@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.18.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, image attachment, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, image bytes outside authorized no-store streams, content hashes, and embedding vectors are never exposed by this API."
+    "version": "1.19.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, image attachment, reminder, notification, approval, read-only calendar integration, and governed tool transport contract. Provider tokens, client secrets, authorization codes, internal credential references, provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, image bytes outside authorized no-store streams, content hashes, and embedding vectors are never exposed by this API. Calendar names, event titles, descriptions, attendees, locations, provider identifiers, and owner identity are private and are never placed in URLs, ordinary logs, telemetry, SSE invalidations, browser persistence, or service-worker caches. Events are retrieved on demand without a durable event-content cache. Calendar create, update, delete, RSVP, attendee mutation, automatic rescheduling, background content synchronization, calendar-to-memory writes, and model-facing calendar tools are intentionally excluded."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -21,6 +21,7 @@
     { "name": "Reminders" },
     { "name": "Notifications" },
     { "name": "Approvals" },
+    { "name": "Calendar" },
     { "name": "Health" }
   ],
   "paths": {
@@ -1487,6 +1488,153 @@
         }
       }
     },
+    "/api/v1/integrations/calendar/connection": {
+      "get": {
+        "operationId": "getCalendarConnection",
+        "tags": ["Calendar"],
+        "description": "Returns the owner-scoped provider-neutral connection state. Credentials, authorization codes, provider account identity, internal credential references, and raw provider errors are excluded.",
+        "responses": {
+          "200": { "description": "Current calendar connection state", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConnection" } } } },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/connection/start": {
+      "post": {
+        "operationId": "startCalendarConnection",
+        "tags": ["Calendar"],
+        "description": "Starts one bounded owner-authorized read-only calendar connection attempt. The returned authorizationPath is a high-entropy opaque handle and MUST be navigated only as an authenticated same-origin owner action from the initiating session. It is bound to that owner, session, and exact attempt, is single-use until expiresAt, fails closed at expiry, rejects replay and prefetch, and is invalidated when a newer attempt starts. It must not be logged, measured, persisted, prefetched, or service-worker cached.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "202": { "description": "Connection attempt started", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarAuthorizationStart" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/connection/complete": {
+      "post": {
+        "operationId": "completeCalendarConnectionCallback",
+        "tags": ["Calendar"],
+        "description": "Consumes exactly once the server-held result of the fixed provider callback bound to the authenticated owner, initiating session, and exact non-expired connection attempt after exact state, nonce, callback origin, and least-privilege read-only scope validation. Missing, expired, superseded, prefetched, replayed, owner-mismatched, session-mismatched, or attempt-mismatched results fail closed. The browser sends no provider authorization code, state, token, credential reference, or raw provider payload.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "200": { "description": "Sanitized callback result committed", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConnection" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "422": { "$ref": "#/components/responses/CalendarUnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/connection/reauthorize": {
+      "post": {
+        "operationId": "reauthorizeCalendarConnection",
+        "tags": ["Calendar"],
+        "description": "Starts a new bounded authorization attempt for a connection that requires owner reauthorization. The same authenticated same-origin owner, initiating-session, exact-attempt, high-entropy, single-use, expiry, replay, prefetch, fail-closed, and newer-attempt-invalidates-prior requirements as startCalendarConnection apply. Existing reads remain disabled until completion succeeds.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "202": { "description": "Reauthorization attempt started", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarAuthorizationStart" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/connection/disconnect": {
+      "post": {
+        "operationId": "disconnectCalendarConnection",
+        "tags": ["Calendar"],
+        "description": "Immediately disables new reads, then attempts provider revocation before server-held credential removal. An uncertain revocation returns revocation_uncertain with reads disabled and owner-safe recovery metadata.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "200": { "description": "Connection disconnected or disabled with uncertain revocation", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConnection" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/calendars": {
+      "get": {
+        "operationId": "listSelectableCalendars",
+        "tags": ["Calendar"],
+        "description": "Lists only calendars readable by the authenticated owner. Discovery never selects a calendar; every newly discovered calendar is returned with selected=false until an explicit selection replacement succeeds.",
+        "parameters": [
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner-bound discovery cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } }
+        ],
+        "responses": {
+          "200": { "description": "Bounded owner-private selectable calendar page", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SelectableCalendarPage" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/calendars/selection": {
+      "put": {
+        "operationId": "replaceCalendarSelection",
+        "tags": ["Calendar"],
+        "description": "Atomically replaces the selected readable-calendar set. The explicit empty set is valid; omitted, undiscovered, unauthorized, or unreadable calendars are never enabled implicitly.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReplaceCalendarSelectionRequest" } } } },
+        "responses": {
+          "200": { "description": "Explicit selected set replaced", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarSelection" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "422": { "$ref": "#/components/responses/CalendarUnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/events/query": {
+      "post": {
+        "operationId": "queryCalendarEvents",
+        "tags": ["Calendar"],
+        "description": "Retrieves owner-private normalized events on demand without a durable event-content cache. A POST body keeps private calendar selection and range inputs out of URLs. The request is read-only, cancellation-aware, and bounded by a maximum 31-day half-open instant range, selected-calendar allowlist, page size, opaque cursor, and server deadline.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarEventQuery" } } } },
+        "responses": {
+          "200": { "description": "Bounded normalized event page; event content remains untrusted private data", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarEventPage" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "422": { "$ref": "#/components/responses/CalendarUnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/conflicts/query": {
+      "post": {
+        "operationId": "queryCalendarConflicts",
+        "tags": ["Calendar"],
+        "description": "Returns server-authoritative deterministic positive-duration overlap relationships for the same bounded selected-calendar range query. The browser and models must not calculate or reinterpret conflicts.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConflictQuery" } } } },
+        "responses": {
+          "200": { "description": "Bounded deterministic conflict relationship page", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConflictPage" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "422": { "$ref": "#/components/responses/CalendarUnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -1545,7 +1693,13 @@
       "Conflict": { "description": "Version conflict, active run conflict, or idempotency-key payload conflict", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
       "RunAdmissionConflict": { "description": "Run admission conflict. model_vision_required is returned when the explicit attachment set contains an image and the selected model lacks a fresh digest-identified vision capability; Aura does not change the selected model or persist the message or run.", "content": { "application/problem+json": { "schema": { "oneOf": [{ "$ref": "#/components/schemas/ErrorEnvelope" }, { "$ref": "#/components/schemas/ModelVisionRequiredError" }] } } } },
       "UnprocessableEntity": { "description": "Semantically invalid command", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
-      "ServiceUnavailable": { "description": "Required dependency unavailable", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
+      "ServiceUnavailable": { "description": "Required dependency unavailable", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "CalendarBadRequest": { "description": "Malformed calendar request with sanitized Aura-owned recovery metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarUnauthorized": { "description": "No valid Aura owner session; no private or provider diagnostic value is returned", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarForbidden": { "description": "Owner authorization, origin-aware CSRF, or attempt binding rejected with sanitized Aura-owned recovery metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarConflictResponse": { "description": "Lifecycle, optimistic-version, idempotency, or single-use attempt conflict with sanitized Aura-owned recovery metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarUnprocessableEntity": { "description": "Semantically invalid calendar command or read query with sanitized Aura-owned recovery metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarServiceUnavailable": { "description": "Calendar dependency unavailable with a closed Aura-owned category and no provider diagnostic value", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } }
     },
     "schemas": {
       "Session": {
@@ -3440,6 +3594,253 @@
           "status": { "type": "string", "const": "deleting" },
           "version": { "type": "integer", "minimum": 1 },
           "acceptedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarConnectionStatus": {
+        "type": "string",
+        "enum": ["disconnected", "connecting", "connected", "reauthorization_required", "revocation_uncertain", "disabled", "unavailable"],
+        "description": "Closed provider-neutral lifecycle state. revocation_uncertain, disabled, unavailable, and reauthorization_required always disable calendar reads."
+      },
+      "CalendarRecoveryAction": {
+        "type": "string",
+        "enum": ["connect", "complete_connection", "retry", "reauthorize", "disconnect", "wait", "contact_administrator"]
+      },
+      "CalendarFailureCategory": {
+        "type": "string",
+        "enum": ["authorization", "validation", "callback_rejected", "provider_auth", "provider_rate_limit", "provider_unavailable", "calendar_unavailable", "dependency_unavailable", "deadline_exceeded", "revocation_uncertain"],
+        "description": "Closed Aura-owned failure category. Raw provider status, payloads, identifiers, URLs, and diagnostics are never copied into this value."
+      },
+      "CalendarErrorEnvelope": {
+        "type": "object", "additionalProperties": false,
+        "description": "Calendar-scoped problem response containing only closed Aura-owned classification and bounded owner-safe recovery metadata. title and detail are server-authored from fixed templates. Calendar names, event content, owner identity, request fields or values, provider identifiers, endpoints, status text, payloads and diagnostics, credentials, codes, tokens, internal references, resource identifiers, and arbitrary field-error data are prohibited.",
+        "required": ["type", "title", "status", "category", "detail", "retryable", "recoveryAction", "traceId"],
+        "properties": {
+          "type": { "type": "string", "format": "uri", "description": "Stable Aura-owned problem type; never a provider URL." },
+          "title": { "type": "string", "minLength": 1, "maxLength": 120, "description": "Fixed Aura-owned owner-safe title." },
+          "status": { "type": "integer", "minimum": 400, "maximum": 599 },
+          "category": { "$ref": "#/components/schemas/CalendarFailureCategory" },
+          "detail": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Fixed-template recovery guidance with no private request, calendar, owner, credential, resource, field, or provider diagnostic value." },
+          "retryable": { "type": "boolean" },
+          "recoveryAction": { "$ref": "#/components/schemas/CalendarRecoveryAction" },
+          "traceId": { "type": "string", "pattern": "^[0-9a-f]{32}$", "description": "Content-free correlation identifier." }
+        }
+      },
+      "CalendarConnectionError": {
+        "type": "object", "additionalProperties": false,
+        "description": "Bounded owner-safe recovery metadata. It contains no provider error text, owner identity, credentials, codes, calendar content, or internal references.",
+        "required": ["category", "message", "retryable", "recoveryAction", "occurredAt"],
+        "properties": {
+          "category": { "$ref": "#/components/schemas/CalendarFailureCategory" },
+          "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "retryable": { "type": "boolean" },
+          "recoveryAction": { "$ref": "#/components/schemas/CalendarRecoveryAction" },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarConnectionAction": {
+        "type": "string",
+        "enum": ["connect", "complete_connection", "reauthorize", "disconnect"],
+        "description": "Server-authoritative owner actions valid for the current connection state. Every value maps unambiguously to one public lifecycle operation; transient read recovery is represented by CalendarRecoveryAction and is not a connection action."
+      },
+      "CalendarConnection": {
+        "type": "object", "additionalProperties": false,
+        "description": "Provider-neutral owner-scoped connection projection. Provider account identity, tokens, authorization codes, credential metadata and references, scopes, endpoints, and raw errors are excluded.",
+        "required": ["status", "readsEnabled", "selectedCalendarCount", "connectedAt", "updatedAt", "lastError", "availableActions"],
+        "properties": {
+          "status": { "$ref": "#/components/schemas/CalendarConnectionStatus" },
+          "readsEnabled": { "type": "boolean", "description": "True only while connected and authorized; false for every other lifecycle state." },
+          "selectedCalendarCount": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "connectedAt": { "type": ["string", "null"], "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "lastError": { "oneOf": [{ "$ref": "#/components/schemas/CalendarConnectionError" }, { "type": "null" }] },
+          "availableActions": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/components/schemas/CalendarConnectionAction" } }
+        }
+      },
+      "CalendarAuthorizationStart": {
+        "type": "object", "additionalProperties": false,
+        "description": "Short-lived navigation result for one owner-initiated connection attempt. authorizationPath is an authenticated same-origin navigation handle bound exactly to the owner, initiating session, and connection attempt. The high-entropy opaque handle is single-use, expires exactly at expiresAt, and MUST fail closed when missing, expired, superseded, replayed, prefetched, owner-mismatched, session-mismatched, or attempt-mismatched. Starting a newer connect or reauthorization attempt invalidates the prior handle and server-held callback result. The path is never persisted, logged, measured, prefetched, placed in SSE, or cached and contains no provider code, state, token, client secret, credential reference, calendar content, or owner identity.",
+        "required": ["connection", "authorizationPath", "expiresAt"],
+        "properties": {
+          "connection": { "$ref": "#/components/schemas/CalendarConnection" },
+          "authorizationPath": { "type": "string", "pattern": "^/api/v1/integrations/calendar/authorize/[A-Za-z0-9_-]{43,128}$", "maxLength": 192, "description": "Authenticated same-origin navigation containing a minimum 256-bit base64url opaque handle. The server, not the path value, owns the exact owner, initiating-session, attempt, single-use, supersession, and expiry binding." },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SelectableCalendar": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-private readable calendar metadata. id is an Aura-owned opaque identifier, not a provider identifier. Names and timezone values must not enter URLs, ordinary logs, telemetry, SSE, browser persistence, or service-worker caches.",
+        "required": ["id", "displayName", "timeZone", "selected", "discoveredAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "timeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "selected": { "type": "boolean", "description": "False on first discovery and until an explicit selection replacement includes this calendar." },
+          "discoveredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SelectableCalendarPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor", "selectionVersion", "observedAt"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/SelectableCalendar" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 },
+          "selectionVersion": { "type": "integer", "minimum": 1 },
+          "observedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ReplaceCalendarSelectionRequest": {
+        "type": "object", "additionalProperties": false,
+        "description": "Complete explicit replacement set. An empty list selects none. Every identifier must be owner-authorized, currently discovered, and readable; newly discovered identifiers are never appended by the server.",
+        "required": ["calendarIds", "expectedVersion"],
+        "properties": {
+          "calendarIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+          "expectedVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "CalendarSelection": {
+        "type": "object", "additionalProperties": false,
+        "required": ["calendarIds", "version", "updatedAt"],
+        "properties": {
+          "calendarIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+          "version": { "type": "integer", "minimum": 1 },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarEventQuery": {
+        "type": "object", "additionalProperties": false,
+        "description": "Private read-only query. rangeStart is inclusive, rangeEnd is exclusive, rangeStart must precede rangeEnd by no more than 31 days, every calendarId must be in the explicit selected set, and a cursor is bound to the owner and every normalized query field. Producers validate displayTimeZone against the deployed IANA database. The server applies a deadline no greater than timeoutMs and stops provider work when the request is cancelled.",
+        "required": ["rangeStart", "rangeEnd", "displayTimeZone", "calendarIds"],
+        "properties": {
+          "rangeStart": { "type": "string", "format": "date-time" },
+          "rangeEnd": { "type": "string", "format": "date-time" },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "calendarIds": { "type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 },
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 1024, "description": "Opaque owner-, selected-calendar-, range-, timezone-, and limit-bound cursor." },
+          "timeoutMs": { "type": "integer", "minimum": 500, "maximum": 10000, "default": 5000 }
+        }
+      },
+      "CalendarEventAvailability": { "type": "string", "enum": ["busy", "free"] },
+      "TimedCalendarEvent": {
+        "type": "object", "additionalProperties": false,
+        "description": "Normalized owner-private timed event. Text is untrusted provider content for escaped display only and must not grant instruction or policy authority or enter logs, telemetry, SSE, URLs, browser persistence, service-worker caches, memory, or model-facing tools.",
+        "required": ["kind", "id", "calendarId", "title", "description", "location", "availability", "startInstant", "endInstant", "eventTimeZone", "displayTimeZone", "spansMultipleDays"],
+        "properties": {
+          "kind": { "type": "string", "const": "timed" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 512, "description": "Opaque owner-bound event identity. It must not be placed in URLs, logs, telemetry, or browser persistence." },
+          "calendarId": { "type": "string", "format": "uuid" },
+          "title": { "type": "string", "maxLength": 1000 },
+          "description": { "type": ["string", "null"], "maxLength": 10000 },
+          "location": { "type": ["string", "null"], "maxLength": 1000 },
+          "availability": { "$ref": "#/components/schemas/CalendarEventAvailability" },
+          "startInstant": { "type": "string", "format": "date-time" },
+          "endInstant": { "type": "string", "format": "date-time" },
+          "eventTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "IANA timezone provenance supplied by or deterministically resolved for the source event." },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "spansMultipleDays": { "type": "boolean", "description": "Server-computed against displayTimeZone; clients do not infer this classification." }
+        }
+      },
+      "AllDayCalendarEvent": {
+        "type": "object", "additionalProperties": false,
+        "description": "Normalized owner-private all-day event using a half-open local-date interval. Text is untrusted provider content and has the same no-log, no-telemetry, no-SSE, no-persistence, no-memory, and no-model-tool restrictions as timed events.",
+        "required": ["kind", "id", "calendarId", "title", "description", "location", "availability", "startDate", "endDateExclusive", "eventTimeZone", "displayTimeZone", "spansMultipleDays"],
+        "properties": {
+          "kind": { "type": "string", "const": "all_day" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 512, "description": "Opaque owner-bound event identity. It must not be placed in URLs, logs, telemetry, or browser persistence." },
+          "calendarId": { "type": "string", "format": "uuid" },
+          "title": { "type": "string", "maxLength": 1000 },
+          "description": { "type": ["string", "null"], "maxLength": 10000 },
+          "location": { "type": ["string", "null"], "maxLength": 1000 },
+          "availability": { "$ref": "#/components/schemas/CalendarEventAvailability" },
+          "startDate": { "type": "string", "format": "date" },
+          "endDateExclusive": { "type": "string", "format": "date" },
+          "eventTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "IANA timezone used to interpret all-day boundaries." },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "spansMultipleDays": { "type": "boolean", "description": "True when the half-open local-date interval spans more than one day." }
+        }
+      },
+      "CalendarEvent": {
+        "oneOf": [{ "$ref": "#/components/schemas/TimedCalendarEvent" }, { "$ref": "#/components/schemas/AllDayCalendarEvent" }],
+        "discriminator": { "propertyName": "kind" }
+      },
+      "CalendarReadWarning": {
+        "type": "object", "additionalProperties": false,
+        "description": "Bounded owner-safe partial-read metadata. Raw provider errors and provider identifiers are excluded.",
+        "required": ["calendarId", "category", "retryable", "recoveryAction"],
+        "properties": {
+          "calendarId": { "type": "string", "format": "uuid" },
+          "category": { "$ref": "#/components/schemas/CalendarFailureCategory" },
+          "retryable": { "type": "boolean" },
+          "recoveryAction": { "$ref": "#/components/schemas/CalendarRecoveryAction" }
+        }
+      },
+      "CalendarEventPage": {
+        "type": "object", "additionalProperties": false,
+        "description": "On-demand normalized event page. The result is never a durable event cache and is not eligible for browser or service-worker persistence.",
+        "required": ["rangeStart", "rangeEnd", "displayTimeZone", "items", "nextCursor", "partial", "warnings", "retrievedAt"],
+        "properties": {
+          "rangeStart": { "type": "string", "format": "date-time" },
+          "rangeEnd": { "type": "string", "format": "date-time" },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/CalendarEvent" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 },
+          "partial": { "type": "boolean" },
+          "warnings": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/CalendarReadWarning" } },
+          "retrievedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarConflictQuery": {
+        "type": "object", "additionalProperties": false,
+        "description": "Private deterministic conflict query. It uses the same 31-day range, selected-calendar allowlist, cursor binding, IANA timezone validation, deadline, and cancellation rules as CalendarEventQuery. conflictLimit bounds relationship expansion independently of source event count.",
+        "required": ["rangeStart", "rangeEnd", "displayTimeZone", "calendarIds"],
+        "properties": {
+          "rangeStart": { "type": "string", "format": "date-time" },
+          "rangeEnd": { "type": "string", "format": "date-time" },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "calendarIds": { "type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+          "conflictLimit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 100 },
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 1024, "description": "Opaque owner-, selected-calendar-, range-, timezone-, and limit-bound relationship cursor." },
+          "timeoutMs": { "type": "integer", "minimum": 500, "maximum": 10000, "default": 5000 }
+        }
+      },
+      "CalendarConflictEventReference": {
+        "type": "object", "additionalProperties": false,
+        "required": ["eventId", "calendarId"],
+        "properties": {
+          "eventId": { "type": "string", "minLength": 1, "maxLength": 512, "description": "Opaque owner-bound private event identity; never placed in URLs, logs, telemetry, or persistence." },
+          "calendarId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "CalendarConflictRelationship": {
+        "type": "string",
+        "enum": ["overlaps", "contains", "contained_by", "same_interval"],
+        "description": "Deterministic interval relationship from left to right. Adjacent zero-duration boundaries and availability=free events are not conflicts. All-day boundaries are resolved in eventTimeZone before comparison."
+      },
+      "CalendarConflict": {
+        "type": "object", "additionalProperties": false,
+        "description": "One canonical unordered event pair. left precedes right by start instant, then end instant, then event ID; each pair appears once. Relationship and overlap bounds are server-computed.",
+        "required": ["left", "right", "relationship", "overlapStart", "overlapEnd"],
+        "properties": {
+          "left": { "$ref": "#/components/schemas/CalendarConflictEventReference" },
+          "right": { "$ref": "#/components/schemas/CalendarConflictEventReference" },
+          "relationship": { "$ref": "#/components/schemas/CalendarConflictRelationship" },
+          "overlapStart": { "type": "string", "format": "date-time" },
+          "overlapEnd": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarConflictPage": {
+        "type": "object", "additionalProperties": false,
+        "description": "Server-authoritative deterministic relationships ordered by overlapStart, overlapEnd, left event ID, and right event ID. Models and clients must not recalculate or broaden them.",
+        "required": ["rangeStart", "rangeEnd", "displayTimeZone", "items", "nextCursor", "partial", "warnings", "evaluatedAt"],
+        "properties": {
+          "rangeStart": { "type": "string", "format": "date-time" },
+          "rangeEnd": { "type": "string", "format": "date-time" },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "items": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/CalendarConflict" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 },
+          "partial": { "type": "boolean" },
+          "warnings": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/CalendarReadWarning" } },
+          "evaluatedAt": { "type": "string", "format": "date-time" }
         }
       },
       "ModelVisionRequiredError": {

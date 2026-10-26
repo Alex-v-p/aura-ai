@@ -1,0 +1,92 @@
+agent: contract_steward
+work_item: AURA-0128
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: /root/aura0128_contract
+  worktree: shared-main
+scope:
+  ownership_zone: contracts.aura-api.calendar and frontend.aura-api-client.generated
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/aura-v1.yaml
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - work-items/handoffs/AURA-0128-contract.yaml
+contracts:
+  changed: true
+  ids:
+    - aura-v1
+  versions:
+    aura-v1: 1.19.0
+  compatibility: backward_compatible_additive
+  producers:
+    - future Aura Core owner-scoped calendar application API and fixed provider callback boundary
+    - future provider-neutral calendar retrieval and deterministic conflict application services
+  consumers:
+    - generated Aura TypeScript transport client
+    - future Aura Web calendar integration and daily-planning feature libraries through the generated client
+    - future controlled contract and Core implementation tests
+  rollout:
+    - publish the additive v1.19.0 contract and generated client before implementing any provider or consumer behavior
+    - implement the separately approved platform credential and fixed-endpoint boundary before enabling connection lifecycle routes
+    - implement Core owner authorization, persistence, bounded retrieval, and conflict behavior before Aura Web consumes the new operations
+    - keep the integration disabled until the owner explicitly connects and selects calendars; rollback disables reads before revocation and credential removal
+  generated_outputs:
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  validation:
+    - all nine calendar operations and all new schemas are additive and operation identifiers remain unique
+    - connection lifecycle uses the seven approved closed states, closed Aura-owned error and recovery enums, and excludes provider credentials, codes, account identity, internal credential references, endpoints, and raw provider errors
+    - every CalendarConnection available action maps unambiguously to one public lifecycle operation; transient retry remains recovery guidance and is not advertised as a connection action
+    - authorization navigation is normatively authenticated, same-origin, high-entropy, owner-, initiating-session-, and exact-attempt-bound, single-use, exactly expiring, replay- and prefetch-rejecting, fail-closed, and superseded by a newer attempt; completion consumes only the matching server-held result once
+    - lifecycle and explicit selection mutations require the existing session-cookie, origin-aware CSRF, and UUID idempotency conventions
+    - selectable calendars and selected sets are bounded; discovery cannot select a calendar and newly discovered calendars remain unselected
+    - event and conflict reads use private JSON request bodies, selected-calendar allowlists, a maximum 31-day half-open range, validated IANA display timezone, bounded limits, opaque cursors, deadlines, cancellation semantics, and no-store responses
+    - every calendar success and failure response requires no-store; failures use a closed calendar-scoped envelope with fixed-template bounded owner-safe details and no resource, field, private, credential, or provider diagnostic values
+    - timed, all-day, and multi-day event variants retain event and display timezone provenance; conflict pairs have canonical server-authoritative ordering and closed relationship types
+    - contract descriptions prohibit durable event-content caching, private calendar content in URLs, logs, telemetry, SSE, browser persistence and service-worker caches, and exclude calendar writes, RSVP, attendee mutation, background synchronization, memory writes, and model-facing calendar tools
+    - generated TypeScript types and operation descriptors were emitted only by the existing deterministic generator and match the contract digest
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0128.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0128.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0128.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0128.yaml (skipped as expected because no protected baseline changed)
+    - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v (27 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0128_calendar_contract.py -q (9 passed after lifecycle, OAuth handoff, closed-error, no-store, and strict additive-compatibility corrections)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0128_calendar_contract.py services/aura-core/tests/system/test_contract_and_deployment.py services/aura-core/tests/test_conversation_attachments.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/test_notification_api.py services/aura-core/tests/test_reminder_api.py -q (93 passed, 3 skipped)
+    - cd frontend && pnpm exec nx run aura-api-client:generate
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated
+    - cd frontend && pnpm exec nx run aura-api-client:lint
+    - local-reference and operation-uniqueness inspection (1105 local references resolved, 104 unique operations)
+    - tooling.architecture.common.validate_document against implementation-handoff.schema.json
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - Calendar lifecycle completion consumes once the server-held sanitized callback result bound to the exact authenticated owner, initiating session, and non-expired connection attempt through a no-body command; provider authorization codes, state, tokens, and raw callback payloads never enter the public JSON contract.
+  - Connect and reauthorize return a high-entropy single-use same-origin authorizationPath instead of a provider endpoint; it fails closed on mismatch, replay, prefetch, expiry, or supersession and is explicitly excluded from logging, telemetry, persistence, SSE, and caching.
+  - CalendarConnection availableActions contains only connect, complete_connection, reauthorize, and disconnect because each maps to one public lifecycle operation; retry remains scoped recovery guidance rather than an ambiguous connection command.
+  - Calendar operations use dedicated no-store problem responses whose closed category and fixed-template recovery fields cannot represent resource or field values, calendar content, owner identity, credential material, or provider diagnostics.
+  - Calendar event and conflict reads use POST bodies as read-only queries so private selected-calendar and range values never enter URLs; they intentionally omit CSRF and idempotency headers because they do not mutate state.
+  - Calendar identifiers are Aura-owned UUIDs and event identities are opaque owner-bound values; public schemas contain no provider account or credential identifier.
+  - Explicit calendar selection replaces the complete selected set with optimistic versioning and accepts an empty set; discovery never mutates selection.
+  - Conflict results contain canonical bounded event pairs and deterministic interval relationships; no business calculation was added to the generated client.
+risks:
+  - OpenAPI expresses individual timestamps and timezone syntax but cannot prove rangeStart precedes rangeEnd by at most 31 days or that a timezone exists in the deployed IANA database; future Core admission must enforce both rules.
+  - The same-origin authorizationPath requires a later platform-owned ephemeral authorization navigation route with exact callback and expiry enforcement; this contract does not implement that behavior.
+unresolved:
+  - AURA-0129 must choose and validate the existing-runtime-compatible credential encryption and key-delivery mechanism before durable credentials are implemented.
+  - Platform OAuth, Core persistence and provider behavior, deployment, and Aura Web product behavior remain sequential follow-up work items.

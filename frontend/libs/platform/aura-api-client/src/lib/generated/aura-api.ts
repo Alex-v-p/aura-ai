@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: d632dad9283669fb7239cac873ff374deaee4e0852a16f2a71249ac3439f2dcf
+// Contract SHA-256: b34ac2a7a35ae4c5d07a1be9f29dad7a75626cd2f19f0e68fba8b7174d786d9d
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -436,6 +436,54 @@ export type DocumentTransitionRequest = { readonly "expectedVersion": number; };
 
 export type DocumentDeletionReceipt = { readonly "documentId": string; readonly "status": "deleting"; readonly "version": number; readonly "acceptedAt": string; };
 
+export type CalendarConnectionStatus = "disconnected" | "connecting" | "connected" | "reauthorization_required" | "revocation_uncertain" | "disabled" | "unavailable";
+
+export type CalendarRecoveryAction = "connect" | "complete_connection" | "retry" | "reauthorize" | "disconnect" | "wait" | "contact_administrator";
+
+export type CalendarFailureCategory = "authorization" | "validation" | "callback_rejected" | "provider_auth" | "provider_rate_limit" | "provider_unavailable" | "calendar_unavailable" | "dependency_unavailable" | "deadline_exceeded" | "revocation_uncertain";
+
+export type CalendarErrorEnvelope = { readonly "type": string; readonly "title": string; readonly "status": number; readonly "category": CalendarFailureCategory; readonly "detail": string; readonly "retryable": boolean; readonly "recoveryAction": CalendarRecoveryAction; readonly "traceId": string; };
+
+export type CalendarConnectionError = { readonly "category": CalendarFailureCategory; readonly "message": string; readonly "retryable": boolean; readonly "recoveryAction": CalendarRecoveryAction; readonly "occurredAt": string; };
+
+export type CalendarConnectionAction = "connect" | "complete_connection" | "reauthorize" | "disconnect";
+
+export type CalendarConnection = { readonly "status": CalendarConnectionStatus; readonly "readsEnabled": boolean; readonly "selectedCalendarCount": number; readonly "connectedAt": string | null; readonly "updatedAt": string; readonly "lastError": CalendarConnectionError | null; readonly "availableActions": ReadonlyArray<CalendarConnectionAction>; };
+
+export type CalendarAuthorizationStart = { readonly "connection": CalendarConnection; readonly "authorizationPath": string; readonly "expiresAt": string; };
+
+export type SelectableCalendar = { readonly "id": string; readonly "displayName": string; readonly "timeZone": ClientTimeZone; readonly "selected": boolean; readonly "discoveredAt": string; };
+
+export type SelectableCalendarPage = { readonly "items": ReadonlyArray<SelectableCalendar>; readonly "nextCursor": string | null; readonly "selectionVersion": number; readonly "observedAt": string; };
+
+export type ReplaceCalendarSelectionRequest = { readonly "calendarIds": ReadonlyArray<string>; readonly "expectedVersion": number; };
+
+export type CalendarSelection = { readonly "calendarIds": ReadonlyArray<string>; readonly "version": number; readonly "updatedAt": string; };
+
+export type CalendarEventQuery = { readonly "rangeStart": string; readonly "rangeEnd": string; readonly "displayTimeZone": ClientTimeZone; readonly "calendarIds": ReadonlyArray<string>; readonly "limit"?: number; readonly "cursor"?: string; readonly "timeoutMs"?: number; };
+
+export type CalendarEventAvailability = "busy" | "free";
+
+export type TimedCalendarEvent = { readonly "kind": "timed"; readonly "id": string; readonly "calendarId": string; readonly "title": string; readonly "description": string | null; readonly "location": string | null; readonly "availability": CalendarEventAvailability; readonly "startInstant": string; readonly "endInstant": string; readonly "eventTimeZone": ClientTimeZone; readonly "displayTimeZone": ClientTimeZone; readonly "spansMultipleDays": boolean; };
+
+export type AllDayCalendarEvent = { readonly "kind": "all_day"; readonly "id": string; readonly "calendarId": string; readonly "title": string; readonly "description": string | null; readonly "location": string | null; readonly "availability": CalendarEventAvailability; readonly "startDate": string; readonly "endDateExclusive": string; readonly "eventTimeZone": ClientTimeZone; readonly "displayTimeZone": ClientTimeZone; readonly "spansMultipleDays": boolean; };
+
+export type CalendarEvent = TimedCalendarEvent | AllDayCalendarEvent;
+
+export type CalendarReadWarning = { readonly "calendarId": string; readonly "category": CalendarFailureCategory; readonly "retryable": boolean; readonly "recoveryAction": CalendarRecoveryAction; };
+
+export type CalendarEventPage = { readonly "rangeStart": string; readonly "rangeEnd": string; readonly "displayTimeZone": ClientTimeZone; readonly "items": ReadonlyArray<CalendarEvent>; readonly "nextCursor": string | null; readonly "partial": boolean; readonly "warnings": ReadonlyArray<CalendarReadWarning>; readonly "retrievedAt": string; };
+
+export type CalendarConflictQuery = { readonly "rangeStart": string; readonly "rangeEnd": string; readonly "displayTimeZone": ClientTimeZone; readonly "calendarIds": ReadonlyArray<string>; readonly "conflictLimit"?: number; readonly "cursor"?: string; readonly "timeoutMs"?: number; };
+
+export type CalendarConflictEventReference = { readonly "eventId": string; readonly "calendarId": string; };
+
+export type CalendarConflictRelationship = "overlaps" | "contains" | "contained_by" | "same_interval";
+
+export type CalendarConflict = { readonly "left": CalendarConflictEventReference; readonly "right": CalendarConflictEventReference; readonly "relationship": CalendarConflictRelationship; readonly "overlapStart": string; readonly "overlapEnd": string; };
+
+export type CalendarConflictPage = { readonly "rangeStart": string; readonly "rangeEnd": string; readonly "displayTimeZone": ClientTimeZone; readonly "items": ReadonlyArray<CalendarConflict>; readonly "nextCursor": string | null; readonly "partial": boolean; readonly "warnings": ReadonlyArray<CalendarReadWarning>; readonly "evaluatedAt": string; };
+
 export type ModelVisionRequiredError = { readonly "type": string; readonly "title": string; readonly "status": 409; readonly "code": "model_vision_required"; readonly "detail": string; readonly "retryable": false; readonly "traceId": string; readonly "resource": string | null; };
 
 export type ErrorEnvelope = { readonly "type": string; readonly "title": string; readonly "status": number; readonly "code": string; readonly "detail": string; readonly "retryable": boolean; readonly "traceId": string; readonly "resource": string | null; readonly "fieldErrors"?: ReadonlyArray<FieldError>; };
@@ -542,6 +590,15 @@ export interface AuraApiOperations {
   readonly downloadDocument: { readonly response: AuraBinaryResponse; readonly body: never; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getDocumentPreview: { readonly response: DocumentPreview; readonly body: never; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly retryDocumentProcessing: { readonly response: DocumentDetail; readonly body: DocumentTransitionRequest; readonly path: { readonly "document_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getCalendarConnection: { readonly response: CalendarConnection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly startCalendarConnection: { readonly response: CalendarAuthorizationStart; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly completeCalendarConnectionCallback: { readonly response: CalendarConnection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly reauthorizeCalendarConnection: { readonly response: CalendarAuthorizationStart; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly disconnectCalendarConnection: { readonly response: CalendarConnection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listSelectableCalendars: { readonly response: SelectableCalendarPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly replaceCalendarSelection: { readonly response: CalendarSelection; readonly body: ReplaceCalendarSelectionRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly queryCalendarEvents: { readonly response: CalendarEventPage; readonly body: CalendarEventQuery; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly queryCalendarConflicts: { readonly response: CalendarConflictPage; readonly body: CalendarConflictQuery; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getLiveness: { readonly response: Liveness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getReadiness: { readonly response: Readiness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
 }
@@ -656,6 +713,15 @@ export const AURA_API_OPERATIONS = {
   downloadDocument: { method: 'GET', pathTemplate: '/api/v1/documents/{document_id}/content', requestMode: 'none', responseMode: 'binary' },
   getDocumentPreview: { method: 'GET', pathTemplate: '/api/v1/documents/{document_id}/preview', requestMode: 'none', responseMode: 'json' },
   retryDocumentProcessing: { method: 'POST', pathTemplate: '/api/v1/documents/{document_id}/retry', requestMode: 'json', responseMode: 'json' },
+  getCalendarConnection: { method: 'GET', pathTemplate: '/api/v1/integrations/calendar/connection', requestMode: 'none', responseMode: 'json' },
+  startCalendarConnection: { method: 'POST', pathTemplate: '/api/v1/integrations/calendar/connection/start', requestMode: 'none', responseMode: 'json' },
+  completeCalendarConnectionCallback: { method: 'POST', pathTemplate: '/api/v1/integrations/calendar/connection/complete', requestMode: 'none', responseMode: 'json' },
+  reauthorizeCalendarConnection: { method: 'POST', pathTemplate: '/api/v1/integrations/calendar/connection/reauthorize', requestMode: 'none', responseMode: 'json' },
+  disconnectCalendarConnection: { method: 'POST', pathTemplate: '/api/v1/integrations/calendar/connection/disconnect', requestMode: 'none', responseMode: 'json' },
+  listSelectableCalendars: { method: 'GET', pathTemplate: '/api/v1/integrations/calendar/calendars', requestMode: 'none', responseMode: 'json' },
+  replaceCalendarSelection: { method: 'PUT', pathTemplate: '/api/v1/integrations/calendar/calendars/selection', requestMode: 'json', responseMode: 'json' },
+  queryCalendarEvents: { method: 'POST', pathTemplate: '/api/v1/integrations/calendar/events/query', requestMode: 'json', responseMode: 'json' },
+  queryCalendarConflicts: { method: 'POST', pathTemplate: '/api/v1/integrations/calendar/conflicts/query', requestMode: 'json', responseMode: 'json' },
   getLiveness: { method: 'GET', pathTemplate: '/health/live', requestMode: 'none', responseMode: 'json' },
   getReadiness: { method: 'GET', pathTemplate: '/health/ready', requestMode: 'none', responseMode: 'json' },
 } as const satisfies Readonly<Record<AuraOperationId, AuraOperationDescriptor>>;

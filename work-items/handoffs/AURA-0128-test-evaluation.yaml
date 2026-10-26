@@ -1,0 +1,103 @@
+agent: test_evaluation_engineer
+work_item: AURA-0128
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0128_tests
+  worktree: shared-main
+scope:
+  ownership_zone: evaluation.calendar-contract
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_reminder_api.py
+  - work-items/handoffs/AURA-0128-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0128.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0128.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0128.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0128.yaml (skipped: no protected baseline changes)
+    - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v (27 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0128_calendar_contract.py -q -k 'not generated'
+      (8 passed, 1 deselected while the steward regenerated the client)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0128_calendar_contract.py
+      services/aura-core/tests/system/test_contract_and_deployment.py
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/test_document_contract.py
+      services/aura-core/tests/test_memory_product_api.py
+      services/aura-core/tests/test_notification_api.py
+      services/aura-core/tests/test_reminder_api.py -q (93 passed, 3 skipped)
+    - >-
+      Focused generated-client contract test passed after steward regeneration,
+      including contract SHA-256 synchronization and every calendar operation
+      and schema exposure.
+    - git diff --check
+  failed: []
+  not_run:
+    - cd frontend && pnpm exec nx run aura-api-client:generate (owned by contract steward)
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated (owned by contract steward)
+    - cd frontend && pnpm exec nx run aura-api-client:lint (owned by contract steward)
+decisions:
+  - >-
+    Added focused acceptance coverage for the seven closed lifecycle states,
+    Aura-owned failure categories and recovery actions, owner-safe metadata,
+    CSRF/idempotency requirements, and no-store success responses.
+  - >-
+    Proved explicit calendar selection semantics, bounded discovery and
+    replacement limits, POST-body privacy for private ranges and IDs, opaque
+    cursor and deadline bounds, and no implicit newly discovered selection.
+  - >-
+    Proved timed and all-day normalized event variants retain event and display
+    timezone provenance, half-open all-day boundaries, and server-computed
+    multi-day classification.
+  - >-
+    Proved deterministic conflict relationship closure, canonical unordered
+    pair representation, bounded relationship pages, and browser/model
+    non-authority descriptions.
+  - >-
+    Proved structural additive compatibility against origin/dev when the local
+    ref is available: every pre-existing path item, operation, component,
+    server, global security rule, and existing tag remains unchanged, with a
+    stable legacy path fallback for source archives.
+  - >-
+    Proved OAuth authorization handles are authenticated same-origin,
+    owner/session/attempt-bound, high-entropy, single-use, exact-expiry,
+    fail-closed, replay/prefetch resistant, and invalidated by newer attempts;
+    completion accepts only the matching server-held callback result once and
+    has no client code/state/token body.
+  - >-
+    Proved calendar errors use a closed category and recovery enum, bounded
+    sanitized owner-safe fields without resource or field-error leakage, and
+    no-store headers on every success and failure response.
+  - Updated existing Aura Core contract assertions from API version 1.18.0 to 1.19.0.
+risks:
+  - >-
+    The compatibility assertion uses the local origin/dev ref when present;
+    environments without that ref use a conservative required legacy-path set.
+  - Frontend generation and lint remain separately owned by the contract steward; generated synchronization and digest assertions passed after regeneration.
+unresolved: []

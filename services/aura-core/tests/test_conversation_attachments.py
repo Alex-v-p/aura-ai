@@ -2344,7 +2344,7 @@ def test_attachment_contract_and_generated_client_are_additive_and_redacted() ->
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.18.0"
+    assert contract["info"]["version"] == "1.19.0"
     paths = cast(dict[str, Any], contract["paths"])
     assert {
         "/api/v1/attachments/uploads",

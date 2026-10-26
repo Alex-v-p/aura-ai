@@ -82,7 +82,7 @@ def test_sql_advisory_lock_key_is_deterministic_unambiguous_and_nul_free() -> No
 
 def test_reminder_contract_is_versioned_owner_authenticated_and_mutations_are_protected() -> None:
     spec = _openapi()
-    assert spec["info"]["version"] == "1.18.0"
+    assert spec["info"]["version"] == "1.19.0"
     expected = {
         "/api/v1/reminders",
         "/api/v1/reminders/{reminder_id}",
