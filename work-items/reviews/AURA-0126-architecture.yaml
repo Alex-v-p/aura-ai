@@ -1,0 +1,9 @@
+agent: architecture_guardian
+work_item: AURA-0126
+verdict: PASS
+checked:
+  - Domain and frontend ownership boundaries
+  - Provider direction and thin entrypoints
+  - Core and Observatory isolation
+  - Approval and notification contract evolution ownership
+findings: []

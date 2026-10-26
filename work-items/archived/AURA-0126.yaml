@@ -1,0 +1,145 @@
+id: AURA-0126
+title: Plan the staged daily action and workflow initiative
+status: integrated
+change_class: documentation
+intent: >
+  Define an implementation-ready four-stage initiative for an Aura Web daily
+  action center, calendar-backed planning, scheduled bounded briefings, and
+  durable sequential workflows, while keeping every future delivery slice
+  independently bounded by existing Core, frontend, provider, governance, and
+  Observatory product boundaries.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - The owner requested a four-stage plan on 2026-10-26 and authorized creation of a feature branch from the current remote dev branch.
+    - Planning assumes the first calendar adapter is read-only Google Calendar, briefings initially deliver through existing Aura-owned web surfaces, and the first workflow slice permits bounded sequential steps and approval pauses without arbitrary scripting or Home Assistant actions unless the owner changes those boundaries.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - RUN-012
+  - RUN-014
+  - RUN-015
+  - RUN-016
+  - RUN-018
+  - AUT-004
+  - AUT-005
+  - AUT-008
+  - AUT-009
+  - AUT-010
+  - AUT-014
+  - AUT-016
+  - AUT-017
+  - AUT-019
+  - AUI-020
+  - AUI-021
+  - AUI-023
+  - AUI-025
+ownership_zones:
+  - delivery.daily-action-initiative-planning
+  - design.aura-web-daily-action-initiative
+allowed_paths:
+  - work-items/active/AURA-0126.yaml
+  - work-items/archived/AURA-0126.yaml
+  - work-items/handoffs/AURA-0126-*.yaml
+  - work-items/reviews/AURA-0126-*.yaml
+  - work-items/integration/AURA-0126.yaml
+  - docs/design/daily-action-and-workflow-initiative.md
+forbidden_paths:
+  - services/**
+  - frontend/**
+  - contracts/**
+  - deploy/**
+  - tooling/**
+  - docs/architecture/**
+  - docs/adr/**
+  - .codex/**
+contracts:
+  changes_allowed: false
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Calendar event content and provider credentials are private and owner-scoped.
+    - Scheduled runs must preserve bounded execution, exact agent revision, cancellation, and approval policy.
+    - Workflow state and notifications must not leak private step inputs through events, telemetry, URLs, logs, or browser persistence.
+    - Aura Web must remain isolated from Aura Observatory and its run-evidence APIs.
+    - Background workers carry no user authority; every scheduled admission and resume must revalidate the immutable owner context and narrowed grants.
+    - Calendar content and prior-step output are untrusted evidence and cannot become instructions, policy, permissions, mappings, or workflow transitions.
+    - New run types must define closed ADR-0017 evidence serializers and permanent secret exclusions before owner-enabled full-content capture can apply.
+  data_classes:
+    - owner-private calendar metadata and content
+    - provider credential references
+    - private briefing inputs and outputs
+    - owner-private workflow definitions and state
+required_agents:
+  implementation:
+    - delivery_lead
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - aura_ux_ui_reviewer
+    - security_privacy_reviewer
+    - observability_steward
+  integration: false
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The plan defines four ordered stages with independent outcomes, prerequisites, non-goals, ownership zones, contract and migration impact, privacy rules, observability, evaluation, rollout, and rollback boundaries.
+  - Stage 1 reuses existing reminder, approval, notification, conversation, and generated-client capabilities without requiring a Core contract or data migration.
+  - Stage 2 remains read-only and provider-agnostic at Core boundaries, names Google Calendar only as the first adapter, and records the unresolved credential lifecycle decision as a blocking gate.
+  - Stage 3 defines scheduled briefing admission and execution as deterministic schedule state plus a bounded Aura run with pinned agent revision, idempotency, cancellation, recovery, and owner-private delivery.
+  - Stage 4 limits the first workflow capability to typed bounded sequential steps and approval pauses with persisted Core-owned state, explicit budgets, cancellation, history, and no arbitrary code execution.
+  - The plan identifies future work-item decomposition and the minimum implementation, review, and integration roles for every stage.
+  - The plan assigns proposed stable observable component and evaluator identities, bounded attributes, replay posture, capture policy, and retention posture for every future runtime stage; AURA-0126 itself changes no observable runtime behavior.
+  - The plan does not authorize product implementation, contracts, migrations, providers, dependencies, deployment changes, or protected baseline changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0126.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0126.yaml
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions:
+  - Before Stage 2 implementation, the owner must approve Google Calendar credential retention, rotation, revocation, disconnect, and reauthorization behavior within ADR-0015 boundaries; otherwise return ADR_REQUIRED.
+  - Before Stage 3 implementation, the owner must approve briefing source scope, default cadence, delivery representation, retention, and whether a briefing appends to an existing conversation or creates a dedicated durable result.
+  - Before Stage 4 implementation, the owner must approve the closed initial workflow step catalogue, retry policy, maximum duration, retention, and editing semantics for running instances.

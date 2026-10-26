@@ -1,0 +1,8 @@
+agent: general_reviewer
+work_item: AURA-0126
+verdict: PASS
+checked:
+  - Contract feasibility and current API capability
+  - Stage dependencies, failure handling, tests, rollout, and rollback
+  - Work-item, changed-path, repository-shape, observability, and diff checks
+findings: []
