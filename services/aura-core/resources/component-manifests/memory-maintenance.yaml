@@ -32,8 +32,12 @@ metrics:
   - backlog_depth
   - backlog
 metric_semantics:
-  memory_maintenance_transition: Bounded lifecycle transition with no memory text.
-  maintenance_duration_ms: Fake-clock-compatible lifecycle maintenance duration.
+  memory_maintenance_transition: >-
+    Bounded lifecycle transition with no memory text; successful no-op sweeps
+    are quiet while real transitions remain observable.
+  maintenance_duration_ms: >-
+    Fake-clock-compatible lifecycle maintenance duration; discovery failures
+    remain immediate bounded error observations.
   retry_count: Reindex and maintenance retry count.
   backlog: Missing embedding or due maintenance work count.
   memory_maintenance_duration_ms: Lifecycle maintenance duration.

@@ -1216,6 +1216,9 @@ class MemoryTraceContext:
     memory_revision_id: str | None = None
     generation_id: str | None = None
     link_span_ids: tuple[str, ...] = ()
+    # Housekeeping still performs its owner-scoped reads, but successful
+    # discovery reads are internal polling details. Failures remain visible.
+    suppress_idle_success: bool = False
 
     def attributes(self) -> dict[str, str]:
         return {

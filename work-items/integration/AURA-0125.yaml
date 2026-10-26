@@ -1,0 +1,58 @@
+agent: integration_maintainer
+work_item: AURA-0125
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0125-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0125-architecture.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0125-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0125.yaml
+  - work-items/integration/AURA-0125.yaml
+checks:
+  passed:
+    - >-
+      Both implementation handoffs are complete, schema-valid, within the
+      authorized ownership zones, and contain no unresolved items.
+    - >-
+      All three required review artifacts are PASS verdicts with no findings
+      or unresolved blocking issues.
+    - >-
+      Work-item, changed-path, contract-change, generated-sync, import-boundary,
+      service-isolation, frontend-boundary, observability, repository-shape, and
+      baseline-protection validators passed; contract and baseline checks had no
+      applicable changes.
+    - >-
+      The focused AURA-0125 Core suite passed with 308 passed and 1
+      environment-dependent test skipped.
+    - >-
+      Scoped Ruff validation passed for all changed Python implementation and
+      test files.
+    - >-
+      After the scripted stack restart and stabilization, the exact UTC window
+      2026-10-26 15:59:11.361 through 16:01:11.361 contained 10 targeted
+      observations, averaging 5.0 per minute versus the 352-per-minute memory
+      baseline subtotal, a 98.58 percent reduction. The only retained records
+      were two memory.model.get not_found error spans and eight associated
+      metrics; empty discovery, no-op maintenance, retry redelivery/NAK, and
+      duplicate activity publication produced no recurring observations.
+    - git diff --check
+    - >-
+      The work item was moved from active to archived with status integrated,
+      and all discovered changed paths remain within its authorized scope.
+failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The ten retained targeted observations are expected not_found failure
+    telemetry from existing unavailable memory configuration and remain visible
+    by design; this work item does not delete, reset, or administratively alter
+    existing retryable jobs.

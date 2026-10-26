@@ -40,13 +40,26 @@ class MemoryMaintenanceService:
         trace_id = uuid5(MEMORY_ID_NAMESPACE, f"maintenance:{issuer}:{subject}").hex
         stamp = now or self._now()
         changed = 0
-        records = await self.repository.list_memories(
-            issuer,
-            subject,
-            MemoryFilters(
-                scope_type=None, include_all_scopes=True, include_historical=True, limit=100000
-            ),
-        )
+        try:
+            records = await self.repository.list_memories(
+                issuer,
+                subject,
+                MemoryFilters(
+                    scope_type=None, include_all_scopes=True, include_historical=True, limit=100000
+                ),
+            )
+        except Exception:
+            # Discovery failures are actionable worker failures, not idle
+            # polling. Emit one bounded event before preserving the exception
+            # for the caller's normal retry boundary.
+            self._transition_telemetry(
+                maintenance_started,
+                trace_id=trace_id,
+                memory_id=None,
+                outcome="error",
+                error_class="persistence",
+            )
+            raise
         for record in records:
             if record.pinned or record.status in {
                 MemoryLifecycleStatus.DISABLED,
@@ -93,7 +106,10 @@ class MemoryMaintenanceService:
                 destination_status=destination,
             )
         await self.repository.save_maintenance_state(issuer, subject, ran_at=stamp)
-        self._transition_telemetry(maintenance_started, trace_id=trace_id, memory_id=None)
+        # Empty sweeps are internal polling; retain the existing summary span
+        # when a concrete lifecycle transition occurred.
+        if changed:
+            self._transition_telemetry(maintenance_started, trace_id=trace_id, memory_id=None)
         return changed
 
 

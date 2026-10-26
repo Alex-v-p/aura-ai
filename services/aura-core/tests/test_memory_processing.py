@@ -27,11 +27,13 @@ from aura_core.domains.interaction.conversations.dto import (
 )
 from aura_core.domains.interaction.conversations.public import ConversationStore
 from aura_core.domains.knowledge.memory.public import (
+    MEMORY_PROCESSING_TOPIC,
     CandidateState,
     MemoryAction,
     MemoryCandidate,
     MemoryEmbeddingGeneration,
     MemoryEmbeddingJob,
+    MemoryFilters,
     MemoryIdempotencyConflict,
     MemoryKind,
     MemoryLifecycleStatus,
@@ -58,9 +60,20 @@ from aura_core.domains.knowledge.memory.public import (
     decide_candidate,
     normalize_retention_horizon,
 )
-from aura_core.entrypoints.worker.app import emit_memory_activity, run_memory_once
-from aura_core.platform.outbox import InMemoryOutbox
-from aura_core.platform.telemetry import Measurement, MetadataMetrics, record_memory_processing
+from aura_core.entrypoints.worker.app import (
+    emit_memory_activity,
+    run_memory_housekeeping,
+    run_memory_once,
+    run_memory_reindex,
+)
+from aura_core.platform.outbox import InMemoryOutbox, make_identifier_command
+from aura_core.platform.telemetry import (
+    Measurement,
+    MemoryTraceContext,
+    MetadataMetrics,
+    memory_trace_context,
+    record_memory_processing,
+)
 from aura_core.providers.embeddings.ollama.adapter import OllamaEmbeddingAdapter
 from aura_core.runtime.models.ports import (
     EmbeddingResult,
@@ -68,6 +81,7 @@ from aura_core.runtime.models.ports import (
     ProviderTraceContext,
     StructuredInferenceRequest,
 )
+from aura_core.runtime.streaming.publisher import EventPublisher
 
 ISSUER = "https://issuer.example"
 OWNER = "owner"
@@ -1091,6 +1105,472 @@ async def test_terminal_rejected_activity_has_no_candidate_identifier() -> None:
     assert data["candidateId"] is None
     assert data["memoryId"] is None
     assert data["memoryRevisionId"] is None
+
+
+@pytest.mark.asyncio
+async def test_housekeeping_quiet_claim_suppresses_empty_but_keeps_real_claim() -> None:
+    metrics = MetadataMetrics()
+
+    class ClaimStore(MemoryStore):
+        async def claim_processing_job(
+            self, issuer: str, subject: str
+        ) -> MemoryProcessingJob | None:
+            for job in self.processing_jobs.values():
+                if (job.issuer, job.subject) == (issuer, subject):
+                    return await self.claim_processing_job_by_id(job.id, issuer, subject)
+            return None
+
+    repository = memory_uow.InstrumentedMemoryRepository(
+        ClaimStore(clock=lambda: NOW), metrics, "memory_store"
+    )
+
+    def context() -> MemoryTraceContext:
+        return MemoryTraceContext(
+            trace_id=uuid4().hex,
+            span_id=uuid4().hex[:16],
+            suppress_idle_success=True,
+        )
+
+    with memory_trace_context(context()):
+        assert await repository.claim_processing_job(ISSUER, OWNER) is None
+    empty_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "memory.job.claim_next"
+    ]
+    assert empty_spans == []
+
+    job = MemoryProcessingJob(
+        uuid4(), ISSUER, OWNER, uuid4(), uuid4(), available_at=NOW
+    )
+    await repository.enqueue_processing_job(job)
+    with memory_trace_context(context()):
+        claimed = await repository.claim_processing_job(ISSUER, OWNER)
+    assert claimed is not None
+    claimed_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "memory.job.claim_next"
+    ]
+    assert len(claimed_spans) == 1
+
+
+@pytest.mark.asyncio
+async def test_composed_housekeeping_real_claim_keeps_model_and_list_success_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = MetadataMetrics()
+
+    class WorkStore(MemoryStore):
+        def __init__(self) -> None:
+            super().__init__(clock=lambda: NOW)
+            self.claimed = False
+
+        async def list_processing_owners(self) -> list[tuple[str, str]]:
+            return [(ISSUER, OWNER)]
+
+        async def claim_processing_job(
+            self, issuer: str, subject: str
+        ) -> MemoryProcessingJob | None:
+            if self.claimed:
+                return None
+            self.claimed = True
+            return MemoryProcessingJob(uuid4(), issuer, subject, uuid4(), uuid4(), available_at=NOW)
+
+    inner = WorkStore()
+    repository = memory_uow.InstrumentedMemoryRepository(inner, metrics, "memory_store")
+
+    def use_repository(
+        _sessions: object,
+        *,
+        testing: bool = False,
+        metrics: MetadataMetrics | None = None,
+    ) -> object:
+        del _sessions, testing, metrics
+        return repository
+
+    async def process_job(
+        service: MemoryProcessingService, _job_id: UUID, *, lease_id: UUID | None = None
+    ) -> None:
+        del lease_id
+        # This is the real-work boundary: discovery reads here must not inherit
+        # the quiet idle-success policy used by the surrounding claim sweep.
+        await service.repository.get_model_configuration(ISSUER, OWNER)
+        await service.repository.list_memories(
+            ISSUER,
+            OWNER,
+            MemoryFilters(include_all_scopes=True, include_historical=True, limit=100),
+        )
+
+    monkeypatch.setattr(memory_uow, "memory_repository", use_repository)
+    monkeypatch.setattr(MemoryProcessingService, "process_job", process_job)
+    await inner.save_model_configuration(
+        ISSUER,
+        OWNER,
+        MemoryModelConfiguration(ISSUER, OWNER, "extractor", "embedder"),
+    )
+    worker = memory_uow.memory_processing_service(None, metrics=metrics)
+    await cast(Any, worker).maintain()
+
+    operations = [
+        dict(item.trace_attributes).get("operation")
+        for item in metrics.snapshot()
+        if item.kind == "span"
+    ]
+    assert operations.count("memory.model.get") == 1
+    assert operations.count("memory.list") == 1
+
+
+
+@pytest.mark.asyncio
+async def test_reindex_housekeeping_passes_have_distinct_child_spans() -> None:
+    metrics = MetadataMetrics()
+
+    class OwnerStore(MemoryStore):
+        async def list_processing_owners(self) -> list[tuple[str, str]]:
+            return [(ISSUER, OWNER)]
+
+    inner = OwnerStore(clock=lambda: NOW)
+    repository = memory_uow.InstrumentedMemoryRepository(inner, metrics, "memory_store")
+
+    def use_repository(
+        _sessions: object,
+        *,
+        testing: bool = False,
+        metrics: MetadataMetrics | None = None,
+    ) -> object:
+        del _sessions, testing, metrics
+        return repository
+
+    original = memory_uow.memory_repository
+    memory_uow.memory_repository = use_repository  # type: ignore[assignment]
+    try:
+        worker = memory_uow.memory_processing_service(None, metrics=metrics)
+        first = await repository.register_embedding_generation(
+            ISSUER,
+            OWNER,
+            generation=1,
+            model_id="embedder",
+            dimension=2,
+            model_digest="a" * 64,
+        )
+        await repository.save_model_configuration(
+            ISSUER,
+            OWNER,
+            MemoryModelConfiguration(
+                ISSUER,
+                OWNER,
+                "extractor",
+                "embedder",
+                embedding_generation=first.id,
+            ),
+        )
+        await run_memory_reindex(worker)
+
+        second = await repository.register_embedding_generation(
+            ISSUER,
+            OWNER,
+            generation=2,
+            model_id="embedder",
+            dimension=2,
+            model_digest="b" * 64,
+        )
+        await repository.save_model_configuration(
+            ISSUER,
+            OWNER,
+            MemoryModelConfiguration(
+                ISSUER,
+                OWNER,
+                "extractor",
+                "embedder",
+                embedding_generation=second.id,
+            ),
+        )
+        await run_memory_reindex(worker)
+    finally:
+        memory_uow.memory_repository = original
+
+    spans = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and item.component_id == "aura.knowledge.memory_maintenance"
+        and dict(item.trace_attributes).get("operation") == "memory.reindex.switch"
+    ]
+    assert len(spans) == 2
+    assert spans[0].trace_id != spans[1].trace_id
+    assert all(item.parent_span_id is not None for item in spans)
+    assert all(item.parent_span_id != item.span_id for item in spans)
+
+
+@pytest.mark.asyncio
+async def test_transient_memory_delivery_emits_terminal_activity_on_successful_redelivery() -> None:
+    command = MemoryProcessingCommand(
+        uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
+    )
+    envelope = make_identifier_command(
+        MEMORY_PROCESSING_TOPIC,
+        command.command_id,
+        command.run_id,
+        command.conversation_id,
+        correlation_id=command.correlation_id,
+        causation_id=command.causation_id,
+        identifiers=(
+            ("jobId", command.job_id),
+            ("agentRevisionId", command.agent_revision_id),
+            ("userMessageId", command.user_message_id),
+            ("assistantMessageId", command.assistant_message_id),
+        ),
+    )
+
+    class Consumer:
+        def __init__(self, delivery_count: int) -> None:
+            self.delivery_count = delivery_count
+            self.ack_count = 0
+            self.nacks: list[dict[str, object]] = []
+
+        async def receive(self) -> object:
+            return envelope
+
+        async def ack(self) -> None:
+            self.ack_count += 1
+
+        async def nack(self, **kwargs: object) -> None:
+            self.nacks.append(kwargs)
+
+        async def reject(self, **kwargs: object) -> None:
+            raise AssertionError(kwargs)
+
+    class Processor:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def process_command(self, received: MemoryProcessingCommand) -> object:
+            assert received.command_id == command.command_id
+            self.attempts += 1
+            if self.attempts == 1:
+                raise TimeoutError("provider timeout")
+            return type(
+                "Settlement",
+                (),
+                {"status": ProcessingJobStatus.COMPLETED, "terminal": True},
+            )()
+
+    publisher = EventPublisher()
+    metrics = MetadataMetrics()
+
+    async def emit(
+        received: MemoryProcessingCommand, status: str, result: object | None
+    ) -> None:
+        await emit_memory_activity(
+            publisher, MemoryStore(clock=lambda: NOW), metrics, received, status, result
+        )
+
+    processor = Processor()
+    first = Consumer(1)
+    await run_memory_once(processor, first, emit)  # type: ignore[arg-type]
+    assert first.ack_count == 0 and len(first.nacks) == 1
+    assert [item.data["status"] for item in await publisher.history(command.run_id)] == ["queued"]
+
+    second = Consumer(2)
+    await run_memory_once(processor, second, emit)  # type: ignore[arg-type]
+    assert second.ack_count == 1
+    assert [item.data["status"] for item in await publisher.history(command.run_id)] == [
+        "queued",
+        "completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_memory_activity_duplicate_after_publisher_restart_uses_durable_lookup() -> None:
+    command = MemoryProcessingCommand(
+        uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
+    )
+
+    class DurableEvents:
+        def __init__(self) -> None:
+            self.events: dict[tuple[UUID, UUID], RunEvent] = {}
+
+        async def event(self, event_id: UUID, run_id: UUID) -> RunEvent | None:
+            return self.events.get((event_id, run_id))
+
+    durable = DurableEvents()
+    metrics = MetadataMetrics()
+    first_publisher = EventPublisher()
+    await emit_memory_activity(
+        first_publisher,
+        durable,
+        metrics,
+        command,
+        "completed",
+        None,
+    )
+    first_events = await first_publisher.history(command.run_id)
+    assert len(first_events) == 1
+    first_event = first_events[0]
+    durable.events[(first_event.event_id, command.run_id)] = first_event
+
+    # A new publisher represents a worker restart: its process-local contains
+    # index is empty, while the shared run-event store remains authoritative.
+    restarted_publisher = EventPublisher()
+    await emit_memory_activity(
+        restarted_publisher,
+        durable,
+        metrics,
+        command,
+        "completed",
+        None,
+    )
+    assert await restarted_publisher.history(command.run_id) == []
+    publication_spans = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "memory.activity.publish"
+        and dict(item.dimensions).get("outcome") == "ok"
+    ]
+    assert len(publication_spans) == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_activity_event_lookup_failure_is_one_bounded_publication_error() -> None:
+    command = MemoryProcessingCommand(
+        uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
+    )
+
+    class FailingEvents:
+        async def event(self, event_id: UUID, run_id: UUID) -> RunEvent | None:
+            del event_id, run_id
+            raise RuntimeError("event store unavailable")
+
+    publisher = EventPublisher()
+    metrics = MetadataMetrics()
+    with pytest.raises(RuntimeError, match="event store unavailable"):
+        await emit_memory_activity(
+            publisher,
+            FailingEvents(),
+            metrics,
+            command,
+            "completed",
+            None,
+        )
+
+    spans = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "memory.activity.publish"
+    ]
+    outcomes = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "metric"
+        and item.metric == "memory_activity_publication_outcome"
+    ]
+    assert len(spans) == 1
+    assert dict(spans[0].dimensions)["outcome"] == "error"
+    assert dict(spans[0].dimensions)["error_class"] == "persistence"
+    assert len(outcomes) == 1
+    assert dict(outcomes[0].dimensions)["outcome"] == "error"
+    assert await publisher.history(command.run_id) == []
+
+
+@pytest.mark.asyncio
+async def test_retryable_ack_gets_one_terminal_activity_from_housekeeping() -> None:
+    command = MemoryProcessingCommand(
+        uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
+    )
+    envelope = make_identifier_command(
+        MEMORY_PROCESSING_TOPIC,
+        command.command_id,
+        command.run_id,
+        command.conversation_id,
+        correlation_id=command.correlation_id,
+        causation_id=command.causation_id,
+        identifiers=(
+            ("jobId", command.job_id),
+            ("agentRevisionId", command.agent_revision_id),
+            ("userMessageId", command.user_message_id),
+            ("assistantMessageId", command.assistant_message_id),
+        ),
+    )
+
+    class Consumer:
+        delivery_count = 1
+
+        async def receive(self) -> object:
+            return envelope
+
+        async def ack(self) -> None:
+            return None
+
+        async def nack(self, **kwargs: object) -> None:
+            raise AssertionError(kwargs)
+
+        async def reject(self, **kwargs: object) -> None:
+            raise AssertionError(kwargs)
+
+    candidate = replace(
+        _candidate(),
+        job_id=command.job_id,
+        state=CandidateState.ACCEPTED,
+        memory_id=uuid4(),
+    )
+
+    class HousekeepingProcessor:
+        def __init__(self) -> None:
+            self.emitter: Callable[..., Awaitable[None]] | None = None
+            self.calls = 0
+
+        def set_activity_emitter(self, emitter: object) -> None:
+            self.emitter = cast(Callable[..., Awaitable[None]], emitter)
+
+        async def process_command(self, received: MemoryProcessingCommand) -> object:
+            assert received.command_id == command.command_id
+            return type(
+                "Settlement",
+                (),
+                {"status": ProcessingJobStatus.RETRYABLE, "terminal": True},
+            )()
+
+        async def maintain(self) -> int:
+            self.calls += 1
+            if self.calls == 1 and self.emitter is not None:
+                # Production housekeeping reconciles the direct candidate
+                # returned by process_job, rather than a command settlement
+                # wrapper.
+                await self.emitter(command, "completed", candidate)
+            return 0
+
+    publisher = EventPublisher()
+    metrics = MetadataMetrics()
+
+    async def emit(
+        received: MemoryProcessingCommand, status: str, result: object | None
+    ) -> None:
+        await emit_memory_activity(
+            publisher, MemoryStore(clock=lambda: NOW), metrics, received, status, result
+        )
+
+    processor = HousekeepingProcessor()
+    await run_memory_once(processor, Consumer(), emit)  # type: ignore[arg-type]
+    assert [item.data["status"] for item in await publisher.history(command.run_id)] == ["queued"]
+
+    task = asyncio.create_task(run_memory_housekeeping(processor, 3600.0, emit))
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert [item.data["status"] for item in await publisher.history(command.run_id)] == [
+        "queued",
+        "completed",
+    ]
+    terminal = (await publisher.history(command.run_id))[1].data
+    assert terminal["action"] == "created"
+    assert terminal["candidateId"] == str(candidate.id)
+    assert terminal["memoryId"] == str(candidate.memory_id)
+    assert terminal["reconciliationStatus"] == "authoritative"
 
 
 @pytest.mark.asyncio

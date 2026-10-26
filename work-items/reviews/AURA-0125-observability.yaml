@@ -1,0 +1,22 @@
+agent: observability_steward
+work_item: AURA-0125
+verdict: PASS
+checked:
+  - Re-reviewed the complete final AURA-0125 diff, active work item, affected component manifests, implementation handoffs, and every previously reported blocker.
+  - Verified empty successful memory.list, memory.model.get, no-op maintenance, and memory.job.claim_next discovery paths are quiet while non-empty claims, active processing, lifecycle transitions, reindex work, embedding work, and every reviewed failure retain component-local telemetry.
+  - Directly verified an empty claim emits zero observations and a real claim retains its memory.job.claim_next span and measurements.
+  - Verified active due work leaves the quiet discovery context and uses a correlated child context with ordinary success telemetry enabled.
+  - Verified transient first-delivery failure followed by successful redelivery produces exactly one queued and one completed activity and leaves no pending stream state.
+  - Verified durable RETRYABLE settlement is acknowledged at JetStream, remains governed by PostgreSQL available_at, and receives one terminal activity when housekeeping later reaches completed or failed state.
+  - Directly verified an accepted CREATE candidate reconciled by housekeeping produces action created, the correct candidateId and memoryId, completed status, and authoritative reconciliation without exposing candidate content.
+  - Verified deterministic event IDs, PostgreSQL event lookup, and publisher-local lookup prevent duplicate publication and duplicate success telemetry across ordinary redelivery and publisher restart.
+  - Verified durable duplicate-lookup and publication failures emit bounded aura.runtime.stream_delivery memory.activity.publish error telemetry with dependency event_store and error class persistence before being re-raised.
+  - Verified maintenance, processing, embedding, and reindex work use fresh per-pass trace roots, fresh child spans, explicit parent linkage, and no owner-derived long-lived execution trace.
+  - Verified stable component identifiers and versions, component-local latency boundaries, bounded error classes, declared dependencies, metrics, evaluators, replay posture, metadata-only capture, redaction, retention, and finite cardinality remain intact.
+  - Verified memory persistence and maintenance manifests truthfully describe quiet successful discovery and no-op behavior while preserving failures and real transitions.
+  - Independently ran the focused Core suite with 308 passing and 1 skipped test.
+  - Independently passed targeted Ruff, the observability validator, changed-path validator, and git diff validation.
+findings: []
+risks: []
+unresolved:
+  - The restarted-stack stabilization and two-minute observation-rate measurement remains the integration-owned acceptance check.
