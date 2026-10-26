@@ -1,0 +1,127 @@
+agent: test_evaluation_engineer
+work_item: AURA-0118
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0115_test
+  worktree: shared
+scope:
+  ownership_zone: evaluation.aura0118-core-evidence
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_run_evidence.py
+  - work-items/handoffs/AURA-0118-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.platform.run_evidence_export
+    - aura.execution.run_coordinator
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      Added independent Core evidence coverage for exact text and structured
+      canonical bytes, digests, byte counts, stable logical IDs, retry delivery
+      IDs, and all authorized evidence kinds with closed payload shapes.
+    - >-
+      Added coverage for displayed-thinking-only capture, provider-hidden
+      reasoning exclusion, secret-bearing field rejection, unsupported and
+      malformed media, incomplete attachment inspection, payload limits, and
+      content-free excluded/partial/dropped states.
+    - >-
+      Added coverage for disabled policy, bounded nonblocking queue pressure,
+      retries, downstream outage, cancellation, bounded shutdown, content-free
+      metrics, dedicated transport subject, composition lifecycle, and absence
+      of Observatory/OTLP/outbox evidence dependencies.
+    - >-
+      Added adversarial coverage for recursive secrets, whole binary rejection,
+      preflight oversized decoded media, all execution outcomes, authoritative
+      schema validation, RFC 8785 exponent/negative-zero/Unicode canonical
+      bytes, deterministic IDs and sequence collisions, shared producer and
+      evaluation sequencing, claim gating, post-publish visible thinking,
+      actual retry firstDeliveryId propagation, completeness signals, disabled
+      bounded state, and real MetadataMetrics span dimensions.
+    - >-
+      Added real MetadataMetrics regressions proving unique serialize, queue,
+      and every retry transport span IDs with item parent lineage; restart-safe
+      deterministic approval-resume/evaluation sequence slots; per-pending-item
+      shutdown transport drop spans and correlated counters; and queue depth
+      convergence after a successful drain.
+    - >-
+      Added independent regressions for production boundary order (routing,
+      context/retrieval, prompt, tool arguments, policy, and tool result),
+      ordinary-chat terminal evidence without execution outcomes, and actual
+      tool execution outcome capture only on tool paths.
+    - >-
+      Added immutable replay-tuple checks across fresh recorders/coordinators,
+      Basic/Cookie/credential rejection in payload and admission revisions,
+      raw oversized attachment rejection before base64 decoding, and a
+      disabled-mode invariant proving non-trivial payload builders remain
+      behind the evidence-enabled guard.
+    - >-
+      Added valid closed tool-boundary regressions for quoted JSON secret
+      keys and Basic/session/private-key forms, exact non-bool safe-integer
+      sequence and bounded chunk ordinal checks, actual native tool execution
+      ordering with result before outcome, repeated monotonic tool blocks,
+      post-tool synthesis/terminal collision safety, and disabled evaluation
+      runner payload-construction isolation.
+    - >-
+      Added direct native text-stream coverage proving each generation chunk
+      is captured exactly once and tool evidence is not duplicated, plus
+      fail-closed nested Unicode-escaped credential detection at the bounded
+      scan depth for both tool argument and result content.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/tests/test_run_evidence.py: passed.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_run_evidence.py -q: 76 passed.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0118.yaml: passed.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0118.yaml: 18 changed paths validated.
+    - >-
+      Contract, generated-sync, import-boundary, module-registry, service
+      isolation, frontend-boundary, observability, repository-shape, and
+      baseline-protection validators: passed or correctly skipped.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core:
+      0 errors, 0 warnings, 0 informations.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests -q: 1238 passed, 106 skipped, 1 warning.
+    - docker compose config --quiet: passed.
+    - git diff --check: passed.
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Kept all changes within the assigned independent test and handoff paths;
+    no Core production, contract, migration, metadata, or Observatory files
+    were changed by this evaluator.
+  - >-
+    Used canonical compiled_prompt.prompt and schema-shaped retrieval,
+    decision, record, and worker/automation/schedule/evaluation fixtures so the
+    broad serializer test checks the public boundary rather than incidental
+    implementation details.
+  - >-
+    Treated the focused suite and complete required-check rerun as the
+    authoritative test-evaluation result; all checks passed without weakening
+    thresholds or modifying protected baselines.
+risks:
+  - >-
+    These tests exercise the Core producer boundary and exporter isolation;
+    downstream Observatory ingestion, persistence, API, deletion, and UI
+    behavior remain follow-up work under the active plan.
+  - >-
+    Duplicate collision handling and out-of-order assembly are consumer/runtime
+    responsibilities and cannot be proven by this Core-only producer suite.
+unresolved: []

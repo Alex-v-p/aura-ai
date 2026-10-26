@@ -30,6 +30,11 @@ from aura_observatory.adapters.evaluation_storage import (
 )
 from aura_observatory.adapters.local_ollama import LocalOllamaAdapter
 from aura_observatory.adapters.object_storage import GarageEvaluationObjectStore
+from aura_observatory.adapters.run_evidence import (
+    GarageRunEvidenceObjectStore,
+    PostgresRunEvidenceRepository,
+    UnavailableRunEvidenceObjectStore,
+)
 from aura_observatory.adapters.postgres import PostgresCatalog, PostgresObservationIdRegistry
 from aura_observatory.adapters.dashboards import (
     MemoryOperationsRepository,
@@ -78,6 +83,7 @@ from aura_observatory.evaluation_storage import (
     EvaluationDeletionService,
 )
 from aura_observatory.ingest import IngestReconciliationService, TelemetryIngestService
+from aura_observatory.run_evidence import RunEvidenceIngestionService, RunInspectionService
 from aura_observatory.metrics import ObservatoryMetrics
 from aura_observatory.ports import EvaluationTransportPort, ObservatoryQueryPort
 from aura_observatory.query import ObservatoryHealthProjector, ObservatoryQueryService
@@ -425,6 +431,30 @@ def build_ingest_service(settings: Settings) -> TelemetryIngestService:
     """Compose production adapters; memory adapters are intentionally test-only."""
 
     return build_ingest_runtime(settings)[0]
+
+
+def build_run_evidence_services(settings: Settings) -> tuple[RunEvidenceIngestionService, RunInspectionService]:
+    """Compose the isolated run-evidence worker/API repository boundary."""
+
+    metrics = _production_metrics(settings)
+    object_store = (
+        GarageRunEvidenceObjectStore(
+            settings.run_evidence_object_endpoint,
+            settings.run_evidence_object_bucket,
+            access_key=settings.run_evidence_object_access_key,
+            secret_key=settings.run_evidence_object_secret_key,
+            region=settings.run_evidence_object_region,
+            timeout_seconds=settings.run_evidence_object_timeout_seconds,
+        )
+        if settings.run_evidence_object_access_key and settings.run_evidence_object_secret_key
+        else UnavailableRunEvidenceObjectStore()
+    )
+    repository = PostgresRunEvidenceRepository(
+        lambda: postgres_connection(settings.database_url), object_store, metrics=metrics
+    )
+    ingestion = RunEvidenceIngestionService(repository, metrics=metrics)
+    inspection = RunInspectionService(repository, query=build_query_service(settings), metrics=metrics)
+    return ingestion, inspection
 
 
 def build_ingest_runtime(

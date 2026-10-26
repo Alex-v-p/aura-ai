@@ -1,0 +1,53 @@
+agent: general_reviewer
+work_item: AURA-0115
+verdict: PASS
+checked:
+  - >-
+    Reviewed the narrowed active work item, architecture handover, ADR-0013,
+    ADR-0016, Observatory and execution specifications, implementation
+    handoffs, and the complete current diff. The final change is confined to
+    Observatory query projection, Observatory UI presentation, focused tests,
+    and work-item artifacts; Aura Core and Aura Web are unchanged.
+  - >-
+    Traced the completed-run projection through the in-memory and production
+    ClickHouse paths. Canonical run_duration_ms rows with an absent or empty
+    unit now project as milliseconds in list, detail, span, and observation
+    representations, while every other absent unit remains uninferred.
+  - >-
+    Verified the foreground phase projection fences RunDetail observations at
+    the terminal lifecycle/duration boundary. Later correlated worker rows are
+    excluded from sequential request phases and summarized in one collapsed,
+    25-row-bounded continuation preview with truthful incomplete-page wording.
+  - >-
+    Verified selected TraceDetail spans remain foreground by deterministic
+    primary execution lineage rather than timestamp. Core emits the root
+    run.execute span after execution returns, while memory redeliveries use
+    fresh worker traces; existing AURA-0114 backend coverage proves late worker
+    traces do not replace the lifecycle-selected primary trace, and AURA-0115
+    frontend coverage preserves that distinction.
+  - >-
+    Verified partial pages do not claim a complete continuation count or time
+    range, including the zero-loaded-continuation case. Live refresh retains
+    the disclosure state, and no late detail observation is reintroduced into
+    the foreground phase sequence.
+  - >-
+    Independent focused verification passed: 18 AURA-0115/AURA-0114
+    Observatory tests, 63 Observatory frontend tests, changed-path validation,
+    and diff whitespace validation. The required desktop Playwright acceptance
+    was rerun with Node 24 against a clean manual dev server and passed both
+    AURA-0115 scenarios, including Axe accessibility checks.
+findings: []
+risks:
+  - >-
+    The continuation summary is intentionally limited to the existing bounded
+    RunDetail page and explicitly reports when more metadata may exist; this
+    item does not add a server-side total aggregate or fetch additional pages.
+  - >-
+    The Core memory retry/redelivery behavior that produced the historical
+    volume is outside the narrowed Observatory-only scope. This change prevents
+    that metadata from stretching the displayed request timeline but does not
+    reduce already stored observations or change future Core retry protocol.
+  - >-
+    The running local Observatory application must be rebuilt or restarted by
+    integration before the user can observe this source change in the live UI.
+unresolved: []

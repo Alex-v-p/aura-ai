@@ -34,6 +34,7 @@ from uuid import UUID, uuid4, uuid5
 
 COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.platform.telemetry_export": "1.0.0",
+    "aura.platform.run_evidence_export": "1.0.0",
     "aura.artifacts.attachment_upload": "1.0.0",
     "aura.artifacts.attachment_processing": "1.0.0",
     "aura.artifacts.attachment_deletion": "1.0.0",
@@ -67,6 +68,17 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
+    "aura.platform.run_evidence_export": frozenset(
+        {
+            "run_evidence_export_outcome_count",
+            "run_evidence_export_dropped_count",
+            "run_evidence_serialize_latency_ms",
+            "run_evidence_queue_offer_latency_ms",
+            "run_evidence_transport_latency_ms",
+            "run_evidence_queue_depth",
+            "run_evidence_queue_capacity",
+        }
+    ),
     "aura.runtime.tool_selection": frozenset(
         {
             "tool_selection_duration_ms",
@@ -437,6 +449,9 @@ _METRICS: Mapping[str, frozenset[str]] = {
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
+    "aura.platform.run_evidence_export": frozenset(
+        {"run_evidence.serialize", "run_evidence.queue_offer", "run_evidence.transport_publish"}
+    ),
     "aura.artifacts.attachment_upload": frozenset({"attachment.upload"}),
     "aura.artifacts.attachment_processing": frozenset({"attachment.process"}),
     "aura.artifacts.attachment_deletion": frozenset({"attachment.delete"}),
@@ -619,6 +634,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
+    "aura.platform.run_evidence_export": "run_evidence_transport_latency_ms",
     "aura.runtime.tool_selection": "tool_selection_duration_ms",
     "aura.runtime.policy_evaluation": "tool_policy_evaluation_duration_ms",
     "aura.runtime.tool_execution": "tool_execution_duration_ms",
@@ -948,6 +964,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "cursor_expired",
             "run_not_found",
             "serialization",
+            "serialization_rejected",
+            "queue_pressure",
+            "transport_unavailable",
             "unknown",
             "stream_error",
             "invalid_cursor",
@@ -1044,6 +1063,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "complete",
             "acknowledge",
             "scan",
+            "serialize",
+            "queue_offer",
+            "transport_publish",
         }
     ),
     "status": frozenset(
@@ -1194,6 +1216,9 @@ class MemoryTraceContext:
     memory_revision_id: str | None = None
     generation_id: str | None = None
     link_span_ids: tuple[str, ...] = ()
+    # Housekeeping still performs its owner-scoped reads, but successful
+    # discovery reads are internal polling details. Failures remain visible.
+    suppress_idle_success: bool = False
 
     def attributes(self) -> dict[str, str]:
         return {

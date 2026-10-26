@@ -57,6 +57,11 @@ from aura_core.platform.outbox import (
     TransactionalOutboxTransport,
 )
 from aura_core.platform.outbox.nats import NatsIdentifierConsumer, NatsOutbox, NatsRunConsumer
+from aura_core.platform.run_evidence import (
+    BoundedRunEvidenceRecorder,
+    JetStreamRunEvidencePublisher,
+    make_run_evidence_recorder,
+)
 from aura_core.platform.telemetry import (
     MemoryTraceContext,
     MetadataMetrics,
@@ -152,7 +157,12 @@ async def run_memory_once(
         return
     context = _memory_context(memory_command)
     with memory_trace_context(context):
-        if activity_emitter is not None:
+        # A redelivery is a transport concern, not a new queued activity. The
+        # deterministic queued event was already admitted on the first
+        # delivery; the terminal event below is still attempted because a
+        # transient first delivery may have failed before settlement.
+        first_delivery = int(getattr(consumer, "delivery_count", 1)) <= 1
+        if activity_emitter is not None and first_delivery:
             await activity_emitter(memory_command, "queued", None)
         try:
             # Core resolves the owner-scoped evidence and reports the durable
@@ -175,11 +185,15 @@ async def run_memory_once(
             return
         if activity_emitter is not None:
             settlement_status = getattr(getattr(result, "status", None), "value", None)
-            await activity_emitter(
-                memory_command,
-                "failed" if settlement_status == "failed" else "completed",
-                result,
-            )
+            # A retryable result is durably parked in PostgreSQL and will be
+            # claimed by the bounded housekeeping path when available_at is
+            # due. It is not a completed memory activity.
+            if settlement_status != "retryable":
+                await activity_emitter(
+                    memory_command,
+                    "failed" if settlement_status == "failed" else "completed",
+                    result,
+                )
         await consumer.ack()
 
 
@@ -264,9 +278,12 @@ def _is_terminal_settlement(result: object) -> bool:
     status = getattr(result, "status", None)
     status_value = getattr(status, "value", status)
     # A candidate/action result is not an acknowledgement boundary.  Only the
-    # memory application service's durable settlement, explicitly marked
-    # completed or failed, permits JetStream acknowledgement.
-    if status_value not in {"completed", "failed"}:
+    # memory application service's durable settlement permits JetStream
+    # acknowledgement, including a retryable PostgreSQL parking result.
+    # RETRYABLE means Core durably parked the work with PostgreSQL retry state;
+    # JetStream must acknowledge the wakeup so available_at remains the sole
+    # retry clock. A transient exception never reaches this helper.
+    if status_value not in {"completed", "failed", "retryable"}:
         return False
     terminal = getattr(result, "terminal", None)
     if terminal is True:
@@ -303,6 +320,14 @@ async def emit_memory_activity(
         raise MemoryValidationError("unsupported memory activity status")
     started = monotonic()
     candidate = getattr(result, "candidate", None) if result is not None else None
+    # Housekeeping reconciles the durable processing result directly, while
+    # the command path returns a settlement wrapper.  Accept only the
+    # candidate's stable public shape here; never serialize an arbitrary
+    # provider/result object.
+    if candidate is None and result is not None and all(
+        hasattr(result, attribute) for attribute in ("action", "state")
+    ):
+        candidate = result
     candidate_action = getattr(getattr(candidate, "action", None), "value", None)
     candidate_state = getattr(getattr(candidate, "state", None), "value", None)
     action_values = {
@@ -388,6 +413,25 @@ async def emit_memory_activity(
         "conversation_id": str(command.conversation_id),
     }
     try:
+        # The event id is deterministic per job/status. The run-event store is
+        # the authoritative duplicate check across worker/publisher restarts.
+        # Keep the publisher seam as a compatibility fast path for lightweight
+        # doubles. Both lookups are governed by this publication error boundary
+        # so a persistence outage is observable and re-raised.
+        event_lookup = getattr(store, "event", None)
+        if callable(event_lookup):
+            existing = event_lookup(event_id, command.run_id)
+            if inspect.isawaitable(existing):
+                existing = await existing
+            if existing is not None:
+                return
+        contains = getattr(publisher, "contains", None)
+        if callable(contains):
+            existing = contains(command.run_id, event_id)
+            if inspect.isawaitable(existing) and await existing:
+                return
+            if existing is True:
+                return
         # PersistentEventPublisher commits this event before its optional
         # external wakeup and process-local subscriber notification.
         await publisher.publish(event)
@@ -533,9 +577,16 @@ def _configure_worker_memory_recall(
     return repository
 
 
-async def run_memory_housekeeping(processor: object, interval_seconds: float = 60.0) -> None:
+async def run_memory_housekeeping(
+    processor: object,
+    interval_seconds: float = 60.0,
+    activity_emitter: MemoryActivityEmitter | None = None,
+) -> None:
     """Run maintenance and resumable reindex work outside the run loop."""
 
+    set_emitter = getattr(processor, "set_activity_emitter", None)
+    if callable(set_emitter):
+        set_emitter(activity_emitter)
     while True:
         try:
             await run_memory_maintenance(processor)
@@ -694,11 +745,12 @@ async def run_approval_housekeeping(
     while True:
         try:
             expired = await approval_service.expire_due(limit=100)
-            metrics.increment(
-                "aura.governance.approval_workflow",
-                "approval_expiry_outcome",
-                outcome="expired" if expired else "empty",
-            )
+            if expired:
+                metrics.increment(
+                    "aura.governance.approval_workflow",
+                    "approval_expiry_outcome",
+                    outcome="expired",
+                )
             for approval in expired:
                 try:
                     await _resume_approval(
@@ -748,6 +800,7 @@ async def run_forever(settings: Settings | None = None) -> None:
     store.agent_store = agent_store
     store.agent_service = agent_service  # type: ignore[attr-defined]
     metrics, telemetry = make_worker_telemetry(config)
+    run_evidence = make_run_evidence_recorder(config, metrics=metrics)
     from aura_core.bootstrap.attachment_uow import attachment_service
 
     attachment_service_instance = attachment_service(sessions, settings=config, metrics=metrics)
@@ -858,8 +911,12 @@ async def run_forever(settings: Settings | None = None) -> None:
         await document_delete_consumer.connect()
         if memory_processor is not None:
             await memory_consumer.connect()
-            housekeeping_task = asyncio.create_task(run_memory_housekeeping(memory_processor))
         await event_transport.connect()
+        if isinstance(run_evidence, BoundedRunEvidenceRecorder):
+            connection = getattr(event_transport, "connection", None)
+            if connection is not None:
+                run_evidence.bind_publisher(JetStreamRunEvidencePublisher(connection))
+                await run_evidence.start()
         from aura_core.runtime.streaming.publisher import PersistentEventPublisher
 
         provider = OllamaAdapter(config.ollama_url, config.ollama_run_timeout_seconds)
@@ -909,6 +966,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             attachment_service=attachment_service_instance,
             attachment_resolver=store,
             thinking_publisher=event_transport,
+            run_evidence=run_evidence,
         )
         # Approval/resumption wakeups are identifier-only; the worker always
         # reloads owner-authorized state through the governance public port.
@@ -962,6 +1020,15 @@ async def run_forever(settings: Settings | None = None) -> None:
                     result,
                 )
 
+            # Housekeeping must start only after the run-event activity
+            # boundary is composed so retryable PostgreSQL settlements can
+            # publish their one terminal activity when due.
+            housekeeping_task = asyncio.create_task(
+                run_memory_housekeeping(
+                    memory_processor,
+                    activity_emitter=publish_activity,
+                )
+            )
             memory_task = asyncio.create_task(
                 run_memory_loop(memory_processor, memory_consumer, publish_activity)
             )
@@ -1045,6 +1112,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         await document_delete_consumer.close()
         await resume_consumer.close()
         await consumer.close()
+        await run_evidence.stop()
         await event_transport.close()
         await telemetry.stop()
         await engine.dispose()

@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 28d78122b2407f1545049a6e200b5a050326e1f11c29881aeca159ed59f05ae7
+// Contract SHA-256: 183a9f0380a262a9dbb116e970e63189f9051a98ac6a88434830fa9b721580b8
 
 export type Uuid = string;
 
@@ -545,6 +545,8 @@ export type OwnerSession = { readonly "csrfToken": string; };
 
 export type Problem = { readonly "code": string; readonly "message": string; readonly "retryable": boolean; readonly "traceId": TraceId; };
 
+export type RunEvidenceProblem = { readonly "code": "invalid_request" | "owner_session_required" | "owner_authorization_failed" | "evidence_not_found" | "evidence_deleted" | "idempotency_collision" | "evidence_store_unavailable"; readonly "retryable": boolean; readonly "traceId": TraceId; };
+
 export type IngestCounts = { readonly "accepted": number; readonly "rejected": number; readonly "duplicate": number; readonly "malformed": number; readonly "storageFailure": number; };
 
 export type IngestOverview = { readonly "state": ServiceState; readonly "counts": IngestCounts; readonly "lastAcceptedAt": string | null; readonly "lastFailureAt": string | null; };
@@ -566,6 +568,36 @@ export type RunPage = { readonly "items": ReadonlyArray<RunSummary>; readonly "n
 export type Measurement = { readonly "name": string; readonly "value": number; readonly "unit": "count" | "milliseconds" | "bytes" | "ratio" | "score" | null; };
 
 export type RunDetail = { readonly "runId": Uuid; readonly "status": RunStatus; readonly "startedAt": UtcInstant; readonly "finishedAt": UtcInstant | null; readonly "durationMs": number | null; readonly "model": SafeLabel | null; readonly "deploymentId": SafeLabel; readonly "componentIds": ReadonlyArray<ComponentId>; readonly "traceId": TraceId | null; readonly "observations": ReadonlyArray<ObservationSummary>; readonly "partial": boolean; readonly "nextCursor": Cursor | null; };
+
+export type EvidenceDigest = string;
+
+export type BoundedEvidenceBytes = Blob;
+
+export type RunInspectionStepCategory = "admission" | "context" | "retrieval" | "prompt" | "routing" | "generation" | "thinking" | "tool" | "policy" | "synthesis" | "persistence" | "delivery" | "worker" | "automation" | "schedule" | "evaluation";
+
+export type RunInspectionStepState = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "rejected" | "unavailable";
+
+export type RunEvidenceKind = "admitted_request" | "admitted_trigger" | "compiled_prompt" | "conversation_context" | "memory_chunk" | "document_chunk" | "model_visible_attachment" | "model_routing" | "displayed_thinking" | "generation_output" | "tool_arguments" | "tool_result" | "policy_decision" | "approval_decision" | "execution_outcome" | "response_synthesis" | "persistence_record" | "delivery_record" | "worker_input" | "worker_output" | "automation_input" | "automation_output" | "schedule_input" | "schedule_output" | "evaluation_input" | "evaluation_output";
+
+export type RunEvidenceCaptureState = "captured" | "excluded" | "partial" | "dropped" | "deleted";
+
+export type RunEvidencePartialReason = "capture_disabled" | "credential_material_rejected" | "secret_bearing_field_rejected" | "bearer_material_rejected" | "provider_hidden_reasoning_excluded" | "unsupported_media_type" | "payload_limit_exceeded" | "queue_pressure" | "export_unavailable" | "transport_failure" | "ingest_rejected" | "storage_failure" | "manually_deleted" | "unknown_capture_gap" | "missing_parent" | "late_delivery" | "page_truncated";
+
+export type RunEvidenceMediaClassification = "text" | "structured" | "image" | "document";
+
+export type RunEvidenceMediaType = "application/json" | "text/plain" | "text/markdown" | "image/png" | "image/jpeg" | "image/webp" | "application/pdf";
+
+export type RunEvidenceManifest = { readonly "evidenceId": Uuid; readonly "eventId": Uuid; readonly "sequence": number; readonly "kind": RunEvidenceKind; readonly "captureState": RunEvidenceCaptureState; readonly "mediaClassification": RunEvidenceMediaClassification; readonly "mediaType": RunEvidenceMediaType; readonly "digest": EvidenceDigest | null; readonly "byteCount": number; readonly "capturedAt": UtcInstant; readonly "reason": RunEvidencePartialReason | null; };
+
+export type RunInspectionMeasurement = { readonly "name": string; readonly "value": number; readonly "unit": "count" | "milliseconds" | "bytes" | "tokens" | "ratio" | "score"; };
+
+export type RunInspectionStep = { readonly "stepId": Uuid; readonly "parentStepId": Uuid | null; readonly "spanId": SpanId | null; readonly "parentSpanId": SpanId | null; readonly "sequence": number; readonly "category": RunInspectionStepCategory; readonly "label": string; readonly "state": RunInspectionStepState; readonly "startedAt": UtcInstant; readonly "finishedAt": UtcInstant | null; readonly "durationMs": number | null; readonly "depth": number; readonly "measurements": ReadonlyArray<RunInspectionMeasurement>; readonly "evidence": ReadonlyArray<RunEvidenceManifest>; readonly "partial": boolean; readonly "partialReasons": ReadonlyArray<RunEvidencePartialReason>; };
+
+export type RunInspectionCompleteness = { readonly "state": "complete" | "partial" | "unavailable" | "deleted"; readonly "expectedEvidenceCount": number | null; readonly "capturedEvidenceCount": number; readonly "excludedEvidenceCount": number; readonly "partialEvidenceCount": number; readonly "droppedEvidenceCount": number; readonly "deletedEvidenceCount": number; readonly "reasons": ReadonlyArray<RunEvidencePartialReason>; };
+
+export type RunInspection = { readonly "schemaVersion": 1; readonly "runId": Uuid; readonly "traceId": TraceId | null; readonly "status": RunStatus; readonly "startedAt": UtcInstant; readonly "finishedAt": UtcInstant | null; readonly "durationMs": number | null; readonly "steps": ReadonlyArray<RunInspectionStep>; readonly "completeness": RunInspectionCompleteness; readonly "snapshotAt": UtcInstant; readonly "partial": boolean; readonly "partialReasons": ReadonlyArray<RunEvidencePartialReason>; readonly "nextCursor": Cursor | null; };
+
+export type RunEvidenceDeletion = { readonly "schemaVersion": 1; readonly "deletionId": Uuid; readonly "runId": Uuid; readonly "status": "accepted" | "in_progress" | "completed" | "failed"; readonly "requestedAt": UtcInstant; readonly "completedAt": UtcInstant | null; readonly "deletedEvidenceCount": number; readonly "auditMode": "content_free"; readonly "failureCode": "manifest_store_unavailable" | "object_store_unavailable" | "object_delete_failed" | "audit_persist_failed" | "unknown_deletion_failure" | null; };
 
 export type ObservationSummary = { readonly "observationId": Uuid; readonly "observedAt": UtcInstant; readonly "componentId": ComponentId; readonly "componentVersion": SafeLabel; readonly "operation": string; readonly "measurement": Measurement; readonly "outcome": Outcome; readonly "deploymentId": SafeLabel; readonly "serviceRole": "api" | "worker" | "scheduler" | "cli"; readonly "capturePolicy": "metadata_only"; };
 
@@ -609,6 +641,8 @@ export type LiveEventType = "observation.changed" | "retention.changed" | "healt
 
 export type LiveEvent = { readonly "schemaVersion": 1; readonly "eventId": Uuid; readonly "eventType": LiveEventType; readonly "occurredAt": UtcInstant; readonly "resourceType": "observation" | "run" | "trace" | "component" | "deployment" | "retention" | "system"; readonly "resourceId": string | null; readonly "capturePolicy": "metadata_only"; };
 
+export type RunInspectionInvalidationEvent = { readonly "schemaVersion": 1; readonly "eventId": Uuid; readonly "eventType": "observation.changed"; readonly "occurredAt": UtcInstant; readonly "resourceType": "run"; readonly "resourceId": Uuid; readonly "capturePolicy": "metadata_only"; };
+
 export type EvaluationLiveEvent = { readonly "schemaVersion": 1; readonly "eventId": Uuid; readonly "eventType": "evaluation.changed"; readonly "occurredAt": UtcInstant; readonly "resourceType": "evaluation_dataset" | "evaluation_case" | "evaluation_suite" | "evaluation_evaluator" | "evaluation_job" | "evaluation_attempt" | "evaluation_result" | "evaluation_artifact" | "evaluation_review" | "evaluation_calibration" | "evaluation_qualification" | "evaluation_experiment" | "evaluation_baseline" | "evaluation_regression" | "evaluation_attribution" | "evaluation_deletion"; readonly "resourceId": string; readonly "change": "created" | "updated" | "state_changed" | "cancel_requested" | "qualified" | "revoked" | "candidate_created" | "promoted" | "comparison_completed" | "attribution_completed" | "deletion_requested" | "deleted"; readonly "state": EvaluationIdentifier; readonly "capturePolicy": "metadata_only"; };
 
 export type SsePayload = Overview | LiveEvent;
@@ -631,6 +665,9 @@ export interface ObservatoryApiOperations {
   readonly listHealthHistory: { readonly response: HealthHistoryPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; }; readonly headers: Readonly<Record<string, never>>; };
   readonly listRuns: { readonly response: RunPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "status"?: RunStatus; readonly "component"?: ComponentId; readonly "model"?: SafeLabel; readonly "deployment"?: SafeLabel; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getRun: { readonly response: RunDetail; readonly body: never; readonly path: { readonly "run_id": Uuid; }; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getRunInspection: { readonly response: RunInspection; readonly body: never; readonly path: { readonly "run_id": Uuid; }; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getRunEvidence: { readonly response: Blob; readonly body: never; readonly path: { readonly "run_id": Uuid; readonly "evidence_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly deleteRunEvidence: { readonly response: RunEvidenceDeletion; readonly body: never; readonly path: { readonly "run_id": Uuid; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; readonly "X-Observatory-Confirmation": string; }; };
   readonly getTrace: { readonly response: TraceDetail; readonly body: never; readonly path: { readonly "trace_id": TraceId; }; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly listComponents: { readonly response: ComponentCollection; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "definition_state"?: ComponentDefinitionState; }; readonly headers: Readonly<Record<string, never>>; };
   readonly getComponentDefinition: { readonly response: ComponentDefinition; readonly body: never; readonly path: { readonly "component_id": ComponentId; readonly "component_version": SafeLabel; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
@@ -731,7 +768,7 @@ export interface ObservatoryOperationDescriptor {
   readonly method: string;
   readonly pathTemplate: string;
   readonly requestMode: 'none' | 'json' | 'multipart';
-  readonly responseMode: 'none' | 'json' | 'event-stream';
+  readonly responseMode: 'none' | 'json' | 'event-stream' | 'blob';
 }
 
 export const OBSERVATORY_API_OPERATIONS = {
@@ -742,6 +779,9 @@ export const OBSERVATORY_API_OPERATIONS = {
   listHealthHistory: { method: 'GET', pathTemplate: '/api/v1/health/history', requestMode: 'none', responseMode: 'json' },
   listRuns: { method: 'GET', pathTemplate: '/api/v1/runs', requestMode: 'none', responseMode: 'json' },
   getRun: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}', requestMode: 'none', responseMode: 'json' },
+  getRunInspection: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}/inspection', requestMode: 'none', responseMode: 'json' },
+  getRunEvidence: { method: 'GET', pathTemplate: '/api/v1/runs/{run_id}/evidence/{evidence_id}', requestMode: 'none', responseMode: 'blob' },
+  deleteRunEvidence: { method: 'DELETE', pathTemplate: '/api/v1/runs/{run_id}/evidence', requestMode: 'none', responseMode: 'json' },
   getTrace: { method: 'GET', pathTemplate: '/api/v1/traces/{trace_id}', requestMode: 'none', responseMode: 'json' },
   listComponents: { method: 'GET', pathTemplate: '/api/v1/components', requestMode: 'none', responseMode: 'json' },
   getComponentDefinition: { method: 'GET', pathTemplate: '/api/v1/components/{component_id}/definitions/{component_version}', requestMode: 'none', responseMode: 'json' },

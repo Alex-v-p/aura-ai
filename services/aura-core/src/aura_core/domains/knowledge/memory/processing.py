@@ -167,10 +167,12 @@ class MemoryProcessingService:
         trace_id: str,
         memory_id: UUID | None,
         destination_status: MemoryLifecycleStatus | None = None,
+        outcome: str = "ok",
+        error_class: str | None = None,
     ) -> None:
         """Route one lifecycle transition to the maintenance telemetry sink."""
 
-        operation = (
+        operation = "memory.error" if outcome == "error" else (
             "memory.decay"
             if destination_status is MemoryLifecycleStatus.DORMANT
             else "memory.archive"
@@ -178,12 +180,26 @@ class MemoryProcessingService:
             else "memory.maintenance"
         )
         if self._maintenance_telemetry is None:
-            self._emit(operation, started, trace_id=trace_id, outcome="ok", memory_id=memory_id)
+            self._emit(
+                operation,
+                started,
+                trace_id=trace_id,
+                outcome=outcome,
+                error_class=error_class,
+                memory_id=memory_id,
+            )
             return
         extraction_telemetry = self._telemetry
         self._telemetry = self._maintenance_telemetry
         try:
-            self._emit(operation, started, trace_id=trace_id, outcome="ok", memory_id=memory_id)
+            self._emit(
+                operation,
+                started,
+                trace_id=trace_id,
+                outcome=outcome,
+                error_class=error_class,
+                memory_id=memory_id,
+            )
         finally:
             self._telemetry = extraction_telemetry
 
@@ -2228,7 +2244,14 @@ class MemoryProcessingService:
                 (item for item in self.jobs.values() if item.id == command.job_id),
                 job,
             )
-        terminal = settled_job.status in {ProcessingJobStatus.COMPLETED, ProcessingJobStatus.FAILED}
+        # A retryable result is a durable transport settlement: PostgreSQL
+        # owns the next attempt through available_at, so JetStream may ack the
+        # identifier-only wakeup without turning the domain job terminal.
+        terminal = settled_job.status in {
+            ProcessingJobStatus.COMPLETED,
+            ProcessingJobStatus.FAILED,
+            ProcessingJobStatus.RETRYABLE,
+        }
         return MemoryProcessingSettlement(
             command.command_id,
             command.job_id,

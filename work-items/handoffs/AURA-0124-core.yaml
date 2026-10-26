@@ -1,0 +1,59 @@
+agent: core_worker
+work_item: AURA-0124
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0124_core
+  worktree: shared-main
+scope:
+  ownership_zone: aura-core.idle-telemetry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/resources/component-manifests/approval-workflow.yaml
+  - services/aura-core/src/aura_core/domains/automation/notifications/repository.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/repository.py
+  - services/aura-core/tests/test_reminder_scheduler.py
+  - services/aura-core/tests/test_approvals.py
+  - services/aura-core/tests/test_reminders.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.automation.reminder_scheduler
+    - aura.governance.approval_workflow
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      .venv/bin/python -m pytest services/aura-core/tests/test_reminder_scheduler.py
+      services/aura-core/tests/test_approvals.py services/aura-core/tests/test_reminders.py
+      services/aura-core/tests/test_notifications.py services/aura-core/tests/test_telemetry.py -q
+      (154 passed, 15 skipped)
+    - >-
+      .venv/bin/ruff check services/aura-core/src/aura_core/domains/automation/notifications/repository.py
+      services/aura-core/src/aura_core/domains/governance/approvals/repository.py
+      services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+      services/aura-core/src/aura_core/entrypoints/worker/app.py
+      services/aura-core/tests/test_reminder_scheduler.py services/aura-core/tests/test_approvals.py
+      services/aura-core/tests/test_reminders.py
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0124.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Full AURA-0124 governance and cross-service checks are owned by the integration maintainer.
+decisions:
+  - Empty successful reminder scans now emit no scheduler-level zero count, lag, or success span; scans with bounded duplicate or occurrence work retain a success span and meaningful lag evidence without a zero count sample.
+  - Empty approval expiry polls emit no successful expiry span in memory or SQL repositories; expiry transitions and all failure spans remain observable.
+  - Approval housekeeping emits expiry outcome telemetry only when an approval actually expires; its polling cadence and retry behavior are unchanged.
+  - The approval component manifest now documents that empty successful expiry polls emit no sample; only real transitions and failures produce approval_expiry_outcome.
+  - SQL approval expiry seam tests cover both silent empty polls and successful expiry transitions with approval.expire span and count evidence.
+risks: []
+unresolved:
+  - >-
+    Sparse database-heartbeat telemetry was not introduced because the assigned Core paths
+    have no existing heartbeat emission seam; cadence remains unchanged.

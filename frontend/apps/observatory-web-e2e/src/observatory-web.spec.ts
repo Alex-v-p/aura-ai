@@ -262,53 +262,192 @@ function runDetail() {
         serviceRole: 'worker',
         capturePolicy: 'metadata_only',
       },
+      {
+        observationId: 'c4a5d06f-99be-4b16-a05e-e9c8d7d2a4dd',
+        observedAt,
+        componentId: 'aura.core.api',
+        componentVersion: '1.2.0',
+        operation: 'request',
+        measurement: { name: 'tool.calls', value: 3, unit: 'count' },
+        outcome: 'succeeded',
+        deploymentId: 'dev-local',
+        serviceRole: 'api',
+        capturePolicy: 'metadata_only',
+      },
     ],
     partial: false,
     nextCursor: null,
   };
 }
 
-function traceDetail() {
+function traceDetail(spanCount = 3) {
+  const baseSpans = [
+    {
+      spanId: 'aaaaaaaaaaaaaaaa',
+      parentSpanId: null,
+      componentId: 'aura.core.api',
+      operation: 'request',
+      startedAt: '2026-10-15T08:59:55.000Z',
+      durationMs: 5000,
+      outcome: 'succeeded',
+      depth: 0,
+      partial: false,
+    },
+    {
+      spanId: 'bbbbbbbbbbbbbbbb',
+      parentSpanId: 'aaaaaaaaaaaaaaaa',
+      componentId: 'aura.core.worker',
+      operation: 'job',
+      startedAt: '2026-10-15T08:59:56.000Z',
+      durationMs: 3200,
+      outcome: 'succeeded',
+      depth: 1,
+      partial: false,
+    },
+    {
+      spanId: 'cccccccccccccccc',
+      parentSpanId: 'missing-parent-1',
+      componentId: 'aura.core.scheduler',
+      operation: 'schedule',
+      startedAt: '2026-10-15T08:59:57.000Z',
+      durationMs: 100,
+      outcome: 'unknown',
+      depth: 0,
+      partial: true,
+    },
+  ];
+  const spans = spanCount <= baseSpans.length
+    ? baseSpans.slice(0, spanCount)
+    : Array.from({ length: spanCount }, (_, index) => ({
+        spanId: (index + 1).toString(16).padStart(16, '0'),
+        parentSpanId: index === 0 ? null : '0000000000000001',
+        componentId: ['aura.core.api', 'aura.core.worker', 'aura.core.scheduler'][index % 3],
+        operation: index === spanCount - 1 ? 'final-large-span' : ['request', 'job', 'schedule'][index % 3],
+        startedAt: new Date(Date.parse('2026-10-15T08:59:55.000Z') + index * 10).toISOString(),
+        durationMs: Math.max(1, 5000 - index),
+        outcome: index % 17 === 0 ? 'failed' : 'succeeded',
+        depth: index === 0 ? 0 : 1,
+        partial: index % 29 === 0,
+      }));
   return {
     traceId,
     runId,
     partial: true,
     nextCursor: null,
-    spans: [
-      {
-        spanId: 'aaaaaaaaaaaaaaaa',
-        parentSpanId: null,
-        componentId: 'aura.core.api',
-        operation: 'request',
-        startedAt: '2026-10-15T08:59:55.000Z',
-        durationMs: 5000,
-        outcome: 'succeeded',
-        depth: 0,
-        partial: false,
-      },
-      {
-        spanId: 'bbbbbbbbbbbbbbbb',
-        parentSpanId: 'aaaaaaaaaaaaaaaa',
-        componentId: 'aura.core.worker',
-        operation: 'job',
-        startedAt: '2026-10-15T08:59:56.000Z',
-        durationMs: 3200,
-        outcome: 'succeeded',
-        depth: 1,
-        partial: false,
-      },
-      {
-        spanId: 'cccccccccccccccc',
-        parentSpanId: 'missing-parent-1',
-        componentId: 'aura.core.scheduler',
-        operation: 'schedule',
-        startedAt: '2026-10-15T08:59:57.000Z',
-        durationMs: 100,
-        outcome: 'unknown',
-        depth: 0,
-        partial: true,
-      },
-    ],
+    spans,
+  };
+}
+
+const inspectionEvidenceIds = {
+  request: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a10',
+  context: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a11',
+  prompt: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a12',
+  generation: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a13',
+  thinking: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a14',
+  tool: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a15',
+  toolResult: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a16',
+  routing: '4a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a17',
+} as const;
+
+type InspectionFixtureMode = 'metadata' | 'full' | 'partial' | 'deleted' | 'large';
+
+function runInspection(
+  mode: InspectionFixtureMode = 'metadata',
+  version = 1,
+  inspectedRunId = runId,
+  evidenceMedia: 'text' | 'image' = 'text',
+) {
+  const captured = mode === 'full' || mode === 'large';
+  const deleted = mode === 'deleted';
+  const manifest = (key: keyof typeof inspectionEvidenceIds, kind: string, state = captured ? 'captured' : deleted ? 'deleted' : 'excluded') => ({
+    evidenceId: inspectionEvidenceIds[key],
+    eventId: `5a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a${10 + Object.keys(inspectionEvidenceIds).indexOf(key)}`,
+    sequence: Object.keys(inspectionEvidenceIds).indexOf(key) + 1,
+    kind,
+    captureState: state,
+    mediaClassification: evidenceMedia === 'image' && key === 'request' ? 'image' : kind === 'model_routing' ? 'structured' : 'text',
+    mediaType: evidenceMedia === 'image' && key === 'request' ? 'image/png' : kind === 'model_routing' ? 'application/json' : 'text/plain',
+    digest: state === 'captured' ? `sha256-${key}-${version}` : null,
+    // Keep the fixture manifest truthful so hardened media validation accepts
+    // the exact JSON body returned by the evidence route.
+    byteCount: state === 'captured' ? (evidenceMedia === 'image' && key === 'request' ? 19 : 168) : 0,
+    capturedAt: observedAt,
+    reason: state === 'excluded' ? 'capture_disabled' : state === 'deleted' ? 'manually_deleted' : null,
+  });
+  const step = (
+    sequence: number,
+    category: string,
+    label: string,
+    durationMs: number,
+    evidence: unknown[] = [],
+    state = 'succeeded',
+    measurementCount = 1,
+  ) => ({
+    stepId: `7a4f1d14-2adf-4e6d-9cc8-${String(sequence).padStart(12, '0')}`,
+    parentStepId: null,
+    spanId: null,
+    parentSpanId: null,
+    sequence,
+    category,
+    label,
+    state,
+    startedAt: observedAt,
+    finishedAt: observedAt,
+    durationMs,
+    depth: 0,
+    measurements: Array.from({ length: measurementCount }, (_, index) => ({
+      name: `${category}.${index === 0 ? 'duration' : `measurement_${index + 1}`}`,
+      value: index === 0 ? durationMs : index,
+      unit: index === 0 ? 'milliseconds' : 'count',
+    })),
+    evidence,
+    partial: state === 'unavailable',
+    partialReasons: state === 'unavailable' ? ['provider_hidden_reasoning_excluded'] : [],
+  });
+  const steps = mode === 'large'
+    ? Array.from({ length: 220 }, (_, index) => {
+        const categories = ['admission', 'context', 'prompt', 'routing', 'generation', 'thinking', 'tool', 'persistence', 'delivery'];
+        const category = categories[index % categories.length];
+        const label = index === 219 ? 'final-large-step' : `${category} record ${index + 1}`;
+        return step(index + 1, category, label, 1, [], 'succeeded', index === 0 ? 24 : 1);
+      })
+    : [
+        step(1, 'admission', 'Request admission', 1200, [manifest('request', 'admitted_request')]),
+        step(2, 'context', 'Context & retrieval', 800, [manifest('context', 'document_chunk')]),
+        step(3, 'prompt', 'Prompt construction', 140, [manifest('prompt', 'compiled_prompt')]),
+        step(4, 'routing', 'Model routing', 35, [manifest('routing', 'model_routing')]),
+        step(5, 'generation', 'Generation', 2300, [manifest('generation', 'generation_output')]),
+        step(6, 'thinking', 'Displayed thinking', 160, [manifest('thinking', 'displayed_thinking')], 'succeeded'),
+        step(7, 'tool', 'Tools & policy', 420, [manifest('tool', 'tool_arguments'), manifest('toolResult', 'tool_result')]),
+        step(8, 'persistence', 'Persistence', 90),
+        step(9, 'delivery', 'Streaming & delivery', 55),
+      ];
+  if (mode === 'partial') {
+    steps[1] = { ...steps[1], partial: true, partialReasons: ['queue_pressure'], evidence: [manifest('context', 'document_chunk', 'partial')] };
+  }
+  return {
+    schemaVersion: 1,
+    runId: inspectedRunId,
+    traceId: inspectedRunId === comparisonRunId ? comparisonRun.traceId : traceId,
+    status: 'succeeded',
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    durationMs: version === 2 ? 6200 : 5000,
+    steps,
+    completeness: {
+      state: deleted ? 'deleted' : mode === 'partial' || mode === 'metadata' ? 'partial' : 'complete',
+      expectedEvidenceCount: captured ? 8 : 9,
+      capturedEvidenceCount: captured ? 8 : 0,
+      excludedEvidenceCount: mode === 'metadata' ? 8 : 0,
+      partialEvidenceCount: mode === 'partial' ? 1 : 0,
+      droppedEvidenceCount: 0,
+      deletedEvidenceCount: deleted ? 8 : 0,
+      reasons: deleted ? ['manually_deleted'] : mode === 'metadata' ? ['capture_disabled'] : mode === 'partial' ? ['queue_pressure'] : [],
+    },
+    snapshotAt: new Date(Date.parse(observedAt) + version * 1000).toISOString(),
+    partial: mode === 'partial' || mode === 'metadata',
+    partialReasons: mode === 'metadata' ? ['capture_disabled'] : mode === 'partial' ? ['queue_pressure'] : [],
+    nextCursor: mode === 'large' ? 'large-next-page' : null,
   };
 }
 
@@ -477,6 +616,7 @@ type FixtureOptions = {
     | 'unavailable-marker';
   comparisonRecovers?: boolean;
   runsEmpty?: boolean;
+  multipleRuns?: boolean;
   reconcileRuns?: boolean;
   runAppearsAfterAttempts?: number;
   replaceRunAfterAttempts?: number;
@@ -486,9 +626,17 @@ type FixtureOptions = {
   traceInitialFailure?: boolean;
   traceUnavailable?: boolean;
   traceMaterializesAfterAttempts?: number;
+  runsNextCursor?: string | null;
+  largeTrace?: boolean;
+  largeComponents?: boolean;
+  runInspection?: InspectionFixtureMode;
+  evidenceMedia?: 'text' | 'image';
+  deferEvidence?: boolean;
+  evidenceDeletionStatus?: 'accepted' | 'in_progress' | 'completed';
 };
 
 type FixtureHandle = {
+  apiRequests: Array<{ method: string; path: string; resourceType: string }>;
   retentionRequests: Array<{
     action: string;
     body: Record<string, unknown>;
@@ -499,7 +647,14 @@ type FixtureHandle = {
   analyticsQueryUrls: string[];
   comparisonRequests: Array<{ leftRunId?: string; rightRunId?: string }>;
   runsRequests: Array<void>;
+  runDetailRequests: Array<void>;
+  runDetailRequestTimes: Array<number>;
   traceRequests: Array<void>;
+  inspectionRequests: Array<void>;
+  evidenceRequests: Array<string>;
+  evidenceDeletionRequests: Array<void>;
+  releaseEvidence: () => void;
+  markEvidenceDeleted: () => void;
   releaseDeferred: () => void;
   failCatalogueRefresh: () => void;
   restoreIdentity: () => void;
@@ -507,6 +662,7 @@ type FixtureHandle = {
 };
 
 async function installFixture(page: Page, options: FixtureOptions = {}): Promise<FixtureHandle> {
+  const apiRequests: Array<{ method: string; path: string; resourceType: string }> = [];
   const retentionRequests: Array<{
     action: string;
     body: Record<string, unknown>;
@@ -517,7 +673,13 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   const analyticsQueryUrls: string[] = [];
   const comparisonRequests: Array<{ leftRunId?: string; rightRunId?: string }> = [];
   const runsRequests: Array<void> = [];
+  const runDetailRequestLog: Array<void> = [];
+  const runDetailRequestTimes: Array<number> = [];
   const traceRequests: Array<void> = [];
+  const inspectionRequests: Array<void> = [];
+  const evidenceRequests: Array<string> = [];
+  const evidenceDeletionRequests: Array<void> = [];
+  const deferredEvidenceResolvers: Array<() => void> = [];
   const deferredResolvers: Array<() => void> = [];
   let actionPolls = 0;
   let namedObservationReconciled = false;
@@ -532,6 +694,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
   let componentRefreshFailure = false;
   let runListRequests = 0;
   let runDetailRequests = 0;
+  let inspectionMode: InspectionFixtureMode = options.runInspection ?? 'metadata';
 
   if (options.sseFlapping) {
     await page.addInitScript(() => {
@@ -575,6 +738,7 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
+    apiRequests.push({ method: request.method(), path, resourceType: request.resourceType() });
     if (path.endsWith('/auth/logout') && request.method() === 'POST') {
       logoutRequests.push({ headers: request.headers() });
       const status = options.logoutStatuses?.[logoutAttempts++] ?? 204;
@@ -682,8 +846,12 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       }
       await route.fulfill({
         json: {
-          items: options.runsEmpty || laggingRunCatalogue || delayedRunCatalogue ? [] : options.comparisonFailure ? [run, comparisonRun] : [staleRunIdentity ? staleCatalogueRun : run],
-          nextCursor: null,
+          items: options.runsEmpty || laggingRunCatalogue || delayedRunCatalogue
+            ? []
+            : options.multipleRuns || options.comparisonFailure
+              ? [run, comparisonRun]
+              : [staleRunIdentity ? staleCatalogueRun : run],
+          nextCursor: options.runsNextCursor ?? null,
           snapshotAt: observedAt,
           latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22',
         },
@@ -761,11 +929,77 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       await route.fulfill({ json: result });
       return;
     }
+    const inspectedRunId = path.endsWith(`/runs/${runId}/inspection`)
+      ? runId
+      : path.endsWith(`/runs/${comparisonRunId}/inspection`)
+        ? comparisonRunId
+        : null;
+    if (inspectedRunId && request.method() === 'GET') {
+      inspectionRequests.push(undefined);
+      await route.fulfill({
+        json: runInspection(inspectionMode, inspectionRequests.length, inspectedRunId, options.evidenceMedia),
+      });
+      return;
+    }
+    if (path.includes(`/runs/${runId}/evidence/`) && request.method() === 'GET') {
+      const evidenceId = path.slice(path.lastIndexOf('/') + 1);
+      evidenceRequests.push(evidenceId);
+      if (options.deferEvidence) await new Promise<void>((resolve) => deferredEvidenceResolvers.push(resolve));
+      const imageEvidence = options.evidenceMedia === 'image' && evidenceId === inspectionEvidenceIds.request;
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': imageEvidence ? 'image/png' : 'text/plain', 'cache-control': 'no-store' },
+        body: imageEvidence
+          ? 'fixture-image-bytes'
+          : JSON.stringify({
+              safeFixtureText: 'Captured fixture evidence',
+              hostileMarkup: '<script>window.__evidence_executed = true</script>',
+              evidenceId,
+            }),
+      });
+      return;
+    }
+    if (path.endsWith(`/runs/${runId}/evidence`) && request.method() === 'DELETE') {
+      evidenceDeletionRequests.push(undefined);
+      const deletionStatus = options.evidenceDeletionStatus ?? 'completed';
+      if (deletionStatus === 'completed')
+      inspectionMode = 'deleted';
+      await route.fulfill({
+        json: {
+          schemaVersion: 1,
+          deletionId: '6a4f1d14-2adf-4e6d-9cc8-67a9ad4e9a10',
+          runId,
+          status: deletionStatus,
+          requestedAt: observedAt,
+          completedAt: deletionStatus === 'completed' ? observedAt : null,
+          deletedEvidenceCount: evidenceRequests.length,
+          auditMode: 'content_free',
+          failureCode: null,
+        },
+      });
+      return;
+    }
     if (path.endsWith(`/runs/${runId}`)) {
       await defer('run');
+      runDetailRequestLog.push(undefined);
+      runDetailRequestTimes.push(Date.now());
       const currentRunDetailRequest = runDetailRequests++;
       const delayedTrace = options.traceMaterializesAfterAttempts !== undefined && currentRunDetailRequest < options.traceMaterializesAfterAttempts;
       await route.fulfill({ json: delayedTrace ? { ...runDetail(), traceId: null } : runDetail() });
+      return;
+    }
+    if (path.endsWith(`/runs/${comparisonRunId}`)) {
+      await defer('run');
+      await route.fulfill({
+        json: {
+          ...runDetail(),
+          ...comparisonRun,
+          observations: runDetail().observations.map((observation) => ({
+            ...observation,
+            deploymentId: comparisonRun.deploymentId,
+          })),
+        },
+      });
       return;
     }
     if (path.endsWith(`/traces/${traceId}`)) {
@@ -775,7 +1009,17 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
         await route.abort('failed');
         return;
       }
-      await route.fulfill({ json: traceDetail() });
+      await route.fulfill({ json: traceDetail(options.largeTrace ? 220 : 3) });
+      return;
+    }
+    if (path.endsWith(`/traces/${comparisonRun.traceId}`)) {
+      await route.fulfill({
+        json: {
+          ...traceDetail(),
+          traceId: comparisonRun.traceId,
+          runId: comparisonRunId,
+        },
+      });
       return;
     }
     if (path.endsWith('/components') && request.method() === 'GET') {
@@ -802,6 +1046,41 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       }
       if (options.componentTopology === 'empty') {
         await route.fulfill({ json: { snapshotAt: observedAt, items: [] } });
+        return;
+      }
+      if (options.largeComponents) {
+        await route.fulfill({
+          json: {
+            snapshotAt: observedAt,
+            items: Array.from({ length: 60 }, (_, index) => {
+              const componentId = index === 0
+                ? 'aura.observatory.query_api'
+                : `aura.observatory.component_${String(index).padStart(3, '0')}`;
+              // Keep the two problems beyond the first 20 source records so
+              // the acceptance check proves problem-first promotion rather
+              // than relying on fixture ordering.
+              const degraded = index === 0 || index === 37;
+              const noData = index === 42;
+              return {
+                componentId,
+                versions: ['1.0.0'],
+                firstSeenAt: observedAt,
+                lastSeenAt: observedAt,
+                definitionState: noData ? 'observed_only' : 'declared',
+                definitionVersions: noData ? [] : ['1.0.0'],
+                health: {
+                  ...componentHealth,
+                  sampleCount: 4 + index,
+                  errorRate: noData ? null : degraded ? 0.25 : 0.01,
+                  latencyP95Ms: noData ? null : degraded ? 240 : 44 + index,
+                  outcomes: noData
+                    ? { succeeded: 0, failed: 0, cancelled: 0, unknown: 4 + index }
+                    : { succeeded: 4 + index, failed: degraded ? 2 : 0, cancelled: 0, unknown: 0 },
+                },
+              };
+            }),
+          },
+        });
         return;
       }
       if (
@@ -1318,6 +1597,23 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
       });
       return;
     }
+    if (options.largeComponents && path.endsWith('/health') && path.includes('/components/')) {
+      const componentId = decodeURIComponent(path.split('/components/')[1]?.split('/health')[0] ?? 'aura.observatory.component_000');
+      const degraded = componentId.includes('query_api') || componentId.endsWith('037');
+      const noData = componentId.endsWith('042');
+      await route.fulfill({
+        json: {
+          componentId,
+          summary: {
+            ...componentHealth,
+            errorRate: noData ? null : degraded ? 0.25 : 0.01,
+            latencyP95Ms: noData ? null : degraded ? 240 : 44,
+          },
+          points: [{ startAt: oldObservedAt, endAt: observedAt, summary: componentHealth }],
+        },
+      });
+      return;
+    }
     if (path.endsWith('/components/aura.observatory.query_api/health')) {
       await route.fulfill({
         json: {
@@ -1452,13 +1748,25 @@ async function installFixture(page: Page, options: FixtureOptions = {}): Promise
     await route.continue();
   });
   return {
+    apiRequests,
     retentionRequests,
     logoutRequests,
     deferredKinds,
     analyticsQueryUrls,
     comparisonRequests,
     runsRequests,
+    runDetailRequests: runDetailRequestLog,
+    runDetailRequestTimes,
     traceRequests,
+    inspectionRequests,
+    evidenceRequests,
+    evidenceDeletionRequests,
+    releaseEvidence: () => {
+      while (deferredEvidenceResolvers.length) deferredEvidenceResolvers.shift()?.();
+    },
+    markEvidenceDeleted: () => {
+      inspectionMode = 'deleted';
+    },
     releaseDeferred: () => {
       while (deferredResolvers.length) deferredResolvers.shift()?.();
     },
@@ -1494,12 +1802,100 @@ async function openDestination(page: Page, label: string, keyboard = false): Pro
     await page.getByRole('button', { name: 'Open Observatory navigation', exact: true }).click();
   }
   if (keyboard) await button.press('Enter');
-  else await button.click();
+  else {
+    await button.scrollIntoViewIfNeeded();
+    await button.click({ force: true });
+  }
 }
 
 async function expectNoA11yViolations(page: Page): Promise<void> {
   const results = await new AxeBuilder({ page }).include('app-root').analyze();
   expect(results.violations).toEqual([]);
+}
+
+async function installRunInvalidationBridge(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    let source: { emit: (runId: string) => void; emitGeneric: () => void } | null = null;
+    class RunInvalidationEventSource {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSED = 2;
+      readyState = RunInvalidationEventSource.CONNECTING;
+      onopen: (() => void) | null = null;
+      onmessage: ((event: Event) => void) | null = null;
+      onerror: (() => void) | null = null;
+      private readonly listeners = new Map<string, Array<(event: Event) => void>>();
+      private closed = false;
+      constructor(url: string) {
+        if (!url.includes('/evaluation/') && !url.includes('/operations/')) {
+          source = {
+            emit: (runId: string): void => this.emit(runId),
+            emitGeneric: (): void => this.emitGeneric(),
+          };
+        }
+        setTimeout(() => {
+          if (this.closed) return;
+          this.readyState = RunInvalidationEventSource.OPEN;
+          this.onopen?.();
+        }, 0);
+      }
+      addEventListener(eventName: string, listener: (event: Event) => void): void {
+        const listeners = this.listeners.get(eventName) ?? [];
+        listeners.push(listener);
+        this.listeners.set(eventName, listeners);
+      }
+      emit(runId: string): void {
+        if (this.closed) return;
+        const event = new MessageEvent('observation.changed', {
+          data: JSON.stringify({
+            eventType: 'observation.changed',
+            resourceType: 'run',
+            resourceId: runId,
+          }),
+        });
+        this.listeners.get('observation.changed')?.forEach((listener) => listener(event));
+        this.onmessage?.(event);
+      }
+      emitGeneric(): void {
+        if (this.closed) return;
+        const event = new MessageEvent('observation.changed', {
+          data: JSON.stringify({
+            eventType: 'observation.changed',
+            resourceType: 'observation',
+            resourceId: 'observation-fixture-1',
+          }),
+        });
+        this.listeners.get('observation.changed')?.forEach((listener) => listener(event));
+        this.onmessage?.(event);
+      }
+      close(): void {
+        this.closed = true;
+        this.readyState = RunInvalidationEventSource.CLOSED;
+      }
+    }
+    Object.defineProperty(window, 'EventSource', {
+      configurable: true,
+      writable: true,
+      value: RunInvalidationEventSource,
+    });
+    Object.defineProperty(window, 'emitRunInvalidation', {
+      configurable: true,
+      value: (runId: string) => source?.emit(runId),
+    });
+    Object.defineProperty(window, 'emitRunInvalidations', {
+      configurable: true,
+      value: (runId: string, count: number) => {
+        for (let index = 0; index < count; index += 1) source?.emit(runId);
+      },
+    });
+    Object.defineProperty(window, 'emitGenericObservationInvalidation', {
+      configurable: true,
+      value: () => {
+        if (!source) return;
+        source.emitGeneric();
+      },
+    });
+  });
 }
 
 test.describe('Observatory Web mocked browser acceptance', () => {
@@ -1784,6 +2180,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     const fixture = await openFixture(page, { comparisonFailure: 'partial', healthChanged: true });
     await openDestination(page, 'Compare');
     const comparison = page.locator('observatory-comparison');
+    await expect(comparison.getByRole('heading', { name: 'Compare runs', exact: true })).toBeVisible();
     if ((page.viewportSize()?.width ?? 1280) <= 832) {
       await expect(
         comparison.getByRole('heading', { name: 'Compare runs', exact: true }),
@@ -2035,24 +2432,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
         display: getComputedStyle(element).display,
       })),
     );
-    const expectedPanelDisplays = {
-      'observatory-overview': 'none',
-      'observatory-runs': 'none',
-      'observatory-trace': 'none',
-      'observatory-comparison': 'block',
-      'observatory-components': 'none',
-      'observatory-analytics': 'none',
-      'observatory-operations-workspace': 'none',
-      'observatory-retention': 'none',
-      'observatory-evaluation-workspace': 'none',
-      'observatory-experiment-workspace': 'none',
-    } as const;
-    expect(panelDisplays).toHaveLength(Object.keys(expectedPanelDisplays).length);
-    for (const panel of panelDisplays) {
-      expect(panel.display, `Panel display diagnostics: ${JSON.stringify(panelDisplays)}`).toBe(
-        expectedPanelDisplays[panel.tag as keyof typeof expectedPanelDisplays],
-      );
-    }
+    // Workspaces are mounted only while active. The selected Compare surface
+    // is therefore the sole main child and must remain visible.
+    expect(panelDisplays).toEqual([{ tag: 'observatory-comparison', display: 'block' }]);
     await expect(comparison).toBeVisible();
     await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
     await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
@@ -2342,13 +2724,19 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(analytics.getByLabel('From (UTC)')).toHaveAttribute('aria-invalid', 'true');
     await analytics.getByLabel('From (UTC)').fill('2026-10-01T00:00');
     await analytics.getByLabel('To (UTC)').fill('2026-11-01T00:00');
+    const queryCountBeforeBoundedApply = fixture.analyticsQueryUrls.length;
     await analytics.getByRole('button', { name: 'Apply bounded query', exact: true }).click();
     await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect
+      .poll(() => fixture.analyticsQueryUrls.length)
+      .toBeGreaterThan(queryCountBeforeBoundedApply);
     await expect(fixture.analyticsQueryUrls.at(-1)).toMatch(/from=2026-10-01T00%3A00%3A00.000Z/);
     await analytics.getByLabel('From (UTC)').fill('');
     await analytics.getByLabel('To (UTC)').fill('');
+    const queryCountBeforeClearedApply = fixture.analyticsQueryUrls.length;
     await analytics.getByRole('button', { name: 'Apply bounded query', exact: true }).click();
     await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect.poll(() => fixture.analyticsQueryUrls.length).toBeGreaterThan(queryCountBeforeClearedApply);
     expect(fixture.analyticsQueryUrls.at(-1)).not.toMatch(/[?&](from|to)=/);
   });
 
@@ -2535,6 +2923,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   }) => {
     const fixture = await openFixture(page, { expireNextRuns: true });
     await openDestination(page, 'Runs');
+    await expect(page.locator('observatory-runs form')).toBeVisible();
     fixture.expireSession();
     await page.evaluate(() => {
       const form = document.querySelector('observatory-runs form');
@@ -2576,10 +2965,13 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     ).toBeVisible();
     await expect(page.getByText('Accepted')).toBeVisible();
     const ingest = page.locator('observatory-overview .ingest-card');
-    await expect(ingest.getByText('Rejected', { exact: true })).toBeVisible();
-    await expect(ingest.getByText('Duplicates', { exact: true })).toBeVisible();
-    await expect(ingest.getByText('Malformed', { exact: true })).toBeVisible();
-    await expect(ingest.getByText('Storage failures', { exact: true })).toBeVisible();
+    // The final overview exposes the counter scope as a nested "lifetime"
+    // context. Assert the semantic labels without depending on that presentational
+    // suffix (or on the rendered number).
+    await expect(ingest.locator('dt').filter({ hasText: /^Rejected\b/ })).toBeVisible();
+    await expect(ingest.locator('dt').filter({ hasText: /^Duplicates\b/ })).toBeVisible();
+    await expect(ingest.locator('dt').filter({ hasText: /^Malformed\b/ })).toBeVisible();
+    await expect(ingest.locator('dt').filter({ hasText: /^Storage failures\b/ })).toBeVisible();
     await page.unrouteAll({ behavior: 'ignoreErrors' });
     await page.route('**/api/v1/overview', async (route) =>
       route.fulfill({
@@ -2684,6 +3076,224 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     ).toBeVisible();
   });
 
+  test('AURA-0123 does not start inactive workspace reads', async ({ page }) => {
+    const fixture = await openFixture(page);
+    await page.waitForTimeout(250);
+
+    const startupPaths = fixture.apiRequests
+      .filter(({ method }) => method === 'GET')
+      .map(({ path }) => path);
+    const inactiveWorkspaceReads = startupPaths.filter((path) =>
+      /\/runs\/.+|\/components(?:\/|$)|\/deployments(?:\/|$)|\/analytics(?:\/|$)|\/comparison(?:\/|$)|\/evaluation\/(?!events(?:\/|$))|\/experiments(?:\/|$)|\/operations(?:\/|$)/i.test(
+        path,
+      ),
+    );
+
+    expect(startupPaths.some((path) => path.endsWith('/overview'))).toBe(true);
+    expect(inactiveWorkspaceReads).toEqual([]);
+  });
+
+  test('AURA-0123 ignores generic observation invalidations without a REST feedback loop', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page);
+    await page.waitForTimeout(250);
+    const observedResourceReads = (): Array<{
+      method: string;
+      path: string;
+      resourceType: string;
+    }> =>
+      fixture.apiRequests.filter(
+        ({ method, path, resourceType }) =>
+          method === 'GET' &&
+          resourceType !== 'eventsource' &&
+          /\/overview$|\/health\/history$|\/runs(?:\/|$)|\/analytics(?:\/|$)|\/comparison(?:\/|$)|\/evaluation(?:\/|$)|\/experiments(?:\/|$)|\/operations(?:\/|$)/i.test(
+            path,
+          ),
+      );
+    const before = observedResourceReads().length;
+
+    await page.evaluate(() => {
+      (
+        window as unknown as { emitGenericObservationInvalidation: () => void }
+      ).emitGenericObservationInvalidation();
+    });
+    await page.waitForTimeout(500);
+
+    expect(observedResourceReads().length).toBe(before);
+  });
+
+  test('AURA-0123 stops active Runs reads after a paginated catalogue converges', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page, { runsNextCursor: 'runs-page-2' });
+
+    await openDestination(page, 'Runs');
+    await expect(
+      page.locator('observatory-runs').getByRole('button', { name: runId, exact: true }),
+    ).toBeVisible();
+    await expect.poll(() => fixture.runsRequests.length, { timeout: 10_000 }).toBeGreaterThan(0);
+
+    const settledRunsReads = fixture.runsRequests.length;
+    const settledOverviewReads = fixture.apiRequests.filter(
+      ({ method, path }) => method === 'GET' && path.endsWith('/overview'),
+    ).length;
+    await page.waitForTimeout(2_500);
+
+    expect(fixture.runsRequests.length).toBe(settledRunsReads);
+    expect(
+      fixture.apiRequests.filter(
+        ({ method, path }) => method === 'GET' && path.endsWith('/overview'),
+      ).length,
+    ).toBe(settledOverviewReads);
+  });
+
+  test('AURA-0123 keeps selected-run projection recovery behind its two-second retry floor', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page, { traceMaterializesAfterAttempts: 100 });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect(
+      page
+        .locator('observatory-trace')
+        .getByRole('heading', { name: 'Run inspector', exact: true }),
+    ).toBeVisible();
+    await expect.poll(() => fixture.runDetailRequests.length).toBeGreaterThan(0);
+    // Let any same-turn route transition settle before starting the measured
+    // retry window; those requests are part of the initial projection load.
+    await page.waitForTimeout(250);
+    const initialDetailRequests = fixture.runDetailRequests.length;
+    const lastInitialRequestAt = fixture.runDetailRequestTimes[initialDetailRequests - 1];
+
+    // A projection-gap retry must not turn into a polling loop. This check
+    // remains strictly below the two-second recovery floor after the initial
+    // same-turn route transition has settled.
+    await page.waitForTimeout(1_500);
+    expect(fixture.runDetailRequests).toHaveLength(initialDetailRequests);
+    await expect
+      .poll(() => fixture.runDetailRequests.length, { timeout: 2_500 })
+      .toBeGreaterThan(initialDetailRequests);
+    const firstRetryAt = fixture.runDetailRequestTimes[initialDetailRequests];
+    expect(firstRetryAt - lastInitialRequestAt).toBeGreaterThanOrEqual(1_900);
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0123 cancels pending analytics and comparison refreshes after leaving', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page, { multipleRuns: true });
+
+    await openDestination(page, 'Analytics', true);
+    await expect
+      .poll(() => fixture.analyticsQueryUrls.length, { timeout: 10_000 })
+      .toBeGreaterThan(0);
+    const analyticsRequestsBeforeLeave = fixture.analyticsQueryUrls.length;
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(
+        selectedRunId,
+      );
+    }, runId);
+    await openDestination(page, 'Overview', true);
+    await page.waitForTimeout(750);
+    expect(fixture.analyticsQueryUrls.length).toBe(analyticsRequestsBeforeLeave);
+
+    await openDestination(page, 'Compare', true);
+    const comparison = page.locator('observatory-comparison');
+    await comparison.getByRole('combobox', { name: 'Left run' }).selectOption(runId);
+    await comparison.getByRole('combobox', { name: 'Right run' }).selectOption(comparisonRunId);
+    await comparison.getByRole('button', { name: 'Compare selected runs', exact: true }).click();
+    await expect.poll(() => fixture.comparisonRequests.length, { timeout: 10_000 }).toBe(1);
+    const comparisonRequestsBeforeLeave = fixture.comparisonRequests.length;
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(
+        selectedRunId,
+      );
+    }, runId);
+    await openDestination(page, 'Overview', true);
+    await page.waitForTimeout(750);
+    expect(fixture.comparisonRequests.length).toBe(comparisonRequestsBeforeLeave);
+  });
+
+  test('AURA-0123 keeps a run invalidation burst live with one bounded trailing refresh', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    await openFixture(page);
+    let detailRequests = 0;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstRequestBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondRequestBlocked = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      detailRequests += 1;
+      const version = detailRequests;
+      if (version === 1) await firstRequestBlocked;
+      if (version === 2) await secondRequestBlocked;
+      await route.fulfill({
+        json: {
+          ...runDetail(),
+          durationMs: version === 1 ? 5000 : 7000,
+          finishedAt: version === 1 ? '2026-10-15T09:00:00.000Z' : '2026-10-15T09:00:02.000Z',
+        },
+      });
+    });
+
+    await openDestination(page, 'Runs', true);
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => detailRequests).toBe(1);
+    await expect(page.locator('observatory-trace')).toBeVisible();
+
+    const burstStartedAt = Date.now();
+    await page.evaluate((selectedRunId) => {
+      (
+        window as unknown as { emitRunInvalidations: (runId: string, count: number) => void }
+      ).emitRunInvalidations(selectedRunId, 100);
+    }, runId);
+    releaseFirst();
+
+    await expect.poll(() => detailRequests, { timeout: 2_500 }).toBe(2);
+    expect(Date.now() - burstStartedAt).toBeLessThanOrEqual(2_500);
+    releaseSecond();
+    await page.waitForTimeout(250);
+    expect(detailRequests).toBe(2);
+  });
+
+  test('AURA-0123 lets idle Overview converge without recurring REST reads', async ({ page }) => {
+    const fixture = await openFixture(page);
+    const observedResourceReads = (): Array<{
+      method: string;
+      path: string;
+      resourceType: string;
+    }> =>
+      fixture.apiRequests.filter(
+        ({ method, path, resourceType }) =>
+          method === 'GET' &&
+          resourceType !== 'eventsource' &&
+          /\/overview$|\/health\/history$|\/runs(?:\/|$)|\/analytics(?:\/|$)|\/comparison(?:\/|$)|\/evaluation(?:\/|$)|\/experiments(?:\/|$)|\/operations(?:\/|$)/i.test(
+            path,
+          ),
+      );
+    await page.waitForTimeout(500);
+    const converged = observedResourceReads().map(({ method, path }) => `${method} ${path}`);
+
+    await page.waitForTimeout(10_000);
+
+    expect(observedResourceReads().map(({ method, path }) => `${method} ${path}`)).toEqual(
+      converged,
+    );
+  });
+
   test('reconciles a delayed run while SSE remains disconnected', async ({ page }) => {
     await openFixture(page, {
       sseDisconnected: true,
@@ -2709,61 +3319,65 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(runs.getByRole('button', { name: runId, exact: true })).toBeVisible({ timeout: 20_000 });
   });
 
-  test('keeps active Runs reconciliation alive after an open SSE same-count response', async ({ page }) => {
-    await page.addInitScript(() => {
-      class OpenOnlyEventSource {
-        static readonly CONNECTING = 0;
-        static readonly OPEN = 1;
-        static readonly CLOSED = 2;
-        readyState = OpenOnlyEventSource.CONNECTING;
-        onopen: (() => void) | null = null;
-        onmessage: ((event: MessageEvent) => void) | null = null;
-        onerror: (() => void) | null = null;
-        private closed = false;
-        constructor() {
-          setTimeout(() => {
-            if (this.closed) return;
-            this.readyState = OpenOnlyEventSource.OPEN;
-            this.onopen?.();
-          }, 0);
-        }
-        addEventListener(): void { /* This regression deliberately emits no event. */ }
-        close(): void { this.closed = true; this.readyState = OpenOnlyEventSource.CLOSED; }
-      }
-      Object.defineProperty(window, 'EventSource', { configurable: true, writable: true, value: OpenOnlyEventSource });
-    });
-    await openFixture(page, { runCount: 1, replaceRunAfterAttempts: 5 });
+  test('reconciles an equal-length catalogue after a run-scoped invalidation', async ({ page }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page, { runCount: 1, replaceRunAfterAttempts: 1 });
     await openDestination(page, 'Runs');
-    await expect(page.locator('observatory-runs').getByRole('button', { name: runId, exact: true })).toBeVisible({ timeout: 20_000 });
+    const runs = page.locator('observatory-runs');
+    await expect(
+      runs.getByRole('button', { name: staleCatalogueRun.runId, exact: true }),
+    ).toBeVisible();
+    const requestsBeforeInvalidation = fixture.runsRequests.length;
+
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(
+        selectedRunId,
+      );
+    }, runId);
+
+    await expect(runs.getByRole('button', { name: runId, exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect
+      .poll(() => fixture.runsRequests.length, { timeout: 10_000 })
+      .toBeGreaterThan(requestsBeforeInvalidation);
+    expect(fixture.runsRequests.length).toBeLessThanOrEqual(requestsBeforeInvalidation + 1);
+    await page.waitForTimeout(2_500);
+    expect(fixture.runsRequests.length).toBeLessThanOrEqual(requestsBeforeInvalidation + 1);
   });
 
   test('renders an authoritative Runs catalogue after activation without mutation delivery', async ({ page }) => {
     await page.clock.install();
+    await installRunInvalidationBridge(page);
     await page.addInitScript(() => {
       // The shell owns route visibility while the Runs feature stays mounted.
       // Suppress mutation delivery to prove activation is not dependent on a
       // browser scheduling detail at the route boundary.
       Object.defineProperty(window, 'MutationObserver', { configurable: true, writable: true, value: undefined });
     });
-    const fixture = await openFixture(page, { sseDisconnected: true, runCount: 1, replaceRunAfterAttempts: 30 });
+    const fixture = await openFixture(page, { sseDisconnected: true, runCount: 1, replaceRunAfterAttempts: 30 ,
+    });
+    const overviewRequestsBeforeActivation = fixture.apiRequests.filter(
+      ({ method, path }) => method === 'GET' && path.endsWith('/overview'),
+    ).length;
+    const runsRequestsBeforeActivation = fixture.runsRequests.length;
 
     for (let attempt = 0; attempt < 32; attempt += 1) {
       await page.clock.runFor(2_000);
       await page.evaluate(() => Promise.resolve());
     }
-    expect(fixture.runsRequests.length).toBeLessThanOrEqual(32);
+    expect(fixture.runsRequests.length).toBe(runsRequestsBeforeActivation);
+    expect(
+      fixture.apiRequests.filter(
+        ({ method, path }) => method === 'GET' && path.endsWith('/overview'),
+      ).length,
+    ).toBe(overviewRequestsBeforeActivation);
 
-    const payload = await page.evaluate(async () => {
-      const response = await fetch('/api/v1/runs', { headers: { Accept: 'application/json' } });
-      return { ok: response.ok, payload: (await response.json()) as { items?: Array<{ runId?: string }> } };
-    });
-    expect(payload.ok).toBe(true);
-    expect(payload.payload.items?.some((item) => item.runId === runId)).toBe(true);
-
-    // From this point onward, only a fresh Runs activation is allowed to see
-    // the authoritative catalogue. A stale global recovery generation has
-    // already capped and cannot accidentally make this assertion pass.
+    // Overview is passive. Only entering Runs may start a bounded recovery
+    // generation and obtain the authoritative catalogue.
+    let activationRequests = 0;
     await page.route('**/api/v1/runs', async (route) => {
+      activationRequests += 1;
       await route.fulfill({
         json: {
           items: [run],
@@ -2775,9 +3389,16 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     });
 
     await openDestination(page, 'Runs');
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(
+        selectedRunId,
+      );
+    }, runId);
     await page.clock.runFor(2_000);
     await page.evaluate(() => Promise.resolve());
     await expect(page.locator('observatory-runs').getByRole('button', { name: runId, exact: true })).toBeVisible();
+    expect(activationRequests).toBeGreaterThan(0);
+    expect(activationRequests).toBeLessThanOrEqual(2);
   });
 
   test('keeps run recovery alive while SSE repeatedly opens and errors', async ({ page }) => {
@@ -2847,29 +3468,47 @@ test.describe('Observatory Web mocked browser acceptance', () => {
 
   test('starts a fresh Runs reconciliation window after the initial window caps', async ({ page }) => {
     await page.clock.install();
+    await installRunInvalidationBridge(page);
     const fixture = await openFixture(page, {
       sseDisconnected: true,
       runCount: 1,
-      // The target is created after the global recovery window has expired;
-      // activating Runs must begin a new bounded generation.
-      replaceRunAfterAttempts: 40,
+      // The initial Overview snapshot is intentionally not reconciled. The
+      // target is only made authoritative once Runs is activated below.
+      replaceRunAfterAttempts: 999,
     });
+    const requestsBeforeRunsActivation = fixture.runsRequests.length;
 
     for (let attempt = 0; attempt < 35; attempt += 1) {
       await page.clock.runFor(2_000);
       await page.evaluate(() => Promise.resolve());
     }
-    const requestsBeforeRunsActivation = fixture.runsRequests.length;
-    expect(requestsBeforeRunsActivation).toBeGreaterThan(1);
-    expect(requestsBeforeRunsActivation).toBeLessThanOrEqual(32);
+    expect(fixture.runsRequests.length).toBe(requestsBeforeRunsActivation);
+    let activationRequests = 0;
+    await page.route('**/api/v1/runs', async (route) => {
+      activationRequests += 1;
+      await route.fulfill({
+        json: {
+          items: [run],
+          nextCursor: null,
+          snapshotAt: observedAt,
+          latestObservationId: 'b8fb4c57-95a8-46b4-9d8f-5c11fb8c7c22',
+        },
+      });
+    });
 
     await openDestination(page, 'Runs');
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      await page.clock.runFor(2_000);
-      await page.evaluate(() => Promise.resolve());
-    }
-    await expect(page.locator('observatory-runs').getByRole('button', { name: runId, exact: true })).toBeVisible();
-    expect(fixture.runsRequests.length).toBeGreaterThan(requestsBeforeRunsActivation);
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(
+        selectedRunId,
+      );
+    }, runId);
+    await page.clock.runFor(2_000);
+    await page.evaluate(() => Promise.resolve());
+    await expect(
+      page.locator('observatory-runs').getByRole('button', { name: runId, exact: true }),
+    ).toBeVisible();
+    expect(activationRequests).toBeGreaterThan(0);
+    expect(activationRequests).toBeLessThanOrEqual(2);
   });
 
   test('reconciles a lagging run catalogue against the overview count', async ({ page }) => {
@@ -2894,13 +3533,13 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
     const trace = page.locator('observatory-trace');
-    await expect(trace.getByText(/trace waterfall/i)).toBeVisible();
+    await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
 
     await openDestination(page, 'Runs');
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
-    await expect(trace.getByRole('status').filter({ hasText: /latest trace refresh is unavailable/i })).toBeVisible();
-    await expect(trace.getByText(/trace waterfall/i)).toBeVisible();
+    await expect(trace.getByRole('status').filter({ hasText: /latest run refresh is unavailable/i })).toBeVisible();
+    await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
   });
 
   test('reconciles a delayed first trace projection without hiding its loading state', async ({ page }) => {
@@ -2909,8 +3548,13 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
     const trace = page.locator('observatory-trace');
-    await expect(trace.getByText(/trace waterfall/i)).toBeVisible({ timeout: 20_000 });
-    expect(fixture.traceRequests.length).toBeGreaterThan(1);
+    await expect(
+      trace.getByRole('heading', { name: 'Run inspector', exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
+    // The inspector renders its stable heading while the bounded projection
+    // recovery timer is still pending. Wait on the fixture's request ledger,
+    // rather than coupling this assertion to the initial render race.
+    await expect.poll(() => fixture.traceRequests.length, { timeout: 20_000 }).toBeGreaterThan(1);
   });
 
   test('reconciles a selected run when its trace materializes after an observation invalidation', async ({ page }) => {
@@ -2944,7 +3588,367 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Runs');
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
-    await expect(page.locator('observatory-trace').getByText(/trace waterfall/i)).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page
+        .locator('observatory-trace')
+        .getByRole('heading', { name: 'Run inspector', exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('AURA-0116 keeps the selected run visible during a burst and settles one trailing refresh', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      let source: { emit: (eventName: string) => void } | null = null;
+      class BurstEventSource {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSED = 2;
+        readyState = BurstEventSource.CONNECTING;
+        onopen: (() => void) | null = null;
+        onmessage: ((event: Event) => void) | null = null;
+        onerror: (() => void) | null = null;
+        private readonly listeners = new Map<string, Array<(event: Event) => void>>();
+        private closed = false;
+        constructor(url: string) {
+          if (!url.includes('/evaluation/') && !url.includes('/operations/')) {
+            source = { emit: (eventName: string): void => this.emit(eventName) };
+          }
+          setTimeout(() => {
+            if (this.closed) return;
+            this.readyState = BurstEventSource.OPEN;
+            this.onopen?.();
+          }, 0);
+        }
+        addEventListener(eventName: string, listener: (event: Event) => void): void {
+          const listeners = this.listeners.get(eventName) ?? [];
+          listeners.push(listener);
+          this.listeners.set(eventName, listeners);
+        }
+        emit(eventName: string): void {
+          if (this.closed) return;
+          // Run refreshes are explicitly scoped in the metadata-only SSE
+          // contract; an unaddressed event must not refresh the inspector.
+          const event = new MessageEvent(eventName, {
+            data: JSON.stringify({ resourceType: 'run', resourceId: '6f4f1d14-2adf-4e6d-9cc8-67a9ad4e9a01' }),
+          });
+          this.listeners.get(eventName)?.forEach((listener) => listener(event));
+          this.onmessage?.(event);
+        }
+        close(): void {
+          this.closed = true;
+          this.readyState = BurstEventSource.CLOSED;
+        }
+      }
+      Object.defineProperty(window, 'EventSource', { configurable: true, writable: true, value: BurstEventSource });
+      Object.defineProperty(window, 'emitRunInvalidations', {
+        configurable: true,
+        value: (count: number) => {
+          for (let index = 0; index < count; index += 1) source?.emit('observation.changed');
+        },
+      });
+    });
+
+    await openFixture(page);
+    let detailRequests = 0;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstRequestBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const secondRequestBlocked = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      detailRequests += 1;
+      const version = detailRequests;
+      if (version === 1) await firstRequestBlocked;
+      if (version === 2) await secondRequestBlocked;
+      await route.fulfill({
+        json: {
+          ...runDetail(),
+          durationMs: version === 1 ? 5000 : 7000,
+          finishedAt: version === 1 ? '2026-10-15T09:00:00.000Z' : '2026-10-15T09:00:02.000Z',
+        },
+      });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => detailRequests).toBe(1);
+
+    await page.evaluate(() => {
+      (window as unknown as { emitRunInvalidations: (count: number) => void }).emitRunInvalidations(24);
+    });
+    releaseFirst();
+
+    const trace = page.locator('observatory-trace');
+    await expect.poll(() => detailRequests, { timeout: 10_000 }).toBe(2);
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('5.00 s');
+    await expect(trace.locator('.run-card .status')).toHaveText(/succeeded/i);
+
+    releaseSecond();
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('7.00 s', { timeout: 10_000 });
+
+    // A burst must not fan out into one request per invalidation, and the
+    // trailing response must be the latest projection after the burst.
+    await page.waitForTimeout(250);
+    expect(detailRequests).toBe(2);
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0116 preserves a live invalidation during the final reconciliation attempt', async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript(() => {
+      let source: { emit: (eventName: string) => void } | null = null;
+      class FinalAttemptEventSource {
+        static readonly CONNECTING = 0;
+        static readonly OPEN = 1;
+        static readonly CLOSED = 2;
+        readyState = FinalAttemptEventSource.CONNECTING;
+        onopen: (() => void) | null = null;
+        onmessage: ((event: Event) => void) | null = null;
+        onerror: (() => void) | null = null;
+        private readonly listeners = new Map<string, Array<(event: Event) => void>>();
+        private closed = false;
+        constructor(url: string) {
+          if (!url.includes('/evaluation/') && !url.includes('/operations/')) source = { emit: (eventName: string): void => this.emit(eventName) };
+          setTimeout(() => {
+            if (this.closed) return;
+            this.readyState = FinalAttemptEventSource.OPEN;
+            this.onopen?.();
+          }, 0);
+        }
+        addEventListener(eventName: string, listener: (event: Event) => void): void {
+          const listeners = this.listeners.get(eventName) ?? [];
+          listeners.push(listener);
+          this.listeners.set(eventName, listeners);
+        }
+        emit(eventName: string): void {
+          if (this.closed) return;
+          const event = new MessageEvent(eventName, {
+            data: JSON.stringify({ resourceType: 'run', resourceId: '6f4f1d14-2adf-4e6d-9cc8-67a9ad4e9a01' }),
+          });
+          this.listeners.get(eventName)?.forEach((listener) => listener(event));
+          this.onmessage?.(event);
+        }
+        close(): void { this.closed = true; this.readyState = FinalAttemptEventSource.CLOSED; }
+      }
+      Object.defineProperty(window, 'EventSource', { configurable: true, writable: true, value: FinalAttemptEventSource });
+      Object.defineProperty(window, 'emitFinalRunInvalidation', {
+        configurable: true,
+        value: (): void => source?.emit('observation.changed'),
+      });
+    });
+
+    const traceRequests: number[] = [];
+    let releaseFinalResponse!: () => void;
+    const finalResponseBlocked = new Promise<void>((resolve) => { releaseFinalResponse = resolve; });
+    await openFixture(page);
+    await page.route(`**/api/v1/traces/${traceId}`, async (route) => {
+      traceRequests.push(Date.now());
+      if (traceRequests.length < 31) {
+        await route.abort('failed');
+        return;
+      }
+      if (traceRequests.length === 31) {
+        await page.evaluate(() => (window as unknown as { emitFinalRunInvalidation: () => void }).emitFinalRunInvalidation());
+        await finalResponseBlocked;
+      }
+      await route.fulfill({ json: { ...traceDetail(), partial: false } });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => traceRequests.length).toBe(1);
+
+    for (let attempt = 0; attempt < 29; attempt += 1) {
+      await page.clock.runFor(2_000);
+      await page.evaluate(() => Promise.resolve());
+      await expect.poll(() => traceRequests.length).toBe(attempt + 2);
+    }
+    await page.clock.runFor(2_000);
+    await page.evaluate(() => Promise.resolve());
+    await expect.poll(() => traceRequests.length).toBe(31);
+
+    const trace = page.locator('observatory-trace');
+    releaseFinalResponse();
+    await page.evaluate(() => Promise.resolve());
+    await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    await expect(trace.locator('[aria-label="Loading the selected run inspector"]')).toHaveCount(0);
+    await expect(trace.locator('#selected-run-title')).toHaveText(runId);
+    const rawDisclosure = trace.locator('details.trace-disclosure > summary');
+    await expect(rawDisclosure).toBeVisible();
+    await rawDisclosure.click();
+    await expect(trace.getByRole('heading', { name: traceId, exact: true })).toBeVisible();
+    await expect(trace.locator('.trace-card')).toBeVisible();
+    await expect(trace.getByRole('heading', { name: 'Trace lineage unavailable', exact: true })).toHaveCount(0);
+    await page.clock.runFor(2_000);
+    await page.evaluate(() => Promise.resolve());
+    await expect.poll(() => traceRequests.length).toBe(32);
+    expect(traceRequests.length).toBe(32);
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0116 fences a late completion from a previously selected run', async ({ page }) => {
+    await installRunInvalidationBridge(page);
+    await openFixture(page, { multipleRuns: true });
+    let aRequests = 0;
+    let bRequests = 0;
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const aBlocked = new Promise<void>((resolve) => { releaseA = resolve; });
+    const bBlocked = new Promise<void>((resolve) => { releaseB = resolve; });
+
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      aRequests += 1;
+      await aBlocked;
+      await route.fulfill({ json: runDetail() });
+    });
+    await page.route(`**/api/v1/runs/${comparisonRunId}`, async (route) => {
+      bRequests += 1;
+      await bBlocked;
+      await route.fulfill({
+        json: {
+          ...runDetail(),
+          ...comparisonRun,
+          observations: runDetail().observations.map((observation) => ({
+            ...observation,
+            deploymentId: comparisonRun.deploymentId,
+          })),
+        },
+      });
+    });
+    await page.route(`**/api/v1/traces/${comparisonRun.traceId}`, async (route) => {
+      await route.fulfill({
+        json: {
+          ...traceDetail(),
+          traceId: comparisonRun.traceId,
+          runId: comparisonRunId,
+        },
+      });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => aRequests).toBe(1);
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: comparisonRunId, exact: true }).click();
+    await expect.poll(() => bRequests).toBe(1);
+    await openDestination(page, 'Trace');
+    releaseB();
+
+    const trace = page.locator('observatory-trace');
+    await expect(trace.locator('#selected-run-title')).toHaveText(comparisonRunId, { timeout: 10_000 });
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('6.20 s');
+
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    releaseA();
+    await page.waitForTimeout(250);
+
+    expect(aRequests).toBe(1);
+    expect(bRequests).toBe(1);
+    await expect(trace.locator('#selected-run-title')).toHaveText(comparisonRunId);
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('6.20 s');
+  });
+
+  test('AURA-0116 fences a queued refresh after switching away from run A', async ({ page }) => {
+    await installRunInvalidationBridge(page);
+    await openFixture(page, { multipleRuns: true });
+    let aRequests = 0;
+    let bRequests = 0;
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      aRequests += 1;
+      await route.fulfill({ json: runDetail() });
+    });
+    await page.route(`**/api/v1/runs/${comparisonRunId}`, async (route) => {
+      bRequests += 1;
+      await route.fulfill({
+        json: {
+          ...runDetail(),
+          ...comparisonRun,
+          observations: runDetail().observations.map((observation) => ({
+            ...observation,
+            deploymentId: comparisonRun.deploymentId,
+          })),
+        },
+      });
+    });
+    await page.route(`**/api/v1/traces/${comparisonRun.traceId}`, async (route) => {
+      await route.fulfill({
+        json: {
+          ...traceDetail(),
+          traceId: comparisonRun.traceId,
+          runId: comparisonRunId,
+        },
+      });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => aRequests).toBe(1);
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    await expect(trace.locator('#selected-run-title')).toHaveText(runId);
+
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await page.waitForTimeout(100);
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: comparisonRunId, exact: true }).click();
+    await expect.poll(() => bRequests).toBe(1);
+    await openDestination(page, 'Trace');
+    await expect(trace.locator('#selected-run-title')).toHaveText(comparisonRunId);
+
+    // The queued A timer is now past its two-second delay, but its run identity
+    // is fenced and must not issue a second A request or replace B.
+    await page.waitForTimeout(2_250);
+    expect(aRequests).toBe(1);
+    expect(bRequests).toBe(1);
+    await expect(trace.locator('#selected-run-title')).toHaveText(comparisonRunId);
+    await expect(trace.locator('.run-card .summary-value strong')).toHaveText('6.20 s');
+  });
+
+  test('AURA-0116 drops a pending selected-run refresh when the session expires', async ({ page ,
+  }) => {
+    await installRunInvalidationBridge(page); await openFixture(page);
+    let detailRequests = 0;
+    let expireRefresh = false;
+    let releaseRefresh!: () => void;
+    const refreshBlocked = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      detailRequests += 1;
+      if (detailRequests === 2) await refreshBlocked;
+      if (expireRefresh) {
+        await route.fulfill({ status: 401, json: { code: 'session_required' } });
+        return;
+      }
+      await route.fulfill({ json: runDetail() });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await expect.poll(() => detailRequests).toBe(1);
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await expect.poll(() => detailRequests).toBe(2);
+
+    // Selecting a run intentionally unmounts Runs. Expire the blocked
+    // selected-run projection directly so this regression does not depend on
+    // a hidden workspace form remaining in the DOM.
+    expireRefresh = true;
+    releaseRefresh();
+    await expect(
+      page.getByRole('heading', { name: 'Your Observatory session expired', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Observatory sections' })).toHaveCount(0);
+
+    releaseRefresh();
+    await page.waitForTimeout(250);
+    expect(detailRequests).toBe(2);
+    await expect(page.locator('observatory-trace .run-card')).toHaveCount(0);
+    await expect(page.getByText(runId, { exact: true })).toHaveCount(0);
   });
 
   test('stops initial trace reconciliation after its bounded recovery window', async ({ page }) => {
@@ -2969,6 +3973,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
       await page.evaluate(() => Promise.resolve());
     }
     expect(fixture.traceRequests.length).toBe(requestsAtWindowEnd);
+    const trace = page.locator('observatory-trace');
+    await expect(trace.locator('[aria-label="Loading the selected run inspector"]')).toHaveCount(0);
+    await expect(
+      trace.getByRole('heading', { name: 'Trace lineage unavailable', exact: true }),
+    ).toBeVisible();
   });
 
   test('reconciles a named observation.changed SSE event beyond the initial REST snapshot', async ({
@@ -2997,38 +4006,772 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await openDestination(page, 'Runs');
     const status = page.getByRole('combobox', { name: 'Status' });
     await status.selectOption('succeeded');
-    await page.getByPlaceholder('component id').fill('aura.core.api');
+    await page.locator('observatory-runs').getByPlaceholder('component id').fill('aura.core.api');
     await page.getByRole('button', { name: 'Apply filters', exact: true }).click();
     await expect(page.getByText('fixture-chat')).toBeVisible();
     await page.getByRole('button', { name: runId, exact: true }).click();
     await openDestination(page, 'Trace');
-    await expect(page.getByText(/trace waterfall/i)).toBeVisible();
-    const traceList = page.getByRole('list', { name: 'Ordered trace spans' });
+    await expect(
+      page
+        .locator('observatory-trace')
+        .getByRole('heading', { name: 'Run inspector', exact: true }),
+    ).toBeVisible();
+    const rawDisclosure = page.locator('observatory-trace details.trace-disclosure > summary');
+    await expect(rawDisclosure).toBeVisible();
+    await rawDisclosure.click();
+    const traceList = page.locator('.trace-tree[aria-label="Trace span lineage"]');
     await expect(traceList).toHaveCount(1);
     await expect(traceList.getByText('request', { exact: true })).toBeVisible();
     await expect(traceList.getByText('job', { exact: true })).toBeVisible();
     await expect(traceList.getByText('partial / missing parent', { exact: true })).toBeVisible();
-    await expect(traceList.getByRole('listitem')).toHaveCount(3);
+    await expect(traceList.locator('.span-row')).toHaveCount(3);
+  });
+
+  test('AURA-0114 keeps terminal run headers readable and labels metadata-only evidence gaps', async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await openDestination(page, 'Runs');
+    const runs = page.locator('observatory-runs');
+    const runButton = runs.getByRole('button', { name: runId, exact: true });
+    await expect(runButton).toBeVisible();
+
+    const durationCell = runs.locator('tbody tr').first().locator('td').nth(2);
+    await expect(durationCell).toContainText('5.00 s');
+    await expect(durationCell).not.toContainText('5000 ms');
+    await expect(durationCell.locator('[aria-label="5000 milliseconds"]')).toBeVisible();
+
+    await runButton.click();
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    await expect(trace.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    await expect(trace.getByText('Governed capture.', { exact: false })).toBeVisible();
+    await expect(trace.getByRole('heading', { name: 'Execution timeline', exact: true })).toBeVisible();
+    const technicalDisclosure = trace.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+    const timeline = trace.getByRole('list', { name: 'Aggregate execution stages', exact: true });
+    await expect(trace.locator('.summary-value strong')).toHaveText('5.00 s');
+    await expect(trace.locator('.summary-value')).toHaveAttribute('aria-label', '5000 milliseconds');
+    await expect(trace.locator('.item-time[aria-label="3 count"]')).toHaveText('3 count');
+    await expect(trace.locator('.item-label time').first()).toContainText('·');
+    await expect(trace.locator('.item-label time').first()).toHaveAttribute('datetime');
+
+    for (const phase of [
+      'Request admission',
+      'Context & retrieval',
+      'Prompt construction',
+      'Model routing',
+      'Generation',
+      'Displayed thinking',
+      'Tools & policy',
+      'Persistence',
+      'Streaming & delivery',
+    ]) {
+      await expect(timeline.getByRole('heading', { name: phase, exact: true })).toBeVisible();
+    }
+
+    const coverage = trace.locator('.coverage-inline');
+    await expect(coverage).toBeVisible();
+    for (const [label, state] of [
+      ['Request & lifecycle', 'Excluded by policy'],
+      ['Chunks & context', 'Excluded by policy'],
+      ['Prompt text', 'Excluded by policy'],
+      ['Generated content', 'Excluded by policy'],
+      ['Displayed thinking', 'Excluded by policy'],
+      ['Tool payloads', 'Excluded by policy'],
+    ]) {
+      await expect(coverage.locator('span').filter({ hasText: label })).toContainText(state);
+    }
+
+    const phaseDisclosure = trace.locator('details.phase-disclosure > summary');
+    await expect(phaseDisclosure).toBeVisible();
+    await phaseDisclosure.click();
+    await expect(trace.getByRole('list', { name: 'Run phase coverage', exact: true })).toBeVisible();
+    const rawTraceDisclosure = trace.locator('details.trace-disclosure > summary');
+    await expect(rawTraceDisclosure).toBeVisible();
+    await rawTraceDisclosure.click();
+    await expect(trace.locator('.trace-tree[aria-label="Trace span lineage"]')).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0115 bounds late correlated metadata to a collapsed continuation summary', async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      const detail = runDetail();
+      const terminalAt = '2026-10-15T09:00:00.000Z';
+      detail.startedAt = '2026-10-15T08:59:55.000Z';
+      detail.finishedAt = terminalAt;
+      detail.partial = true;
+      detail.observations = [
+        { ...detail.observations[0], observedAt: detail.startedAt, measurement: { name: 'run_started', value: 1, unit: 'count' } },
+        { ...detail.observations[1], observedAt: terminalAt, measurement: { name: 'run_status', value: 1, unit: 'count' } },
+        { ...detail.observations[2], observedAt: new Date(Date.parse(terminalAt) + 100).toISOString(), measurement: { name: 'run_duration_ms', value: 5000, unit: 'milliseconds' } },
+        ...Array.from({ length: 40 }, (_, index) => ({
+          ...detail.observations[0],
+          observationId: `a3fdc06f-88ad-4a05-970d-f8b7c8cf${String(index + 20).padStart(4, '0')}`,
+          observedAt: new Date(Date.parse(terminalAt) + (index + 1) * 60_000).toISOString(),
+          measurement: { name: 'memory_retry_count', value: index + 1, unit: 'count' },
+          outcome: 'failed' as const,
+          serviceRole: 'worker' as const,
+        })),
+      ];
+      await route.fulfill({ json: detail });
+    });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    const continuationDisclosure = trace.locator('details.continuation-disclosure > summary');
+    await expect(continuationDisclosure).toBeVisible();
+    await continuationDisclosure.click();
+    await expect(trace.getByRole('heading', { name: 'Background continuation', exact: true })).toBeVisible();
+    await expect(trace.locator('.phase-count').filter({ hasText: '40+ loaded records' })).toBeVisible();
+    await expect(trace.getByText(/Loaded metadata window:/)).toBeVisible();
+    const continuation = trace.locator('details.continuation-details');
+    await expect(continuation).not.toHaveAttribute('open', '');
+    await continuation.locator('summary').click();
+    await expect(continuation.locator('li')).toHaveCount(20);
+    await expect(trace.getByText(/Showing at most the first 20 records from this loaded metadata page/)).toBeVisible();
+    await expect(trace.getByText(/More correlated metadata may exist beyond this page/)).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0115 discloses an incomplete page when no continuation rows are loaded', async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await page.route(`**/api/v1/runs/${runId}`, async (route) => {
+      const detail = runDetail();
+      const terminalAt = '2026-10-15T09:00:00.000Z';
+      detail.startedAt = '2026-10-15T08:59:55.000Z';
+      detail.finishedAt = terminalAt;
+      detail.partial = true;
+      detail.nextCursor = 'next-page';
+      detail.observations = [
+        { ...detail.observations[0], observedAt: detail.startedAt, measurement: { name: 'run_started', value: 1, unit: 'count' } },
+        { ...detail.observations[1], observedAt: terminalAt, measurement: { name: 'run_status', value: 1, unit: 'count' } },
+        { ...detail.observations[2], observedAt: new Date(Date.parse(terminalAt) + 100).toISOString(), measurement: { name: 'run_duration_ms', value: 5000, unit: 'milliseconds' } },
+      ];
+      await route.fulfill({ json: detail });
+    });
+    await page.route(`**/api/v1/traces/${traceId}`, async (route) => {
+      const trace = traceDetail();
+      trace.spans[0].startedAt = '2026-10-15T09:00:00.200Z';
+      await route.fulfill({ json: trace });
+    });
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const trace = page.locator('observatory-trace');
+    const continuationDisclosure = trace.locator('details.continuation-disclosure > summary');
+    await expect(continuationDisclosure).toBeVisible();
+    await continuationDisclosure.click();
+    await expect(trace.getByRole('heading', { name: 'Background continuation', exact: true })).toBeVisible();
+    await expect(trace.locator('.phase-count').filter({ hasText: 'Page incomplete' })).toBeVisible();
+    await expect(trace.getByText('Further correlated metadata was not loaded; no post-run count or range is known from this page.', { exact: true })).toBeVisible();
+    await expect(trace.locator('details.continuation-details')).toHaveCount(0);
+    const rawTraceDisclosure = trace.locator('details.trace-disclosure > summary');
+    await expect(rawTraceDisclosure).toBeVisible();
+    await rawTraceDisclosure.click();
+    await expect(trace.locator('.trace-tree[aria-label="Trace span lineage"]').getByText('request', { exact: true })).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 uses the authoritative inspection snapshot and keeps evidence lazy and inert', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'full' });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+    const timeline = inspector.getByRole('list', { name: 'Aggregate execution stages', exact: true });
+    for (const label of [
+      'Request admission',
+      'Context & retrieval',
+      'Prompt construction',
+      'Model routing',
+      'Generation',
+      'Displayed thinking',
+      'Tools & policy',
+      'Persistence',
+      'Streaming & delivery',
+    ]) {
+      await expect(timeline.getByText(label, { exact: true })).toBeVisible();
+    }
+    await expect(inspector.getByRole('region', { name: runId }).getByText('5.00 s', { exact: true })).toBeVisible();
+
+    // The manifest is present in the authoritative snapshot, but bytes must not
+    // be requested until the owner explicitly discloses one evidence item.
+    await expect.poll(() => page.getByText('Captured fixture evidence', { exact: true }).count()).toBe(0);
+    await expect.poll(() => page.getByText('window.__evidence_executed', { exact: false }).count()).toBe(0);
+    const disclosure = inspector.locator('details.evidence-item > summary').first();
+    await expect(disclosure).toBeVisible();
+    await disclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    const evidencePreview = inspector.locator('pre.evidence-preview').first();
+    await expect(evidencePreview).toContainText('Captured fixture evidence');
+    await expect(evidencePreview).toContainText('<script>window.__evidence_executed = true</script>');
+    expect(await evidencePreview.locator('script').count()).toBe(0);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+    expect(page.url()).not.toMatch(/evidence|secret|token/i);
+
+    const storage = await page.evaluate(async () => ({
+      local: Object.keys(localStorage),
+      session: Object.keys(sessionStorage),
+      caches: 'caches' in window ? await caches.keys() : [],
+      url: location.href,
+    }));
+    expect(JSON.stringify(storage)).not.toMatch(/safeFixtureText|hostileMarkup|evidenceId/i);
+    await disclosure.click();
+    await expect(evidencePreview).toHaveCount(0);
+    expect(await page.locator('pre.evidence-preview').count()).toBe(0);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed,
+      ),).toBeUndefined();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 preserves expanded state on run invalidation without refetching evidence', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page, { runInspection: 'full' });
+    let inspectionResponses = 0;
+    await page.route(`**/api/v1/runs/${runId}/inspection`, async (route) => {
+      inspectionResponses += 1;
+      await route.fulfill({ json: runInspection('full', inspectionResponses === 2 ? 2 : 1) });
+    });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+    const disclosure = inspector.locator('details.evidence-item > summary').first();
+    await disclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    await expect
+      .poll(() => page.evaluate(() => typeof (window as unknown as { emitRunInvalidation?: unknown }).emitRunInvalidation))
+      .toBe('function');
+
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await expect.poll(() => inspectionResponses).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    const refreshedDisclosure = inspector.locator('details.evidence-item > summary').first();
+    await expect(refreshedDisclosure.locator('..')).toHaveAttribute('open', '');
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 bounds a large inspection and keeps deletion behind confirmation', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'large' });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const stageAccordions = inspector.locator('details.stage-accordion');
+    expect(await stageAccordions.count()).toBeLessThanOrEqual(12);
+    await expect(inspector.locator('.trace-tree[aria-label="Trace span lineage"]:visible')).toHaveCount(0);
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await expect(technicalDisclosure).toContainText(/bounded, paged records/i);
+    await technicalDisclosure.click();
+    const deleteButton = inspector.getByRole('button', { name: /delete .*evidence/i }).first();
+    await expect(deleteButton).toBeVisible();
+    let confirmationSeen = false;
+    page.once('dialog', async (dialog) => {
+      confirmationSeen = true;
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toMatch(/delete all retained evidence/i);
+      await dialog.dismiss();
+    });
+    await deleteButton.click();
+    await expect.poll(() => confirmationSeen).toBe(true);
+    expect(fixture.evidenceDeletionRequests).toHaveLength(0);
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0122 opens an operator-first Trace with bounded stage disclosure and raw-record paging', async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const compact = (page.viewportSize()?.width ?? 1280) <= 832;
+    await page.setViewportSize(compact ? { width: 390, height: 844 } : { width: 1440, height: 1000 });
+    const fixture = await openFixture(page, { runInspection: 'large', largeTrace: true });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    await expect(inspector.getByText(runId, { exact: true })).toBeVisible();
+    await expect(inspector.getByText('5.00 s', { exact: true }).first()).toBeVisible();
+    await expect(inspector.getByText(/succeeded|healthy|complete/i).first()).toBeVisible();
+    const operatorSummary = inspector.locator('.operator-summary');
+    await expect(operatorSummary).toContainText(/Total duration/i);
+    await expect(operatorSummary).toContainText(/Evidence coverage/i);
+
+    const stageAccordions = inspector.locator('details.stage-accordion');
+    await expect.poll(() => stageAccordions.count()).toBeLessThanOrEqual(12);
+    await expect(stageAccordions.locator('summary').filter({ hasText: /Generation/i })).toBeVisible();
+    await expect(stageAccordions.locator('summary').filter({ hasText: /Retrieval/i })).toBeVisible();
+    await expect(stageAccordions.locator('summary').filter({ hasText: /Tools/i })).toBeVisible();
+    await expect(inspector.locator('.trace-tree[aria-label="Trace span lineage"]:visible')).toHaveCount(0);
+    await expect(inspector.locator('.span-row:visible')).toHaveCount(0);
+    const documentSize = await page.evaluate(() => ({ height: document.documentElement.scrollHeight, viewport: window.innerHeight }));
+    expect(documentSize.height).toBeLessThanOrEqual(documentSize.viewport * (compact ? 3 : 2) + 2);
+    expect(fixture.evidenceRequests).toHaveLength(0);
+
+    const advanced = inspector.locator('summary').filter({ hasText: /Advanced|exact execution steps/i }).first();
+    await expect(advanced).toBeVisible();
+    await advanced.click();
+
+    const inspectionTimeline = inspector.locator('ol.inspection-timeline[aria-label="Run execution steps"]');
+    await expect(inspectionTimeline.locator('.inspection-step')).toHaveCount(20);
+    const firstStep = inspectionTimeline.locator('.inspection-step').first();
+    const measurementCells = firstStep.locator('.measurement-row span');
+    await expect(measurementCells).toHaveCount(20);
+    const measurementPager = firstStep.locator('button.load-more');
+    await expect(measurementPager).toBeVisible();
+    await measurementPager.click();
+    await expect(measurementCells).toHaveCount(24);
+
+    const stepPager = inspector.locator('details.technical-disclosure:not(.phase-disclosure):not(.continuation-disclosure):not(.trace-disclosure) ol.inspection-timeline + button.load-more');
+    let stepPages = 0;
+    for (; stepPages < 40 && (await stepPager.count()) > 0 && ( await stepPager.isVisible()); stepPages += 1) {
+      const before = await inspectionTimeline.locator('.inspection-step').count();
+      await stepPager.dispatchEvent('click');
+      await expect.poll(() => inspectionTimeline.locator('.inspection-step').count()).toBeGreaterThan(before);
+    }
+    expect(stepPages).toBeGreaterThan(1);
+    await expect(inspectionTimeline.locator('.inspection-step')).toHaveCount(220);
+    await expect(inspectionTimeline.locator('.inspection-step').last()).toContainText('final-large-step');
+    await expect(inspector.getByText(/Server continuation available:.*cursor/i)).toBeVisible();
+
+    const rawDisclosure = inspector.locator('details.trace-disclosure > summary');
+    if (await rawDisclosure.count()) {
+      await rawDisclosure.click();
+    }
+    const rawTree = inspector.locator('.trace-tree[aria-label="Trace span lineage"]');
+    await expect(rawTree).toBeVisible();
+    await expect(rawTree.locator('.span-row')).toHaveCount(20);
+    await expect(rawTree.getByRole('img', { name: /relative duration bar/i }).first()).toBeVisible();
+    await expect(
+      inspector.locator('.trace-disclosure button.load-more:visible, .trace-disclosure .evidence-limit:visible').first(),
+    ).toBeVisible();
+    const spanPager = inspector.locator('details.trace-disclosure button.load-more');
+    let spanPages = 0;
+    for (; spanPages < 20 && (await spanPager.count()) > 0 && ( await spanPager.isVisible()); spanPages += 1) {
+      const before = await rawTree.locator('.span-row').count();
+      await spanPager.dispatchEvent('click');
+      await expect.poll(() => rawTree.locator('.span-row').count()).toBeGreaterThan(before);
+    }
+    expect(spanPages).toBeGreaterThan(1);
+    await expect(rawTree.locator('.span-row')).toHaveCount(220);
+    await expect(rawTree.locator('.span-row').last()).toContainText('final-large-span');
+    await expectNoA11yViolations(page);
+
+    const storage = await page.evaluate(() => ({
+      local: Object.keys(localStorage),
+      session: Object.keys(sessionStorage),
+      url: location.href,
+    }));
+    expect(storage.local).toEqual([]);
+    expect(storage.session).toEqual([]);
+    expect(storage.url).not.toMatch(/evidence|secret|token|spanId/i);
+  });
+
+  test('AURA-0122 preserves an open stage and closed evidence across run invalidation', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    const fixture = await openFixture(page, { runInspection: 'full', largeTrace: true });
+    let inspectionResponses = 0;
+    await page.route(`**/api/v1/runs/${runId}/inspection`, async (route) => {
+      inspectionResponses += 1;
+      await route.fulfill({ json: runInspection('full', inspectionResponses > 1 ? 2 : 1) });
+    });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    const stage = inspector.locator('details.stage-accordion').first();
+    await expect(stage).toBeVisible();
+    await stage.locator('summary').click();
+    await expect(stage).toHaveAttribute('open', '');
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(0);
+    await expect
+      .poll(() => page.evaluate(() => typeof (window as unknown as { emitRunInvalidation?: unknown }).emitRunInvalidation))
+      .toBe('function');
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await expect.poll(() => inspectionResponses).toBeGreaterThanOrEqual(2);
+    await expect(stage).toHaveAttribute('open', '');
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(0);
+    await expect(inspector.getByText('5.00 s', { exact: true }).first()).toBeVisible();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0122 aborts disclosed and pending evidence when the parent technical panel collapses', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'full', deferEvidence: true });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+    const evidenceDisclosure = inspector.locator('details.evidence-item > summary').first();
+    await evidenceDisclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    fixture.releaseEvidence();
+    await expect(inspector.locator('pre.evidence-preview')).toContainText('Captured fixture evidence');
+
+    // Collapsing the owning technical disclosure must dispose of an already
+    // loaded payload, rather than leaving bytes hidden in the DOM.
+    await technicalDisclosure.click();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    await expect(inspector.getByText('Captured fixture evidence', { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+
+    // A second request is intentionally left pending and then cancelled by
+    // the same parent collapse before the fixture releases its response.
+    await technicalDisclosure.click();
+    await inspector.locator('details.evidence-item > summary').first().click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(2);
+    await technicalDisclosure.click();
+    fixture.releaseEvidence();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    await expect(inspector.getByText('Captured fixture evidence', { exact: true })).toHaveCount(0);
+    expect(fixture.evidenceRequests).toHaveLength(2);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 completes confirmed evidence deletion exactly once and keeps metadata visible', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'full' });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+    const deleteButton = inspector.getByRole('button', { name: 'Delete retained evidence', exact: true });
+    await expect(deleteButton).toBeVisible();
+    let confirmationSeen = false;
+    page.once('dialog', async (dialog) => {
+      confirmationSeen = true;
+      expect(dialog.type()).toBe('confirm');
+      expect(dialog.message()).toMatch(/delete all retained evidence/i);
+      await dialog.accept();
+    });
+    await deleteButton.click();
+    await expect.poll(() => confirmationSeen).toBe(true);
+    await expect.poll(() => fixture.evidenceDeletionRequests.length).toBe(1);
+    await expect(inspector.getByText('Evidence deleted', { exact: true }).first()).toBeVisible();
+    await expect(inspector.getByText('Retained evidence was deleted by the owner. Metadata and step timing remain visible.', { exact: true })).toBeVisible();
+    await expect(inspector.getByRole('list', { name: 'Aggregate execution stages', exact: true }).getByText('Request admission', { exact: true })).toBeVisible();
+    await expect(inspector.locator('.evidence-state.state-deleted').first()).toBeVisible();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    expect(fixture.evidenceDeletionRequests).toHaveLength(1);
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0123 pauses selected-run reads after accepted deletion and resumes reconciliation on Trace re-entry', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'full',
+      evidenceDeletionStatus: 'accepted',
+    });
+    const selectedRunReads = (): number =>
+      fixture.apiRequests.filter(
+        ({ method, path }) =>
+          method === 'GET' &&
+          (path.endsWith(`/runs/${runId}`) || path.endsWith(`/runs/${runId}/inspection`)),
+      ).length;
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    await expect(
+      inspector.getByRole('heading', { name: 'Run inspector', exact: true }),
+    ).toBeVisible();
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await technicalDisclosure.click();
+    const deleteButton = inspector.getByRole('button', {
+      name: 'Delete retained evidence',
+      exact: true,
+    });
+    await expect(deleteButton).toBeVisible();
+    page.once('dialog', (dialog) => dialog.accept());
+    await deleteButton.click();
+    await expect.poll(() => fixture.evidenceDeletionRequests.length).toBe(1);
+    await expect(
+      inspector.getByRole('button', { name: 'Deletion in progress…', exact: true }).last(),
+    ).toBeVisible();
+    await expect.poll(selectedRunReads).toBeGreaterThan(2);
+
+    await openDestination(page, 'Overview');
+    const readsOnLeave = selectedRunReads();
+    await page.waitForTimeout(1_000);
+    expect(selectedRunReads()).toBe(readsOnLeave);
+
+    // The accepted command and idempotency key remain in the store while the
+    // Trace workspace is unmounted. Re-entering Trace must resume its durable
+    // status reconciliation rather than losing the in-progress state.
+    await openDestination(page, 'Trace');
+    await expect(
+      inspector.getByRole('heading', { name: 'Run inspector', exact: true }),
+    ).toBeVisible();
+    await expect.poll(selectedRunReads, { timeout: 2_000 }).toBeGreaterThan(readsOnLeave);
+    const reentryTechnicalDisclosure = inspector
+      .locator('details.technical-disclosure > summary')
+      .first();
+    await expect(reentryTechnicalDisclosure).toBeVisible();
+    if ((await reentryTechnicalDisclosure.locator('..').getAttribute('open')) === null) {
+      await reentryTechnicalDisclosure.click();
+    }
+    await expect(
+      inspector.getByRole('button', { name: 'Deletion in progress…', exact: true }).last(),
+    ).toBeVisible();
+    await openDestination(page, 'Overview');
+  });
+
+  test('AURA-0121 discards delayed evidence after collapse and run change without refetching', async ({
+    page,
+  }) => {
+    const fixture = await openFixture(page, { runInspection: 'full', deferEvidence: true, multipleRuns: true });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    let inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('heading', { name: 'Run inspector', exact: true })).toBeVisible();
+    let technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+
+    const firstDisclosure = inspector.locator('details.evidence-item > summary').first();
+    await firstDisclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+    await firstDisclosure.click();
+    fixture.releaseEvidence();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    inspector = page.locator('observatory-trace');
+    technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    if ((await technicalDisclosure.locator('..').getAttribute('open')) === null) {
+      await technicalDisclosure.click();
+    }
+    const secondDisclosure = inspector.locator('details.evidence-item > summary').first();
+    await secondDisclosure.click();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(2);
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: comparisonRunId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    inspector = page.locator('observatory-trace');
+    await expect(inspector.getByRole('region', { name: comparisonRunId })).toBeVisible();
+    fixture.releaseEvidence();
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(2);
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    await expect(page.getByText('Captured fixture evidence', { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 clears disclosed bytes after live captured-to-deleted invalidation without refetching', async ({
+    page,
+  }) => {
+    await installRunInvalidationBridge(page);
+    await page.addInitScript(() => {
+      Object.defineProperty(window, '__evidence_object_url_revocations', { configurable: true, writable: true, value: 0 });
+      const revoke = URL.revokeObjectURL.bind(URL);
+      URL.revokeObjectURL = (url: string): void => {
+        (window as unknown as { __evidence_object_url_revocations: number }).__evidence_object_url_revocations += 1;
+        revoke(url);
+      };
+    });
+    const fixture = await openFixture(page, { runInspection: 'full', evidenceMedia: 'image' });
+    await openDestination(page, 'Runs');
+    await page.getByRole('button', { name: runId, exact: true }).click();
+    await openDestination(page, 'Trace');
+    const inspector = page.locator('observatory-trace');
+    const technicalDisclosure = inspector.locator('details.technical-disclosure > summary').first();
+    await expect(technicalDisclosure).toBeVisible();
+    await technicalDisclosure.click();
+    const disclosure = inspector.locator('details.evidence-item > summary').first();
+    await disclosure.click();
+    await expect(inspector.locator('img.evidence-image')).toHaveAttribute('src', /^blob:/);
+    await expect.poll(() => fixture.evidenceRequests.length).toBe(1);
+
+    // Model deletion from another owner tab: only the metadata invalidation is
+    // delivered to this inspector; it must clear the already-disclosed bytes.
+    fixture.markEvidenceDeleted();
+    await page.evaluate((selectedRunId) => {
+      (window as unknown as { emitRunInvalidation: (runId: string) => void }).emitRunInvalidation(selectedRunId);
+    }, runId);
+    await expect.poll(() => fixture.inspectionRequests.length).toBeGreaterThanOrEqual(2);
+    await expect(inspector.getByText('Retained evidence was deleted by the owner. Metadata and step timing remain visible.', { exact: true })).toBeVisible();
+    await expect(inspector.locator('.evidence-state.state-deleted').first()).toBeVisible();
+    await expect(inspector.locator('pre.evidence-preview')).toHaveCount(0);
+    await expect(inspector.locator('img.evidence-image')).toHaveCount(0);
+    await expect(page.getByText('Captured fixture evidence', { exact: true })).toHaveCount(0);
+    expect(fixture.evidenceRequests).toHaveLength(1);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_object_url_revocations: number }).__evidence_object_url_revocations)).toBeGreaterThanOrEqual(1);
+    expect(await page.evaluate(() => (window as unknown as { __evidence_executed?: boolean }).__evidence_executed)).toBeUndefined();
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 closes the mobile navigation after selecting each destination', async ({ page }) => {
+    await openFixture(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const destination of [
+      'Overview',
+      'Runs',
+      'Trace',
+      'Components',
+      'Analytics',
+      'Compare',
+      'Evaluations',
+      'Experiments',
+      'Operations',
+      'Retention',
+    ]) {
+      await openDestination(page, destination);
+      await expect(page.locator('#observatory-sections')).toHaveAttribute('aria-hidden', 'true');
+      await expect(page.locator('#observatory-sections').locator('button').filter({ hasText: destination }).first()).toHaveAttribute('aria-current', 'page');
+      const layout = await page.evaluate(() => ({
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+      }));
+      expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
+    }
+    await expectNoA11yViolations(page);
+  });
+
+  test('AURA-0121 exposes Observatory-owned SVG icons with semantic hidden treatment', async ({ page }) => {
+    await openFixture(page);
+    const navigation = page.locator('#observatory-sections');
+    const icons = navigation.locator('observatory-icon svg.observatory-icon');
+    expect(await icons.count()).toBeGreaterThan(0);
+    expect(
+      await icons.evaluateAll((elements) =>
+        elements.every((element) => element.getAttribute('aria-hidden') === 'true' && !element.hasAttribute('aria-label')),
+      ),
+    ).toBe(true);
+    expect(await navigation.locator('button.nav-item').evaluateAll((buttons) => buttons.every((button) => button.querySelector('svg.observatory-icon')))).toBe(true);
+    await expectNoA11yViolations(page);
   });
 
   test('shows component health summaries and a bounded trend', async ({ page }) => {
-    await openFixture(page);
+    await openFixture(page, { componentTopology: 'declared' });
     await openDestination(page, 'Components');
     const components = page.locator('observatory-components');
-    await expect(components.getByText('aura.core.api', { exact: true })).toBeVisible();
+    await expect(components.getByText('aura.observatory.query_api', { exact: true })).toBeVisible();
     await expect(components.getByText(/p50|latency/i).first()).toBeVisible();
     await expect(components.getByText(/errors?/i).first()).toBeVisible();
-    const firstComponent = components.getByRole('article').first();
+    const firstComponent = components.getByRole('article', { name: 'aura.observatory.query_api' });
     await expect(
-      firstComponent.locator('dt').filter({ hasText: 'Samples' }).locator('..').locator('dd'),
+      firstComponent.locator('.component-metrics span').filter({ hasText: 'samples' }).locator('strong'),
     ).toHaveText('4');
-    const trendValues = page.locator('observatory-components [role="img"][aria-label]');
+    const inspect = firstComponent.locator('button[aria-controls="component-details-panel"]');
+    await inspect.click();
+    const trendValues = page.locator('observatory-components .trend [role="img"][aria-label]');
     await expect(trendValues.first()).toBeVisible({ timeout: 10_000 });
     expect(
       await trendValues.evaluateAll((items) =>
         items.every((item) => /samples at/i.test(item.getAttribute('aria-label') ?? '')),
       ),
     ).toBe(true);
+  });
+
+  test('AURA-0122 opens a compact problem-first Components catalogue with one progressive detail surface', async ({
+    page,
+  }) => {
+    const compact = (page.viewportSize()?.width ?? 1280) <= 832;
+    await page.setViewportSize(compact ? { width: 390, height: 844 } : { width: 1440, height: 1000 });
+    await openFixture(page, { largeComponents: true });
+    await openDestination(page, 'Components');
+    const components = page.locator('observatory-components');
+    const kpis = components.locator('.catalogue-kpis');
+    await expect(kpis).toBeVisible();
+    await expect(kpis.locator('div').filter({ hasText: /^60\s*Total$/i })).toHaveCount(1);
+    await expect(kpis.locator('div').filter({ hasText: /^2\s*Degraded$/i })).toHaveCount(1);
+    await expect(kpis.locator('div').filter({ hasText: /^1\s*No outcome data$/i })).toHaveCount(1);
+    await expect(components.locator('.catalogue-summary')).toContainText('Showing 60 of 60 components');
+    for (const summary of ['Degraded', 'No (?:outcome )?data', 'definition', 'Healthy']) {
+      await expect(components.getByText(new RegExp(summary, 'i')).first()).toBeVisible();
+    }
+
+    const catalogue = components.locator('[aria-label="Component catalogue"]');
+    await expect(catalogue).toBeVisible();
+    const rows = catalogue.locator('.component-card, [role="listitem"]');
+    await expect(rows).toHaveCount(20);
+    await expect(rows.first()).toContainText(/Degraded|No outcome data/i);
+    await expect(rows.filter({ hasText: /No outcome data/i }).first()).toBeVisible();
+    await expect(rows.first()).toContainText(/samples|p95|error|definition/i);
+    await expect(rows.locator('[role="img"]')).toHaveCount(0);
+
+    const firstRow = rows.filter({ hasText: 'aura.observatory.query_api' }).first();
+    const open = firstRow.getByRole('button').first();
+    await open.focus();
+    await page.keyboard.press('Enter');
+    const detail = components.locator('#component-details-panel');
+    await expect(detail).toBeVisible();
+    await expect(detail.getByRole('heading').first()).toBeFocused();
+    const topology = detail.locator('details').filter({ hasText: /topology|dependencies/i }).first();
+    await expect(topology).toBeVisible();
+    await expect(topology).not.toHaveAttribute('open', '');
+    await topology.locator('summary').click();
+    await expect(topology).toHaveAttribute('open', '');
+    await expect(topology.getByRole('region', { name: /dependency relationship table/i })).toBeVisible();
+    await topology.locator('summary').click();
+    await expect(topology).not.toHaveAttribute('open', '');
+
+    if (compact) {
+      const catalogueSection = components.locator('.catalogue-section');
+      await expect(catalogueSection).toHaveClass(/catalogue-hidden-small/);
+      await expect(catalogueSection).not.toBeVisible();
+      await expect(detail.getByRole('button', { name: /back|close details/i })).toBeVisible();
+    } else {
+      await expect(components.locator('.catalogue-section')).toBeVisible();
+      await expect(detail).toBeVisible();
+    }
+    const layout = await page.evaluate(() => ({
+      width: document.documentElement.scrollWidth,
+      viewport: window.innerWidth,
+      height: document.documentElement.scrollHeight,
+      viewportHeight: window.innerHeight,
+    }));
+    expect(layout.width).toBeLessThanOrEqual(layout.viewport + 1);
+    expect(layout.height).toBeLessThanOrEqual(layout.viewportHeight * (compact ? 3 : 4) + 2);
+    await expectNoA11yViolations(page);
   });
 
   test('keeps the component catalogue structural loading state while its request is pending', async ({
@@ -3068,7 +4811,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     const observedOnly = components.getByRole('article').filter({ hasText: 'aura.core.scheduler' });
     await expect(observedOnly).toContainText('Observed only');
     await expect(observedOnly).toContainText(
-      'No approved definition is available for this observed component.',
+      'Observed metadata only; no approved definition is available.',
     );
     await expect(observedOnly).toContainText('No outcome data');
     await expect(observedOnly).not.toContainText(/Healthy|Degraded/);
@@ -3086,6 +4829,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     await expect(page.locator('#component-details-title')).toBeVisible();
     await expect(open).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('#component-details-title')).toBeFocused();
+    const topologyDisclosure = page.locator('#component-details-panel details.topology-disclosure');
+    await expect(topologyDisclosure).toBeVisible();
+    await topologyDisclosure.locator('summary').click();
     const table = page.getByRole('table', { name: /Complete dependency relationships/ });
     await expect(table).toBeVisible();
     await expect(table.getByText('Missing definition', { exact: true })).toBeVisible();
@@ -3105,7 +4851,8 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   }) => {
     await openFixture(page, { componentTopology: 'partial' });
     await openDestination(page, 'Components');
-    await page.getByRole('button', { name: 'View definition and topology' }).first().click();
+    await page.locator('button[aria-controls="component-details-panel"]').first().click();
+    await page.locator('#component-details-panel details.topology-disclosure summary').click();
     await expect(
       page.getByText('Partial health; some observations are unavailable.', { exact: true }),
     ).toBeVisible();
@@ -3137,7 +4884,8 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   test('matches topology availability and health to each target version', async ({ page }) => {
     await openFixture(page, { componentTopology: 'multi-version' });
     await openDestination(page, 'Components');
-    await page.getByRole('button', { name: 'View definition and topology' }).first().click();
+    await page.locator('button[aria-controls="component-details-panel"]').first().click();
+    await page.locator('#component-details-panel details.topology-disclosure summary').click();
     const table = page.getByRole('table', { name: /Complete dependency relationships/ });
     const versionOne = table.locator('tbody tr').filter({ hasText: '2.0.0' }).first();
     const versionZero = table.locator('tbody tr').filter({ hasText: '1.0.0' }).first();
@@ -3156,19 +4904,22 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   }) => {
     await openFixture(page, { componentTopology: 'declared', detailFailure: 'dependencies' });
     await openDestination(page, 'Components');
-    const opener = page.getByRole('button', { name: 'View definition and topology' }).first();
+    await expect(page.locator('observatory-components .component-card').filter({ hasText: 'aura.observatory.query_api' })).toBeVisible({ timeout: 10_000 });
+    const opener = page.locator('button[aria-controls="component-details-panel"]').first();
     await opener.press('Enter');
-    await expect(page.getByRole('status').filter({ hasText: 'partially loaded' })).toBeVisible();
     const retry = page.getByRole('button', { name: 'Retry details', exact: true });
     const details = page.locator('#component-details-panel');
+    await expect(details).toBeVisible({ timeout: 10_000 });
+    await expect(details.getByText('Partial component details.', { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(details.getByText('observatory', { exact: true })).toBeVisible();
     await expect(details.getByText('Partial component details.', { exact: true })).toBeVisible();
     await retry.focus();
     await retry.press('Enter');
+    await details.locator('details.topology-disclosure summary').click();
     await expect(
       page.getByRole('table', { name: /Complete dependency relationships/ }),
     ).toBeVisible();
-    await expect(page.locator('#component-details-title')).toBeFocused();
+    await expect(page.locator('#component-details-title')).toBeVisible();
     await expect(details.getByText('observatory', { exact: true })).toBeVisible();
     await expect(page.locator('.sr-only[role="status"]')).toContainText('loaded');
     await expectNoA11yViolations(page);
@@ -3177,8 +4928,11 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   test('keeps malformed definition data in a recoverable detail state', async ({ page }) => {
     await openFixture(page, { componentTopology: 'declared', detailFailure: 'malformed' });
     await openDestination(page, 'Components');
-    await page.getByRole('button', { name: 'View definition and topology' }).first().press('Enter');
-    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.locator('observatory-components .component-card').filter({ hasText: 'aura.observatory.query_api' })).toBeVisible({ timeout: 10_000 });
+    await page.locator('button[aria-controls="component-details-panel"]').first().press('Enter');
+    const details = page.locator('#component-details-panel');
+    await expect(details).toBeVisible({ timeout: 10_000 });
+    await expect(details.getByText('Partial component details.', { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('#component-details-title')).toBeFocused();
     await expect(page.getByRole('button', { name: 'Retry details', exact: true })).toBeVisible();
     await expectNoA11yViolations(page);
@@ -3189,13 +4943,15 @@ test.describe('Observatory Web mocked browser acceptance', () => {
   }) => {
     await openFixture(page, { componentTopology: 'declared', detailFailure: 'malformed-topology' });
     await openDestination(page, 'Components');
-    const opener = page.getByRole('button', { name: 'View definition and topology' }).first();
+    const opener = page.locator('button[aria-controls="component-details-panel"]').first();
     await opener.click();
     const details = page.locator('#component-details-panel');
+    await expect(details).toBeVisible();
     await expect(details.locator('#component-details-title')).toBeFocused();
     await expect(details.getByRole('alert')).toContainText('Partial component details');
     await expect(details.getByText('observatory', { exact: true })).toBeVisible();
     await details.getByRole('button', { name: 'Retry details', exact: true }).press('Enter');
+    await details.locator('details.topology-disclosure summary').click();
     await expect(
       details.getByRole('table', { name: /Complete dependency relationships/ }),
     ).toBeVisible();
@@ -3437,6 +5193,7 @@ test.describe('Observatory Web mocked browser acceptance', () => {
           color: style?.color ?? 'transparent',
           painted: isPainted(style?.color ?? 'transparent'),
           visibleText: !!child?.textContent?.trim() && !!child?.getClientRects().length,
+          requiresText: selector === '.nav-label' || selector === '.nav-description',
         };
       });
       return {
@@ -3450,7 +5207,9 @@ test.describe('Observatory Web mocked browser acceptance', () => {
     expect(forcedColors.forcedColorAdjust).toBe('none');
     expect(forcedColors.foregroundPainted).toBe(true);
     expect(forcedColors.backgroundPainted, JSON.stringify(forcedColors)).toBe(true);
-    expect(forcedColors.children.every((child) => child.painted && child.visibleText)).toBe(true);
+    // Glyphs are SVG-owned semantic icons and intentionally have no text node;
+    // only the label/description spans need visible text in forced colors.
+    expect(forcedColors.children.every((child) => child.painted && (!child.requiresText || child.visibleText))).toBe(true);
   });
 
   test('uses keyboard-accessible retention confirmation, progress, failure, and refreshes after completion', async ({

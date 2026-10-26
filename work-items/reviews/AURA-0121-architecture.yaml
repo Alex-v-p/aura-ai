@@ -1,0 +1,20 @@
+agent: architecture_guardian
+work_item: AURA-0121
+verdict: PASS
+checked:
+  - Active AURA-0121 owner decisions, allowed and forbidden paths, acceptance criteria, and implementation handoffs.
+  - Architecture handover, system context, module boundaries, accepted ADR-0017, ownership manifests, and the existing Observatory v1 generated API boundary.
+  - Complete current authorized change set, including the Observatory shell, feature library, Storybook fixtures, browser acceptance, governance records, and full-stack boundary assertion.
+  - Observatory application composition remains thin; run inspection, evidence disclosure, deletion state, formatting, and presentation behavior remain in the Observatory feature library.
+  - The feature library consumes getRunInspection, getRunEvidence, and deleteRunEvidence through the existing @aura/observatory-api-client public generated client without duplicating or editing transport contracts.
+  - Evidence stays on the owner-authenticated Observatory path, is fetched lazily, held only in memory, cleared on collapse or run change, and never crosses into Aura Web code or a shared product session.
+  - No Core implementation, Observatory backend, database, provider adapter, deployment topology, contract, generated client, Aura Web, Aura feature, or shared UI source was changed.
+  - Repository shape, changed-path authorization, contract-change, generated-sync, import-boundary, service-isolation, and frontend-boundary validators all passed.
+  - Delivery-owned governance correction aligned required evaluators with the existing aura.observatory.run_inspection_query manifest and removed unsupported Vitest flags without changing product paths.
+  - Corrected work-item and observability validators passed; final Observatory Web and Observatory library tests passed with 1 and 70 tests respectively.
+  - Final post-UX diff adds only authorized Observatory feature helpers, tests, and observatory-prefixed Storybook stories; stories consume the @aura/observatory public barrel and feature helpers do not create a new package or cross-product dependency.
+  - Final module-registry, changed-path, contract, generated-sync, import-boundary, service-isolation, frontend-boundary, repository-shape, and observability validators passed with the expanded review records included.
+  - Observatory Web lint and production build passed; git diff --check passed.
+findings: []
+risks: []
+unresolved: []

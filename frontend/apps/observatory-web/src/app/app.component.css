@@ -101,6 +101,7 @@ button:focus-visible,a:focus-visible { outline: 3px solid var(--obs-focus); outl
    * avoiding a second visual layer at narrow widths. */
   .navigation-rail { box-shadow: var(--obs-shadow-md); inset-block: 0; inset-inline-start: 0; max-height: 100dvh; max-width: calc(100vw - 2.5rem); overflow-y: auto; position: fixed; transform: translateX(calc(-100% - 1rem)); transition: transform .2s ease; width: min(20rem, calc(100vw - 2.5rem)); z-index: 40; }
   .navigation-rail.mobile-open { transform: translateX(0); }
+  .navigation-rail.mobile-closed { pointer-events: none; visibility: hidden; }
   .navigation-rail .nav-description { display: inline; }
   .mobile-close { display: inline-flex; font-size: 1.25rem; line-height: 1; min-height: 2rem; padding: .15rem .45rem; }
   .mobile-scrim { background: rgb(30 20 18 / .45); display: block; inset: 0; opacity: 0; pointer-events: none; position: fixed; transition: opacity .2s ease; z-index: 30; }

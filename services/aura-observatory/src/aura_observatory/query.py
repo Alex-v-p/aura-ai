@@ -417,6 +417,14 @@ COMPARISON_MAX_SCANNED_ROWS = 1_000_000
 COMPARISON_QUERY_ROWS = (COMPARISON_MAX_OBSERVATIONS + 1) * 2
 COMPARISON_EXECUTION_TIMEOUT_MS = 5_000
 _COMPARISON_DURATION_NAMES = frozenset({"duration_ms", "operation_duration_ms", "run_duration_ms"})
+_RUN_STARTED_NAME = "run_started"
+_RUN_STATUS_NAME = "run_status"
+_RUN_DURATION_NAME = "run_duration_ms"
+_RUN_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
+_RUN_LIFECYCLE_NAMES = frozenset({_RUN_STARTED_NAME, _RUN_STATUS_NAME, _RUN_DURATION_NAME})
+_MODEL_EXECUTION_COMPONENTS = frozenset(
+    {"aura.runtime.model_routing", "aura.runtime.model_inference"}
+)
 _V2_ONLY_MARKERS = frozenset(
     {
         "image_version",
@@ -1690,16 +1698,32 @@ class ObservatoryQueryService:
             for item in observations
             if sequence_by_id.get(item.observation_id, 0) <= snapshot_sequence
         ]
-        # Status is derived from the latest observation in each run.  Applying
-        # it to rows before grouping would allow an earlier status to keep a
-        # run in a later-status query.
+        cursor_snapshot: int | None = None
+        cursor_at: datetime | None = None
+        cursor_id: str | None = None
+        if cursor:
+            cursor_snapshot, cursor_at, cursor_id = decode_run_cursor(cursor)
+            if cursor_snapshot is not None:
+                snapshot_sequence = min(snapshot_sequence, cursor_snapshot)
+                observations = [
+                    item
+                    for item in observations
+                    if sequence_by_id.get(item.observation_id, 0) <= snapshot_sequence
+                ]
+
+        # Discovery filters qualify run IDs from the fenced snapshot, but the
+        # header for every qualifying run is projected from all of that run's
+        # rows.  A model/component/time match must not strip lifecycle rows
+        # and make a completed run look active or legacy.
         selected = [item for item in observations if _matches(item, filters, include_status=False)]
-        selected.sort(
-            key=lambda item: (item.observed_at.astimezone(UTC), item.observation_id), reverse=True
-        )
+        qualifying_run_ids = {
+            item.correlation.run_id
+            for item in selected
+            if item.correlation and item.correlation.run_id
+        }
         groups: dict[str, list[MetadataObservation]] = defaultdict(list)
-        for item in selected:
-            if item.correlation and item.correlation.run_id:
+        for item in observations:
+            if item.correlation and item.correlation.run_id in qualifying_run_ids:
                 groups[item.correlation.run_id].append(item)
         grouped_runs = sorted(
             groups.items(),
@@ -1708,39 +1732,23 @@ class ObservatoryQueryService:
             ),
             reverse=True,
         )
-        cursor_snapshot: int | None = None
         if cursor:
-            cursor_snapshot, at, identifier = decode_run_cursor(cursor)
-            if cursor_snapshot is not None:
-                selected = [
-                    item
-                    for item in selected
-                    if sequence_by_id.get(item.observation_id, 0) <= cursor_snapshot
-                ]
-                groups = defaultdict(list)
-                for item in selected:
-                    if item.correlation and item.correlation.run_id:
-                        groups[item.correlation.run_id].append(item)
-                grouped_runs = sorted(
-                    groups.items(),
-                    key=lambda pair: max(
-                        (item.observed_at.astimezone(UTC), item.observation_id) for item in pair[1]
-                    ),
-                    reverse=True,
-                )
+            assert cursor_at is not None and cursor_id is not None
             grouped_runs = [
                 pair
                 for pair in grouped_runs
                 if max((item.observed_at.astimezone(UTC), item.observation_id) for item in pair[1])
-                < (at, identifier)
+                < (cursor_at, cursor_id)
             ]
         if filters.status:
             grouped_runs = [
                 pair
                 for pair in grouped_runs
-                if _run_status(
-                    max(pair[1], key=lambda item: (item.observed_at, item.observation_id))
-                )
+                if run_projection(
+                    pair[0],
+                    pair[1],
+                    max(pair[1], key=lambda item: (item.observed_at, item.observation_id)),
+                )["status"]
                 == filters.status
             ]
         runs: list[dict[str, Any]] = []
@@ -1766,9 +1774,9 @@ class ObservatoryQueryService:
             "nextCursor": next_cursor,
             "latestObservationId": (
                 max(
-                    selected, key=lambda item: (item.observed_at, item.observation_id)
+                    observations, key=lambda item: (item.observed_at, item.observation_id)
                 ).observation_id
-                if selected
+                if observations
                 else None
             ),
         }
@@ -1830,11 +1838,12 @@ class ObservatoryQueryService:
             narrow = self.query_port
             result = await narrow.run_detail_query(run_id, cursor=cursor, limit=limit)
             return result
-        items = [
+        all_items = [
             item
             for item in await self.store.list_observations()
             if item.correlation and item.correlation.run_id == run_id
         ]
+        items = all_items
         if not items:
             return None
         if cursor:
@@ -1850,10 +1859,20 @@ class ObservatoryQueryService:
         # advertise a continuation cursor.  Slicing first silently made the
         # HTTP page_size contract report every page as complete.
         truncated = len(items) > limit
+        projection_items = sorted(
+            all_items, key=lambda item: (item.observed_at, item.observation_id)
+        )
         items = sorted(items, key=lambda item: (item.observed_at, item.observation_id))[:limit]
         newest = max(items, key=lambda item: (item.observed_at, item.observation_id))
         page = items[:limit]
-        result = _run_dict(run_id, page, newest, include_spans=True)
+        all_newest = max(projection_items, key=lambda item: (item.observed_at, item.observation_id))
+        result = _run_dict(
+            run_id,
+            page,
+            newest,
+            include_spans=True,
+            projection=run_projection(run_id, projection_items, all_newest),
+        )
         result["partial"] = truncated
         result["nextCursor"] = (
             encode_cursor(page[-1].observed_at, page[-1].observation_id)
@@ -2791,38 +2810,176 @@ def _run_dict(
     newest: MetadataObservation,
     *,
     include_spans: bool = False,
+    projection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    # A run's last metadata observation is not necessarily a span.  In
-    # particular, terminal measurements can have no trace lineage even when
-    # an earlier span established the run's trace.  Select the newest
-    # non-empty lineage independently from the newest status/deployment/model
-    # observation, using the same stable timestamp/observation ordering as
-    # the run grouping and cursor semantics.
-    trace_items = [item for item in items if item.trace is not None and item.trace.trace_id]
-    latest_trace = (
-        max(trace_items, key=lambda item: (item.observed_at, item.observation_id))
-        if trace_items
-        else None
-    )
+    projection = projection or run_projection(run_id, items, newest)
     result: dict[str, Any] = {
         "runId": run_id,
-        "status": _run_status(newest),
-        "deploymentId": newest.deployment.deployment_id,
-        "startedAt": _iso(min(item.observed_at for item in items)),
-        "finishedAt": _iso(max(item.observed_at for item in items)),
-        "durationMs": (
-            (
-                max(item.observed_at for item in items) - min(item.observed_at for item in items)
-            ).total_seconds()
-            * 1000
-        ),
-        "model": newest.dimensions.get("provider"),
+        **projection,
         "componentIds": sorted({item.component.id for item in items}),
-        "traceId": latest_trace.trace.trace_id if latest_trace and latest_trace.trace else None,
     }
     if include_spans:
         result["observations"] = [_observation_dict(item) for item in items]
     return result
+
+
+def _lifecycle_status(
+    items: list[MetadataObservation],
+) -> tuple[str | None, MetadataObservation | None]:
+    """Return the authoritative run status, ignoring correlated background rows.
+
+    Core emits ``run_status`` for the run lifecycle.  A terminal lifecycle
+    state is sticky: a late retry/delivery row, or an inconsistent nonterminal
+    retry, must not make a completed run appear active again.  Equal timestamp
+    duplicates remain deterministic through the observation id.
+    """
+
+    lifecycle = [item for item in items if item.measurement.name == _RUN_STATUS_NAME]
+    if not lifecycle:
+        return None, None
+    normalized = [(item, _run_status(item)) for item in lifecycle if _run_status(item) != "unknown"]
+    if not normalized:
+        return "unknown", max(lifecycle, key=lambda item: (item.observed_at, item.observation_id))
+    terminal = [(item, status) for item, status in normalized if status in _RUN_TERMINAL_STATUSES]
+    selected = max(
+        terminal or normalized,
+        key=lambda pair: (pair[0].observed_at, pair[0].observation_id),
+    )
+    return selected[1], selected[0]
+
+
+def _lifecycle_duration(
+    items: list[MetadataObservation],
+) -> tuple[float | None, MetadataObservation | None]:
+    """Return the latest valid Core run duration measurement, if present."""
+
+    candidates = [
+        item
+        for item in items
+        if item.measurement.name == _RUN_DURATION_NAME
+        and canonical_measurement_unit(item.measurement.name, item.measurement.unit)
+        == "milliseconds"
+        and math.isfinite(item.measurement.value)
+        and item.measurement.value >= 0
+    ]
+    if not candidates:
+        return None, None
+    selected = max(candidates, key=lambda item: (item.observed_at, item.observation_id))
+    return selected.measurement.value, selected
+
+
+def canonical_measurement_unit(name: str, unit: str | None) -> str | None:
+    """Apply the one compatibility default permitted for run lifecycle data.
+
+    Core's canonical ``run_duration_ms`` measurement is milliseconds even for
+    older observations whose optional unit was omitted.  No other measurement
+    name gets a guessed unit, and an explicitly supplied unit is preserved.
+    """
+
+    if name == _RUN_DURATION_NAME and not unit:
+        return "milliseconds"
+    return unit
+
+
+def _primary_trace_id(run_id: str, items: list[MetadataObservation]) -> str | None:
+    """Choose the execution lineage before considering arbitrary trace rows."""
+
+    traced = [item for item in items if item.trace is not None and item.trace.trace_id]
+    if not traced:
+        return None
+    normalized_run = run_id.replace("-", "").casefold()
+    run_lineage = [
+        item
+        for item in traced
+        if item.trace is not None
+        and item.trace.trace_id.replace("-", "").casefold() == normalized_run
+    ]
+    lifecycle_traced = [item for item in traced if item.measurement.name in _RUN_LIFECYCLE_NAMES]
+    if lifecycle_traced:
+        selected = min(lifecycle_traced, key=lambda item: (item.observed_at, item.observation_id))
+        return selected.trace.trace_id if selected.trace else None
+    # Legacy rows have no lifecycle marker to identify the execution root;
+    # retain their established newest-lineage behavior for compatibility.
+    if not any(
+        item.measurement.name in {_RUN_STARTED_NAME, _RUN_STATUS_NAME, _RUN_DURATION_NAME}
+        for item in items
+    ):
+        selected = max(traced, key=lambda item: (item.observed_at, item.observation_id))
+        return selected.trace.trace_id if selected.trace else None
+    selected = min(
+        run_lineage or traced,
+        key=lambda item: (item.observed_at, item.observation_id),
+    )
+    return selected.trace.trace_id if selected.trace else None
+
+
+def _run_model(run_id: str, items: list[MetadataObservation]) -> str | None:
+    """Keep the model header on execution evidence, not late background rows."""
+
+    candidates = [item for item in items if item.dimensions.get("provider")]
+    if not candidates:
+        return None
+    normalized_run = run_id.replace("-", "").casefold()
+    run_lineage = [
+        item
+        for item in candidates
+        if item.trace is not None
+        and item.trace.trace_id.replace("-", "").casefold() == normalized_run
+    ]
+    execution = [item for item in candidates if item.component.id in _MODEL_EXECUTION_COMPONENTS]
+    has_lifecycle = any(item.measurement.name in _RUN_LIFECYCLE_NAMES for item in items)
+    selected_pool = run_lineage or execution
+    if not selected_pool:
+        if has_lifecycle:
+            return None
+        selected_pool = candidates
+    selected = max(selected_pool, key=lambda item: (item.observed_at, item.observation_id))
+    return selected.dimensions.get("provider")
+
+
+def run_projection(
+    run_id: str,
+    items: list[MetadataObservation],
+    newest: MetadataObservation,
+) -> dict[str, Any]:
+    """Build an immutable run header from lifecycle evidence when available."""
+
+    started_items = [item for item in items if item.measurement.name == _RUN_STARTED_NAME]
+    started_item = min(
+        started_items, key=lambda item: (item.observed_at, item.observation_id), default=None
+    )
+    status, status_item = _lifecycle_status(items)
+    duration, duration_item = _lifecycle_duration(items)
+
+    started_at = started_item.observed_at if started_item else None
+    finished_at: datetime | None = None
+    if duration_item is not None:
+        finished_at = duration_item.observed_at
+        if started_at is None:
+            started_at = finished_at - timedelta(milliseconds=duration or 0.0)
+    elif status_item is not None and status in _RUN_TERMINAL_STATUSES:
+        finished_at = status_item.observed_at
+
+    # Legacy runs predate the lifecycle measurements.  Preserve their useful
+    # metadata projection, but only use the fallback when no authoritative
+    # boundary exists; late correlated rows cannot change a lifecycle header.
+    if started_at is None:
+        started_at = min(item.observed_at for item in items)
+    if finished_at is None and duration is None and not started_items and status_item is None:
+        finished_at = max(item.observed_at for item in items)
+    if duration is None and started_item is None and status_item is None:
+        assert started_at is not None
+        assert finished_at is not None
+        duration = (finished_at - started_at).total_seconds() * 1000
+    return {
+        "status": status if status is not None else _run_status(newest),
+        "deploymentId": newest.deployment.deployment_id,
+        "startedAt": _iso(started_at),
+        "finishedAt": _iso(finished_at),
+        "durationMs": duration,
+        "model": _run_model(run_id, items),
+        "traceId": _primary_trace_id(run_id, items),
+    }
 
 
 class _ReferenceRunDetail(dict[str, Any]):
@@ -2863,6 +3020,7 @@ def _run_status(observation: MetadataObservation) -> str:
         "completed": "succeeded",
         "success": "succeeded",
         "error": "failed",
+        "canceled": "cancelled",
     }.get(
         value,
         value
@@ -2883,6 +3041,7 @@ def _normalize_outcome(observation: MetadataObservation) -> str:
         "completed": "succeeded",
         "ok": "succeeded",
         "error": "failed",
+        "canceled": "cancelled",
     }.get(value, value if value in {"succeeded", "failed", "cancelled"} else "unknown")
 
 
@@ -2904,7 +3063,12 @@ def _span_dict(item: MetadataObservation) -> dict[str, Any]:
         "parentSpanId": trace.parent_span_id,
         "componentId": item.component.id,
         "operation": item.operation,
-        "durationMs": item.measurement.value if item.measurement.unit == "milliseconds" else None,
+        "durationMs": (
+            item.measurement.value
+            if canonical_measurement_unit(item.measurement.name, item.measurement.unit)
+            == "milliseconds"
+            else None
+        ),
         "outcome": _normalize_outcome(item),
         "startedAt": _iso(item.observed_at),
         "children": [],
@@ -2922,7 +3086,9 @@ def _observation_dict(item: MetadataObservation) -> dict[str, Any]:
         "measurement": {
             "name": item.measurement.name,
             "value": item.measurement.value,
-            "unit": item.measurement.unit,
+            "unit": canonical_measurement_unit(
+                item.measurement.name, item.measurement.unit
+            ),
         },
         "outcome": _normalize_outcome(item),
         "deploymentId": item.deployment.deployment_id,

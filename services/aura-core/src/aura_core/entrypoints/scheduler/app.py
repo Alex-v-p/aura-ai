@@ -67,6 +67,29 @@ def _result_lag_ms(result: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) and value >= 0 else None
 
 
+def _result_has_work(result: object, fired: int) -> bool:
+    """Return whether the bounded scan performed meaningful work.
+
+    A successful empty poll is intentionally silent.  Delivery results may
+    still contain useful work when no new notification was inserted (for
+    example, duplicate prevention or recurring-occurrence accounting), so do
+    not reduce this decision to ``fired_count`` alone.
+    """
+
+    if fired > 0:
+        return True
+    for name in (
+        "duplicate_count",
+        "generated_count",
+        "skipped_count",
+        "missed_count",
+    ):
+        value = getattr(result, name, None)
+        if type(value) is int and value > 0:
+            return True
+    return False
+
+
 async def run_once(
     delivery: ReminderDelivery,
     *,
@@ -87,13 +110,14 @@ async def run_once(
         if inspect.isawaitable(result):
             result = await result
         fired = _result_count(result)
-        if metrics is not None:
-            metrics.observe(
-                SCHEDULER_COMPONENT,
-                "reminder_fired_count",
-                float(fired),
-                outcome="ok",
-            )
+        if metrics is not None and _result_has_work(result, fired):
+            if fired > 0:
+                metrics.observe(
+                    SCHEDULER_COMPONENT,
+                    "reminder_fired_count",
+                    float(fired),
+                    outcome="ok",
+                )
             lag = _result_lag_ms(result)
             if lag is not None:
                 metrics.observe(

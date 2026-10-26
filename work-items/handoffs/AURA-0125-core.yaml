@@ -1,0 +1,100 @@
+agent: core_worker
+work_item: AURA-0125
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0125_core
+  worktree: shared-main
+scope:
+  ownership_zone: aura-core.memory-housekeeping and aura-core.memory-retry-delivery
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/maintenance.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/processing.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/memory-maintenance.yaml
+  - services/aura-core/resources/component-manifests/memory-persistence.yaml
+  - services/aura-core/tests/test_memory_processing.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.knowledge.memory_persistence
+    - aura.knowledge.memory_extraction
+    - aura.knowledge.memory_maintenance
+    - aura.runtime.stream_delivery
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      .venv/bin/python -m pytest services/aura-core/tests/test_aura0125_idle_memory_telemetry.py
+      services/aura-core/tests/test_memory_processing.py services/aura-core/tests/test_memory_maintenance.py
+      services/aura-core/tests/test_memory_evaluation.py services/aura-core/tests/test_telemetry.py -q
+      (308 passed, 1 skipped)
+    - >-
+      .venv/bin/ruff check services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/src/aura_core/bootstrap/memory_uow.py
+      services/aura-core/src/aura_core/domains/knowledge/memory/maintenance.py
+      services/aura-core/src/aura_core/domains/knowledge/memory/processing.py
+      services/aura-core/src/aura_core/entrypoints/worker/app.py
+      services/aura-core/tests/test_memory_processing.py
+    - git diff --check
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0125.yaml
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0125.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0125.yaml
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0125.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0125.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Full AURA-0125 architecture, observability, integration, and restarted-stack sampling
+      remain owned by the Delivery Lead and Integration Maintainer.
+decisions:
+  - >-
+    Housekeeping contexts mark successful internal memory.list and memory.model.get discovery
+    reads as quiet while preserving the database calls and emitting all failures.
+  - >-
+    Empty maintenance sweeps do not emit a success summary; lifecycle transitions and changed-sweep
+    telemetry remain observable, while discovery failures emit one bounded memory.error event.
+  - >-
+    A durable retryable processing settlement is marked transport-settled in the application
+    result so JetStream acknowledges the identifier wakeup; PostgreSQL available_at remains the
+    retry clock and a transient or non-durable result still NAKs.
+  - >-
+    Housekeeping receives the already-composed activity emitter only after the run-event publisher
+    exists; a due processing claim emits one deterministic terminal activity after completion or
+    failure, while the emitter remains non-blocking for Core execution.
+  - >-
+    Empty claim-next success is quiet only when no job is returned; real claims and all failures
+    remain observable. Housekeeping owner and reindex discovery spans use fresh child spans under
+    the per-pass trace rather than deterministic owner-derived roots.
+  - >-
+    Memory activity publication checks the authoritative durable run-event store by deterministic
+    event id before recording success telemetry, retaining the optional publisher contains seam
+    for compatible doubles; redelivery delivery counts suppress repeated queued admission without
+    changing public ports or schema.
+  - >-
+    Housekeeping keeps suppress_idle_success bounded to discovery and claim calls. Claimed
+    processing and embedding work use fresh linked non-suppressing child contexts so model/list
+    successes remain visible, while terminal activity accepts the safe direct MemoryCandidate
+    shape returned by reconciliation and reports authoritative created identifiers.
+  - >-
+    Durable event-lookup failures share the publication error boundary with publisher failures:
+    each produces one bounded persistence error span and one error outcome, is re-raised, and
+    cannot produce a success event or success telemetry.
+risks:
+  - >-
+    Persistent event adapters without the public event lookup seam still rely on their durable
+    event-id idempotency; the worker does not alter the RunEventPort contract.
+unresolved: []

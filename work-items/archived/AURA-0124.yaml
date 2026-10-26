@@ -1,0 +1,144 @@
+id: AURA-0124
+title: Suppress idle-loop telemetry amplification
+status: integrated
+change_class: bugfix
+intent: >
+  Stop Core and Observatory background pollers from persisting success
+  observations for empty cycles while preserving their execution cadence,
+  all real-work telemetry, all failures, and a sparse bounded heartbeat.
+  Reduce the known idle-only observation rate by more than ninety-nine percent
+  without weakening service health or changing product boundaries.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - Empty successful polls are execution details and do not produce per-cycle metrics or spans.
+    - Non-empty work and every failure or retry retain their existing observable identities and dimensions.
+    - Database heartbeat and lease operations keep their existing cadence while successful heartbeat telemetry is emitted no more often than once every thirty seconds per process.
+    - No scheduler worker approval reminder evaluation or delivery cadence changes are authorized.
+    - Existing stored observations are not deleted by this work item.
+    - Core continues to export asynchronously to Observatory and never reads from or waits for Observatory.
+  contracts: []
+feature_references: [OBS-005, OBS-009]
+ownership_zones:
+  - aura-core.idle-telemetry
+  - aura-observatory.evaluation-idle-telemetry
+  - evaluation.aura0124
+  - delivery.aura0124
+allowed_paths:
+  - work-items/active/AURA-0124.yaml
+  - work-items/archived/AURA-0124.yaml
+  - work-items/handoffs/AURA-0124-*.yaml
+  - work-items/reviews/AURA-0124-*.yaml
+  - work-items/integration/AURA-0124.yaml
+  - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/repository.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/repository.py
+  - services/aura-core/resources/component-manifests/approval-workflow.yaml
+  - services/aura-core/tests/test_reminder_scheduler.py
+  - services/aura-core/tests/test_reminders.py
+  - services/aura-core/tests/test_approvals.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/tests/test_aura0092_orchestration.py
+  - services/aura-observatory/tests/test_aura0092_metrics.py
+  - services/aura-observatory/tests/test_aura0092_worker.py
+  - services/aura-observatory/tests/test_aura0094_worker.py
+  - services/aura-observatory/tests/test_aura0094_observability.py
+  - services/aura-observatory/tests/test_aura0092_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0124_idle_telemetry.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - .env
+  - .env.local-http
+  - .secrets/**
+  - docs/**
+  - contracts/**
+  - frontend/**
+  - deploy/**
+  - compose.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: telemetry-ingestion
+observability:
+  applicable: true
+  affected_components:
+    - aura.automation.reminder_scheduler
+    - aura.governance.approval_workflow
+    - aura.observatory.evaluation_scheduler
+    - aura.observatory.evaluation_orchestration
+  required_metrics: []
+  required_evaluators:
+    - reminder_firing_exactly_once
+    - approval_expiry_correctness
+    - evaluation_orchestration_retry_recovery
+    - evaluation_orchestration_lease_exclusivity
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - No request content evidence credentials owner identity or new dimensions enter telemetry.
+    - Failure visibility and meaningful state transitions must not be suppressed.
+    - Core and Observatory data ownership and one-way provider direction remain unchanged.
+  data_classes:
+    - metadata_only_operational_observations
+required_agents:
+  implementation:
+    - core_worker
+    - observatory_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - An empty reminder scan emits no reminder_fired_count zero sample and no successful reminder.scan span while a non-empty scan and every failure retain their existing telemetry.
+  - An empty SQL reminder delivery transaction emits no fired persistence success, zero occurrence metrics, fired count, or reminder.fire span while duplicates, actual delivery work, and failures remain observable.
+  - An approval-expiry poll with no expired approvals emits no empty outcome and no successful approval.expire span while actual expiry transitions resume outcomes and failures remain observable.
+  - Empty evaluation schedule materialization recovery dispatch local-claim enqueue and outbox publication cycles emit no success observation or success dependency counter.
+  - Scheduler and worker database heartbeat operations continue every configured poll while successful heartbeat telemetry is emitted at most once per thirty-second window and failures are emitted immediately.
+  - Poll intervals locking leases retries delivery behavior and service readiness are unchanged.
+  - Deterministic tests cover empty non-empty failure and sparse-heartbeat boundaries without sleeping on wall-clock time.
+  - A restarted idle local stack shows at least a ninety-nine-percent reduction for the four targeted idle producers compared with the measured 28800 observations per hour subtotal.
+  - Aura Web and Observatory Web behavior contracts remain unchanged and Core remains independent of Observatory health.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0124.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0124.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0124.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0124.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0124.yaml
+  - .venv/bin/python -m pytest services/aura-core/tests/test_reminder_scheduler.py services/aura-core/tests/test_reminders.py services/aura-core/tests/test_approvals.py -q
+  - .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0124_idle_telemetry.py services/aura-observatory/tests/test_aura0092_orchestration.py services/aura-observatory/tests/test_aura0092_metrics.py services/aura-observatory/tests/test_aura0092_worker.py services/aura-observatory/tests/test_aura0094_worker.py services/aura-observatory/tests/test_aura0094_observability.py -q
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

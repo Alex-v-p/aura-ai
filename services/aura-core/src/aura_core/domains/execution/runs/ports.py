@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
@@ -88,6 +89,37 @@ class ChatMessage:
         """Compatibility alias for adapters that call the parts ``images``."""
 
         return self.image_parts
+
+
+@dataclass(frozen=True, slots=True)
+class RunEvidenceItem:
+    """Closed, provider-neutral input accepted by the evidence port.
+
+    The execution domain owns the shape; the platform exporter owns
+    serialization, admission inspection, and transport.  Keeping this value
+    object here prevents the coordinator from importing a platform adapter.
+    """
+
+    run_id: UUID
+    trace_id: str
+    span_id: str
+    parent_span_id: str | None
+    sequence: int
+    step_category: str
+    evidence_kind: str
+    media_classification: str
+    media_type: str
+    payload: Mapping[str, object] | None
+    observed_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    capture_state: str = "captured"
+    reason: str | None = None
+    content_admission: Mapping[str, object] | None = None
+
+
+class RunEvidencePort(Protocol):
+    def record(self, item: RunEvidenceItem) -> bool: ...
+
+    def allocate_sequence(self, run_id: UUID) -> int: ...
 
 
 class RunRepository(Protocol):

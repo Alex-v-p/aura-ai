@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
 import zlib
+import tempfile
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -49,6 +51,16 @@ from aura_observatory.query import (
     RunFilters,
     analytics_metric_catalogue,
     decode_health_cursor,
+)
+from aura_observatory.run_evidence import (
+    EvidenceUnavailable,
+    MAX_EVIDENCE_BYTES,
+    MemoryRunEvidenceRepository,
+    RunEvidenceIngestionService,
+    RunEvidenceDeletionService,
+    RunEvidenceProblem,
+    RunInspectionService,
+    _record_component_span,
 )
 from aura_observatory.settings import Settings
 from aura_observatory.alerting import AlertError
@@ -145,6 +157,9 @@ def create_app(
     auth: ObservatoryAuth | None = None,
     query_store: object | None = None,
     evaluation_service: object | None = None,
+    run_evidence_repository: object | None = None,
+    run_evidence_ingest: object | None = None,
+    run_inspection_service: object | None = None,
     testing: bool = False,
 ) -> FastAPI:
     """Build the API with an explicit service dependency for deterministic tests."""
@@ -226,6 +241,9 @@ def create_app(
                 409: "request conflicts with existing state",
                 503: "service unavailable",
             }.get(exc.status_code, "request failed")
+            headers = {
+                "Cache-Control": "no-store"
+            } if "/inspection" in request.url.path or "/evidence" in request.url.path else None
             return JSONResponse(
                 status_code=exc.status_code,
                 content={
@@ -234,6 +252,7 @@ def create_app(
                     "retryable": exc.status_code >= 500,
                     "traceId": _request_trace_id(request),
                 },
+                headers=headers,
             )
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
@@ -242,6 +261,9 @@ def create_app(
         request: Request, _exc: StorageUnavailableError
     ) -> JSONResponse:
         if request.url.path.startswith("/api/v1/"):
+            headers = {
+                "Cache-Control": "no-store"
+            } if "/inspection" in request.url.path or "/evidence" in request.url.path else None
             return JSONResponse(
                 status_code=503,
                 content={
@@ -250,8 +272,27 @@ def create_app(
                     "retryable": True,
                     "traceId": _request_trace_id(request),
                 },
+                headers=headers,
             )
         return JSONResponse(status_code=503, content={"detail": "service unavailable"})
+
+    @app.exception_handler(Exception)
+    async def protected_runtime_problem(request: Request, _exc: Exception) -> JSONResponse:
+        """Fail closed when auth/storage/framework code raises unexpectedly."""
+
+        if request.url.path.startswith("/api/v1/"):
+            protected_evidence = "/inspection" in request.url.path or "/evidence" in request.url.path
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": "service_unavailable",
+                    "message": "service unavailable",
+                    "retryable": True,
+                    "traceId": _request_trace_id(request),
+                },
+                headers={"Cache-Control": "no-store"} if protected_evidence else None,
+            )
+        raise _exc
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_problem(
@@ -283,6 +324,9 @@ def create_app(
                             "retryable": False,
                             "traceId": _request_trace_id(request),
                         },
+                        headers={"Cache-Control": "no-store"}
+                        if "/inspection" in request.url.path or "/evidence" in request.url.path
+                        else None,
                     )
                 if resolved.owner_subject and session.principal.subject != resolved.owner_subject:
                     return JSONResponse(
@@ -293,6 +337,9 @@ def create_app(
                             "retryable": False,
                             "traceId": _request_trace_id(request),
                         },
+                        headers={"Cache-Control": "no-store"}
+                        if "/inspection" in request.url.path or "/evidence" in request.url.path
+                        else None,
                     )
             return JSONResponse(
                 status_code=422,
@@ -302,6 +349,9 @@ def create_app(
                     "retryable": False,
                     "traceId": _request_trace_id(request),
                 },
+                headers={"Cache-Control": "no-store"}
+                if "/inspection" in request.url.path or "/evidence" in request.url.path
+                else None,
             )
         return JSONResponse(status_code=422, content={"detail": "request validation failed"})
 
@@ -315,6 +365,41 @@ def create_app(
             app.state.query = build_query_service(resolved)
     else:
         app.state.query = ObservatoryQueryService(query_store)  # type: ignore[arg-type]
+
+    if run_evidence_repository is not None:
+        evidence_repository = run_evidence_repository
+        app.state.run_evidence_ingest = run_evidence_ingest or RunEvidenceIngestionService(
+            evidence_repository, metrics=app.state.query.metrics
+        )
+        app.state.run_evidence = run_inspection_service or RunInspectionService(
+            evidence_repository, query=app.state.query, metrics=app.state.query.metrics
+        )
+        app.state.run_evidence_repository = evidence_repository
+        app.state.run_evidence_deletion = RunEvidenceDeletionService(
+            evidence_repository, metrics=app.state.query.metrics
+        )
+    elif testing:
+        evidence_repository = MemoryRunEvidenceRepository()
+        app.state.run_evidence_ingest = RunEvidenceIngestionService(
+            evidence_repository, metrics=app.state.query.metrics
+        )
+        app.state.run_evidence = RunInspectionService(
+            evidence_repository, query=app.state.query, metrics=app.state.query.metrics
+        )
+        app.state.run_evidence_repository = evidence_repository
+        app.state.run_evidence_deletion = RunEvidenceDeletionService(
+            evidence_repository, metrics=app.state.query.metrics
+        )
+    else:
+        from aura_observatory.composition import build_run_evidence_services
+
+        ingestion_service, inspection_service = build_run_evidence_services(resolved)
+        app.state.run_evidence_ingest = ingestion_service
+        app.state.run_evidence = inspection_service
+        app.state.run_evidence_repository = inspection_service.repository
+        app.state.run_evidence_deletion = RunEvidenceDeletionService(
+            inspection_service.repository, metrics=app.state.query.metrics
+        )
 
     # Health projection belongs to the API lifecycle, independently of the
     # ingest worker.  Testing compositions opt out by default so unit tests
@@ -685,6 +770,119 @@ def create_app(
             raise HTTPException(status_code=404, detail="run not found")
         return JSONResponse(_run_detail_payload(result))
 
+    @app.get("/api/v1/runs/{run_id}/inspection")
+    async def run_inspection(
+        run_id: str,
+        request: Request,
+        cursor: str | None = None,
+        page_size: str | None = Query(default=None, alias="page_size"),
+    ) -> JSONResponse:
+        await owner_session(request)
+        try:
+            _validate_uuid(run_id, "run identifier")
+            result = await app.state.run_evidence.inspect(
+                run_id, cursor=cursor, page_size=_parse_bounded_int(page_size, default=250, minimum=1, maximum=1000)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        except (EvidenceUnavailable, RuntimeError) as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        if result is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v1/runs/{run_id}/evidence/{evidence_id}")
+    async def run_evidence(
+        run_id: str, evidence_id: str, request: Request
+    ) -> StreamingResponse:
+        await owner_session(request)
+        manifest = None
+        stream_started = monotonic()
+        try:
+            _validate_uuid(run_id, "run identifier")
+            _validate_uuid(evidence_id, "evidence identifier")
+            manifest, stream = await app.state.run_evidence_repository.stream(run_id, evidence_id)
+            if manifest.digest is None or manifest.byte_count < 0 or manifest.byte_count > MAX_EVIDENCE_BYTES:
+                raise ValueError("invalid evidence manifest")
+            spool = tempfile.SpooledTemporaryFile(max_size=MAX_EVIDENCE_BYTES, mode="w+b")
+            total = 0
+            hasher = hashlib.sha256()
+            async for chunk in stream:
+                if not isinstance(chunk, bytes) or len(chunk) > 64 * 1024:
+                    raise ValueError("invalid evidence stream")
+                total += len(chunk)
+                if total > manifest.byte_count or total > MAX_EVIDENCE_BYTES:
+                    raise ValueError("evidence stream exceeds manifest")
+                hasher.update(chunk)
+                spool.write(chunk)
+            if total != manifest.byte_count or "sha256:" + hasher.hexdigest() != manifest.digest:
+                raise ValueError("evidence digest mismatch")
+            spool.seek(0)
+            _record_component_span(getattr(getattr(app.state, "query", None), "metrics", None), component_id="aura.observatory.run_evidence_storage", operation="run_evidence.object_stream", duration_ms=(monotonic() - stream_started) * 1000.0, outcome="success", dependency="garage", trace_id=manifest.trace_id, parent_span_id=manifest.parent_span_id, run_id=run_id)
+        except FileNotFoundError as exc:
+            if manifest is not None:
+                _record_component_span(getattr(getattr(app.state, "query", None), "metrics", None), component_id="aura.observatory.run_evidence_storage", operation="run_evidence.object_stream", duration_ms=(monotonic() - stream_started) * 1000.0, outcome="unavailable", dependency="garage", error_code="object_store_unavailable", trace_id=manifest.trace_id, parent_span_id=manifest.parent_span_id, run_id=run_id)
+            raise HTTPException(status_code=410, detail="evidence was deleted") from exc
+        except KeyError as exc:
+            _record_component_span(getattr(getattr(app.state, "query", None), "metrics", None), component_id="aura.observatory.run_evidence_storage", operation="run_evidence.object_stream", duration_ms=(monotonic() - stream_started) * 1000.0, outcome="unavailable", dependency="postgresql", run_id=run_id)
+            raise HTTPException(status_code=404, detail="evidence not found") from exc
+        except (EvidenceUnavailable, OSError, RuntimeError) as exc:
+            _record_component_span(getattr(getattr(app.state, "query", None), "metrics", None), component_id="aura.observatory.run_evidence_storage", operation="run_evidence.object_stream", duration_ms=(monotonic() - stream_started) * 1000.0, outcome="unavailable", dependency="garage", error_code="object_store_unavailable", trace_id=manifest.trace_id if manifest is not None else None, parent_span_id=manifest.parent_span_id if manifest is not None else None, run_id=run_id)
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except Exception as exc:
+            _record_component_span(getattr(getattr(app.state, "query", None), "metrics", None), component_id="aura.observatory.run_evidence_storage", operation="run_evidence.object_stream", duration_ms=(monotonic() - stream_started) * 1000.0, outcome="failure", dependency="garage", error_code="digest_mismatch", trace_id=manifest.trace_id if manifest is not None else None, parent_span_id=manifest.parent_span_id if manifest is not None else None, run_id=run_id)
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        async def bounded_stream() -> AsyncIterator[bytes]:
+            try:
+                while True:
+                    chunk = spool.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                spool.close()
+
+        return StreamingResponse(
+            bounded_stream(),
+            media_type=manifest.media_type,
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Length": str(manifest.byte_count),
+                "X-Observatory-Evidence-Digest": manifest.digest or "sha256:" + "0" * 64,
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.delete("/api/v1/runs/{run_id}/evidence", status_code=status.HTTP_202_ACCEPTED)
+    async def delete_run_evidence(
+        run_id: str,
+        request: Request,
+        csrf: str | None = Header(default=None, alias="X-Observatory-CSRF"),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        confirmation: str | None = Header(default=None, alias="X-Observatory-Confirmation"),
+    ) -> JSONResponse:
+        session = await owner_session(request)
+        try:
+            _validate_uuid(run_id, "run identifier")
+            _validate_uuid(idempotency_key, "idempotency key")
+            if confirmation != "DELETE_RUN_EVIDENCE":
+                raise ValueError("confirmation required")
+            auth_service.require_csrf(session, csrf, origin=request.headers.get("origin"))
+            result = await app.state.run_evidence_deletion.delete(
+                run_id, cast(str, idempotency_key)
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail="request not permitted") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid request") from exc
+        except (EvidenceUnavailable, RuntimeError) as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="service unavailable") from exc
+        return JSONResponse(result.as_dict(), status_code=status.HTTP_202_ACCEPTED, headers={"Cache-Control": "no-store"})
+
     @app.get("/api/v1/traces/{trace_id}")
     async def trace_detail(
         trace_id: str,
@@ -884,6 +1082,33 @@ def create_app(
 
             if await disconnected() or not await session_is_authorized():
                 return
+            # Establish the run-evidence high-water mark before taking the
+            # authoritative telemetry snapshot.  This closes the event-loss
+            # window for unknown/mixed Last-Event-ID cursors: changes after
+            # this anchor are replayed after the snapshot.
+            run_repository = app.state.run_evidence_repository
+            run_cursor = last_event_id
+            query_cursor = last_event_id
+            if last_event_id:
+                has_event = getattr(run_repository, "has_event", None)
+                try:
+                    run_cursor_known = bool(await has_event(last_event_id)) if callable(has_event) else False
+                except Exception:
+                    run_cursor_known = False
+                if run_cursor_known:
+                    query_cursor = None
+                else:
+                    latest_event_id = getattr(run_repository, "latest_event_id", None)
+                    try:
+                        run_cursor = await latest_event_id() if callable(latest_event_id) else None
+                    except Exception:
+                        run_cursor = None
+                    query_cursor = None
+            elif callable(getattr(run_repository, "latest_event_id", None)):
+                try:
+                    run_cursor = await run_repository.latest_event_id()
+                except Exception:
+                    run_cursor = None
             snapshot = await app.state.query.overview()
             if await disconnected() or not await session_is_authorized():
                 return
@@ -892,31 +1117,97 @@ def create_app(
                 + json.dumps(_overview_payload(snapshot), separators=(",", ":"))
                 + "\n\n"
             )
-            async for event in app.state.query.events_after(
-                last_event_id, snapshot.get("snapshotSequence")
-            ):
-                if await disconnected() or not await session_is_authorized():
-                    return
-                data = event["data"]
-                event_id = event.get("id")
+            # Run-evidence changes use the existing metadata-only SSE channel.
+            # The repository event projection intentionally carries only the
+            # run resource identity; manifests and content remain REST-only.
+            def evidence_payload(evidence_event: Mapping[str, object]) -> str | None:
+                evidence_id = evidence_event.get("id")
+                data = evidence_event.get("data")
+                if not isinstance(data, Mapping):
+                    return None
                 event_payload = {
                     "schemaVersion": 1,
-                    "eventId": event_id or str(uuid4()),
-                    "eventType": event["type"],
+                    "eventId": evidence_id or str(uuid4()),
+                    "eventType": "observation.changed",
                     "occurredAt": _now_iso(),
-                    "resourceType": "system"
-                    if event["type"] == "health.changed"
-                    else "observation",
-                    "resourceId": data.get("observationId")
-                    if event["type"] != "health.changed"
-                    else None,
+                    "resourceType": "run",
+                    "resourceId": data.get("resourceId"),
                     "capturePolicy": "metadata_only",
                 }
-                id_line = f"id: {event_id}\n" if event_id else ""
-                yield (
-                    f"{id_line}event: {event['type']}\n"
-                    f"data: {json.dumps(event_payload, separators=(',', ':'))}\n\n"
+                id_line = f"id: {evidence_id}\n" if evidence_id else ""
+                return f"{id_line}event: observation.changed\ndata: {json.dumps(event_payload, separators=(',', ':'))}\n\n"
+
+            def query_payload(event: Mapping[str, object]) -> str:
+                data = event.get("data")
+                if not isinstance(data, Mapping):
+                    data = {}
+                event_type = str(event.get("type", "heartbeat"))
+                event_id = event.get("id")
+                event_payload = _query_live_event_payload(
+                    event_type,
+                    data,
+                    event_id=event_id,
                 )
+                id_line = f"id: {event_id}\n" if event_id else ""
+                return f"{id_line}event: {event_type}\ndata: {json.dumps(event_payload, separators=(',', ':'))}\n\n"
+
+            for evidence_event in await run_repository.events_after(run_cursor):
+                if await disconnected() or not await session_is_authorized():
+                    return
+                rendered = evidence_payload(evidence_event)
+                if rendered is not None:
+                    event_id = evidence_event.get("id")
+                    if isinstance(event_id, str):
+                        run_cursor = event_id
+                    yield rendered
+
+            # Keep the telemetry producer running in its own bounded task and
+            # poll run evidence between queue reads.  This makes late evidence
+            # visible without waiting for the telemetry stream's heartbeat.
+            query_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+
+            async def pump_query_events() -> None:
+                try:
+                    async for event in app.state.query.events_after(
+                        query_cursor, snapshot.get("snapshotSequence")
+                    ):
+                        await query_events.put(event)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # A disconnected ClickHouse/query stream is represented by
+                    # the next REST snapshot; never put provider diagnostics in
+                    # SSE data.
+                    return
+
+            query_task = asyncio.create_task(pump_query_events())
+            try:
+                while True:
+                    if await disconnected() or not await session_is_authorized():
+                        return
+                    for evidence_event in await run_repository.events_after(run_cursor):
+                        rendered = evidence_payload(evidence_event)
+                        if rendered is not None:
+                            event_id = evidence_event.get("id")
+                            if isinstance(event_id, str):
+                                run_cursor = event_id
+                            yield rendered
+                    try:
+                        event = query_events.get_nowait()
+                    except asyncio.QueueEmpty:
+                        if query_task.done():
+                            break
+                        try:
+                            event = await asyncio.wait_for(query_events.get(), timeout=0.5)
+                        except TimeoutError:
+                            continue
+                    if await disconnected() or not await session_is_authorized():
+                        return
+                    yield query_payload(event)
+            finally:
+                if not query_task.done():
+                    query_task.cancel()
+                await asyncio.gather(query_task, return_exceptions=True)
 
         return StreamingResponse(
             stream(),
@@ -1060,6 +1351,51 @@ def create_app(
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _query_live_event_payload(
+    event_type: str,
+    data: Mapping[str, object],
+    *,
+    event_id: object = None,
+) -> dict[str, object]:
+    """Render the closed, metadata-only payload for one query-stream event.
+
+    A query observation correlated to a canonical run invalidates that run so
+    selected-run views can refresh without inventing a new SSE schema.  Legacy
+    observations without a valid run correlation keep their observation
+    identity.  The payload deliberately remains the existing closed set of
+    fields; no observation attributes or content are copied into the stream.
+    """
+
+    if event_type == "health.changed":
+        resource_type = "system"
+        resource_id: object = None
+    else:
+        run_id = data.get("runId")
+        component_id = data.get("componentId")
+        is_observatory_self_observation = (
+            isinstance(component_id, str) and component_id.startswith("aura.observatory.")
+        )
+        if (
+            isinstance(run_id, str)
+            and _UUID_RE.fullmatch(run_id)
+            and not is_observatory_self_observation
+        ):
+            resource_type = "run"
+            resource_id = run_id
+        else:
+            resource_type = "observation"
+            resource_id = data.get("observationId")
+    return {
+        "schemaVersion": 1,
+        "eventId": event_id or str(uuid4()),
+        "eventType": event_type,
+        "occurredAt": _now_iso(),
+        "resourceType": resource_type,
+        "resourceId": resource_id,
+        "capturePolicy": "metadata_only",
+    }
 
 
 def _overview_payload(value: dict[str, Any]) -> dict[str, Any]:

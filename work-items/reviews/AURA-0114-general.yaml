@@ -1,0 +1,65 @@
+agent: general_reviewer
+work_item: AURA-0114
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the complete AURA-0114 backend, frontend, and browser-test
+    change against the active work item and implementation handoffs, including
+    every previously reported general-review finding.
+  - >-
+    Verified terminal headers derive status, start, finish, and duration from
+    authoritative lifecycle evidence; later correlated telemetry cannot reopen
+    or extend completed runs. Core producer `canceled` normalizes to public
+    `cancelled`, running runs keep terminal fields unavailable, and list/detail
+    projections remain aligned.
+  - >-
+    Verified discovery filtering uses qualify-first/project-second semantics.
+    Component, deployment, model, and observed-time predicates form one
+    per-observation conjunction, terminal status remains a separate run-level
+    predicate, and the projection retains every lifecycle row after a run
+    genuinely qualifies.
+  - >-
+    Verified all four executable run-list trace aggregates qualify source
+    trace, time, observation, and run columns with the `observations` table
+    name. The compatibility output remains aliased `trace_id` without allowing
+    ClickHouse to substitute that aggregate alias into another aggregate.
+    Detail-window trace aggregates use distinct `header_*` aliases and have no
+    same-SELECT source/output collision.
+  - >-
+    Generated the exact run-list statement from the current
+    ProductionObservatoryStore and executed it against the project's running
+    ClickHouse 25.8 container and real observations table. It returned rows
+    without Code 184. Generated and executed the exact paged run-detail
+    statement against the same provider; it also returned rows successfully.
+  - >-
+    Verified the strengthened SQL-shape regression removes block comments,
+    requires exactly two qualified argMinIf and two qualified argMaxIf trace
+    aggregates, and rejects each prior unqualified executable expression.
+  - >-
+    Verified the phase inspector deduplicates mirrored span observations,
+    separates tool.execute from run.execute, preserves deterministic order,
+    presents captured units and source offsets, formats durations readably,
+    and distinguishes unavailable metadata from content that was not captured.
+    Aura Web and cross-product frontend boundaries remain unchanged.
+  - >-
+    Final verification passed: 16 focused AURA-0114 backend tests; 17 selected
+    AURA-0114 and formal production-query regressions; Ruff and Pyright on the
+    changed backend/test paths; and repository diff whitespace validation.
+    Earlier accepted frontend verification remains 58 unit tests plus desktop,
+    tablet, and mobile browser/Axe coverage.
+findings: []
+risks:
+  - >-
+    The currently running Observatory API container was built before the final
+    qualification repair and still logs Code 184 from its stale unqualified
+    source. Integration must rebuild/restart that service before live UI
+    acceptance; this is deployment state, not a failure in the reviewed diff.
+  - >-
+    Rich prompt, chunk, generated-content, displayed-thinking, and tool payload
+    evidence remains outside this metadata-focused item and requires the
+    separately governed evidence architecture.
+  - >-
+    The full Observatory suite retains pre-existing migration/full-stack
+    fixture failures recorded by the worker; focused and selected existing
+    regressions for this change pass.
+unresolved: []

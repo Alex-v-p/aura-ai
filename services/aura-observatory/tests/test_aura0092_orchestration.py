@@ -435,6 +435,22 @@ async def test_scheduler_heartbeat_postgres_failure_is_counted_once() -> None:
     assert heartbeat_spans[0].get("dependency") == "postgresql"
 
 
+def test_successful_heartbeat_telemetry_interval_has_hard_thirty_second_minimum() -> None:
+    repository = InMemoryEvaluationOrchestrationRepository()
+    with pytest.raises(ValueError, match="at least 30 seconds"):
+        EvaluationSchedulerService(
+            repository, heartbeat_telemetry_interval_seconds=29.999
+        )
+    with pytest.raises(ValueError, match="at least 30 seconds"):
+        EvaluationOrchestrationService(
+            repository, heartbeat_telemetry_interval_seconds=1.0
+        )
+    with pytest.raises(ValueError, match="finite"):
+        EvaluationOrchestrationService(
+            repository, heartbeat_telemetry_interval_seconds=float("inf")
+        )
+
+
 @pytest.mark.asyncio
 async def test_scheduler_replicas_claim_one_due_occurrence_at_a_barrier() -> None:
     class BarrierRepository(InMemoryEvaluationOrchestrationRepository):

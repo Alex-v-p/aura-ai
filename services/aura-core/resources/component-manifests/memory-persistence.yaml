@@ -29,8 +29,12 @@ metric_semantics:
   memory_product_operation_outcome: Metadata-only memory product API operation outcome.
   memory_model_configuration_duration_ms: Owner-scoped memory model configuration duration.
   memory_model_configuration_outcome: Metadata-only memory model configuration outcome.
-  memory_operation_duration_ms: Owner-scoped memory persistence operation duration.
-  memory_operation_outcome: Metadata-only memory operation outcome.
+  memory_operation_duration_ms: >-
+    Metadata-only owner-scoped memory operation duration; successful internal
+    housekeeping discovery reads may be quiet, while failures remain visible.
+  memory_operation_outcome: >-
+    Metadata-only memory operation outcome; housekeeping suppression applies
+    only to successful discovery and never to failures or real transitions.
   memory_lifecycle_status: Lifecycle status transition metadata.
   memory_scope_type: Memory scope classification metadata.
 capture_policy: metadata_only

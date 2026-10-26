@@ -38,7 +38,10 @@ metrics:
 metric_semantics:
   approval_creation_outcome: Content-free result of persisting an owner-scoped approval and proposal reference.
   approval_decision_outcome: Content-free approve, reject, cancel, or conflict result.
-  approval_expiry_outcome: Content-free expiry scan result with expired, empty, or failed outcome.
+  approval_expiry_outcome: >-
+    Content-free approval-expiry transition or failure outcome. Empty successful
+    expiry polls emit no sample; expired is emitted only when one or more
+    approvals transition and failed is emitted immediately for a failed poll.
   approval_expiry_count: Count of deterministic expiry transitions; no requested due time is emitted.
   approval_wait_duration_ms: Duration from durable approval creation to its single terminal decision.
   approval_resume_outcome: Content-free durable waiting-run resumption outcome.

@@ -19,10 +19,15 @@ from aura_observatory.composition import (
     build_ingest_runtime,
     build_query_service,
     build_operations_services,
+    build_run_evidence_services,
 )
 from aura_observatory.evaluation_storage import EvaluationDeletionService
 from aura_observatory.ingest import IngestReconciliationService, TelemetryIngestService
 from aura_observatory.settings import Settings
+from aura_observatory.run_evidence_transport import (
+    NatsRunEvidenceTransport,
+    connect_run_evidence_nats,
+)
 
 
 class IngestWorker:
@@ -151,16 +156,97 @@ async def run(settings: Settings | None = None) -> None:
     deletion = build_evaluation_deletion(resolved)
     deletion_stop = asyncio.Event()
     retention_stop = asyncio.Event()
+    run_evidence_stop = asyncio.Event()
     retention_task = asyncio.create_task(query.run_retention_worker(retention_stop))
     deletion_task = asyncio.create_task(_run_deletion_worker(deletion, resolved, deletion_stop))
+    evidence_ingest, _ = build_run_evidence_services(resolved)
+    evidence_repository = getattr(evidence_ingest, "repository", None)
+    evidence_recovery_stop = asyncio.Event()
+    evidence_recovery_task = asyncio.create_task(
+        _run_run_evidence_recovery_worker(evidence_repository, resolved, evidence_recovery_stop)
+    )
+    evidence_task = asyncio.create_task(
+        _run_run_evidence_worker(evidence_ingest, resolved, run_evidence_stop)
+    )
     try:
         await worker.run()
     finally:
         retention_stop.set()
         deletion_stop.set()
+        run_evidence_stop.set()
+        evidence_recovery_stop.set()
+        evidence_task.cancel()
+        evidence_recovery_task.cancel()
         await retention_task
         await deletion_task
+        with suppress(asyncio.CancelledError):
+            await evidence_task
+        with suppress(asyncio.CancelledError):
+            await evidence_recovery_task
         await _flush_metrics(worker.service, deletion)
+
+
+async def _run_run_evidence_worker(
+    service: Any, settings: Settings, stop: asyncio.Event
+) -> None:
+    """Consume governed evidence independently from normal telemetry intake.
+
+    Connection and storage failures deliberately keep the worker alive.  A
+    message is ACKed only after validation/terminal rejection or durable
+    persistence; provider failures escape the transport and are redelivered.
+    """
+
+    while not stop.is_set():
+        try:
+            user, password = settings.run_evidence_nats_credential()
+            connection = await connect_run_evidence_nats(
+                settings.run_evidence_nats_url, user=user, password=password
+            )
+            transport = NatsRunEvidenceTransport(
+                connection,
+                durable=settings.run_evidence_nats_durable,
+                max_bytes=settings.run_evidence_max_envelope_bytes,
+            )
+            await transport.consume(service, stop)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            try:
+                await asyncio.wait_for(
+                    stop.wait(), timeout=settings.run_evidence_ingest_poll_seconds
+                )
+            except TimeoutError:
+                continue
+        finally:
+            close = getattr(locals().get("connection"), "close", None)
+            if callable(close):
+                with suppress(Exception):
+                    await close()
+
+
+async def _run_run_evidence_recovery_worker(
+    repository: Any, settings: Settings, stop: asyncio.Event
+) -> None:
+    """Resume committed evidence compensation and deletion intents."""
+
+    recover_orphans = getattr(repository, "recover_orphans", None)
+    recover_deletions = getattr(repository, "recover_deletions", None)
+    if not callable(recover_orphans) and not callable(recover_deletions):
+        return
+    while not stop.is_set():
+        try:
+            if callable(recover_orphans):
+                await recover_orphans(limit=100)
+            if callable(recover_deletions):
+                await recover_deletions(limit=100)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=settings.run_evidence_ingest_poll_seconds)
+        except TimeoutError:
+            continue
 
 
 async def _run_deletion_worker(

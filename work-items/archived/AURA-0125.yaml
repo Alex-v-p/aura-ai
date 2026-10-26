@@ -1,0 +1,145 @@
+id: AURA-0125
+title: Bound idle memory housekeeping and retry telemetry
+status: integrated
+change_class: bugfix
+intent: >
+  Eliminate the remaining idle memory observation amplification by making
+  successful housekeeping discovery quiet and by ending JetStream delivery
+  after Core has durably parked a retryable memory job in PostgreSQL. Preserve
+  the existing housekeeping cadence, owner scoping, real lifecycle and
+  reindex work, bounded PostgreSQL retry schedule, all failures, and Core to
+  Observatory isolation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - Successful housekeeping discovery reads are internal polling details and do not emit per-owner persistence success observations.
+    - Lifecycle transitions reindex progress due retry attempts and every failure retain their existing observable identities and bounded metadata.
+    - PostgreSQL available_at and lease state remain authoritative for memory retry timing after a retryable settlement is durably committed.
+    - JetStream carries the identifier-only wakeup and is acknowledged after a durable completed failed or retryable settlement; a transient exception or missing durable settlement remains negatively acknowledged.
+    - Duplicate transport delivery must not republish queued or completed memory activity telemetry when the deterministic activity event is already durable.
+    - Housekeeping execution interval database reads leases provider calls and owner-scoped memory state are not weakened or bypassed.
+    - Existing memory processing jobs are not deleted reset reclassified or administratively mutated by this work item.
+    - Core continues to export asynchronously and never reads from or waits for Observatory.
+  contracts: []
+feature_references: [MEM-034, TOL-008, OBS-005, OBS-009]
+ownership_zones:
+  - aura-core.memory-housekeeping
+  - aura-core.memory-retry-delivery
+  - evaluation.aura0125
+  - delivery.aura0125
+allowed_paths:
+  - work-items/active/AURA-0125.yaml
+  - work-items/archived/AURA-0125.yaml
+  - work-items/handoffs/AURA-0125-*.yaml
+  - work-items/reviews/AURA-0125-*.yaml
+  - work-items/integration/AURA-0125.yaml
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/maintenance.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/processing.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/repository_ports.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/memory-maintenance.yaml
+  - services/aura-core/resources/component-manifests/memory-persistence.yaml
+  - services/aura-core/resources/component-manifests/memory-extraction.yaml
+  - services/aura-core/resources/component-manifests/stream-delivery.yaml
+  - services/aura-core/tests/test_memory_processing.py
+  - services/aura-core/tests/test_memory_maintenance.py
+  - services/aura-core/tests/test_memory_evaluation.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_aura0125_idle_memory_telemetry.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - .env
+  - .env.local-http
+  - .secrets/**
+  - docs/**
+  - contracts/**
+  - frontend/**
+  - deploy/**
+  - compose.yaml
+  - services/aura-observatory/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.memory_persistence
+    - aura.knowledge.memory_extraction
+    - aura.knowledge.memory_maintenance
+    - aura.runtime.stream_delivery
+  required_metrics: []
+  required_evaluators:
+    - memory_extraction_policy
+    - memory_maintenance_integrity
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - No memory content evidence principal identity credential or new high-cardinality dimension enters telemetry.
+    - Owner scoping durable retry state failure visibility and meaningful memory transitions must not be suppressed.
+    - Core and Observatory data ownership and one-way provider direction remain unchanged.
+  data_classes:
+    - metadata_only_memory_operations
+required_agents:
+  implementation:
+    - core_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A successful housekeeping pass still invokes maintenance and resumable reindex discovery for every eligible owner at the configured sixty-second cadence but emits no success observation for an internal memory list model-configuration lookup or no-op maintenance sweep.
+  - A lifecycle decay archive embedding or reindex transition retains its existing success telemetry and every housekeeping discovery or state-transition failure is emitted immediately with a bounded error class.
+  - A memory command whose processing job is durably parked as retryable is acknowledged at the JetStream boundary and is retried only when PostgreSQL available_at becomes due through the existing bounded housekeeping claim path.
+  - A transient exception before durable settlement and a non-durable result remain negatively acknowledged with bounded backoff while completed failed and durably retryable settlements are acknowledged.
+  - Duplicate or late JetStream delivery does not create repeated queued completed or memory.activity.publish success observations for an already durable deterministic memory activity event.
+  - Existing retryable jobs are neither deleted nor administratively rewritten and normal claim settlement lease attempt-count and backoff behavior remains authoritative.
+  - Deterministic tests cover empty and active housekeeping successful and failed discovery due and not-due retry jobs first delivery duplicate delivery transient failure and durable retry acknowledgement without wall-clock sleeps.
+  - After a restarted local stack stabilizes for at least seventy-five seconds a following two-minute idle sample contains no recurring successful housekeeping discovery observations and no recurring redelivery or memory activity publication for the four pre-existing unavailable retry jobs.
+  - The targeted memory idle sources average at most five observations per minute in that two-minute sample which is more than a ninety-eight-percent reduction from the measured 352 observations per minute memory subtotal before this work item.
+  - Aura Web Observatory Web public contracts deployment topology and Core to Observatory isolation remain unchanged.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0125.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0125.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0125.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0125.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0125.yaml
+  - .venv/bin/python -m pytest services/aura-core/tests/test_aura0125_idle_memory_telemetry.py services/aura-core/tests/test_memory_processing.py services/aura-core/tests/test_memory_maintenance.py services/aura-core/tests/test_memory_evaluation.py services/aura-core/tests/test_telemetry.py -q
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

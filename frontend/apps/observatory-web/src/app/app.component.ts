@@ -21,6 +21,8 @@ import {
   ownerLoginHref,
   ObservatoryStatusBadgeComponent,
   ObservatoryStatusTone,
+  ObservatoryIconComponent,
+  type ObservatoryIconName,
 } from '@aura/observatory';
 
 type ObservatoryDestination = 'overview' | 'runs' | 'trace' | 'comparison' | 'components' | 'analytics' | 'operations' | 'retention' | 'evaluation' | 'experiments';
@@ -29,7 +31,7 @@ interface ObservatoryNavItem {
   readonly id: ObservatoryDestination;
   readonly label: string;
   readonly description: string;
-  readonly glyph: string;
+  readonly icon: ObservatoryIconName;
 }
 
 interface ObservatoryNavGroup {
@@ -53,6 +55,7 @@ interface ObservatoryNavGroup {
     ExperimentWorkspaceComponent,
     ObservatoryOperationsWorkspaceComponent,
     ObservatoryStatusBadgeComponent,
+    ObservatoryIconComponent,
   ],
   providers: [
     FetchObservatoryTransport,
@@ -71,13 +74,13 @@ interface ObservatoryNavGroup {
       <div class="brand-lockup">
         @if (store.authState() === 'authenticated') {
           <button #navigationTrigger class="mobile-menu-toggle" type="button" [attr.aria-expanded]="navigationOpen()" aria-controls="observatory-sections" (click)="toggleNavigation()">
-            <span class="menu-icon" aria-hidden="true">☰</span><span class="sr-only">{{ navigationOpen() ? 'Close' : 'Open' }} Observatory navigation</span>
+            <observatory-icon class="menu-icon" name="menu" /><span class="sr-only">{{ navigationOpen() ? 'Close' : 'Open' }} Observatory navigation</span>
           </button>
         }
         <div class="brand-mark" aria-hidden="true"><span>O</span></div>
         <div class="brand-copy"><p class="brand-eyebrow">Aura Observatory</p><h1>Operational metadata</h1></div>
       </div>
-      <div class="header-context"><span class="context-title" aria-live="polite">{{ activeDestinationLabel() }}</span><span class="context-divider" aria-hidden="true"></span><span class="context-note">Private, metadata-only monitoring</span></div>
+      <div class="header-context"><span class="context-title" aria-live="polite">{{ activeDestinationLabel() }}</span><span class="context-divider" aria-hidden="true"></span><span class="context-note">Private operational monitoring · governed evidence is owner-disclosed</span></div>
       @if (store.authState() === 'authenticated') {
         <div class="header-actions">
           <observatory-status-badge [label]="connectionLabel()" [tone]="connectionTone()" />
@@ -91,11 +94,11 @@ interface ObservatoryNavGroup {
     } @else if (store.authState() === 'authenticated') {
       <div class="shell-layout">
         <div class="mobile-scrim" [class.visible]="isModalNavigation()" (click)="closeNavigation()" aria-hidden="true"></div>
-        <aside #navigationRail class="navigation-rail" [class.mobile-open]="navigationOpen()" id="observatory-sections"
+        <aside #navigationRail class="navigation-rail" [class.mobile-open]="navigationOpen()" [class.mobile-closed]="compactViewport() && !navigationOpen()" id="observatory-sections"
           [attr.role]="navigationRole()" [attr.aria-modal]="isModalNavigation() ? 'true' : null"
           aria-label="Observatory navigation" [attr.aria-hidden]="navigationUsable() ? null : 'true'"
           [attr.inert]="navigationUsable() ? null : ''" tabindex="-1">
-          <div class="rail-heading"><div><p class="rail-kicker">Workspace</p><p class="rail-title">Observe clearly</p></div><button class="mobile-close" type="button" aria-label="Close Observatory navigation" (click)="closeNavigation()">×</button></div>
+          <div class="rail-heading"><div><p class="rail-kicker">Workspace</p><p class="rail-title">Observe clearly</p></div><button class="mobile-close" type="button" aria-label="Close Observatory navigation" (click)="closeNavigation()"><observatory-icon name="danger" /></button></div>
           <nav aria-label="Observatory sections" (keydown.escape)="closeNavigation()">
             @for (group of navigationGroups; track group.id) {
               <section class="nav-group" [attr.aria-labelledby]="'nav-group-' + group.id">
@@ -103,7 +106,7 @@ interface ObservatoryNavGroup {
                 <div class="nav-items">
                   @for (item of group.items; track item.id) {
                     <button type="button" class="nav-item" [class.active]="destination() === item.id" [attr.aria-current]="destination() === item.id ? 'page' : null" [attr.aria-label]="item.label" (click)="openDestination(item.id)">
-                      <span class="nav-glyph" aria-hidden="true">{{ item.glyph }}</span><span class="nav-item-copy"><span class="nav-label">{{ item.label }}</span><span class="nav-description" aria-hidden="true">{{ item.description }}</span></span><span class="nav-current" aria-hidden="true">→</span>
+                      <span class="nav-glyph"><observatory-icon [name]="item.icon" /></span><span class="nav-item-copy"><span class="nav-label">{{ item.label }}</span><span class="nav-description" aria-hidden="true">{{ item.description }}</span></span><span class="nav-current"><observatory-icon name="next" /></span>
                     </button>
                   }
                 </div>
@@ -114,16 +117,18 @@ interface ObservatoryNavGroup {
         </aside>
 
         <main id="observatory-main" tabindex="-1" class="shell-main">
-            <observatory-overview [hidden]="destination() !== 'overview'" [style.display]="destination() === 'overview' ? 'block' : 'none'" />
-            <observatory-runs [hidden]="destination() !== 'runs'" [style.display]="destination() === 'runs' ? 'block' : 'none'" (runSelected)="openTraceFromRun()" />
-            <observatory-trace [hidden]="destination() !== 'trace'" [style.display]="destination() === 'trace' ? 'block' : 'none'" (browseRuns)="openDestination('runs')" />
-            <observatory-comparison [hidden]="destination() !== 'comparison'" [style.display]="destination() === 'comparison' ? 'block' : 'none'" />
-            <observatory-components [hidden]="destination() !== 'components'" [style.display]="destination() === 'components' ? 'block' : 'none'" />
-            <observatory-analytics [hidden]="destination() !== 'analytics'" [style.display]="destination() === 'analytics' ? 'block' : 'none'" />
-            <observatory-operations-workspace [hidden]="destination() !== 'operations'" [style.display]="destination() === 'operations' ? 'block' : 'none'" />
-            <observatory-retention [hidden]="destination() !== 'retention'" [style.display]="destination() === 'retention' ? 'block' : 'none'" />
-            <observatory-evaluation-workspace [hidden]="destination() !== 'evaluation'" [style.display]="destination() === 'evaluation' ? 'block' : 'none'" />
-            <observatory-experiment-workspace [hidden]="destination() !== 'experiments'" [style.display]="destination() === 'experiments' ? 'block' : 'none'" />
+            @switch (destination()) {
+              @case ('overview') { <observatory-overview /> }
+              @case ('runs') { <observatory-runs (runSelected)="openTraceFromRun()" /> }
+              @case ('trace') { <observatory-trace (browseRuns)="openDestination('runs')" /> }
+              @case ('comparison') { <observatory-comparison /> }
+              @case ('components') { <observatory-components /> }
+              @case ('analytics') { <observatory-analytics /> }
+              @case ('operations') { <observatory-operations-workspace /> }
+              @case ('retention') { <observatory-retention /> }
+              @case ('evaluation') { <observatory-evaluation-workspace /> }
+              @case ('experiments') { <observatory-experiment-workspace /> }
+            }
         </main>
       </div>
     } @else {
@@ -148,22 +153,22 @@ export class AppComponent {
 
   readonly navigationGroups: readonly ObservatoryNavGroup[] = [
     { id: 'monitor', label: 'Monitor', items: [
-      { id: 'overview', label: 'Overview', description: 'Current health', glyph: '◌' },
-      { id: 'runs', label: 'Runs', description: 'Recent execution', glyph: '↗' },
-      { id: 'trace', label: 'Trace', description: 'Inspect a run', glyph: '⌁' },
-      { id: 'components', label: 'Components', description: 'Catalogue & topology', glyph: '◫' },
+      { id: 'overview', label: 'Overview', description: 'Current health', icon: 'overview' },
+      { id: 'runs', label: 'Runs', description: 'Recent execution', icon: 'runs' },
+      { id: 'trace', label: 'Trace', description: 'Inspect a run', icon: 'trace' },
+      { id: 'components', label: 'Components', description: 'Catalogue & topology', icon: 'components' },
     ] },
     { id: 'analyze', label: 'Analyze', items: [
-      { id: 'analytics', label: 'Analytics', description: 'Operational signals', glyph: '▥' },
-      { id: 'comparison', label: 'Compare', description: 'Run evidence', glyph: '⇄' },
+      { id: 'analytics', label: 'Analytics', description: 'Operational signals', icon: 'analytics' },
+      { id: 'comparison', label: 'Compare', description: 'Run evidence', icon: 'compare' },
     ] },
     { id: 'evaluate', label: 'Evaluate', items: [
-      { id: 'evaluation', label: 'Evaluations', description: 'Quality workspace', glyph: '✓' },
-      { id: 'experiments', label: 'Experiments', description: 'Baselines & changes', glyph: '⌘' },
+      { id: 'evaluation', label: 'Evaluations', description: 'Quality workspace', icon: 'evaluation' },
+      { id: 'experiments', label: 'Experiments', description: 'Baselines & changes', icon: 'experiments' },
     ] },
     { id: 'operate', label: 'Operate', items: [
-      { id: 'operations', label: 'Operations', description: 'Dashboards & alerts', glyph: '⚙' },
-      { id: 'retention', label: 'Retention', description: 'Storage lifecycle', glyph: '⌫' },
+      { id: 'operations', label: 'Operations', description: 'Dashboards & alerts', icon: 'operations' },
+      { id: 'retention', label: 'Retention', description: 'Storage lifecycle', icon: 'retention' },
     ] },
   ];
 
@@ -197,11 +202,18 @@ export class AppComponent {
   }
 
   openDestination(destination: ObservatoryDestination): void {
+    if (this.destination() === 'operations' && destination !== 'operations') this.operationsStore.disconnect(true);
+    if (this.destination() === 'trace' && destination !== 'trace') this.store.deactivateSelectedRunView();
+    if (this.destination() === 'analytics' && destination !== 'analytics') this.store.deactivateAnalyticsView();
+    if (this.destination() === 'comparison' && destination !== 'comparison') this.store.deactivateComparisonView();
     if (destination === 'components' && this.destination() !== destination) this.store.refreshCatalog();
+    if (destination === 'analytics' && this.destination() !== destination) { this.store.activateAnalyticsView(); this.store.refreshAnalytics(); }
+    if (destination === 'comparison' && this.destination() !== destination) this.store.activateComparisonView();
     // Close the modal before changing the destination so focus never lands in
     // a workspace underneath an active navigation dialog.
     this.closeNavigation(false);
     this.destination.set(destination);
+    if (destination === 'trace' && this.destination() === destination) this.store.activateSelectedRunView();
     // Each destination is a distinct workspace. Restore the page origin so
     // route switching never opens a new surface halfway down the prior one.
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });

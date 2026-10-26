@@ -1,0 +1,71 @@
+agent: security_privacy_reviewer
+work_item: AURA-0121
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the corrected current diff against AURA-0121, ADR-0017, the
+    Observatory specification, and every finding from the initial security and
+    privacy BLOCK. The change remains confined to Observatory Web,
+    Observatory-owned frontend code and acceptance, and work-item artifacts;
+    Aura Web, Core, backend services, contracts, generated clients, migrations,
+    credentials, and deployment topology remain unchanged.
+  - >-
+    Verified evidence GET and deletion now promote
+    ObservatorySessionRequiredError through the established signed-out
+    boundary. That boundary aborts disclosure, revokes object URLs, clears the
+    selected run and evidence Blob, cancels deletion polling, clears in-memory
+    idempotency material, and removes all other owner-private projections.
+  - >-
+    Verified each evidence disclosure owns an AbortController. A new
+    disclosure, collapse, run change, session expiry, deletion, or component
+    destruction aborts the request and clears retained bytes. Text decoding
+    repeats disclosure-generation, selected-run, evidence-ID, and current
+    authoritative-manifest checks after Blob.text(), preventing late decode
+    from restoring content.
+  - >-
+    Verified evidence is retained or rendered only when Blob size is within one
+    MiB and exactly matches the manifest byte count, Blob media type exactly
+    matches the manifest, and the classification/media pair is in the closed
+    contract allowlist. Image object URLs are therefore limited to PNG, JPEG,
+    and WebP; PDF remains non-previewable, and text and JSON remain inert pre
+    content rather than HTML.
+  - >-
+    Verified same-run inspection refresh reconciles an open disclosure against
+    the current immutable captured manifest using evidence ID, capture state,
+    classification, media type, digest, and byte count. Captured-to-deleted,
+    removed, or changed manifests clear the Blob and text and revoke any object
+    URL before the deleted projection is rendered.
+  - >-
+    Verified deletion clears disclosed bytes before mutation, requires the
+    existing confirmation, uses the gateway's owner-session CSRF value and
+    exact DELETE_RUN_EVIDENCE acknowledgement, retains one UUID idempotency key
+    for uncertain retries of the selected run, gates duplicate activations,
+    polls accepted or in-progress commands within a bounded window, and clears
+    the key only at an authoritative terminal boundary or scope reset.
+  - >-
+    Confirmed evidence remains explicit-disclosure-only, same-origin,
+    no-store, in memory, and absent from local storage, session storage,
+    IndexedDB, CacheStorage, page-location state, console output, telemetry,
+    SSE, service-worker caches, browser traces, videos, and screenshots. No
+    Aura Web file or Observatory reference was added.
+  - >-
+    Independent verification passed: 74 Observatory unit tests; eight focused
+    desktop AURA-0121 browser scenarios on a clean dedicated dev-server port,
+    including lazy inert rendering, delayed-response collapse and run-change
+    cancellation, confirmed exactly-once deletion with metadata retained, and
+    live captured-to-deleted cleanup; changed-path validation; Aura Web
+    separation scans; and git diff whitespace validation.
+  - >-
+    Final post-UX spot verification traced the new selected-run ten-second
+    AbortController across parallel detail and inspection requests, session
+    rejection, preserved disclosures, deletion truth, and stale-snapshot
+    fallback. The corrected ordering now promotes a session-required rejection
+    from either settled projection first, then publishes and reconciles any
+    fulfilled inspection before handling a non-session detail failure. Focused
+    fake-timer coverage proves a fulfilled captured-to-deleted inspection
+    clears the disclosed Blob and remains fresh when detail times out; separate
+    coverage proves an inspection-only 401 enters session-required and clears
+    selected-run, evidence, and owner-private snapshot state.
+findings: []
+risks: []
+unresolved: []

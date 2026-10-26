@@ -1,0 +1,19 @@
+agent: architecture_guardian
+work_item: AURA-0117
+verdict: PASS
+checked:
+  - Active work item scope, owner decisions, acceptance criteria, allowed and forbidden paths.
+  - ADR-0013, ADR-0016, accepted ADR-0017, architecture handover, system context, module boundaries, and Observatory specification.
+  - Actual 20-path diff and AURA-0117 contract, platform, and test-evaluation handoffs.
+  - Canonical evidence-byte rules for RFC 8785 JSON, exact UTF-8 text, and decoded attachment bytes.
+  - Closed discriminated evidence kind, step category, media classification, media type, and payload variants.
+  - Independent eventId and evidenceId collision semantics, retry identity, idempotent duplicates, and out-of-order delivery.
+  - Additive Observatory inspection, evidence-streaming, deletion, and metadata-only run-invalidation contracts.
+  - Generated Observatory Blob transport, generated DTOs, and unchanged Aura Web and Aura API client boundaries.
+  - One-way nonblocking Core-to-Observatory dependency direction, acknowledgement isolation, and follow-up runtime authorization.
+  - Observatory-owned PostgreSQL manifests and deletion truth, dedicated Garage evidence bucket, and content-free ClickHouse, OTLP, and SSE.
+  - Architecture validators, 36 Python contract tests, Observatory client validation and generation check, 9 client tests, lint, and git diff check.
+findings: []
+risks:
+  - Runtime capture, persistence, media inspection, and UI behavior remain intentionally assigned to the sequential follow-up work items.
+unresolved: []

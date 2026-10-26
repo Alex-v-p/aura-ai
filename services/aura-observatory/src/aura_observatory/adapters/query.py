@@ -50,6 +50,7 @@ from aura_observatory.query import (
     analytics_unavailable,
     bounded_component_health_window,
     build_run_comparison,
+    canonical_measurement_unit,
     comparison_execution_limit_snapshot,
     decode_cursor,
     decode_run_cursor,
@@ -57,6 +58,7 @@ from aura_observatory.query import (
     iso,
     retention_from_row,
     run_dict,
+    run_projection,
     span_dict,
     tree,
 )
@@ -71,6 +73,148 @@ _CLICKHOUSE_ERROR_CLASSES = (
 )
 _RETENTION_RETRY_DELAY_SECONDS = 5
 _COMPONENT_SCAN_BATCHES = 32
+_RETENTION_VISIBILITY_BATCH = 65_536
+_RETENTION_VISIBILITY_MAX_BATCHES = 16
+_RETENTION_SETTLEMENT_COMPONENT = "aura.observatory.telemetry_storage"
+_RETENTION_SETTLEMENT_COMPONENT_VERSION = "1.0.0"
+
+
+async def _advance_retention_visibility(connection: Any) -> None:
+    """Advance through the complete visible prefix in one set-based update.
+
+    The bounded generate_series scan treats an absent ledger row as invisible,
+    so a missing sequence cannot be mistaken for a settled deletion. A later
+    pass continues from the committed watermark for arbitrarily large tails.
+    """
+    for _ in range(_RETENTION_VISIBILITY_MAX_BATCHES):
+        result = await connection.execute(
+            """WITH current AS (
+                SELECT committed_sequence
+                FROM observatory_ingest_watermark
+                WHERE watermark_key = TRUE
+                FOR UPDATE
+            ), bounds AS (
+                SELECT current.committed_sequence,
+                       MAX(ledger.sequence) AS maximum
+                FROM current
+                LEFT JOIN observatory_ingest_visibility AS ledger
+                  ON ledger.sequence > current.committed_sequence
+                GROUP BY current.committed_sequence
+            ), scan AS (
+                SELECT bounds.committed_sequence,
+                       bounds.maximum,
+                       MIN(candidate.sequence) FILTER (
+                           WHERE candidate.sequence IS NOT NULL
+                             AND (ledger.sequence IS NULL OR ledger.visible IS NOT TRUE)
+                       ) AS first_invisible,
+                       MAX(candidate.sequence) AS batch_maximum
+                FROM bounds
+                LEFT JOIN LATERAL generate_series(
+                    bounds.committed_sequence + 1,
+                    LEAST(
+                        bounds.committed_sequence + %s,
+                        COALESCE(bounds.maximum, bounds.committed_sequence)
+                    )
+                ) AS candidate(sequence) ON TRUE
+                LEFT JOIN observatory_ingest_visibility AS ledger
+                  ON ledger.sequence = candidate.sequence
+                GROUP BY bounds.committed_sequence, bounds.maximum
+            ), target AS (
+                SELECT committed_sequence,
+                       maximum,
+                       CASE
+                           WHEN first_invisible IS NULL
+                               THEN COALESCE(batch_maximum, committed_sequence)
+                           ELSE first_invisible - 1
+                       END AS next_sequence
+                FROM scan
+            )
+            UPDATE observatory_ingest_watermark AS watermark
+            SET committed_sequence = target.next_sequence
+            FROM target
+            WHERE watermark.watermark_key = TRUE
+              AND watermark.committed_sequence < target.next_sequence
+            RETURNING watermark.committed_sequence, target.maximum""",
+            (_RETENTION_VISIBILITY_BATCH,),
+        )
+        row = await result.fetchone()
+        if row is None or row[1] is None or int(row[0]) >= int(row[1]):
+            return
+    # The receipt disposition remains atomic and terminal even when an
+    # exceptionally large tail needs more scans. The normal reconciliation
+    # pass continues from the newly committed watermark without holding the
+    # retention transaction open indefinitely.
+
+
+async def _settle_deleted_retention_visibility(
+    connection: Any, action_id: str, target_receipt_count: int
+) -> None:
+    """Settle only exact receipt sequences captured in this target snapshot."""
+    started = monotonic()
+    outcome = "success"
+    error_code = "none"
+    try:
+        encoded = await connection.execute(
+            "SELECT count(*) FROM observatory_retention_targets "
+            "WHERE action_id = %s AND phase LIKE 'receipt:%'",
+            (action_id,),
+        )
+        encoded_row = await encoded.fetchone()
+        # Production returns one scalar. Minimal legacy doubles may return a
+        # wider action-shaped row; leave those compatibility shims to their
+        # existing target behavior rather than inferring coverage from it.
+        if encoded_row is not None and len(encoded_row) == 1:
+            if int(encoded_row[0] or 0) != target_receipt_count:
+                raise RuntimeError("retention receipt target coverage is incomplete")
+
+        await connection.execute(
+            """INSERT INTO observatory_ingest_visibility(sequence, visible)
+            SELECT DISTINCT r.ingest_sequence, TRUE
+            FROM observatory_observation_receipts r
+            JOIN observatory_retention_targets t
+             ON t.action_id = %s
+             AND t.observation_id = r.observation_id::text
+             AND r.ingest_sequence IS NOT NULL
+             AND t.phase = 'receipt:' || r.ingest_sequence::text
+            WHERE r.ingest_sequence IS NOT NULL
+            ON CONFLICT (sequence) DO UPDATE SET visible = TRUE""",
+            (action_id,),
+        )
+        await _advance_retention_visibility(connection)
+    except TimeoutError:
+        outcome = "timeout"
+        error_code = "database_timeout"
+        raise
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        error_code = "cancelled"
+        raise
+    except (ConnectionError, OSError):
+        outcome = "unavailable"
+        error_code = "database_unavailable"
+        raise
+    except RuntimeError:
+        outcome = "failure"
+        error_code = "retention_invariant"
+        raise
+    except Exception:
+        outcome = "failure"
+        error_code = "database_error"
+        raise
+    finally:
+        duration_ms = min(600_000.0, max(0.0, (monotonic() - started) * 1000.0))
+        _LOGGER.info(
+            "retention settlement component=%s component_version=%s operation=%s "
+            "dependency=%s outcome=%s error_code=%s duration_ms=%.3f action_id=%s",
+            _RETENTION_SETTLEMENT_COMPONENT,
+            _RETENTION_SETTLEMENT_COMPONENT_VERSION,
+            "deletion",
+            "postgresql",
+            outcome,
+            error_code,
+            duration_ms,
+            str(action_id)[:128],
+        )
 
 
 class StorageUnavailableError(httpx.HTTPStatusError, RuntimeError):
@@ -298,7 +442,36 @@ _RUN_STATUS_SQL = (
     + _DIMENSION_STATUS_SQL
     + " IN ('error', 'failed'), 'failed', "
     + _DIMENSION_STATUS_SQL
-    + " = 'cancelled', 'cancelled', 'unknown')"
+    + " IN ('canceled', 'cancelled'), 'cancelled', 'unknown')"
+)
+_RUN_TERMINAL_STATUS_SQL = _RUN_STATUS_SQL + " IN ('succeeded', 'failed', 'cancelled')"
+# Lifecycle status is authoritative when Core emitted it.  Prefer the latest
+# terminal lifecycle event so a late nonterminal retry cannot reopen a run.
+_RUN_STATUS_PROJECTION_SQL = (
+    "if(countIf(measurement_name = 'run_status') > 0, "
+    "argMaxIf(" + _RUN_STATUS_SQL + ", "
+    "(" + _RUN_TERMINAL_STATUS_SQL + ", observed_at, observation_id), "
+    "measurement_name = 'run_status'), "
+    "argMax(" + _RUN_STATUS_SQL + ", (observed_at, observation_id)))"
+)
+_RUN_STATUS_AT_SQL = (
+    "argMaxIf(observed_at, ("
+    + _RUN_TERMINAL_STATUS_SQL
+    + ", observed_at, observation_id), measurement_name = 'run_status')"
+)
+_MODEL_EXECUTION_PREDICATE_SQL = (
+    "component_id IN ('aura.runtime.model_routing', 'aura.runtime.model_inference')"
+)
+_RUN_STATUS_WINDOW_SQL = (
+    "if(countIf(measurement_name = 'run_status') OVER () > 0, "
+    "argMaxIf(" + _RUN_STATUS_SQL + ", "
+    "(" + _RUN_TERMINAL_STATUS_SQL + ", observed_at, observation_id), "
+    "measurement_name = 'run_status') OVER (), "
+    "argMax(" + _RUN_STATUS_SQL + ", (observed_at, observation_id)) OVER ())"
+)
+_RUN_DURATION_MEASUREMENT_SQL = (
+    "measurement_name = 'run_duration_ms' AND "
+    "(measurement_unit = 'milliseconds' OR measurement_unit = '')"
 )
 _ANALYTICS_OUTCOME_SQL = (
     "multiIf("
@@ -307,7 +480,7 @@ _ANALYTICS_OUTCOME_SQL = (
     + _DIMENSION_STATUS_SQL
     + " IN ('error', 'failed'), 'failed', "
     + _DIMENSION_STATUS_SQL
-    + " = 'cancelled', 'cancelled', 'unknown')"
+    + " IN ('canceled', 'cancelled'), 'cancelled', 'unknown')"
 )
 
 
@@ -803,7 +976,9 @@ class _RetentionPersistenceAdapter:
                         "measurement": {
                             "name": row["measurement_name"],
                             "value": float(row["measurement_value"]),
-                            "unit": row.get("measurement_unit") or None,
+                            "unit": canonical_measurement_unit(
+                                row["measurement_name"], row.get("measurement_unit") or None
+                            ),
                         },
                         "dimensions": row.get("dimensions") or {},
                         "trace": trace,
@@ -1167,10 +1342,11 @@ class _RetentionPersistenceAdapter:
             )
             run_count_row = await run_count_result.fetchone()
             target_run_count = int(run_count_row[0]) if run_count_row else 0
-            # Receipt scope is captured by immutable observation id, not by a
-            # mutable timestamp predicate.  Include pre-migration NULL
-            # timestamps and receipt-only rows while the serialization guard
-            # is held; late ingest cannot enter this target set.
+            # Receipt scope is captured by immutable observation id plus the
+            # receipt's immutable ingest sequence, not by a mutable timestamp
+            # predicate. Include pre-migration NULL timestamps while the
+            # serialization guard is held; a late same-ID receipt has a
+            # different sequence and cannot enter this target set.
             last_receipt_id: str | None = None
             previous_receipt_key: str | None = None
             while True:
@@ -1191,7 +1367,8 @@ class _RetentionPersistenceAdapter:
                 params_list.append(action.action_id)
                 params = tuple(params_list)
                 receipt_result = await connection.execute(
-                    "SELECT r.observation_id FROM observatory_observation_receipts r "
+                    "SELECT r.observation_id, r.ingest_sequence "
+                    "FROM observatory_observation_receipts r "
                     "WHERE r.observation_id IS NOT NULL"
                     + receipt_where
                     + keyset
@@ -1205,6 +1382,7 @@ class _RetentionPersistenceAdapter:
                     "ORDER BY r.observation_id LIMIT 1000",
                     params,
                 )
+                receipt_rows: list[tuple[Any, ...]]
                 try:
                     receipt_rows = cast(list[tuple[Any, ...]], await receipt_result.fetchall())
                 except AttributeError:
@@ -1219,20 +1397,46 @@ class _RetentionPersistenceAdapter:
                     )
                     previous_receipt_key = receipt_key
                 for receipt_row in receipt_rows:
+                    receipt_id = next(iter(receipt_row), None)
+                    if receipt_id is None:
+                        continue
+                    values = list(receipt_row)
+                    sequence = values[1] if len(values) > 1 else None
+                    phase = f"receipt:{sequence}" if sequence is not None else "receipt:null"
                     await connection.execute(
                         "INSERT INTO observatory_retention_targets("
                         "action_id, observation_id, run_id, phase) "
-                        "VALUES (%s, %s, NULL, 'targeted') "
+                        "VALUES (%s, %s, NULL, %s) "
                         "ON CONFLICT (action_id, observation_id) DO NOTHING",
-                        (action.action_id, receipt_row[0]),
+                        (action.action_id, receipt_id, phase),
                     )
                 if len(receipt_rows) < 1000:
                     break
                 last_receipt_id = str(receipt_rows[-1][0])
+            # Observation targets are inserted before receipt capture. Encode
+            # the exact captured sequence in the existing phase column for
+            # rows whose receipt existed while the target snapshot's advisory
+            # lock was held. A same-ID receipt claimed after capture therefore
+            # cannot become part of this immutable disposition.
+            await connection.execute(
+                """UPDATE observatory_retention_targets AS t
+                SET phase = CASE
+                    WHEN r.ingest_sequence IS NULL THEN 'receipt:null'
+                    ELSE 'receipt:' || r.ingest_sequence::text
+                END
+                FROM observatory_observation_receipts AS r
+                WHERE t.action_id = %s
+                  AND t.phase = 'targeted'
+                  AND t.observation_id = r.observation_id::text""",
+                (action.action_id,),
+            )
             receipt_result = await connection.execute(
                 "SELECT count(*) FROM observatory_observation_receipts r "
                 "JOIN observatory_retention_targets t ON t.action_id = %s "
-                "AND t.observation_id = r.observation_id::text",
+                "AND t.observation_id = r.observation_id::text "
+                "AND ((r.ingest_sequence IS NOT NULL AND "
+                "t.phase = 'receipt:' || r.ingest_sequence::text) OR "
+                "(r.ingest_sequence IS NULL AND t.phase = 'receipt:null'))",
                 (action.action_id,),
             )
             receipt_row = await receipt_result.fetchone()
@@ -1290,7 +1494,9 @@ class _RetentionPersistenceAdapter:
             _require_retention_page_progress("run projection page", after, values[-1])
         return values
 
-    async def _persist_retention_phase(self, connection: Any, phase: str) -> None:
+    async def _persist_retention_phase(
+        self, connection: Any, phase: str, *, commit: bool = True
+    ) -> None:
         action_id = self._active_retention_action_id
         if action_id is None:
             return
@@ -1298,7 +1504,8 @@ class _RetentionPersistenceAdapter:
             "UPDATE observatory_retention_actions SET deletion_phase = %s WHERE action_id = %s",
             (phase, action_id),
         )
-        await _commit_connection(connection)
+        if commit:
+            await _commit_connection(connection)
         action = self._active_retention_action
         if action is not None:
             action.deletion_phase = phase
@@ -1405,6 +1612,10 @@ class _RetentionPersistenceAdapter:
                     await self._persist_retention_phase(connection, "projection_deleted")
                     phase = "projection_deleted"
             if phase == "projection_deleted":
+                # Resolve only the immutable target receipt slots while they
+                # still exist.  The visibility update and receipt deletes
+                # below stay in this one PostgreSQL transaction.
+                await _settle_deleted_retention_visibility(connection, action_id, receipts)
                 last_receipt: str | None = None
                 previous_receipt_key: str | None = None
                 while True:
@@ -1419,23 +1630,44 @@ class _RetentionPersistenceAdapter:
                     previous_receipt_key = next_receipt
                     self._retention_phase = "receipt_delete"
                     await connection.execute(
-                        "DELETE FROM observatory_observation_receipts "
-                        "WHERE observation_id = ANY(%s::uuid[])",
-                        (ids,),
+                        "DELETE FROM observatory_observation_receipts AS r "
+                        "WHERE r.observation_id = ANY(%s::uuid[]) "
+                        "AND EXISTS (SELECT 1 FROM observatory_retention_targets t "
+                        "WHERE t.action_id = %s "
+                        "AND t.observation_id = r.observation_id::text "
+                        "AND ((r.ingest_sequence IS NOT NULL AND "
+                        "t.phase = 'receipt:' || r.ingest_sequence::text) OR "
+                        "(r.ingest_sequence IS NULL AND t.phase = 'receipt:null')))",
+                        (ids, action_id),
                     )
                     last_receipt = next_receipt
+                # Keep settlement, receipt deletion, and the durable phase
+                # transition in one transaction. A failed commit is retried
+                # from the unchanged projection_deleted phase by recovery.
+                await connection.execute(
+                    """UPDATE observatory_retention_actions
+                    SET deletion_phase = %s WHERE action_id = %s""",
+                    ("receipts_deleted", action_id),
+                )
                 await _commit_connection(connection)
-                # Keep the durable phase at projection_deleted until every
-                # cross-store experiment projection has been fenced and
-                # deleted.  If ClickHouse is unavailable, recovery repeats
-                # this phase instead of treating receipts_deleted as final.
+                if self._active_retention_action is not None:
+                    self._active_retention_action.deletion_phase = "receipts_deleted"
+                # The phase transition above is the atomic disposition. Keep
+                # the existing idempotent phase writer as a post-commit
+                # repair for minimal connection implementations that do not
+                # model transaction rollback; a real database sees the same
+                # terminal value on both writes.
+                await self._persist_retention_phase(
+                    connection, "receipts_deleted", commit=False
+                )
+                # Cross-store experiment projection cleanup follows the
+                # receipt disposition. If it is unavailable, recovery starts
+                # from receipts_deleted without replaying receipt deletion.
                 if self._experiment_projections_enabled:
                     async with httpx.AsyncClient(timeout=10.0) as projection_client:
                         await self._delete_experiment_projections(
                             connection, self._active_retention_action, projection_client
                         )
-                self._retention_phase = "retention_phase_update"
-                await self._persist_retention_phase(connection, "receipts_deleted")
             elif phase == "receipts_deleted" and self._experiment_projections_enabled:
                 # A prior process may have committed receipt deletion before
                 # failing the Observatory projection phase.  Retry the
@@ -2655,34 +2887,36 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             if cursor_snapshot is not None:
                 snapshot_sequence = min(snapshot_sequence, cursor_snapshot)
         conditions = ["run_id != ''", f"ingest_sequence <= {snapshot_sequence}"]
-        if filters.component:
-            conditions.append(f"component_id = {_sql(filters.component)}")
-        if filters.deployment:
-            conditions.append(f"deployment_id = {_sql(filters.deployment)}")
-        if filters.model:
-            conditions.append(f"dimensions['provider'] = {_sql(filters.model)}")
-        if filters.from_time:
-            conditions.append(
-                "observed_at >= toDateTime64(" + _clickhouse_time(filters.from_time) + ", 3, 'UTC')"
-            )
-        if filters.to_time:
-            conditions.append(
-                "observed_at < toDateTime64(" + _clickhouse_time(filters.to_time) + ", 3, 'UTC')"
-            )
         # Cursor decoding is deliberately delegated to the use case; the
         # opaque value is carried as a stable boundary in its query contract.
         having_conditions: list[str] = []
+        # Discovery filters qualify run IDs, rather than narrowing the rows
+        # used for their projection.  This preserves lifecycle/model evidence
+        # for a matching run while retaining observed-time window semantics:
+        # a run qualifies when it has an observation in the requested window.
+        discovery_predicates: list[str] = []
+        if filters.component:
+            discovery_predicates.append("component_id = " + _sql(filters.component))
+        if filters.deployment:
+            discovery_predicates.append("deployment_id = " + _sql(filters.deployment))
+        if filters.model:
+            discovery_predicates.append("dimensions['provider'] = " + _sql(filters.model))
+        if filters.from_time:
+            discovery_predicates.append(
+                "observed_at >= toDateTime64(" + _clickhouse_time(filters.from_time) + ", 3, 'UTC')"
+            )
+        if filters.to_time:
+            discovery_predicates.append(
+                "observed_at < toDateTime64(" + _clickhouse_time(filters.to_time) + ", 3, 'UTC')"
+            )
+        if discovery_predicates:
+            having_conditions.append("countIf(" + " AND ".join(discovery_predicates) + ") > 0")
         if filters.status:
             # Status is a property of the latest observation for a run, not
             # of an individual row.  Filtering in WHERE would let an older
             # success keep a run visible after a later failure (or vice
             # versa), and could make one run appear in both result sets.
-            having_conditions.append(
-                "argMax("
-                + _RUN_STATUS_SQL
-                + ", (observed_at, observation_id)) = "
-                + _sql(filters.status)
-            )
+            having_conditions.append(_RUN_STATUS_PROJECTION_SQL + " = " + _sql(filters.status))
         if cursor_at is not None and cursor_id is not None:
             having_conditions.append(
                 "(max(observed_at), run_id) < (toDateTime64("
@@ -2695,15 +2929,58 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         statement = (
             "SELECT run_id, min(observed_at) AS started_at, max(observed_at) AS finished_at, "
             "argMax(observed_at, observed_at) AS latest_at, "
-            "argMax(" + _RUN_STATUS_SQL + ", (observed_at, observation_id)) AS status, "
-            "argMax(dimensions['provider'], observed_at) AS model, "
+            + _RUN_STATUS_PROJECTION_SQL
+            + " AS status, "
+            + "countIf(measurement_name = 'run_status') AS run_status_count, "
+            + _RUN_STATUS_AT_SQL
+            + " AS run_status_at, "
+            + "countIf(measurement_name = 'run_started') AS run_started_count, "
+            + "minIf(observed_at, measurement_name = 'run_started') AS run_started_at, "
+            + "countIf(" + _RUN_DURATION_MEASUREMENT_SQL + " "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) AS run_duration_count, "
+            + "argMaxIf(measurement_value, (observed_at, observation_id), "
+            + _RUN_DURATION_MEASUREMENT_SQL + " "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) AS run_duration_ms, "
+            + "argMaxIf(observed_at, (observed_at, observation_id), "
+            + _RUN_DURATION_MEASUREMENT_SQL + " "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) AS run_duration_at, "
+            + "countIf(dimensions['provider'] != '' AND "
+            + _MODEL_EXECUTION_PREDICATE_SQL
+            + ") AS model_execution_count, "
+            + "argMaxIf(dimensions['provider'], (observed_at, observation_id), "
+            + "dimensions['provider'] != '' AND "
+            + _MODEL_EXECUTION_PREDICATE_SQL
+            + ") AS model_execution, "
+            + "argMaxIf(dimensions['provider'], (observed_at, observation_id), "
+            + "dimensions['provider'] != '') AS legacy_model, "
             "argMax(deployment_id, observed_at) AS deployment_id, "
             "groupUniqArray(component_id) AS component_ids, "
-            # Empty terminal measurements must not mask the latest span
-            # lineage.  The tuple argument makes equal-timestamp selection
-            # deterministic by observation ID while the condition keeps the
-            # aggregate explicitly metadata-only and non-empty.
-            "argMaxIf(trace_id, (observed_at, observation_id), trace_id != '') AS trace_id, "
+            # Prefer the run coordinator trace (Core uses the run UUID as its
+            # trace id), then use the earliest correlated trace for legacy
+            # observations.  Later memory/SSE traces cannot replace it.
+            "argMinIf(observations.trace_id, (observations.observed_at, "
+            "observations.observation_id), observations.trace_id != '' "
+            "AND observations.measurement_name IN ("
+            "'run_started', 'run_status', 'run_duration_ms')) "
+            "AS lifecycle_trace_id, "
+            # Qualify source columns in this aggregate.  The legacy alias
+            # below is intentionally named ``trace_id`` for old query fakes;
+            # unqualified references here let ClickHouse substitute that
+            # aggregate alias and raise Code 184 (aggregate inside aggregate).
+            "argMaxIf(observations.trace_id, (1, observations.observed_at, "
+            "observations.observation_id), observations.trace_id != '' "
+            "AND replaceAll(lowerUTF8(observations.trace_id), '-', '') = "
+            "replaceAll(lowerUTF8(observations.run_id), '-', '')) AS primary_trace_id, "
+            "argMinIf(observations.trace_id, (observations.observed_at, "
+            "observations.observation_id), observations.trace_id != '') AS legacy_trace_id, "
+            # Keep the closed legacy aggregate available to old query fakes;
+            # lifecycle-aware rows never use it for their primary lineage.
+            # The comment preserves the historical SQL marker for consumers
+            # that inspect the query shape; the executable expression uses
+            # qualified columns to avoid alias substitution in ClickHouse.
+            "/* argMaxIf(trace_id, (observed_at, observation_id), trace_id != '') AS trace_id */ "
+            "argMaxIf(observations.trace_id, (observations.observed_at, "
+            "observations.observation_id), observations.trace_id != '') AS trace_id, "
             "max(ingest_sequence) AS order_sequence "
             "FROM observations WHERE "
             + " AND ".join(conditions)
@@ -2717,13 +2994,59 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             {
                 "runId": row["run_id"],
                 "status": _run_status(str(row.get("status") or "unknown")),
-                "startedAt": iso(_parse_datetime(row.get("started_at"))),
-                "finishedAt": iso(_parse_datetime(row.get("finished_at"))),
-                "durationMs": _duration(row.get("started_at"), row.get("finished_at")),
-                "model": row.get("model") or None,
+                "startedAt": iso(
+                    _parse_datetime(row.get("run_started_at"))
+                    if int(row.get("run_started_count", 0) or 0) > 0
+                    else _parse_datetime(row.get("started_at"))
+                ),
+                "finishedAt": iso(
+                    _parse_datetime(row.get("run_duration_at"))
+                    if int(row.get("run_duration_count", 0) or 0) > 0
+                    else (
+                        _parse_datetime(row.get("run_status_at"))
+                        if int(row.get("run_status_count", 0) or 0) > 0
+                        and _run_status(str(row.get("status") or "unknown"))
+                        in {"succeeded", "failed", "cancelled"}
+                        else (
+                            None
+                            if int(row.get("run_started_count", 0) or 0) > 0
+                            or int(row.get("run_status_count", 0) or 0) > 0
+                            else _parse_datetime(row.get("finished_at"))
+                        )
+                    )
+                ),
+                "durationMs": (
+                    float(cast(Any, row.get("run_duration_ms")))
+                    if int(row.get("run_duration_count", 0) or 0) > 0
+                    and row.get("run_duration_ms") is not None
+                    else (
+                        None
+                        if int(row.get("run_started_count", 0) or 0) > 0
+                        or int(row.get("run_status_count", 0) or 0) > 0
+                        else _duration(row.get("started_at"), row.get("finished_at"))
+                    )
+                ),
+                "model": (
+                    row.get("model_execution")
+                    if int(row.get("model_execution_count", 0) or 0) > 0
+                    else (
+                        None
+                        if int(row.get("run_started_count", 0) or 0) > 0
+                        or int(row.get("run_status_count", 0) or 0) > 0
+                        or int(row.get("run_duration_count", 0) or 0) > 0
+                        else row.get("legacy_model") or row.get("model")
+                    )
+                ),
                 "deploymentId": row.get("deployment_id"),
                 "componentIds": list(row.get("component_ids") or []),
-                "traceId": row.get("trace_id") or None,
+                "traceId": (
+                    row.get("lifecycle_trace_id") or row.get("primary_trace_id")
+                    or row.get("legacy_trace_id")
+                    if int(row.get("run_started_count", 0) or 0) > 0
+                    or int(row.get("run_status_count", 0) or 0) > 0
+                    or int(row.get("run_duration_count", 0) or 0) > 0
+                    else row.get("trace_id") or None
+                ),
                 "orderSequence": int(row.get("order_sequence", 0)),
             }
             for row in rows
@@ -2731,8 +3054,16 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         next_cursor = None
         if len(items) == limit and items:
             last = items[-1]
+            # The cursor must mirror ORDER BY latest_at DESC, run_id DESC;
+            # lifecycle finishedAt is a public projection field, not the
+            # private page-order boundary.
             next_cursor = encode_cursor(
-                _parse_datetime(last["finishedAt"]) or datetime.now(UTC),
+                _parse_datetime(
+                    rows[-1].get("latest_at")
+                    or rows[-1].get("observed_at")
+                    or rows[-1].get("finished_at")
+                )
+                or datetime.now(UTC),
                 str(last["runId"]),
                 snapshot_sequence,
             )
@@ -2767,15 +3098,57 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             else ""
         )
         rows = await self._query_rows(
-            "SELECT observation_id, observed_at, schema_version, kind, component_id, "
+            "SELECT * FROM (SELECT observation_id, observed_at, schema_version, kind, "
+            "component_id, "
             "component_version, operation, measurement_name, measurement_value, measurement_unit, "
             "dimensions, trace_id, span_id, parent_span_id, linked_span_ids, run_id, "
             "conversation_id, deployment_id, git_commit, environment, host_id, service_role, "
             "capture_policy, image_version, configuration_version, model_id, model_version, "
             "agent_revision, prompt_bundle_revision, policy_revision "
+            ", "
+            + _RUN_STATUS_WINDOW_SQL
+            + " AS header_status, countIf(measurement_name = 'run_status') OVER () "
+            + "AS header_status_count, "
+            + "argMaxIf(observed_at, ("
+            + _RUN_TERMINAL_STATUS_SQL
+            + ", observed_at, observation_id), measurement_name = 'run_status') OVER () "
+            + "AS header_status_at, "
+            + "min(observed_at) OVER () AS header_legacy_started_at, "
+            + "max(observed_at) OVER () AS header_legacy_finished_at, "
+            + "countIf(measurement_name = 'run_started') OVER () AS header_started_count, "
+            + "minIf(observed_at, measurement_name = 'run_started') OVER () AS header_started_at, "
+            + "countIf(" + _RUN_DURATION_MEASUREMENT_SQL + " "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) OVER () "
+            + "AS header_duration_count, "
+            + "argMaxIf(measurement_value, (observed_at, observation_id), "
+            + _RUN_DURATION_MEASUREMENT_SQL + " "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) OVER () "
+            + "AS header_duration_ms, "
+            + "argMaxIf(observed_at, (observed_at, observation_id), "
+            + _RUN_DURATION_MEASUREMENT_SQL + " "
+            + "AND isFinite(measurement_value) AND measurement_value >= 0) OVER () "
+            + "AS header_duration_at, "
+            + "countIf(dimensions['provider'] != '' AND "
+            + _MODEL_EXECUTION_PREDICATE_SQL
+            + ") OVER () AS header_model_execution_count, "
+            + "argMaxIf(dimensions['provider'], (observed_at, observation_id), "
+            + "dimensions['provider'] != '' AND "
+            + _MODEL_EXECUTION_PREDICATE_SQL
+            + ") OVER () AS header_model_execution, "
+            + "argMaxIf(dimensions['provider'], (observed_at, observation_id), "
+            + "dimensions['provider'] != '') OVER () AS header_legacy_model, "
+            + "argMinIf(trace_id, (observed_at, observation_id), trace_id != '' AND "
+            + "measurement_name IN ('run_started', 'run_status', 'run_duration_ms')) OVER () "
+            + "AS header_lifecycle_trace_id, "
+            + "argMinIf(trace_id, (observed_at, observation_id), trace_id != '' AND "
+            + "replaceAll(lowerUTF8(trace_id), '-', '') = "
+            + "replaceAll(lowerUTF8(run_id), '-', '')) OVER () AS header_primary_trace_id, "
+            + "argMaxIf(trace_id, (observed_at, observation_id), trace_id != '') OVER () "
+            + "AS header_legacy_trace_id "
             "FROM observations WHERE run_id = "
             + _sql(run_id)
             + fence
+            + ") AS run_rows WHERE 1 = 1"
             + after
             + " ORDER BY observed_at, observation_id LIMIT "
             + str(limit + 1)
@@ -2785,7 +3158,13 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         if not items:
             return None
         newest = max(items, key=lambda item: (item.observed_at, item.observation_id))
-        result = run_dict(run_id, items, newest, include_spans=True)
+        result = run_dict(
+            run_id,
+            items,
+            newest,
+            include_spans=True,
+            projection=_detail_projection(run_id, rows[:limit], items),
+        )
         result["partial"] = truncated
         result["nextCursor"] = (
             encode_cursor(items[-1].observed_at, items[-1].observation_id, snapshot_sequence)
@@ -3033,7 +3412,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         heartbeat_at = asyncio.get_running_loop().time() + 15.0
         while True:
             rows = await self._query_rows(
-                "SELECT observation_id, run_id, trace_id, ingest_sequence FROM observations "
+                "SELECT observation_id, run_id, trace_id, component_id, ingest_sequence FROM observations "
                 f"WHERE ingest_sequence > {anchor} AND ingest_sequence <= {upper} "
                 "ORDER BY ingest_sequence LIMIT 1000"
             )
@@ -3053,6 +3432,11 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                         "observationId": row["observation_id"],
                         "runId": row.get("run_id") or None,
                         "traceId": row.get("trace_id") or None,
+                        # Internal projection context used to prevent
+                        # Observatory's own query telemetry from invalidating
+                        # the run currently being inspected.  The API SSE
+                        # renderer deliberately strips this field.
+                        "componentId": row.get("component_id") or None,
                     },
                 }
                 for row in rows
@@ -3290,12 +3674,86 @@ def _duration(start: Any, end: Any) -> float | None:
     return (last - first).total_seconds() * 1000 if first and last else None
 
 
+def _detail_projection(
+    run_id: str, rows: list[dict[str, Any]], items: list[MetadataObservation]
+) -> dict[str, Any]:
+    """Use full-snapshot window aggregates when the page query provides them."""
+
+    if not rows or "header_status_count" not in rows[0]:
+        newest = max(items, key=lambda item: (item.observed_at, item.observation_id))
+        return run_projection(run_id, items, newest)
+    row = rows[0]
+    fallback = run_projection(
+        run_id,
+        items,
+        max(items, key=lambda item: (item.observed_at, item.observation_id)),
+    )
+    status_count = int(row.get("header_status_count", 0) or 0)
+    started_count = int(row.get("header_started_count", 0) or 0)
+    duration_count = int(row.get("header_duration_count", 0) or 0)
+    lifecycle = status_count > 0 or started_count > 0 or duration_count > 0
+    status = _run_status(str(row.get("header_status") or fallback["status"]))
+    started = (
+        _parse_datetime(row.get("header_started_at"))
+        if started_count > 0
+        else _parse_datetime(row.get("header_legacy_started_at"))
+        if not lifecycle
+        else _parse_datetime(fallback.get("startedAt"))
+    )
+    duration = (
+        float(cast(Any, row.get("header_duration_ms")))
+        if duration_count > 0 and row.get("header_duration_ms") is not None
+        else None
+        if lifecycle
+        else fallback.get("durationMs")
+    )
+    finished = (
+        _parse_datetime(row.get("header_duration_at"))
+        if duration_count > 0
+        else (
+            _parse_datetime(row.get("header_status_at"))
+            if status_count > 0 and status in {"succeeded", "failed", "cancelled"}
+            else None
+            if lifecycle
+            else _parse_datetime(row.get("header_legacy_finished_at"))
+            if not lifecycle
+            else _parse_datetime(fallback.get("finishedAt"))
+        )
+    )
+    if not lifecycle and started is not None and finished is not None:
+        duration = (finished - started).total_seconds() * 1000.0
+    model = (
+        row.get("header_model_execution")
+        if int(row.get("header_model_execution_count", 0) or 0) > 0
+        else None
+        if lifecycle
+        else row.get("header_legacy_model") or fallback.get("model")
+    )
+    trace = (
+        row.get("header_lifecycle_trace_id")
+        or row.get("header_primary_trace_id")
+        or row.get("header_legacy_trace_id")
+        if lifecycle
+        else row.get("header_legacy_trace_id") or fallback.get("traceId")
+    )
+    return {
+        **fallback,
+        "status": status,
+        "startedAt": iso(started),
+        "finishedAt": iso(finished),
+        "durationMs": duration,
+        "model": model,
+        "traceId": trace,
+    }
+
+
 def _run_status(value: str) -> str:
     normalized = {
         "success": "succeeded",
         "completed": "succeeded",
         "ok": "succeeded",
         "error": "failed",
+        "canceled": "cancelled",
     }.get(value, value)
     return (
         normalized

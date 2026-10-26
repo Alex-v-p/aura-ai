@@ -148,6 +148,9 @@ export class FetchObservatoryTransport implements ObservatoryGatewayPort {
       throw new Error(`Observatory request failed (${response.status})`);
     }
     if (operation.responseMode === 'none') return undefined as ObservatoryOperationResponse<K>;
+    // Evidence is deliberately streamed as a bounded Blob. Keep it out of
+    // JSON parsing and let the inspector decide when (and how) to disclose it.
+    if (operation.responseMode === 'blob') return (await response.blob()) as ObservatoryOperationResponse<K>;
     return (await response.json()) as ObservatoryOperationResponse<K>;
   }
 }

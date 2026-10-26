@@ -1,0 +1,40 @@
+agent: architecture_guardian
+work_item: AURA-0115
+verdict: PASS
+checked:
+  - >-
+    Re-read the narrowed AURA-0115 work item, implementation handoffs, current
+    diff, architecture handover, ADR-0013, ADR-0016, and the Observatory and
+    execution specifications.
+  - >-
+    Confirmed the change stays inside the authorized Observatory query and
+    Observatory Web ownership zones. No Aura Core files, Aura Web files,
+    contracts, migrations, entrypoints, deployment topology, or shared
+    frontend libraries changed.
+  - >-
+    Confirmed the foreground boundary is a presentation projection of the
+    authoritative terminal lifecycle observation. Correlated observations after
+    that boundary remain available as metadata-only continuation activity and
+    are not silently deleted or rewritten.
+  - >-
+    Confirmed no new cross-product dependency, browser communication, shared
+    session, SSE payload, storage dependency, or API contract was introduced.
+  - >-
+    Confirmed the duration compatibility default is limited to the canonical
+    run_duration_ms measurement and is applied at read-time only; no arbitrary
+    unit inference or persisted data mutation was added.
+  - >-
+    Confirmed the changed paths pass work-item ownership, repository shape,
+    module registry, import-boundary, service-isolation, contract-change, and
+    baseline-protection validation.
+findings: []
+risks:
+  - >-
+    Core retry/redelivery behavior remains outside this narrowed Observatory
+    presentation item and requires a separately scoped change if transport
+    volume is to be reduced.
+  - >-
+    The continuation summary is intentionally bounded by the existing detail
+    page and does not add a server-side total aggregate or a new continuation
+    endpoint.
+unresolved: []

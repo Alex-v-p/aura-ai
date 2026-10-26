@@ -86,6 +86,27 @@ async def test_scheduler_run_once_bounds_batch_and_records_metadata_only_metrics
 
 
 @pytest.mark.asyncio
+async def test_scheduler_run_once_keeps_empty_successful_polls_silent() -> None:
+    metrics = MetadataMetrics()
+    assert await run_once(_Delivery(result=0), metrics=metrics) == 0
+    assert metrics.snapshot() == ()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_run_once_records_duplicate_work_without_a_zero_sample() -> None:
+    result = type(
+        "Result",
+        (),
+        {"fired_count": 0, "duplicate_count": 2, "due_lag_ms": 8.0},
+    )()
+    metrics = MetadataMetrics()
+    assert await run_once(_Delivery(result=result), metrics=metrics) == 0
+    measurements = metrics.snapshot()
+    assert "reminder_fired_count" not in {item.metric for item in measurements}
+    assert "reminder_due_lag_ms" in {item.metric for item in measurements}
+
+
+@pytest.mark.asyncio
 async def test_scheduler_run_once_retries_after_failure_without_swallowing_error() -> None:
     delivery = _Delivery(error=RuntimeError("database unavailable"))
     with pytest.raises(RuntimeError, match="database unavailable"):

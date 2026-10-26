@@ -1,0 +1,73 @@
+agent: general_reviewer
+work_item: AURA-0121
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the final complete diff against AURA-0121, ADR-0017, the
+    Observatory specification, generated run-inspection contract, and updated
+    implementation and test-evaluation handoffs. Reverified every finding from
+    both prior general-review BLOCK verdicts at its actual execution path.
+  - >-
+    Verified Experiment parallel-source assembly distinguishes valid fulfilled
+    empty pages from a whole-service outage. One or more fulfilled sources plus
+    a rejection now produces partial, no fulfilled source produces unavailable,
+    and fully fulfilled empty sources produce empty; focused tests cover all
+    three cases.
+  - >-
+    Verified evidence coverage is derived from authoritative inspection kinds
+    and manifests rather than legacy metadata phases, with captured, excluded,
+    partial, dropped, deleted, unavailable, and not-observed states represented
+    truthfully.
+  - >-
+    Verified inspection freshness is independent from detail and trace
+    readiness. A failed inspection refresh retains an explicitly stale snapshot
+    rather than presenting it as current, while matching run-scoped metadata
+    invalidations refresh only their selected run.
+  - >-
+    Verified evidence fetch is explicit, abortable, bounded, media-allowlisted,
+    and session-expiry aware. Disclosure generations are checked after each
+    asynchronous boundary, and a successful inspection refresh reconciles the
+    disclosed Blob against the current captured manifest's evidence ID, media
+    classification, media type, digest, and byte count before retaining it.
+  - >-
+    Verified collapse, run change, component destruction, deletion, and a live
+    captured-to-deleted transition clear the Blob and rendered preview without
+    silently refetching evidence. The live browser regression also proves image
+    object-URL revocation and that the authoritative deleted manifest remains
+    visible with metadata and timing.
+  - >-
+    Verified confirmed deletion remains behind explicit run-scoped confirmation,
+    submits exactly one request, uses the existing CSRF, confirmation, and
+    per-run idempotency path, gates concurrent activation, preserves its command
+    key for ambiguous retry, bounds accepted/in-progress polling, and leaves
+    metadata visible after the terminal deleted projection.
+  - >-
+    Reverified the final UX corrections. The selected-run request now has a
+    10-second abort deadline and an initial-error branch with an explicit Retry
+    selected run action; production requests propagate the AbortSignal to
+    fetch. Runs labels missing model or trace data as a limited historical
+    projection without rewriting the stored duration, and Observatory-owned SVG
+    icons replace the audited state and lineage glyphs.
+  - >-
+    Verified the new deterministic Storybook destination matrix builds and
+    includes Runs, Components, and Analytics loading, empty, stale, error,
+    partial or disconnected where applicable, large, and narrow fixtures.
+    The earlier final spot-check also passed the one Observatory Web unit test,
+    Storybook build, and targeted acceptance reports for 16 desktop/mobile
+    AURA-0121 browser tests plus one final UX browser pass.
+  - >-
+    Reverified the final tree-position correction at the rendered execution
+    paths. Inspection steps group siblings by parent step or parent span and
+    trace spans group by parent span; aria-posinset and aria-setsize are derived
+    from the same bounded collections rendered by each tree. Focused tests cover
+    two roots, multiple children under one parent, and a child under another
+    parent for both data types. Independently reran all 74 Observatory unit
+    tests, the Observatory production build, and git diff validation
+    successfully.
+findings: []
+risks:
+  - >-
+    The targeted browser suite uses deterministic fixture-owned inspection and
+    evidence responses; integration still owns the work item's full Playwright
+    matrix and composed production-stack acceptance before archival.
+unresolved: []

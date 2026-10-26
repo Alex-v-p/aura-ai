@@ -1,0 +1,50 @@
+agent: general_reviewer
+work_item: AURA-0118
+verdict: PASS
+checked:
+  - >-
+    Rechecked the final native direct-text and nested JSON security delta against
+    the active work item, ADR-0017, run-evidence-v1, the settled implementation
+    and every previously reported General-review finding.
+  - >-
+    Reproduced a tool-capable native stream containing displayed thinking and
+    two ModelTextDelta values followed by ModelStreamCompleted. The run
+    completed and emitted one displayed_thinking item plus exactly two ordered
+    generation_output items whose text matched the delivered chunks; no tool
+    evidence was fabricated.
+  - >-
+    Verified native text evidence is offered before the same buffered chunks
+    are delivered, remains lazy when capture is disabled, and uses the shared
+    monotonic allocator. Cancellation before native stream completion does not
+    claim buffered text was displayed, while recorder failure remains isolated
+    from normal response delivery.
+  - >-
+    Verified JSON encoded inside closed tool argument/result content is parsed
+    recursively within a bounded depth and subjected to the same prohibited-key
+    and secret-value checks. Deeply nested JSON fails closed rather than being
+    accepted as completely inspected.
+  - >-
+    Reconfirmed prior remediations: closed payload and state discriminators,
+    safe sequence bounds, RFC 8785 bytes, truthful binary partial handling,
+    immutable replay identity, retry delivery identity, real execution order,
+    repeated tool/synthesis/terminal sequence isolation, actual-tool-only
+    outcomes, successful-only displayed thinking, correlated completeness,
+    accepted finite telemetry, unique spans, bounded state, non-acquired
+    redelivery behavior, and disabled coordinator/evaluation no-build paths.
+  - >-
+    Independently reran services/aura-core/tests/test_run_evidence.py on the
+    final tree: 76 tests passed. The reported complete Core suite has 1238
+    passing and 106 skipped tests, with all required governance, type, lint,
+    Compose, isolation and diff checks green.
+findings: []
+risks:
+  - >-
+    Binary image and PDF evidence remains intentionally partial because Core
+    has no authorized parser/OCR boundary. This is truthful and fail-closed;
+    exact binary capture requires a later governed complete-byte inspector.
+  - >-
+    Queue saturation is represented through run-correlated content-free
+    telemetry because the full evidence queue cannot accept its own dropped
+    envelope. Downstream inspection must merge that signal when calculating
+    completeness.
+unresolved: []

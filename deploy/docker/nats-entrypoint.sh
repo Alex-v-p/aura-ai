@@ -22,17 +22,23 @@ validate_name() {
 
 normal_user=${AURA_NATS_USER:-aura}
 bootstrap_user=${AURA_NATS_BOOTSTRAP_USER:-aura-evaluation-bootstrap}
+run_evidence_bootstrap_user=${AURA_NATS_RUN_EVIDENCE_BOOTSTRAP_USER:-aura-run-evidence-bootstrap}
 dispatch_user=${AURA_NATS_DISPATCH_USER:-aura-evaluation-dispatch}
 runner_user=${AURA_NATS_RUNNER_USER:-aura-evaluation-runner}
+run_evidence_user=${AURA_NATS_RUN_EVIDENCE_USER:-aura-observatory-run-evidence}
 validate_name "$normal_user"
 validate_name "$bootstrap_user"
+validate_name "$run_evidence_bootstrap_user"
 validate_name "$dispatch_user"
 validate_name "$runner_user"
+validate_name "$run_evidence_user"
 
 normal_password=$(read_secret /run/secrets/aura-nats-password)
 bootstrap_password=$(read_secret /run/secrets/aura-nats-bootstrap-password)
+run_evidence_bootstrap_password=$(read_secret /run/secrets/aura-nats-run-evidence-bootstrap-password)
 dispatch_password=$(read_secret /run/secrets/aura-nats-dispatch-password)
 runner_password=$(read_secret /run/secrets/aura-nats-runner-password)
+run_evidence_password=$(read_secret /run/secrets/aura-nats-run-evidence-password)
 
 config=$(mktemp /tmp/aura-nats.XXXXXX)
 chmod 0600 "$config"
@@ -58,7 +64,7 @@ authorization {
         }
         subscribe: {
           allow: ["aura.runs.>", "aura.approvals.>", "aura.notifications.>", "aura.artifacts.>", "aura.memory.process.v1", "aura.knowledge.documents.process.v1", "aura.knowledge.documents.delete.v1", "_INBOX.>"]
-          deny: ["aura.evaluation.>"]
+          deny: ["aura.evaluation.>", "aura.runs.evidence.v1"]
         }
       }
     }
@@ -67,6 +73,14 @@ authorization {
       password: "$bootstrap_password"
       permissions: {
         publish: { allow: ["\$JS.API.STREAM.INFO.AURA_EVALUATION_RUNNER", "\$JS.API.STREAM.CREATE.AURA_EVALUATION_RUNNER", "\$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-evaluation-dispatch", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-evaluation-dispatch", "\$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-core-evaluation-runner", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-runner", "\$JS.API.CONSUMER.INFO.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_EVALUATION_RUNNER.aura-core-evaluation-cancellation"] }
+        subscribe: { allow: ["_INBOX.>"] }
+      }
+    }
+    {
+      user: "$run_evidence_bootstrap_user"
+      password: "$run_evidence_bootstrap_password"
+      permissions: {
+        publish: { allow: ["\$JS.API.STREAM.INFO.AURA_RUN_EVIDENCE", "\$JS.API.STREAM.CREATE.AURA_RUN_EVIDENCE", "\$JS.API.CONSUMER.INFO.AURA_RUN_EVIDENCE.aura-observatory-run-evidence", "\$JS.API.CONSUMER.DURABLE.CREATE.AURA_RUN_EVIDENCE.aura-observatory-run-evidence"] }
         subscribe: { allow: ["_INBOX.>"] }
       }
     }
@@ -86,9 +100,17 @@ authorization {
         subscribe: { allow: ["aura.evaluation.runner.requested.v1", "aura.evaluation.runner.cancellation.v1", "_INBOX.>"] }
       }
     }
+    {
+      user: "$run_evidence_user"
+      password: "$run_evidence_password"
+      permissions: {
+        publish: { allow: ["\$JS.API.CONSUMER.INFO.AURA_RUN_EVIDENCE.aura-observatory-run-evidence", "\$JS.API.CONSUMER.MSG.NEXT.AURA_RUN_EVIDENCE.aura-observatory-run-evidence", "\$JS.ACK.AURA_RUN_EVIDENCE.aura-observatory-run-evidence.>"] }
+        subscribe: { allow: ["_INBOX.>"] }
+      }
+    }
   ]
 }
 EOF
 
-unset normal_password bootstrap_password dispatch_password runner_password
+unset normal_password bootstrap_password run_evidence_bootstrap_password dispatch_password runner_password run_evidence_password
 exec nats-server -c "$config"

@@ -85,6 +85,22 @@ modules:
   - aura-observatory.contract
   - aura-observatory.metrics
   - aura-observatory.ports
+- id: aura-observatory.run-evidence
+  root: services/aura-observatory/src/aura_observatory/run_evidence.py
+  kind: python
+  public_api: services/aura-observatory/src/aura_observatory/run_evidence.py
+  python_modules:
+  - aura_observatory.run_evidence
+  dependencies: []
+- id: aura-observatory.run-evidence-transport
+  root: services/aura-observatory/src/aura_observatory/run_evidence_transport.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/run_evidence_transport.py
+  python_modules:
+  - aura_observatory.run_evidence_transport
+  dependencies:
+  - aura-observatory.run-evidence
+  - aura-observatory.evaluation-transport
 - id: aura-observatory.adapters
   root: services/aura-observatory/src/aura_observatory/adapters
   kind: package
@@ -232,6 +248,15 @@ modules:
   - aura_observatory.adapters.object_storage
   dependencies:
   - aura-observatory.ports
+- id: aura-observatory.adapters.run-evidence
+  root: services/aura-observatory/src/aura_observatory/adapters/run_evidence.py
+  kind: provider
+  public_api: services/aura-observatory/src/aura_observatory/adapters/run_evidence.py
+  python_modules:
+  - aura_observatory.adapters.run_evidence
+  dependencies:
+  - aura-observatory.run-evidence
+  - aura-observatory.adapters.object-storage
 - id: aura-observatory.local-judges
   root: services/aura-observatory/src/aura_observatory/evaluation_judges.py
   kind: python
@@ -284,6 +309,7 @@ modules:
   - aura-observatory.evaluation-definitions
   - aura-observatory.evaluation-evaluators
   - aura-observatory.adapters.object-storage
+  - aura-observatory.adapters.run-evidence
   - aura-observatory.adapters.local-ollama
   - aura-observatory.local-judges
   - aura-observatory.calibration
@@ -294,6 +320,7 @@ modules:
   - aura-observatory.settings
   - aura-observatory.query
   - aura-observatory.operations
+  - aura-observatory.run-evidence
   - aura-observatory.adapters.operations
 - id: aura-observatory.entrypoints
   root: services/aura-observatory/src/aura_observatory/entrypoints
@@ -315,6 +342,7 @@ modules:
   dependencies:
   - aura-observatory.composition
   - aura-observatory.operations
+  - aura-observatory.run-evidence
 - id: aura-observatory.entrypoints.api.app
   root: services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
   kind: entrypoint
@@ -331,6 +359,7 @@ modules:
   - aura-observatory.settings
   - aura-observatory.query
   - aura-observatory.operations
+  - aura-observatory.run-evidence
 - id: aura-observatory.entrypoints.worker
   root: services/aura-observatory/src/aura_observatory/entrypoints/worker.py
   kind: entrypoint
@@ -344,6 +373,7 @@ modules:
   - aura-observatory.query
   - aura-observatory.evaluation-storage
   - aura-observatory.operations
+  - aura-observatory.run-evidence-transport
 - id: aura-observatory.entrypoints.cli
   root: services/aura-observatory/src/aura_observatory/entrypoints/cli.py
   kind: entrypoint
@@ -463,6 +493,7 @@ modules:
   - aura-core.platform.database.engine
   - aura-core.platform.outbox
   - aura-core.platform.outbox.nats
+  - aura-core.platform.run-evidence
   - aura-core.platform.telemetry
   - aura-core.providers.object-storage.evaluation
   - aura-core.providers.object-storage.garage
@@ -730,6 +761,14 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/platform/__init__.py
   dependencies: []
+- id: aura-core.platform.run-evidence
+  root: services/aura-core/src/aura_core/platform/run_evidence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/run_evidence.py
+  python_modules:
+  - aura_core.platform.run_evidence
+  dependencies:
+  - aura-core.domains.execution.runs.ports
 - id: aura-core.platform.object-store
   root: services/aura-core/src/aura_core/platform/object_store
   kind: package
@@ -1924,6 +1963,7 @@ modules:
   - aura-core.platform.outbox
   - aura-core.platform.outbox.nats
   - aura-core.platform.readiness
+  - aura-core.platform.run-evidence
   - aura-core.platform.telemetry
   - aura-core.providers.models.ollama.adapter
   - aura-core.providers.embeddings.ollama.adapter
@@ -2020,6 +2060,7 @@ modules:
   - aura-core.platform.database.engine
   - aura-core.platform.outbox
   - aura-core.platform.outbox.nats
+  - aura-core.platform.run-evidence
   - aura-core.platform.telemetry
   - aura-core.providers.models.ollama.adapter
   - aura-core.providers.embeddings.ollama.adapter

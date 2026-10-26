@@ -1,0 +1,190 @@
+agent: observatory_worker
+work_item: AURA-0119
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0119_observatory
+  worktree: shared-main
+scope:
+  ownership_zone: aura-observatory.run-evidence
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/run_evidence.py
+  - services/aura-observatory/src/aura_observatory/adapters/run_evidence.py
+  - services/aura-observatory/src/aura_observatory/adapters/object_storage.py
+  - services/aura-observatory/src/aura_observatory/run_evidence_transport.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/migrations/postgresql/versions/0016_run_evidence.sql
+  - services/aura-observatory/resources/component-manifests/run-evidence-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/run-evidence-storage.yaml
+  - services/aura-observatory/resources/component-manifests/run-inspection-query.yaml
+  - tooling/architecture/modules.yaml
+  - services/aura-observatory/tests/test_aura0119_regression.py
+  - services/aura-observatory/tests/test_aura0119_acceptance.py
+contracts:
+  changed: false
+migrations:
+  changed: true
+  files:
+    - services/aura-observatory/migrations/postgresql/versions/0016_run_evidence.sql
+observability:
+  components:
+    - aura.observatory.run_evidence_ingestion
+    - aura.observatory.run_evidence_storage
+    - aura.observatory.run_inspection_query
+  metrics_added:
+    - run_evidence_ingest_outcome_count
+    - run_evidence_storage_outcome_count
+    - run_evidence_deletion_outcome_count
+    - run_evidence_ingest_validation_latency_ms
+    - run_evidence_ingest_dedupe_latency_ms
+    - run_evidence_manifest_storage_latency_ms
+    - run_evidence_object_storage_latency_ms
+    - run_evidence_deletion_latency_ms
+    - run_inspection_query_latency_ms
+    - run_inspection_merge_latency_ms
+verification:
+  passed:
+    - >-
+      Run-evidence validator enforces the closed envelope, discriminator and
+      media bindings (including context-only model attachments), RFC8785-compatible
+      canonical bytes, digest and byte count, bounded content, fail-closed
+      credential/bearer/AWS/GitHub and hidden-reasoning rejection, capture-state
+      reasons, and delivery identity.
+    - >-
+      Memory and PostgreSQL repository seams provide stable-ID idempotency,
+      transaction-serialized collision detection, deterministic pagination,
+      object integrity checks, durable deletion intent/progress/failure state,
+      content-free audit, and run-scoped invalidation.
+    - >-
+      Dedicated Garage object adapter uses canonical run/evidence UUID keys,
+      bounded streaming, digest verification, and fail-closed credentials.
+    - >-
+      Owner API routes implement inspection snapshots, truthful unavailable and
+      paged completeness, no-store/nosniff evidence streaming with exact
+      length and digest, CSRF/confirmation/idempotent deletion, and a polling
+      metadata-only SSE invalidation stream that keeps run and telemetry
+      cursors separate.
+    - >-
+      Worker entrypoint composes a reconnecting JetStream consumer with the
+      platform subject, stream, durable, and bounded envelope setting; only
+      terminal validation errors are ACKed while storage failures redeliver.
+    - >-
+      PYTHONPATH=services/aura-observatory/src .venv/bin/pytest -q
+      services/aura-observatory/tests/test_aura0119_acceptance.py
+      services/aura-observatory/tests/test_aura0119_regression.py: 75 acceptance
+      cases and 14 production regressions passed.  The accepted envelopes use the
+      Core scanner/policy revisions and the contract-required context category
+      for model-visible attachments.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-observatory/src/aura_observatory: 0 errors.
+    - >-
+      Ruff and Pyright passed for all changed Observatory source files; module registry,
+      work-item, changed-path, contract, generated-sync, import-boundary,
+      service-isolation, frontend-boundary, observability, repository-shape,
+      baseline, compose, and diff checks passed.
+    - >-
+      Second-review regressions pass for strict production envelope validation: no
+      fixture/test bypasses, closed delivery/admission/category/classification/state
+      bindings, scanner/policy revision allowlists, and the 1,500,000-byte wire
+      ceiling with a 1,048,576-byte evidence ceiling.
+    - >-
+      Collision and rejection paths are content-free and durable: collision records
+      commit before terminal failure, malformed rejections retain only server-derived
+      IDs, bounded wire byte count, bounded reason, and timestamp, and Garage-before-
+      manifest failures compensate or enter the restart-recoverable orphan queue.
+    - >-
+      Deletion intent/progress/failure/completion commits are restart-recoverable with
+      distinct audit IDs; the worker resumes committed deletion intents and orphan
+      compensation; zero-byte objects are persisted and verified; object streams are
+      bounded and digest-verified before the HTTP response is constructed.
+    - >-
+      Inspection completeness aggregates the full run across pages, stable UUIDv5 step
+      IDs and truncation reasons, while SSE uses an Observatory-owned mixed-source
+      high-water cursor and polls later run-evidence changes without replaying unknown
+      producer cursors.
+    - >-
+      ADR operation spans are emitted for serialization, queue offer, transport publish,
+      validation, dedupe, manifest/object writes, object delete/stream, deletion
+      finalize, metadata/manifest queries, and inspection merge with bounded latency,
+      source trace/parent/run correlation, and finite error dimensions. Manifest and
+      object latency histograms are recorded at their owning persistence boundaries.
+    - >-
+      Non-captured state/admission bindings are fail-closed: excluded, dropped, and
+      deleted envelopes require exactly not_applicable admission, while credential,
+      secret, and bearer rejection reasons require a complete rejected_prohibited_material
+      attestation. Postgres deletion uses a run-scoped advisory fence across API and
+      recovery work, and a completed tombstone permanently rejects later captured
+      evidence for that run. Deleted manifests clear content-derived fingerprints,
+      including existing deleted rows during migration upgrade.
+    - >-
+      Inspection page and run-wide summary are read through one repeatable-read
+      PostgreSQL snapshot, with all summary bindings verified against the real
+      PostgreSQL adapter on one connection; transaction setup uses SET TRANSACTION
+      as the first psycopg statement and an opt-in live test verifies a concurrent
+      insert is excluded from the page and aggregate. Failed deletion attempts
+      finalize successfully removed objects as deleted while retaining the failed
+      target's object key and captured state for recovery retry; resumed counts
+      accumulate the durable prior progress. Each acknowledged Garage delete now
+      atomically transitions its manifest and increments that durable count, with
+      a crash-boundary regression proving restart recovery cannot expose a missing
+      captured object or double-count. Producer IDs are scanned for bearer/AWS/
+      GitHub credential material before persistence.
+    - >-
+      Required run-evidence evaluator names have executable bounded outputs through
+      evaluate_run_evidence_projection, and ADR error classes plus manifest/object/
+      deletion boundary histograms are emitted without content-derived labels. The
+      inspection service invokes those evaluators at runtime and retains only their
+      bounded results; stream failures emit content-free failure spans. Validation
+      latency is recorded at the validation boundary before repository I/O, and
+      deletion retry regressions preserve durable failed-target state. Successful
+      deletion finalization retains target trace/parent correlation, emits the
+      end-to-end deletion latency exactly once at the service boundary, and API
+      missing-evidence spans are ordinary unavailable outcomes with no outage
+      error class and run correlation. Progress count assignment occurs only after its transaction
+      commits; a regression that fails count persistence after manifest transition
+      proves recovery retains the DB-authoritative count without double counting.
+      The Postgres adapter regression verifies that the run-level session fence
+      is acquired exactly once and does not self-deadlock by reacquiring an
+      xact-level lock on a second pooled connection.
+  failed:
+    - >-
+      Aggregate Ruff remains blocked by the unrelated pre-existing E501 at
+      deploy/tests/test_aura0090_topology.py:189.
+    - >-
+      Aggregate pytest collection remains blocked by the unrelated duplicate
+      test_aura0104_acceptance_capabilities module basename in services and
+      deploy tests; the non-conflicting focused AURA-0119 cases remain green.
+  not_run:
+    - >-
+      Live PostgreSQL/Garage/NATS restart, ACL, and independent outage checks
+      remain for final integration environment validation.
+decisions:
+  - >-
+    PostgreSQL stores only bounded manifests, delivery/collision/deletion
+    state, content-free audits, and metadata-only SSE cursors; evidence bytes
+    remain in the dedicated Garage bucket.
+  - >-
+    Inspection snapshots never include payloads, object keys, evidence bytes,
+    or content-bearing SSE fields. Evidence is available only through the
+    owner-authorized bounded REST stream.
+  - >-
+    Durable NATS storage failures are retryable and are not ACKed; malformed
+    or prohibited envelopes are terminal and ACKed after bounded rejection.
+risks:
+  - >-
+    PostgreSQL/Garage adapter behavior and ACL isolation need the live
+    full-stack acceptance environment; in-memory acceptance cannot prove
+    external service restart behavior.
+  - >-
+    Aggregate repository checks require unrelated baseline cleanup by the
+    integration maintainer and were not altered within this ownership zone.
+unresolved: []

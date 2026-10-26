@@ -1,0 +1,95 @@
+agent: frontend_worker
+work_item: AURA-0116
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0115_frontend
+  worktree: shared
+scope:
+  ownership_zone: frontend.observatory.store
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - work-items/handoffs/AURA-0116-frontend.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.live_updates
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      corepack pnpm exec nx test observatory --skip-nx-cache (63 tests passed;
+      the generic AURA-0116 coordinator regression remains tagged)
+    - >-
+      corepack pnpm exec nx lint observatory --skip-nx-cache (0 errors;
+      pre-existing warnings only)
+    - >-
+      corepack pnpm exec nx build observatory-web --configuration=production
+      --skip-nx-cache
+    - >-
+      corepack pnpm exec nx lint observatory-web-e2e --skip-nx-cache (0 errors;
+      one pre-existing warning)
+    - >-
+      Focused desktop browser acceptance for the five AURA-0116 scenarios plus
+      the bounded trace-unavailable scenario (6 passed in the integration
+      environment, including the final-attempt live-invalidation regression)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0116.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0116.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0116.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0116.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0116.yaml
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Selected-run loads now own an in-flight sequence. Live invalidations during
+    detail or trace acquisition set one pending bit instead of superseding the
+    request, preserving the first visible projection.
+  - >-
+    The pending bit is consumed only after the active request settles, where a
+    single bounded reconciliation timer schedules the trailing latest snapshot.
+    Selection changes, sign-out, retention reset, and session invalidation clear
+    the pending bit and retain the existing monotonic sequence guards.
+  - >-
+    A successful response clears reconciliation timers and attempt counts while
+    preserving an in-flight invalidation through the finally boundary, so a
+    converged first response cannot accidentally drop the trailing refresh.
+  - >-
+    The selected-run attempt cap is checked before in-flight coalescing. The
+    final missing-trace attempt therefore transitions to the existing bounded
+    error disclosure instead of leaving the inspector permanently loading.
+  - >-
+    Live invalidations and projection-gap self-reconciliation use separate
+    pending provenance. A live invalidation may set
+    selectedRunRefreshPending even during the final allowed attempt, while
+    selectedRunRetryPending remains cap-bounded. A successful final attempt
+    preserves the live pending bit through completion and schedules exactly
+    one trailing refresh; a final missing-trace attempt remains an error.
+  - >-
+    Existing metadata-only state, transport contracts, Aura Web isolation, and
+    browser persistence behavior remain unchanged.
+  - >-
+    The production ObservatoryStore keeps the standard Angular Injectable
+    decorator; no runtime decorator substitution is used, preserving JIT and
+    production bootstrap behavior.
+risks:
+  - >-
+    Direct TestBed coverage of the decorated store cannot execute under the
+    repository's current standalone Vitest transform without replacing the
+    production @Injectable metadata; that replacement caused a blank runtime
+    application and was deliberately reverted. The focused browser regression
+    remains the authoritative selected-run state-machine acceptance.
+unresolved: []

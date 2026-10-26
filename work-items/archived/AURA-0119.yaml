@@ -1,0 +1,207 @@
+id: AURA-0119
+title: Persist and serve governed Observatory run evidence
+status: integrated
+change_class: repository_governance
+intent: >
+  Implement the Observatory-owned ingestion, manifest and object persistence,
+  inspection merge, owner-authorized evidence streaming, durable manual
+  deletion, metadata-only invalidation, and isolated deployment topology for
+  the AURA-0117 contract and AURA-0118 producer, without changing Aura Core or
+  either product frontend.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/agents-and-execution.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - AURA-0117 owns the immutable run-evidence-v1 and Observatory API contracts; this work item implements them without contract changes.
+    - AURA-0118 publishes only to the dedicated aura.runs.evidence.v1 JetStream subject and never reads or waits for Observatory.
+    - Observatory PostgreSQL owns manifests authorization deletion truth idempotency collision records and content-free audits; Garage owns bytes; ClickHouse remains content-free metadata.
+    - A dedicated AURA_RUN_EVIDENCE stream durable consumer NATS identity Garage bucket and least-privilege worker/API credentials are separate from run commands evaluation artifacts and metadata ingest.
+    - Object writes are digest and byte-count verified before a manifest becomes captured; ACK occurs only after durable authoritative state while duplicates and out-of-order delivery converge deterministically.
+    - Inspection REST snapshots are authoritative and merge ClickHouse timing with PostgreSQL manifests; SSE publishes only run-scoped metadata invalidation after authoritative state changes.
+    - Evidence reads are owner-authorized bounded streamed no-store and nosniff; object keys never leave the service.
+    - Deletion is owner-authorized CSRF-protected idempotent durable and restart-recoverable; bytes are removed while content-free manifest and audit truth remains.
+    - No frontend implementation or Aura Core change is allowed in this backend/platform slice.
+  contracts:
+    - contracts/events/runs/v1/run-evidence.schema.json
+    - contracts/openapi/observatory-v1.yaml
+feature_references: [OBS-001, OBS-002, OBS-005, OBS-020, OBS-025, OBS-027, GOV-020]
+ownership_zones:
+  - aura-observatory.run-evidence
+  - aura-observatory.run-inspection-query
+  - aura-observatory.entrypoints.api
+  - aura-observatory.entrypoints.evidence-worker
+  - aura-observatory.postgresql
+  - aura-observatory.object-storage.run-evidence
+  - platform.nats.run-evidence
+  - platform.compose.run-evidence
+  - architecture.module-registry
+  - evaluation.aura0119
+  - delivery.aura0119
+allowed_paths:
+  - work-items/active/AURA-0119.yaml
+  - work-items/archived/AURA-0119.yaml
+  - work-items/handoffs/AURA-0119-*.yaml
+  - work-items/reviews/AURA-0119-*.yaml
+  - work-items/integration/AURA-0119.yaml
+  - services/aura-observatory/src/aura_observatory/**
+  - services/aura-observatory/migrations/postgresql/versions/0016_run_evidence.sql
+  - services/aura-observatory/resources/component-manifests/run-evidence-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/run-evidence-storage.yaml
+  - services/aura-observatory/resources/component-manifests/run-inspection-query.yaml
+  - services/aura-observatory/tests/test_aura0119_*.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0094_contract.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0095_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0100_startup.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/tests/test_modules.py
+  - compose.yaml
+  - .env.example
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-http.sh
+  - deploy/docker/nats-entrypoint.sh
+  - deploy/docker/nats-run-evidence-bootstrap.sh
+  - deploy/tests/test_aura0119_*.py
+  - deploy/tests/test_compose_topology.py
+  - deploy/tests/test_aura0091_topology.py
+  - deploy/tests/test_aura0092_topology.py
+  - deploy/tests/test_aura0104_acceptance_capabilities.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - .env
+  - .env.local-http
+  - .secrets/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - frontend/**
+  - satellites/**
+  - extensions/**
+  - services/aura-observatory/migrations/clickhouse/**
+  - services/aura-observatory/migrations/postgresql/versions/000*.sql
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - run-evidence-v1 consumer implementation
+    - observatory-v1 inspection evidence and deletion implementation
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: run-evidence
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.run_evidence_ingestion
+    - aura.observatory.run_evidence_storage
+    - aura.observatory.run_inspection_query
+  required_metrics:
+    - run_evidence_ingest_outcome_count
+    - run_evidence_storage_outcome_count
+    - run_evidence_deletion_outcome_count
+    - run_evidence_ingest_validation_latency_ms
+    - run_evidence_ingest_dedupe_latency_ms
+    - run_evidence_manifest_storage_latency_ms
+    - run_evidence_object_storage_latency_ms
+    - run_evidence_deletion_latency_ms
+    - run_inspection_query_latency_ms
+    - run_inspection_merge_latency_ms
+  required_evaluators:
+    - run_evidence_ingestion_integrity
+    - run_evidence_deletion_recovery
+    - run_inspection_projection_truth
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Observatory receives owner-private exact run content and must validate the complete closed envelope before any persistence acknowledgement.
+    - Dedicated NATS and Garage identities and buckets must not grant access to run commands evaluation artifacts Core storage or metadata OTLP.
+    - Evidence bytes and identifiers never enter ClickHouse OTLP logs metrics SSE URLs error detail or browser-facing object keys.
+    - Owner authorization no-store nosniff approved media content length and digest headers are mandatory for evidence streaming.
+    - Deletion requires Observatory CSRF idempotency and exact confirmation and retains only content-free durable audit and deleted manifests.
+    - Object or PostgreSQL failures cannot acknowledge a captured item falsely and recovery must converge after restarts duplicates and out-of-order delivery.
+    - Aura Web and Aura Core remain unchanged and no direct database read callback shared browser session or synchronous dependency is introduced.
+  data_classes:
+    - owner_private_run_evidence_bytes
+    - run_evidence_manifests_and_lineage
+    - evidence_deletion_state
+    - content_free_evidence_audit
+    - metadata_only_run_invalidation
+required_agents:
+  implementation:
+    - observatory_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 7
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Dedicated JetStream stream consumer and least-privilege identities provision aura.runs.evidence.v1 separately from Core commands evaluation and transient thinking with bounded retention message size delivery attempts and explicit ACK after durable success.
+  - A complete closed run-evidence-v1 consumer validates discriminator bindings bounds canonical bytes digest byte count admission attestation capture state reason retry identity stable-ID duplicates and collisions before authoritative persistence.
+  - Exact duplicates are idempotent changed immutable reuse becomes a content-free collision late and out-of-order evidence is retained deterministically and malformed or prohibited content is rejected without logging or persisting bytes.
+  - Migration 0016 creates Observatory-owned manifest delivery collision deletion and content-free audit state with run sequence evidence and deletion indexes and is safe for fresh upgrade repeated and restart application.
+  - A dedicated run-evidence Garage bucket and separate worker-write and API-read-delete credentials cannot access evaluation or Core buckets; object writes reads deletes and recovery enforce the 1 MiB limit digest byte count and approved media.
+  - Captured manifests become visible only after durable object success; failures and partial excluded dropped deleted or unavailable states remain truthful and restart recovery never exposes missing bytes as captured.
+  - GET run inspection merges existing ClickHouse spans and measurements with PostgreSQL manifests into deterministic bounded steps lineage completeness and partial reasons handling running late missing-parent duplicate out-of-order unavailable paged and deleted states.
+  - GET evidence is owner-authorized no-store nosniff bounded streamed with exact approved media Content-Length and digest header and never exposes object keys or buffers unbounded bytes.
+  - DELETE run evidence is owner-authorized CSRF-protected confirmation-gated idempotent durable and restart-recoverable; it removes every run byte while retaining content-free deleted manifests status and audit.
+  - All success and error responses for inspection evidence and deletion satisfy the existing Observatory contract and remain no-store and content-free where required.
+  - Each authoritative manifest or deletion state change emits only a metadata-only SSE observation.changed invalidation with resourceType run and the run ID; SSE never contains evidence IDs kinds media digests reasons deletion detail or content.
+  - Component manifests telemetry spans metrics error classes evaluator outputs retention and dependencies exactly implement ADR-0017 with finite content-free dimensions and no evidence values or identifiers in observability signals.
+  - Stopping NATS Observatory API PostgreSQL ClickHouse or Garage independently cannot affect Core run success and produces truthful bounded ingestion inspection or deletion failure states after recovery.
+  - Tests cover fresh and upgraded migrations stream drift ACL isolation malformed and adversarial envelopes digest verification duplicate collision out-of-order merge pagination auth no-store streaming CSRF idempotent deletion restart recovery invalidation privacy and service outage isolation.
+  - No Aura Core Aura Web frontend contract ClickHouse content schema evaluation bucket protected baseline or cross-product browser/session dependency changes occur.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0119.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0119.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0119.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest tooling.architecture.tests.test_modules -v
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0119.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0119.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-observatory deploy/tests
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-observatory
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-observatory/tests deploy/tests -q
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Observatory Web rendering browser persistence accessibility and live inspector interaction remain in AURA-0120 after this API and storage slice is integrated.
+  - Binary evidence remains partial until an approved media-inspection producer attestation exists; ingestion never upgrades rejected bytes to captured.

@@ -1,0 +1,128 @@
+agent: platform_worker
+work_item: AURA-0119
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0117_platform
+  worktree: shared-main
+scope:
+  ownership_zone: platform.nats.run-evidence,platform.compose.run-evidence
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/local-http.yaml
+  - deploy/docker/nats-entrypoint.sh
+  - deploy/docker/nats-run-evidence-bootstrap.sh
+  - deploy/tests/test_aura0119_topology.py
+  - work-items/handoffs/AURA-0119-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0119.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0119.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0119.yaml (no contract changes; skipped)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 -m unittest tooling.architecture.tests.test_modules -v (14 passed)
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0119.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0119.yaml (no protected changes; skipped)
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check deploy/tests/test_aura0119_topology.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -q deploy/tests/test_aura0119_topology.py (5 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-observatory (0 errors, 0 warnings, 0 informations)
+    - >-
+      Platform topology test confirms AURA_RUN_EVIDENCE_CAPTURE_POLICY and
+      AURA_RUN_EVIDENCE_CAPTURE_REVISION reach Core API, worker, and evaluation
+      runner roots, with an empty policy default and no implicit full_content
+      opt-in.
+    - >-
+      docker compose --profile observatory config rendered an empty capture
+      policy by default and rendered full_content into Core API, Core worker,
+      and evaluation-runner when explicitly opted in through the environment.
+    - docker compose config --quiet
+    - docker compose --profile observatory config --quiet
+    - sh -n deploy/docker/nats-entrypoint.sh deploy/docker/nats-run-evidence-bootstrap.sh
+    - git diff --check
+    - implementation-handoff.schema.json validation for this handoff
+  failed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-observatory deploy/tests: pre-existing
+      E501 in deploy/tests/test_aura0090_topology.py:189; no platform-owned
+      file was implicated.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-observatory/tests deploy/tests -q: collection fails on the
+      pre-existing duplicate test module name test_aura0104_acceptance_capabilities.
+  not_run: []
+decisions:
+  - >-
+    Stable deployment names are subject aura.runs.evidence.v1, JetStream stream
+    AURA_RUN_EVIDENCE, durable consumer aura-observatory-run-evidence, private
+    network aura-run-evidence-bus, and Garage bucket aura-observatory-run-evidence.
+  - >-
+    Core and the Observatory worker share only the private broker segment; the
+    API receives no NATS attachment and uses a distinct Garage identity.
+  - >-
+    The worker Garage identity is write-only and the API identity is read/write
+    because Garage's write capability is required for durable object deletion;
+    both identities are denied owner access and are fail-closed on unexpected
+    grants or bucket reuse.
+  - >-
+    Runtime environment names follow the landed Observatory Settings fields:
+    NATS_DURABLE, OBJECT_ACCESS_KEY_FILE, OBJECT_SECRET_KEY_FILE, and
+    MAX_ENVELOPE_BYTES. Role-specific env names remain only as host secret-file
+    configuration so worker and API credentials stay separate.
+  - >-
+    Core capture policy is forwarded only as an explicit owner-controlled
+    Compose setting. The tracked example leaves it empty, while the capture
+    revision defaults to full-content-v1; no deployment silently enables
+    full-content capture.
+  - >-
+    JetStream bootstrap reconciles stream and consumer settings and exits on
+    drift; transport retention and size limits are bounded and ACK permissions
+    are limited to the dedicated durable consumer.
+  - >-
+    The aligned wire-envelope ceiling is 1,500,000 bytes, while producer
+    evidence bytes remain bounded at 1,048,576 bytes. Compose, Observatory
+    worker/API settings, and the NATS stream use the envelope ceiling so a
+    valid maximum evidence item survives JSON envelope overhead.
+  - >-
+    A direct Core serializer fixture with exactly 1,048,576 decoded text
+    attachment bytes and the maximum legal display name produced a 1,399,474
+    byte envelope; 1,500,000 leaves bounded headroom without raising the
+    decoded evidence limit.
+  - >-
+    Run-evidence stream provisioning uses the separate
+    aura-run-evidence-bootstrap identity and secret; the evaluation bootstrap
+    identity no longer receives run-evidence JetStream administration grants.
+    The normal Core identity explicitly denies evidence-subject subscription.
+risks:
+  - >-
+    The aggregate Ruff check remains blocked by the known pre-existing E501
+    finding in deploy/tests/test_aura0090_topology.py:189; no platform-owned
+    file is implicated.
+  - >-
+    The aggregate pytest command remains blocked during collection by the
+    known duplicate test module name test_aura0104_acceptance_capabilities;
+    focused platform tests pass.
+  - >-
+    Final AURA-0119 integration still needs the independent full-stack outage,
+    restart, and acceptance sequence to exercise the deployed topology; this
+    platform handoff does not claim that integration execution.
+unresolved:
+  []

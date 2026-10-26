@@ -1,0 +1,32 @@
+component:
+  id: aura.observatory.run_evidence_storage
+  version: 1.0.0
+  owner: observatory.run_evidence
+  category: persistence
+input:
+  schema: observatory-run-evidence-manifest-v1
+  replayable: true
+output:
+  schema: observatory-run-evidence-manifest-v1
+dependencies:
+  - postgresql
+  - garage
+metrics:
+  - run_evidence_storage_outcome_count
+  - run_evidence_manifest_storage_latency_ms
+  - run_evidence_object_storage_latency_ms
+  - run_evidence_deletion_outcome_count
+  - run_evidence_deletion_latency_ms
+evaluators:
+  - run_evidence_deletion_recovery
+  - run_evidence_storage_isolation
+  - observatory_run_evidence_privacy
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [operation, outcome, status, dependency, errorClass]
+  trace_only: [runId]
+  prohibited: [eventId, evidenceId, digest, object_key, prompt, response, content, arguments, result, token, credential, password, owner_identity]
+export:
+  sink: postgresql_and_private_garage
+  cadence: per_evidence_item

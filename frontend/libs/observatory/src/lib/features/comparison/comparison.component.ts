@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, ElementRef, ViewChild, inject } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { ObservatoryStore } from '../../observatory-store';
+import { formatDurationMs } from '../../observatory-models';
 import type { ComparisonState, RunComparison } from '@aura/observatory-api-client';
 
 @Component({
@@ -84,7 +85,7 @@ export class ObservatoryComparisonComponent {
   runsAreEmpty(): boolean { return this.runs().length === 0 && (this.store.resourceState('runs') === 'empty' || this.store.snapshot().state === 'empty'); }
   showFirstUseGuidance(): boolean { return this.runs().length > 0 && !this.store.comparison().result && this.store.comparison().state === 'idle'; }
   value(event: Event): string { return (event.target as HTMLSelectElement).value; }
-  duration(value: number | null): string { return value === null ? 'duration unavailable' : `${value} ms`; }
+  duration(value: number | null): string { return value === null ? 'Duration unavailable' : formatDurationMs(value); }
   clearValidation(): void { this.validationError = null; }
   hasAnySelection(): boolean { const committed = this.store.comparison(); return Boolean(this.leftRunId || this.rightRunId || committed.leftRunId || committed.rightRunId); }
   selectionDirty(): boolean { const committed = this.store.comparison(); return Boolean(committed.result && (this.leftRunId !== (committed.leftRunId ?? '') || this.rightRunId !== (committed.rightRunId ?? ''))); }
@@ -105,9 +106,9 @@ export class ObservatoryComparisonComponent {
   statusClass(value: string): string { return `status-${value}`; }
   resultStateLabel(value: string): string { return value === 'partial' ? 'Partial' : value === 'disconnected' ? 'Disconnected' : value === 'refreshing' ? 'Refreshing' : value === 'stale' ? 'Stale' : value === 'ready' ? 'Ready' : 'Unavailable'; }
   numberValue(value: { readonly availability: string; readonly value: number | null }): string { return value.availability === 'available' && value.value !== null ? String(value.value) : value.availability === 'missing' ? 'Missing' : 'Unavailable'; }
-  sideSummary(side: { readonly durationMs: number | null; readonly outcome: string; readonly componentVersion: { readonly availability: string; readonly value: string | null } } | null): string { return side ? `${side.durationMs === null ? 'duration unavailable' : `${side.durationMs} ms`} · ${side.outcome} · ${this.versionLabel(side.componentVersion)}` : 'No matching side'; }
-  spanSummary(span: { readonly operation: string; readonly componentId: string; readonly durationMs: number; readonly outcome: string; readonly partial: boolean } | null): string { return span ? `${span.componentId} / ${span.operation} · ${span.durationMs} ms · ${span.outcome}${span.partial ? ' · partial' : ''}` : 'No span retained'; }
-  durationDelta(left: number | null, right: number | null): string { return left === null || right === null ? 'Unavailable' : `${right - left >= 0 ? '+' : ''}${right - left} ms (right − left)`; }
+  sideSummary(side: { readonly durationMs: number | null; readonly outcome: string; readonly componentVersion: { readonly availability: string; readonly value: string | null } } | null): string { return side ? `${this.duration(side.durationMs)} · ${side.outcome} · ${this.versionLabel(side.componentVersion)}` : 'No matching side'; }
+  spanSummary(span: { readonly operation: string; readonly componentId: string; readonly durationMs: number; readonly outcome: string; readonly partial: boolean } | null): string { return span ? `${span.componentId} / ${span.operation} · ${this.duration(span.durationMs)} · ${span.outcome}${span.partial ? ' · partial' : ''}` : 'No span retained'; }
+  durationDelta(left: number | null, right: number | null): string { return left === null || right === null ? 'Unavailable' : `${right - left >= 0 ? '+' : ''}${formatDurationMs(Math.abs(right - left))} (right − left)`; }
   versionLabel(marker: { readonly availability: string; readonly value: string | null }): string { return marker.availability === 'missing' ? 'Version missing' : marker.availability === 'unavailable' ? 'Version unavailable' : `v${marker.value ?? 'unknown'}`; }
   integrityLabel(values: ReadonlyArray<string>): string { const labels: Record<string, string> = { complete: 'Complete', retained_partial: 'Retained partial', truncated: 'Truncated', missing_parent: 'Missing parent', cyclic: 'Cyclic lineage', duplicate: 'Duplicate span' }; return values.length ? [...new Set(values)].map((value) => labels[value] ?? 'Integrity warning').join(', ') : 'No evidence'; }
   partialReasonLabel(result: RunComparison): string { const labels: Record<string, string> = { observation_limit: 'observation limit', span_limit: 'span limit', measurement_limit: 'measurement limit', scan_limit: 'scan limit', execution_limit: 'execution timeout', late_data: 'late data', retention_boundary: 'retention boundary', incomplete_run: 'incomplete run', missing_parent: 'missing parent', cyclic: 'cyclic lineage', duplicate_span: 'duplicate span' }; return result.partialReasons.length ? `Partial reasons: ${result.partialReasons.map((reason) => labels[reason] ?? 'bounded evidence').join(', ')}.` : 'Fresh bounded evidence.'; }

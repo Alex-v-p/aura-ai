@@ -1,0 +1,82 @@
+agent: observatory_worker
+work_item: AURA-0113
+status: complete
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-observatory.retention+services.aura-observatory.ingest-visibility
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/tests/test_aura0113_visibility_settlement.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.retention
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+  settlement_signal:
+    component: aura.observatory.telemetry_storage
+    component_version: 1.0.0
+    operation: deletion
+    dependency: postgresql
+    outcomes:
+      - success
+      - failure
+      - timeout
+      - unavailable
+      - cancelled
+    error_codes:
+      - none
+      - retention_invariant
+      - database_timeout
+      - database_unavailable
+      - database_error
+      - cancelled
+    duration_bound_ms: 600000
+    action_correlation: structured_log_field_outside_metric_labels
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0113.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0113.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0113.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0113.yaml (no contract changes)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0113.yaml (no baseline changes)
+    - UV_CACHE_DIR=/tmp/aura-0113-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0113_visibility_settlement.py (11 passed)
+    - UV_CACHE_DIR=/tmp/aura-0113-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0113_visibility_settlement.py
+    - UV_CACHE_DIR=/tmp/aura-0113-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0113_visibility_settlement.py
+    - git diff --check
+    - focused AURA-0113 plus AURA-0080/AURA-0108/AURA-0109 regression selection (160 passed, 5 skipped; one migration assertion remains pre-existing)
+  failed:
+    - UV_CACHE_DIR=/tmp/aura-0113-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests (1425 passed, 43 skipped, 6 pre-existing failures before the latest cancellation regression; latest focused AURA-0113 run adds 1 passed cancellation case; the same 6 failures remain pre-existing: migration 0015 rerunnable assertion, two AURA-0087 harness assertions, and three migration-version assertions expecting 14 while version 15 is present)
+  not_run: []
+decisions:
+  - Kept settlement logic inside the production query adapter; no undeclared adapter-to-adapter dependency was added.
+  - Encoded the exact captured ingest sequence in the existing retention-target phase column (`receipt:<sequence>`), avoiding a migration while distinguishing a late same-ID receipt.
+  - Encoded captured legacy NULL-sequence membership as the closed `receipt:null` phase; deletion matches that marker only while the current receipt sequence remains NULL, while visibility settlement continues to exclude NULL sequences.
+  - Called settlement before target receipt deletion in the existing projection-deleted phase, keeping target settlement, receipt deletion, watermark update, and the durable receipts_deleted phase transition in one transaction; rollback therefore leaves all four unchanged on failure.
+  - Kept visibility ledger rows rather than deleting them so a crash after the transaction commit is restart-safe and idempotent.
+  - Repeated bounded watermark advancement in the same transaction until the complete contiguous tail converges or the bounded pass budget is reached; an exceptional larger tail remains eligible for the next reconciliation pass, including tails larger than 1024 slots.
+  - Replaced per-sequence advancement with bounded set-based PostgreSQL tail scans (65,536 generated slots per pass, at most 16 passes per retention transaction), preserving pending/absent-gap fences while bounding lock duration and clearing a 147k tail immediately; later reconciliation continues an exceptional larger tail.
+  - Recovery checks persisted target_receipt_count against receipt:* marker coverage and fails closed for legacy targeted rows whose immutable membership cannot be proven.
+  - Preserved ordinary AURA-0108 missing-receipt behavior: reconciliation remains pending/redeliverable and no timeout or outage-based gap skipping was introduced.
+  - Added focused regressions for targeted-versus-pending fences, contiguous targeted/health-visible advancement, and idempotent retry behavior.
+  - Added a content-free bounded settlement phase signal using stable component/version, operation, dependency, outcome, error code, duration, and action correlation outside metric labels; no metric or public API contract changed.
+  - No public contract, migration, Core, Aura Web, frontend, deployment, dependency, metric, evaluator, baseline, or capture-policy change.
+risks:
+  - The shared checkout contains unrelated later migration and full-stack harness changes; full-suite failures remain outside this ownership slice and no forbidden paths were altered to mask them.
+  - Legacy target rows using the pre-AURA-0113 `targeted` phase are handled conservatively: they are not treated as exact receipt snapshots, so recovery cannot delete a late same-ID receipt without the sequence marker.
+  - Legacy in-flight actions with incomplete receipt marker coverage fail with a bounded retention-invariant error and remain in projection_deleted for operator recovery; no migration is introduced.
+unresolved: []

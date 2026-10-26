@@ -1,0 +1,159 @@
+id: AURA-0114
+title: Stabilize completed runs and clarify the metadata inspector
+status: integrated
+change_class: bugfix
+intent: >
+  Make Observatory run summaries and selected-run inspection reflect the
+  authoritative Core lifecycle rather than later correlated background
+  telemetry, and present the metadata already captured as a clear accessible
+  phase-oriented inspector with readable durations and truthful capture gaps.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - work-items/archived/AURA-0098.yaml
+    - Core run lifecycle measurements are authoritative for run status and duration; later correlated child, worker, persistence, or delivery telemetry must not mutate a terminal run header.
+    - The primary run trace is selected from execution lifecycle lineage rather than the newest arbitrary correlated trace.
+    - This work remains metadata-only. The inspector explicitly labels content that is not captured and never synthesizes prompts, chunks, thinking, generation text, or tool payloads from metadata.
+    - Aura Web remains unchanged and contains no Observatory reference, dependency, route, link, or browser communication.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/telemetry/v2/metadata-observation.schema.json
+feature_references:
+  - OBS-001
+  - OBS-002
+ownership_zones:
+  - services.aura-observatory.query
+  - frontend.observatory.run-inspector
+  - evaluation.observatory-run-projection
+  - delivery.aura0114
+allowed_paths:
+  - work-items/active/AURA-0114.yaml
+  - work-items/archived/AURA-0114.yaml
+  - work-items/handoffs/AURA-0114-*.yaml
+  - work-items/reviews/AURA-0114-*.yaml
+  - work-items/integration/AURA-0114.yaml
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/tests/test_aura0114_*.py
+  - frontend/libs/observatory/src/lib/features/runs/**
+  - frontend/libs/observatory/src/lib/features/traces/**
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/libs/observatory/src/lib/observatory-shell.component.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/**
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - frontend/apps/aura-web/**
+  - frontend/libs/aura/**
+  - frontend/libs/platform/observatory-api-client/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - observatory-v1 RunSummary and RunDetail existing fields
+    - metadata-observation-v2 existing lifecycle measurements
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: query
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.query_api
+    - aura.execution.run_coordinator
+  required_metrics:
+    - run_started
+    - run_status
+    - run_duration_ms
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Metadata-only policy and closed observation schema remain enforced.
+    - The UI must distinguish unavailable content from empty content and must not infer or persist sensitive evidence.
+    - No content enters URLs logs browser storage service-worker caches screenshots or SSE.
+    - Aura Web and Observatory remain separate products with no frontend dependency or direct data exchange.
+  data_classes:
+    - operational_metadata
+    - run_lifecycle_metadata
+    - trace_lineage_metadata
+required_agents:
+  implementation:
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A terminal run derives status from authoritative run_status lifecycle telemetry and duration from terminal run_duration_ms; later correlated memory tool worker persistence streaming or delivery observations cannot change either value.
+  - A running run may remain running until terminal lifecycle evidence arrives; missing or inconsistent lifecycle evidence is represented honestly without inventing completion.
+  - Run list and detail select the primary execution trace deterministically rather than a later arbitrary correlated trace, while related observations remain available in run detail.
+  - Equivalent production and in-memory projection paths cover succeeded failed and cancelled terminal states, equal timestamps retries duplicate terminal observations and legacy runs without complete lifecycle telemetry.
+  - Runs and selected-run views format durations into stable readable units with bounded precision while preserving precise accessible labels.
+  - The selected-run view groups existing observations and spans into recognizable request context retrieval prompt routing generation thinking tools persistence and delivery phases when applicable, with accessible icons labels lineage timing outcome and partial state.
+  - The inspector explicitly reports metadata-only capture and marks prompts chunks generated content displayed thinking and tool payloads as not captured where evidence is unavailable; it never presents absence as an empty successful capture.
+  - Live refresh preserves the selected run and expanded presentation state while terminal header fields remain immutable.
+  - Responsive keyboard screen-reader reduced-motion and forced-colors behavior is covered for the changed views.
+  - Aura Web Core contracts migrations deployment topology generated clients retention policy and SSE payloads remain unchanged.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0114.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0114.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0114.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0114.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0114.yaml
+  - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0114_*.py
+  - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests
+  - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0114_*.py
+  - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0114_*.py
+  - cd frontend && corepack pnpm exec nx test observatory
+  - cd frontend && corepack pnpm exec nx lint observatory
+  - cd frontend && AURA_OBSERVATORY_WEB_E2E_APP_PORT=4311 corepack pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --project desktop --grep AURA-0114
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

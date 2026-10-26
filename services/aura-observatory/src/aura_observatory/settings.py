@@ -118,6 +118,22 @@ class Settings(BaseSettings):
     judge_object_access_key_file: Path | None = None
     judge_object_secret_key: str = ""
     judge_object_secret_key_file: Path | None = None
+    # Run evidence has a separate one-way NATS identity and Garage bucket.
+    run_evidence_nats_url: str = "nats://aura-nats:4222"
+    run_evidence_nats_user: str = "aura-observatory-run-evidence"
+    run_evidence_nats_password: str = ""
+    run_evidence_nats_password_file: Path | None = None
+    run_evidence_nats_durable: str = "aura-observatory-run-evidence"
+    run_evidence_object_endpoint: str = "http://garage:3900"
+    run_evidence_object_bucket: str = "aura-observatory-run-evidence"
+    run_evidence_object_access_key: str = ""
+    run_evidence_object_access_key_file: Path | None = None
+    run_evidence_object_secret_key: str = ""
+    run_evidence_object_secret_key_file: Path | None = None
+    run_evidence_object_region: str = "garage"
+    run_evidence_object_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+    run_evidence_max_envelope_bytes: int = Field(default=1_500_000, ge=1024, le=1_500_000)
+    run_evidence_ingest_poll_seconds: float = Field(default=0.5, ge=0.1, le=30.0)
 
     @field_validator("evaluation_worker_id", "evaluation_scheduler_id")
     @classmethod
@@ -150,6 +166,15 @@ class Settings(BaseSettings):
         )
         self.judge_object_secret_key = read_secret(
             self.judge_object_secret_key, self.judge_object_secret_key_file
+        )
+        self.run_evidence_nats_password = read_secret(
+            self.run_evidence_nats_password, self.run_evidence_nats_password_file
+        )
+        self.run_evidence_object_access_key = read_secret(
+            self.run_evidence_object_access_key, self.run_evidence_object_access_key_file
+        )
+        self.run_evidence_object_secret_key = read_secret(
+            self.run_evidence_object_secret_key, self.run_evidence_object_secret_key_file
         )
         if not self.database_url:
             encoded = quote(self.database_password, safe="")
@@ -192,6 +217,9 @@ class Settings(BaseSettings):
         """Return the least-privilege dispatch identity for the worker only."""
 
         return self.evaluation_nats_user, self.evaluation_nats_password
+
+    def run_evidence_nats_credential(self) -> tuple[str, str]:
+        return self.run_evidence_nats_user, self.run_evidence_nats_password
 
     @property
     def oidc_discovery_url(self) -> str:

@@ -1,0 +1,62 @@
+component:
+  id: aura.platform.run_evidence_export
+  version: 1.0.0
+  owner: aura-core.platform
+  category: observability
+input:
+  schema: run-evidence-v1
+  replayable: false
+output:
+  schema: run-evidence-v1
+  capture:
+    content: full_content
+    metadata: allowlisted
+dependencies:
+  - run_evidence_jetstream
+metrics:
+  - run_evidence_export_outcome_count
+  - run_evidence_export_dropped_count
+  - run_evidence_serialize_latency_ms
+  - run_evidence_queue_offer_latency_ms
+  - run_evidence_transport_latency_ms
+  - run_evidence_queue_depth
+  - run_evidence_queue_capacity
+metric_semantics:
+  run_evidence_export_outcome_count: Count of bounded evidence publish outcomes.
+  run_evidence_export_dropped_count: Count of rejected, pressured, or unavailable evidence items.
+  run_evidence_serialize_latency_ms: Time spent in one explicit serializer.
+  run_evidence_queue_offer_latency_ms: Time spent offering one item to the local bounded queue.
+  run_evidence_transport_latency_ms: Time spent in one bounded transport attempt.
+  run_evidence_queue_depth: Current bounded queue depth.
+  run_evidence_queue_capacity: Configured bounded queue capacity.
+evaluators:
+  - run_evidence_exact_boundary_coverage
+  - run_evidence_schema_compatibility
+  - run_evidence_failure_isolation
+  - run_evidence_secret_rejection
+  - observatory_run_evidence_privacy
+capture_policy: full_content
+cardinality:
+  metric_attributes: [operation, outcome, status, dependency, error_class]
+  trace_only: [trace_id, span_id, parent_span_id, run_id]
+  prohibited: [event_id, evidence_id, digest, bytes, payload, prompt, response, owner, credential, token]
+retention:
+  queue:
+    capacity: bounded
+    overflow: drop_new_and_count
+  retries:
+    minimum: 1
+    maximum: 5
+    default: 3
+    exhausted: drop_and_count
+  shutdown_drain:
+    bounded: true
+    default_seconds: 5
+failure_semantics:
+  execution_coupling: none
+  downstream_outage: drop_and_count
+  cancellation: bounded_stop
+  evidence_rejection: whole_item
+export:
+  sink: aura.runs.evidence.v1
+  cadence: background_only

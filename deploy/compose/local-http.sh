@@ -238,6 +238,8 @@ ensure_local_secret() {
     AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE) default_path=./.secrets/aura-evaluation-runner-database-password ;;
     AURA_NATS_DISPATCH_PASSWORD_FILE) default_path=./.secrets/aura-nats-dispatch-password ;;
     AURA_NATS_RUNNER_PASSWORD_FILE) default_path=./.secrets/aura-nats-runner-password ;;
+    AURA_NATS_RUN_EVIDENCE_PASSWORD_FILE) default_path=./.secrets/aura-nats-run-evidence-password ;;
+    AURA_NATS_RUN_EVIDENCE_BOOTSTRAP_PASSWORD_FILE) default_path=./.secrets/aura-nats-run-evidence-bootstrap-password ;;
     AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE)
       default_path=./.secrets/observatory-garage-access-key
       managed_default=1
@@ -268,6 +270,22 @@ ensure_local_secret() {
       ;;
     AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE)
       default_path=./.secrets/aura-evaluation-runner-garage-secret-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_RUN_EVIDENCE_WORKER_ACCESS_KEY_FILE)
+      default_path=./.secrets/observatory-run-evidence-worker-access-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_RUN_EVIDENCE_WORKER_SECRET_KEY_FILE)
+      default_path=./.secrets/observatory-run-evidence-worker-secret-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_RUN_EVIDENCE_API_ACCESS_KEY_FILE)
+      default_path=./.secrets/observatory-run-evidence-api-access-key
+      managed_default=1
+      ;;
+    AURA_OBSERVATORY_RUN_EVIDENCE_API_SECRET_KEY_FILE)
+      default_path=./.secrets/observatory-run-evidence-api-secret-key
       managed_default=1
       ;;
   esac
@@ -434,6 +452,8 @@ ensure_evaluation_secrets() {
   ensure_local_secret AURA_NATS_BOOTSTRAP_PASSWORD_FILE nats
   ensure_local_secret AURA_NATS_DISPATCH_PASSWORD_FILE nats
   ensure_local_secret AURA_NATS_RUNNER_PASSWORD_FILE nats
+  ensure_local_secret AURA_NATS_RUN_EVIDENCE_PASSWORD_FILE nats
+  ensure_local_secret AURA_NATS_RUN_EVIDENCE_BOOTSTRAP_PASSWORD_FILE nats
   ensure_local_secret AURA_EVALUATION_RUNNER_DATABASE_PASSWORD_FILE database
   ensure_local_secret AURA_OBSERVATORY_GARAGE_ACCESS_KEY_FILE garage-access
   ensure_local_secret AURA_OBSERVATORY_GARAGE_SECRET_KEY_FILE garage-secret
@@ -443,6 +463,10 @@ ensure_evaluation_secrets() {
   ensure_local_secret AURA_OBSERVATORY_JUDGE_OBJECT_SECRET_KEY_FILE garage-secret
   ensure_local_secret AURA_EVALUATION_RUNNER_GARAGE_ACCESS_KEY_FILE garage-access
   ensure_local_secret AURA_EVALUATION_RUNNER_GARAGE_SECRET_KEY_FILE garage-secret
+  ensure_local_secret AURA_OBSERVATORY_RUN_EVIDENCE_WORKER_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_OBSERVATORY_RUN_EVIDENCE_WORKER_SECRET_KEY_FILE garage-secret
+  ensure_local_secret AURA_OBSERVATORY_RUN_EVIDENCE_API_ACCESS_KEY_FILE garage-access
+  ensure_local_secret AURA_OBSERVATORY_RUN_EVIDENCE_API_SECRET_KEY_FILE garage-secret
 }
 
 write_local_environment() {

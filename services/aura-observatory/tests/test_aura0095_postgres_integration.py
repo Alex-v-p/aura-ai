@@ -88,7 +88,7 @@ def _isolated_schema(
 def test_live_event_migration_inventory_is_contiguous_and_forward_only() -> None:
     versions = sorted(int(path.name[:4]) for path in MIGRATION_ROOT.glob("*.sql"))
     assert versions == list(range(1, len(versions) + 1))
-    assert versions[-1] == 14
+    assert versions[-1] == 16
     migration = (MIGRATION_ROOT / "0011_evaluation_live_events.sql").read_text(
         encoding="utf-8"
     )

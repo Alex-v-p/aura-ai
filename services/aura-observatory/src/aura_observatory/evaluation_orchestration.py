@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -45,8 +46,38 @@ DEFAULT_WORKER_ID = "00000000-0000-4000-8000-000000000092"
 DEFAULT_SCHEDULER_ID = "00000000-0000-4000-8000-000000000093"
 RETRYABLE_FAILURES = frozenset({"DEPENDENCY_UNAVAILABLE", "STORAGE_FAILED"})
 TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled", "deadline"})
+MIN_HEARTBEAT_TELEMETRY_INTERVAL_SECONDS = 30.0
 
 ResultScorer = Callable[[str, str, Mapping[str, object], Mapping[str, object]], Awaitable[object]]
+
+
+class _SparseHeartbeatTelemetry:
+    """Gate successful heartbeat telemetry without changing heartbeat cadence."""
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = monotonic,
+        interval_seconds: float = 30.0,
+    ) -> None:
+        if not math.isfinite(interval_seconds) or (
+            interval_seconds < MIN_HEARTBEAT_TELEMETRY_INTERVAL_SECONDS
+        ):
+            raise ValueError(
+                "heartbeat telemetry interval must be at least 30 seconds and finite"
+            )
+        self._clock = clock
+        self._interval_seconds = interval_seconds
+        self._last_emitted: float | None = None
+
+    def allow(self) -> bool:
+        current = self._clock()
+        if self._last_emitted is not None and (
+            current - self._last_emitted < self._interval_seconds
+        ):
+            return False
+        self._last_emitted = current
+        return True
 
 
 class TransportValidationError(ValueError):
@@ -681,6 +712,8 @@ class EvaluationSchedulerService:
         metrics: Any | None = None,
         worker_id: str = DEFAULT_SCHEDULER_ID,
         batch_size: int = 32,
+        heartbeat_clock: Callable[[], float] = monotonic,
+        heartbeat_telemetry_interval_seconds: float = 30.0,
     ) -> None:
         if not 1 <= batch_size <= 1000:
             raise ValueError("batch_size out of bounds")
@@ -688,6 +721,10 @@ class EvaluationSchedulerService:
         self.metrics = metrics
         self.worker_id = _bounded_worker_id(worker_id)
         self.batch_size = batch_size
+        self._heartbeat_telemetry = _SparseHeartbeatTelemetry(
+            clock=heartbeat_clock,
+            interval_seconds=heartbeat_telemetry_interval_seconds,
+        )
 
     async def run_once(self, *, now: datetime | None = None) -> int:
         at = (now or datetime.now(UTC)).astimezone(UTC)
@@ -699,12 +736,12 @@ class EvaluationSchedulerService:
         except Exception:
             self._span("schedule_materialize", started, "failure", "database_failure", "postgresql")
             raise
-        self._span("schedule_materialize", started, "success", None, "postgresql")
-        self._metric(
-            "observatory_evaluation_dependency_outcome_count",
-            labels={"operation": "postgresql", "outcome": "success"},
-        )
         if materialized:
+            self._span("schedule_materialize", started, "success", None, "postgresql")
+            self._metric(
+                "observatory_evaluation_dependency_outcome_count",
+                labels={"operation": "postgresql", "outcome": "success"},
+            )
             self._metric(
                 "observatory_evaluation_scheduler_occurrence_count",
                 value=materialized,
@@ -752,7 +789,8 @@ class EvaluationSchedulerService:
                 labels={"operation": "postgresql", "outcome": "failed"},
             )
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
-        self._span("heartbeat", started, "success", None, "postgresql")
+        if self._heartbeat_telemetry.allow():
+            self._span("heartbeat", started, "success", None, "postgresql")
         return snapshot
 
     def _metric(
@@ -788,6 +826,8 @@ class EvaluationOrchestrationService:
         max_attempts: int = MAX_ATTEMPTS,
         event_publisher: Callable[[str, str, str, str], Awaitable[object]] | None = None,
         result_scorer: ResultScorer | None = None,
+        heartbeat_clock: Callable[[], float] = monotonic,
+        heartbeat_telemetry_interval_seconds: float = 30.0,
     ) -> None:
         if not 1 <= batch_size <= 1000:
             raise ValueError("batch_size out of bounds")
@@ -808,6 +848,10 @@ class EvaluationOrchestrationService:
         self.max_attempts = max_attempts
         self.event_publisher = event_publisher
         self.result_scorer = result_scorer
+        self._heartbeat_telemetry = _SparseHeartbeatTelemetry(
+            clock=heartbeat_clock,
+            interval_seconds=heartbeat_telemetry_interval_seconds,
+        )
 
     async def _publish_live(
         self, resource_type: str, resource_id: str, change: str, state: str
@@ -832,11 +876,12 @@ class EvaluationOrchestrationService:
         except Exception as error:
             self._record_dependency_failure("dispatch", started, "postgresql")
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
-        self._span("dispatch", started, "success", None, "postgresql")
-        self._metric(
-            "observatory_evaluation_dependency_outcome_count",
-            labels={"operation": "postgresql", "outcome": "success"},
-        )
+        if work is not None:
+            self._span("dispatch", started, "success", None, "postgresql")
+            self._metric(
+                "observatory_evaluation_dependency_outcome_count",
+                labels={"operation": "postgresql", "outcome": "success"},
+            )
         return work
 
     async def enqueue_admitted_local_work(self, job_id: str) -> int:
@@ -872,11 +917,12 @@ class EvaluationOrchestrationService:
         except Exception as error:
             self._record_dependency_failure("dispatch", started, "postgresql")
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
-        self._span("dispatch", started, "success", None, "postgresql")
-        self._metric(
-            "observatory_evaluation_dependency_outcome_count",
-            labels={"operation": "postgresql", "outcome": "success"},
-        )
+        if inserted:
+            self._span("dispatch", started, "success", None, "postgresql")
+            self._metric(
+                "observatory_evaluation_dependency_outcome_count",
+                labels={"operation": "postgresql", "outcome": "success"},
+            )
         return inserted
 
     async def complete_local_work(self, work: LocalWorkItem, result: object) -> None:
@@ -888,6 +934,8 @@ class EvaluationOrchestrationService:
         except Exception as error:
             self._record_dependency_failure("dispatch", started, "postgresql")
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
+        # Completion is always meaningful work: a claimed item reached its
+        # durable terminal transition.  Preserve its success telemetry.
         self._span("dispatch", started, "success", None, "postgresql")
         if not completed:
             raise OrchestrationError("local_work_lease_lost")
@@ -907,6 +955,8 @@ class EvaluationOrchestrationService:
         except Exception as error:
             self._record_dependency_failure("dispatch", started, "postgresql")
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
+        # Failure settlement is always meaningful work: preserve its success
+        # span because it describes a real claimed item transition.
         self._span("dispatch", started, "success", None, "postgresql")
         if not failed:
             raise OrchestrationError("local_work_lease_lost")
@@ -953,7 +1003,8 @@ class EvaluationOrchestrationService:
         except Exception as error:
             self._record_dependency_failure("dispatch", started, "postgresql")
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
-        self._span("dispatch", started, "success", None, "postgresql")
+        if settled or attempts:
+            self._span("dispatch", started, "success", None, "postgresql")
         if attempts:
             self._metric(
                 "observatory_evaluation_attempt_transition_count",
@@ -977,12 +1028,13 @@ class EvaluationOrchestrationService:
         except Exception as error:
             self._record_dependency_failure("publish", started, "postgresql")
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
-        self._metric(
-            "observatory_evaluation_outbox_pending_count",
-            value=len(entries),
-            labels={},
-            replace=True,
-        )
+        if entries:
+            self._metric(
+                "observatory_evaluation_outbox_pending_count",
+                value=len(entries),
+                labels={},
+                replace=True,
+            )
         count = 0
         publish_failed = False
         for entry in entries:
@@ -1045,13 +1097,14 @@ class EvaluationOrchestrationService:
                     "observatory_evaluation_dependency_outcome_count",
                     labels={"operation": "evaluation_nats", "outcome": "published"},
                 )
-        self._span(
-            "publish",
-            started,
-            "failure" if publish_failed else "success",
-            "transport_unavailable" if publish_failed else None,
-            "evaluation_nats",
-        )
+        if entries:
+            self._span(
+                "publish",
+                started,
+                "failure" if publish_failed else "success",
+                "transport_unavailable" if publish_failed else None,
+                "evaluation_nats",
+            )
         return count
 
     async def heartbeat_once(self, *, now: datetime | None = None) -> Mapping[str, int]:
@@ -1066,15 +1119,16 @@ class EvaluationOrchestrationService:
         except Exception as error:
             self._record_dependency_failure("heartbeat", started, "postgresql")
             raise OrchestrationDependencyError("database_failure", "postgresql") from error
-        for name, value in snapshot.items():
-            metric_name = {
-                "backlog_count": "observatory_evaluation_backlog_count",
-                "outbox_pending_count": "observatory_evaluation_outbox_pending_count",
-                "outbox_oldest_age_seconds": "observatory_evaluation_outbox_oldest_age_seconds",
-            }.get(name)
-            if metric_name is not None:
-                self._metric(metric_name, value=float(value), labels={}, replace=True)
-        self._span("heartbeat", started, "success", None, "postgresql")
+        if self._heartbeat_telemetry.allow():
+            for name, value in snapshot.items():
+                metric_name = {
+                    "backlog_count": "observatory_evaluation_backlog_count",
+                    "outbox_pending_count": "observatory_evaluation_outbox_pending_count",
+                    "outbox_oldest_age_seconds": "observatory_evaluation_outbox_oldest_age_seconds",
+                }.get(name)
+                if metric_name is not None:
+                    self._metric(metric_name, value=float(value), labels={}, replace=True)
+            self._span("heartbeat", started, "success", None, "postgresql")
         return snapshot
 
     async def cancel(
@@ -1310,7 +1364,8 @@ class EvaluationOrchestrationService:
                 value=recovered,
                 labels={"outcome": "recovered"},
             )
-        self._span("recover", started, "success", None, "postgresql")
+        if settled or recovered:
+            self._span("recover", started, "success", None, "postgresql")
         return recovered
 
     def _record_dependency_failure(self, operation: str, started: float, dependency: str) -> None:

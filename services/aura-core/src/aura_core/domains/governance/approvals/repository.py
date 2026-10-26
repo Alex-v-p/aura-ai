@@ -449,7 +449,11 @@ class MemoryApprovalRepository:
                             outcome="expired",
                         )
             result = tuple(expired)
-        _span(self.metrics, "approval.expire", started, outcome="ok", dependency="postgresql")
+        # Empty expiry polls are expected housekeeping, not an observable
+        # business operation.  Keep the database cadence unchanged while
+        # avoiding one successful span for every idle poll.
+        if result:
+            _span(self.metrics, "approval.expire", started, outcome="ok", dependency="postgresql")
         return result
 
     async def replay(self, issuer: str, subject: str, *, after: UUID | None = None) -> tuple[ApprovalReplayEvent, ...]:
@@ -888,7 +892,10 @@ class SqlApprovalRepository:
                 error_class="database",
             )
             raise
-        _span(self.metrics, "approval.expire", started, outcome="ok", dependency="postgresql")
+        # Empty expiry polls are expected housekeeping, not an observable
+        # business operation.  Failures above remain immediately observable.
+        if result:
+            _span(self.metrics, "approval.expire", started, outcome="ok", dependency="postgresql")
         if self.metrics is not None and result:
             self.metrics.observe(APPROVAL_COMPONENT, "approval_expiry_count", float(len(result)), outcome="expired")
             for item in result:

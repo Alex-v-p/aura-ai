@@ -55,6 +55,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryTurnEvidence,
     MemoryValidationError,
     MemoryVersionConflict,
+    ProcessingJobStatus,
     classify_sensitivity,
 )
 from aura_core.domains.knowledge.memory.recall import (
@@ -72,6 +73,7 @@ from aura_core.platform.telemetry import (
     Stopwatch,
     current_memory_trace_context,
     memory_trace_context,
+    new_span_id,
     record_memory_operation,
     record_memory_processing,
     record_memory_retrieval,
@@ -85,6 +87,9 @@ from aura_core.runtime.models.ports import ProviderTraceContext
 _ = memory_persistence
 
 _MEMORY_COMMAND_NAMESPACE = UUID("4c2a5df3-8b07-4a6d-a9ca-3d19f4ee0d4e")
+MemoryActivityEmitter = Callable[
+    [MemoryProcessingCommand, str, object | None], Awaitable[None]
+]
 
 
 def make_agent_policy_loader(
@@ -422,6 +427,9 @@ class InstrumentedMemoryRepository:
             memory_revision_id=trace_revision_id,
             generation_id=trace_generation_id,
             link_span_ids=(parent_context.span_id,) if parent_context is not None else (),
+            suppress_idle_success=(
+                parent_context.suppress_idle_success if parent_context is not None else False
+            ),
         )
         try:
             with memory_trace_context(trace_context):
@@ -444,6 +452,16 @@ class InstrumentedMemoryRepository:
                 parent_span_id=parent_context.span_id if parent_context is not None else None,
             )
             raise
+        active_context = current_memory_trace_context()
+        if (
+            active_context is not None
+            and active_context.suppress_idle_success
+            and (
+                operation in {"memory.list", "memory.model.get"}
+                or (operation == "memory.job.claim_next" and result is None)
+            )
+        ):
+            return result
         result_memory_id = trace_memory_id
         revision_id = trace_revision_id
         generation_id = trace_generation_id
@@ -1143,17 +1161,19 @@ def memory_processing_service(
         memory_revision_id: str,
         generation_id: str,
     ) -> Any:
+        parent = current_memory_trace_context()
         return memory_trace_context(
             MemoryTraceContext(
-                trace_id=trace_id,
-                span_id=uuid5(
-                    _MEMORY_COMMAND_NAMESPACE,
-                    f"reindex-span:{job_id}:{memory_id}:{memory_revision_id}",
-                ).hex[:16],
+                trace_id=parent.trace_id if parent is not None else trace_id,
+                span_id=new_span_id(),
                 job_id=job_id,
                 memory_id=memory_id,
                 memory_revision_id=memory_revision_id,
                 generation_id=generation_id,
+                link_span_ids=(parent.span_id,) if parent is not None else (),
+                suppress_idle_success=(
+                    parent.suppress_idle_success if parent is not None else False
+                ),
             )
         )
 
@@ -1165,6 +1185,53 @@ def memory_processing_service(
     )
 
     class WorkerMemoryService:
+        def __init__(self) -> None:
+            self._activity_emitter: MemoryActivityEmitter | None = None
+
+        def set_activity_emitter(self, emitter: MemoryActivityEmitter | None) -> None:
+            """Attach the already-composed run-event activity boundary."""
+
+            self._activity_emitter = emitter
+
+        @staticmethod
+        def _activity_command(job: MemoryProcessingJob) -> MemoryProcessingCommand | None:
+            if (
+                job.agent_revision_id is None
+                or not job.user_message_ids
+                or not job.assistant_message_ids
+            ):
+                return None
+            return MemoryProcessingCommand(
+                uuid5(_MEMORY_COMMAND_NAMESPACE, f"command:{job.run_id}"),
+                job.id,
+                job.run_id,
+                job.conversation_id,
+                job.correlation_id or job.run_id,
+                job.causation_id or job.run_id,
+                job.agent_revision_id,
+                job.user_message_ids[0],
+                job.assistant_message_ids[0],
+            )
+
+        async def _emit_processing_settlement(
+            self, job: MemoryProcessingJob, result: object | None
+        ) -> None:
+            emitter = self._activity_emitter
+            if emitter is None:
+                return
+            try:
+                settled = await repository.get_processing_job(job.id, job.issuer, job.subject)
+                if settled.status not in {ProcessingJobStatus.COMPLETED, ProcessingJobStatus.FAILED}:
+                    return
+                command = self._activity_command(settled)
+                if command is None:
+                    return
+                await emitter(command, settled.status.value, result)
+            except Exception:
+                # Run activity is an optional observation side effect. A
+                # publisher outage must never change Core settlement/cadence.
+                return
+
         async def process_command(self, command: object) -> object:
             parser = getattr(MemoryProcessingCommand, "from_outbox", None)
             if parser is not None and not isinstance(command, MemoryProcessingCommand):
@@ -1181,14 +1248,21 @@ def memory_processing_service(
                 getattr(repository, "settle_embedding_job", None),
             )
             embedding_started = monotonic()
-            trace_id = uuid5(_MEMORY_COMMAND_NAMESPACE, f"embedding:{job.id}").hex
+            parent_context = current_memory_trace_context()
+            trace_id = (
+                parent_context.trace_id
+                if parent_context is not None
+                else uuid5(_MEMORY_COMMAND_NAMESPACE, f"embedding:{job.id}").hex
+            )
             trace_context = MemoryTraceContext(
                 trace_id=trace_id,
-                span_id=uuid5(_MEMORY_COMMAND_NAMESPACE, f"embedding-span:{job.id}").hex[:16],
+                span_id=new_span_id(),
                 job_id=str(job.id),
                 generation_id=str(job.generation_id),
                 memory_id=str(job.memory_id),
                 memory_revision_id=str(job.revision_id),
+                link_span_ids=(parent_context.span_id,) if parent_context is not None else (),
+                suppress_idle_success=False,
             )
             active_trace = trace_context
 
@@ -1401,33 +1475,57 @@ def memory_processing_service(
                 return 0
             changed = 0
             for issuer, subject in await owners_loader():
+                parent = current_memory_trace_context()
                 maintenance_context = MemoryTraceContext(
-                    trace_id=uuid5(
-                        _MEMORY_COMMAND_NAMESPACE, f"maintenance:{issuer}:{subject}"
-                    ).hex,
-                    span_id=uuid5(
-                        _MEMORY_COMMAND_NAMESPACE, f"maintenance-span:{issuer}:{subject}"
-                    ).hex[:16],
+                    trace_id=parent.trace_id if parent is not None else uuid4().hex,
+                    span_id=new_span_id(),
+                    link_span_ids=(parent.span_id,) if parent is not None else (),
+                    suppress_idle_success=True,
                 )
+                # Keep the quiet context bounded to polling/discovery and
+                # claim calls. Real work gets a child context with normal
+                # success telemetry and an explicit lineage link.
                 with memory_trace_context(maintenance_context):
                     changed += await processor.maintain(issuer, subject)
-                claim_next = cast(
-                    Callable[[str, str], Awaitable[MemoryProcessingJob | None]] | None,
-                    getattr(repository, "claim_processing_job", None),
-                )
-                if callable(claim_next):
-                    queued = await claim_next(issuer, subject)
-                    if queued is not None:
-                        await processor.process_job(queued.id, lease_id=queued.lease_id)
-                claim_embedding = cast(
-                    Callable[[str, str], Awaitable[MemoryEmbeddingJob | None]] | None,
-                    getattr(repository, "claim_embedding_job", None),
-                )
-                if callable(claim_embedding):
+                    claim_next = cast(
+                        Callable[[str, str], Awaitable[MemoryProcessingJob | None]] | None,
+                        getattr(repository, "claim_processing_job", None),
+                    )
+                    queued = await claim_next(issuer, subject) if callable(claim_next) else None
+                    claim_embedding = cast(
+                        Callable[[str, str], Awaitable[MemoryEmbeddingJob | None]] | None,
+                        getattr(repository, "claim_embedding_job", None),
+                    )
                     # One claim per owner/cycle bounds provider work and
                     # leaves remaining retryable jobs for the next cycle.
-                    embedding_job = await claim_embedding(issuer, subject)
-                    if embedding_job is not None:
+                    embedding_job = (
+                        await claim_embedding(issuer, subject)
+                        if callable(claim_embedding)
+                        else None
+                    )
+                if queued is not None:
+                    processing_context = replace(
+                        maintenance_context,
+                        span_id=new_span_id(),
+                        job_id=str(queued.id),
+                        link_span_ids=(maintenance_context.span_id,),
+                        suppress_idle_success=False,
+                    )
+                    with memory_trace_context(processing_context):
+                        result = await processor.process_job(queued.id, lease_id=queued.lease_id)
+                        await self._emit_processing_settlement(queued, result)
+                if embedding_job is not None:
+                    embedding_context = replace(
+                        maintenance_context,
+                        span_id=new_span_id(),
+                        job_id=str(embedding_job.id),
+                        generation_id=str(embedding_job.generation_id),
+                        memory_id=str(embedding_job.memory_id),
+                        memory_revision_id=str(embedding_job.revision_id),
+                        link_span_ids=(maintenance_context.span_id,),
+                        suppress_idle_success=False,
+                    )
+                    with memory_trace_context(embedding_context):
                         await self._process_embedding_job(embedding_job)
             return changed
 
@@ -1461,8 +1559,18 @@ def memory_processing_service(
                 return 0
             completed = 0
             for issuer, subject in await owners_loader():
+                # Configuration discovery is still performed every cadence,
+                # but a successful idle read is not a product operation.
+                parent = current_memory_trace_context()
+                discovery_context = MemoryTraceContext(
+                    trace_id=parent.trace_id if parent is not None else uuid4().hex,
+                    span_id=new_span_id(),
+                    link_span_ids=(parent.span_id,) if parent is not None else (),
+                    suppress_idle_success=True,
+                )
                 try:
-                    configuration = await processor.model_configuration(issuer, subject)
+                    with memory_trace_context(discovery_context):
+                        configuration = await processor.model_configuration(issuer, subject)
                 except MemoryNotFound:
                     continue
                 listed = cast(
@@ -1480,30 +1588,30 @@ def memory_processing_service(
                 ]
                 if building:
                     for generation in building:
+                        parent = current_memory_trace_context()
                         context = MemoryTraceContext(
-                            trace_id=uuid5(
-                                _MEMORY_COMMAND_NAMESPACE,
-                                f"reindex:{issuer}:{subject}:{generation.id}",
-                            ).hex,
-                            span_id=uuid5(
-                                _MEMORY_COMMAND_NAMESPACE, f"reindex-span:{generation.id}"
-                            ).hex[:16],
+                            trace_id=parent.trace_id if parent is not None else uuid4().hex,
+                            span_id=new_span_id(),
+                            link_span_ids=(parent.span_id,) if parent is not None else (),
                             generation_id=str(generation.id),
+                            suppress_idle_success=(
+                                parent.suppress_idle_success if parent is not None else False
+                            ),
                         )
                         with memory_trace_context(context):
                             completed += await reindex.resume(issuer, subject, generation.id)
                 else:
                     generation_id = configuration.embedding_generation
                     if isinstance(generation_id, UUID):
+                        parent = current_memory_trace_context()
                         context = MemoryTraceContext(
-                            trace_id=uuid5(
-                                _MEMORY_COMMAND_NAMESPACE,
-                                f"reindex:{issuer}:{subject}:{generation_id}",
-                            ).hex,
-                            span_id=uuid5(
-                                _MEMORY_COMMAND_NAMESPACE, f"reindex-span:{generation_id}"
-                            ).hex[:16],
+                            trace_id=parent.trace_id if parent is not None else uuid4().hex,
+                            span_id=new_span_id(),
+                            link_span_ids=(parent.span_id,) if parent is not None else (),
                             generation_id=str(generation_id),
+                            suppress_idle_success=(
+                                parent.suppress_idle_success if parent is not None else False
+                            ),
                         )
                         with memory_trace_context(context):
                             completed += await reindex.resume(issuer, subject, generation_id)

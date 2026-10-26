@@ -1,0 +1,43 @@
+agent: observatory_worker
+work_item: AURA-0115
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: shared
+scope:
+  ownership_zone: services.aura-observatory.query
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/tests/test_aura0115_duration.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+  metrics_added: []
+verification:
+  passed:
+    - UV_CACHE_DIR=/tmp/aura-0115-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0115_duration.py
+    - UV_CACHE_DIR=/tmp/aura-0115-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0115_duration.py services/aura-observatory/tests/test_aura0114_backend.py
+    - UV_CACHE_DIR=/tmp/aura-0115-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0115_duration.py
+    - UV_CACHE_DIR=/tmp/aura-0115-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0115_duration.py
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0115.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Full AURA-0115 required-check matrix is owned by the Delivery Lead and integration workflow.
+decisions:
+  - Canonical run_duration_ms observations with an absent or empty unit are normalized to milliseconds at the shared query projection boundary; no other missing unit is inferred.
+  - Production ClickHouse list/detail lifecycle predicates accept the canonical empty-unit compatibility form and serialize the returned duration observation as milliseconds.
+  - No API schema, migration, telemetry payload, or storage data is changed.
+risks:
+  - Existing stored observations remain unchanged; normalization is a read-time compatibility projection only.
+unresolved: []

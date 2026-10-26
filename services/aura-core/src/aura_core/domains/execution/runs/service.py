@@ -7,13 +7,16 @@
 # pyright: reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportGeneralTypeIssues=false, reportUnusedImport=false, reportAttributeAccessIssue=false
 
 import asyncio
+import base64
+import json
 import re
 import secrets
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from time import monotonic, perf_counter
 from typing import cast
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from aura_core.domains.artifacts.attachments.ports import AttachmentReadPort
 from aura_core.domains.execution.runs.dto import (
@@ -34,12 +37,15 @@ from aura_core.domains.execution.runs.ports import (
     NullMetrics,
     RunCommandPort,
     RunEventPort,
+    RunEvidenceItem,
+    RunEvidencePort,
     RunRepository,
     TitleInferencePort,
 )
 from aura_core.domains.interaction.conversations.public import (
     AttachmentSummary,
     Conversation,
+    ConversationBranchOrigin,
     DocumentCitation,
     Message,
     MessageState,
@@ -77,6 +83,8 @@ from aura_core.runtime.tools import (
     validate_tool_arguments,
     validate_tool_result,
 )
+
+_RUN_EVIDENCE_ATTACHMENT_MAX_BYTES = 1_048_576
 
 
 class RunExecutionFailure(RuntimeError):
@@ -120,6 +128,7 @@ class RunCoordinator:
         attachment_service: AttachmentReadPort | None = None,
         attachment_resolver: AttachmentResolutionPort | None = None,
         thinking_publisher: ThinkingDeltaPublisher | None = None,
+        run_evidence: RunEvidencePort | None = None,
     ) -> None:
         self.store = store
         self.publisher = publisher
@@ -140,11 +149,16 @@ class RunCoordinator:
         self.attachment_service = attachment_service
         self.attachment_resolver = attachment_resolver
         self.thinking_publisher = thinking_publisher
+        self.run_evidence = run_evidence
         self._thinking_offsets: dict[UUID, int] = {}
         self._thinking_offset_expiry: dict[UUID, float] = {}
         # Keep in-flight metadata long enough for an outer run timeout to
         # publish the terminal tool status and execution telemetry.
         self._active_tool_attempts: dict[UUID, dict[str, object]] = {}
+        # Bounded ordinal state for streamed synthesis chunks. The sequence
+        # range is derived from the durable completed-tool count; this map
+        # only distinguishes chunks within the current synthesis stream.
+        self._synthesis_ordinals: OrderedDict[UUID, int] = OrderedDict()
         # Evidence is intentionally process-local and run-scoped. It is used
         # only to validate model citation markers before metadata-only
         # citations are persisted; excerpts never cross this boundary.
@@ -152,6 +166,246 @@ class RunCoordinator:
         configure_prompt_metrics = getattr(self.store, "set_prompt_metrics", None)
         if callable(configure_prompt_metrics):
             configure_prompt_metrics(self.metrics)
+
+    def _record_evidence(
+        self,
+        run: Run,
+        *,
+        step_category: str,
+        evidence_kind: str,
+        media_classification: str,
+        media_type: str,
+        payload: Mapping[str, object] | None,
+        span_id: str | None = None,
+        parent_span_id: str | None = None,
+        capture_state: str = "captured",
+        reason: str | None = None,
+        sequence_hint: int | None = None,
+    ) -> bool:
+        """Offer one explicit, bounded item without affecting execution."""
+
+        recorder = self.run_evidence
+        if recorder is None or getattr(recorder, "enabled", True) is False:
+            return False
+        allocator = getattr(recorder, "allocate_sequence", None)
+        if sequence_hint is None:
+            if evidence_kind == "response_synthesis":
+                sequence_hint = self._next_synthesis_sequence(run)
+            else:
+                sequence_hint = self._deterministic_sequence_hint(run, evidence_kind, payload)
+        if sequence_hint is not None:
+            sequence = sequence_hint
+        elif callable(allocator):
+            sequence = cast(int, allocator(run.id))
+        else:
+            # Test doubles and disabled adapters may expose only ``record``;
+            # production composition always supplies the shared allocator.
+            sequence = 0
+        # Evidence is replayable only when its source lineage is stable. The
+        # live exporter spans remain unique, but the envelope references a
+        # deterministic boundary span and the durable run root as parent.
+        evidence_span_id = uuid5(
+            NAMESPACE_URL,
+            f"aura-run-evidence-span:{run.id}:{sequence}:{evidence_kind}",
+        ).hex[:16]
+        evidence_parent_span_id = run.id.hex[:16] if parent_span_id is not None else None
+        # Synthesis is a distinct schema category even when a legacy caller
+        # labels the streamed text as generation. Normalize at this producer
+        # seam so the exported envelope remains schema-valid.
+        effective_step_category = (
+            "synthesis" if evidence_kind == "response_synthesis" else step_category
+        )
+        try:
+            return bool(recorder.record(
+                RunEvidenceItem(
+                    run_id=run.id,
+                    trace_id=run.id.hex,
+                    span_id=evidence_span_id,
+                    parent_span_id=evidence_parent_span_id,
+                    sequence=sequence,
+                    step_category=effective_step_category,
+                    evidence_kind=evidence_kind,
+                    media_classification=media_classification,
+                    media_type=media_type,
+                    payload=payload,
+                    observed_at=getattr(run, "started_at", None)
+                    or getattr(run, "created_at", datetime.now(UTC)),
+                    capture_state=capture_state,
+                    reason=reason,
+                )
+            ))
+        except Exception:
+            # Evidence is an optional side channel.  A malformed serializer or
+            # exporter must never alter the run's durable result.
+            try:
+                self.metrics.increment(
+                    "aura.platform.run_evidence_export",
+                    "run_evidence_export_dropped_count",
+                    operation="serialize",
+                    outcome="failed",
+                    error_class="serialization_rejected",
+                )
+            except Exception:
+                pass
+            return False
+
+    def _evidence_enabled(self) -> bool:
+        recorder = self.run_evidence
+        return recorder is not None and getattr(recorder, "enabled", True) is not False
+
+    def _next_synthesis_sequence(self, run: Run) -> int:
+        """Allocate a deterministic post-tool slot for one synthesis chunk."""
+
+        ordinal = self._synthesis_ordinals.get(run.id, 0)
+        self._synthesis_ordinals[run.id] = ordinal + 1
+        self._synthesis_ordinals.move_to_end(run.id)
+        while len(self._synthesis_ordinals) > 1024:
+            self._synthesis_ordinals.popitem(last=False)
+        tool_stride = 1_000_000_000
+        tool_count = getattr(run, "tool_calls_used", 0)
+        if not isinstance(tool_count, int) or isinstance(tool_count, bool):
+            tool_count = 0
+        if getattr(run, "approval_id", None) is not None:
+            return 11_000_100 + ordinal
+        # A synthesis stream follows the most recently completed tool block.
+        # For a text-only run, reserve the first block's post-tool range.
+        block = max(tool_count - 1, 0)
+        return 40_000 + block * tool_stride + 2_000 + ordinal
+
+    @staticmethod
+    def _deterministic_sequence_hint(
+        run: Run, evidence_kind: str, payload: Mapping[str, object] | None
+    ) -> int | None:
+        """Assign restart-safe slots to non-repeating execution boundaries.
+
+        Dynamic stream chunks continue to use the recorder allocator. The
+        boundaries that can be replayed after a worker restart (admission,
+        context, approval resume, and terminal settlement) use deterministic
+        slots instead, so a fresh producer cannot restart a run's lineage at
+        sequence zero or mint a new logical identity for the same boundary.
+        """
+
+        # Each persisted tool call owns a deterministic block.  The stride is
+        # intentionally wide enough for streamed synthesis chunks between two
+        # calls while keeping all producer sequences below the safe JSON
+        # integer limit.  The durable tool-call count supplies the ordinal;
+        # no process-local counter is needed for redelivery or resume.
+        tool_stride = 1_000_000_000
+        tool_count = getattr(run, "tool_calls_used", 0)
+        if not isinstance(tool_count, int) or isinstance(tool_count, bool):
+            tool_count = 0
+        tool_ordinal = max(tool_count, 0)
+        if evidence_kind in {"tool_result", "execution_outcome"}:
+            tool_ordinal = max(tool_count - 1, 0)
+        tool_base = 40_000 + tool_ordinal * tool_stride
+        base_slots = {
+            "admitted_request": 100,
+            "admitted_trigger": 101,
+            "worker_input": 102,
+            # Routing is admitted before context construction in the
+            # coordinator; keep retrieval and prompt slots after it.
+            "conversation_context": 300,
+            "compiled_prompt": 1_000,
+            "model_routing": 200,
+            # Native tool streams emit arguments before the policy decision;
+            # keep the deterministic slots in that actual execution order.
+            "policy_decision": tool_base + 500,
+            "tool_arguments": tool_base,
+            "tool_result": tool_base + 1_000,
+            "execution_outcome": tool_base + 1_100,
+            # Terminal settlement is emitted after any streamed synthesis.
+            "persistence_record": 9_000_000_000_000,
+            "delivery_record": 9_000_000_000_001,
+            "worker_output": 9_000_000_000_002,
+        }
+        approval_id = getattr(run, "approval_id", None)
+        if (
+            evidence_kind in {"approval_decision", "tool_arguments", "tool_result"}
+            and approval_id is not None
+        ):
+            base_slots.update(
+                {
+                    "approval_decision": 10_000_000,
+                    "tool_arguments": 10_000_001,
+                    "tool_result": 10_000_002,
+                    "execution_outcome": 11_000_000,
+                    "persistence_record": 9_100_000_000_000,
+                    "delivery_record": 9_100_000_000_001,
+                    "worker_output": 9_100_000_000_002,
+                }
+            )
+        if approval_id is not None and evidence_kind in {
+            "execution_outcome",
+            "persistence_record",
+            "delivery_record",
+            "worker_output",
+        }:
+            base_slots.update(
+                {
+                    "execution_outcome": 11_000_000,
+                    "persistence_record": 9_100_000_000_000,
+                    "delivery_record": 9_100_000_000_001,
+                    "worker_output": 9_100_000_000_002,
+                }
+            )
+        if evidence_kind == "approval_decision":
+            return base_slots["approval_decision"]
+        if evidence_kind in {"memory_chunk", "document_chunk"}:
+            if not isinstance(payload, Mapping):
+                return None
+            chunk = payload.get("chunk")
+            ordinal = chunk.get("ordinal") if isinstance(chunk, Mapping) else None
+            if isinstance(ordinal, int) and ordinal >= 0:
+                return (400 if evidence_kind == "memory_chunk" else 700) + ordinal
+            return None
+        if evidence_kind == "model_visible_attachment":
+            if not isinstance(payload, Mapping):
+                return None
+            attachment_id = payload.get("attachmentId")
+            if isinstance(attachment_id, str):
+                match = re.search(r":(\d+):(\d+)$", attachment_id)
+                if match is not None:
+                    return 2_000 + int(match.group(1)) * 100 + int(match.group(2))
+            return None
+        return base_slots.get(evidence_kind)
+
+    def _record_model_attachments(
+        self, run: Run, messages: Sequence[ChatMessage], parent_span_id: str | None
+    ) -> None:
+        if self.run_evidence is None or getattr(self.run_evidence, "enabled", True) is False:
+            return
+        for index, message in enumerate(messages):
+            for part_index, part in enumerate(message.image_parts):
+                sequence_hint = 2_000 + index * 100 + part_index
+                if len(part.data) > _RUN_EVIDENCE_ATTACHMENT_MAX_BYTES:
+                    self._record_evidence(
+                        run,
+                        step_category="context",
+                        evidence_kind="model_visible_attachment",
+                        media_classification="image",
+                        media_type=part.media_type,
+                        payload=None,
+                        capture_state="partial",
+                        reason="payload_limit_exceeded",
+                        parent_span_id=parent_span_id,
+                        sequence_hint=sequence_hint,
+                    )
+                    continue
+                self._record_evidence(
+                    run,
+                    step_category="context",
+                    evidence_kind="model_visible_attachment",
+                    media_classification="image",
+                    media_type=part.media_type,
+                    payload={
+                        "kind": "model_visible_attachment",
+                        "attachmentId": f"{run.id.hex}:{index}:{part_index}",
+                        "displayName": "model-input",
+                        "contentBase64": base64.b64encode(part.data).decode("ascii"),
+                    },
+                    parent_span_id=parent_span_id,
+                    sequence_hint=sequence_hint,
+                )
 
     async def enqueue(self, run: Run) -> None:
         try:
@@ -395,6 +649,20 @@ class RunCoordinator:
             )
             return
         self._thinking_offsets[run.id] = offset + len(text)
+        self._record_evidence(
+            run,
+            step_category="thinking",
+            evidence_kind="displayed_thinking",
+            media_classification="text",
+            media_type="text/plain",
+            payload=(
+                {"kind": "displayed_thinking", "text": text}
+                if self._evidence_enabled()
+                else None
+            ),
+            span_id=parent_span_id,
+            parent_span_id=run.id.hex[:16],
+        )
         self.metrics.increment(
             "aura.runtime.stream_delivery",
             "thinking_stream_outcome",
@@ -547,6 +815,71 @@ class RunCoordinator:
                 await self._settle_title(conversation, run, provider, worker_span_id)
                 await self._status(conversation.id, run)
             return
+        admitted = next(
+            (item for item in conversation.messages if item.id == run.user_message_id), None
+        )
+        if admitted is not None and admitted.role.value == "user":
+            self._record_evidence(
+                run,
+                step_category="admission",
+                evidence_kind="admitted_request",
+                media_classification="structured",
+                media_type="application/json",
+                payload=(
+                    {
+                        "kind": "admitted_request",
+                        "request": {"role": "user", "content": admitted.content},
+                    }
+                    if self._evidence_enabled()
+                    else None
+                ),
+                span_id=worker_span_id,
+            )
+        branch = next((item for item in conversation.branches if item.id == run.branch_id), None)
+        trigger_type = (
+            "edit"
+            if branch is not None and branch.origin is ConversationBranchOrigin.EDITED_MESSAGE
+            else "regeneration"
+            if run.regenerated_from_run_id is not None
+            or branch is not None
+            and branch.origin is ConversationBranchOrigin.REGENERATED_RESPONSE
+            else "retry"
+            if run.retry_of_run_id is not None
+            else "conversation_message"
+        )
+        self._record_evidence(
+            run,
+            step_category="admission",
+            evidence_kind="admitted_trigger",
+            media_classification="structured",
+            media_type="application/json",
+            payload=(
+                {
+                    "kind": "admitted_trigger",
+                    "triggerType": trigger_type,
+                    "content": run.id.hex,
+                }
+                if self._evidence_enabled()
+                else None
+            ),
+            span_id=worker_span_id,
+        )
+        self._record_evidence(
+            run,
+            step_category="worker",
+            evidence_kind="worker_input",
+            media_classification="structured",
+            media_type="application/json",
+            payload=(
+                {
+                    "kind": "worker_input",
+                    "content": {"name": "run.execute", "content": run.id.hex},
+                }
+                if self._evidence_enabled()
+                else None
+            ),
+            span_id=worker_span_id,
+        )
         attempt_id = run.attempt_id
         if attempt_id is None:
             raise RuntimeError("acquired run is missing its attempt identifier")
@@ -614,6 +947,25 @@ class RunCoordinator:
             model_id=model_id,
             agent_revision_id=str(run.agent_revision_id),
             model_policy_revision_id=str(run.model_policy_revision_id),
+        )
+        self._record_evidence(
+            run,
+            step_category="routing",
+            evidence_kind="model_routing",
+            media_classification="structured",
+            media_type="application/json",
+            payload=(
+                {
+                    "kind": "model_routing",
+                    "provider": provider_name,
+                    "model": model_id,
+                    "routeReason": "admitted_model_policy",
+                }
+                if self._evidence_enabled()
+                else None
+            ),
+            span_id=routing_span_id,
+            parent_span_id=worker_span_id,
         )
         assistant = next(
             (item for item in conversation.messages if item.id == run.assistant_message_id), None
@@ -830,6 +1182,52 @@ class RunCoordinator:
             )
         except Exception as exc:
             raise RunExecutionFailure("persistence") from exc
+        self._record_evidence(
+            run,
+            step_category="context",
+            evidence_kind="conversation_context",
+            media_classification="structured",
+            media_type="application/json",
+            payload=(
+                {
+                    "kind": "conversation_context",
+                    "messages": [
+                        {"role": ("user" if role == "memory" else role), "content": content}
+                        for role, content in context
+                        if role in {"system", "developer", "user", "assistant", "tool", "memory"}
+                    ],
+                }
+                if self._evidence_enabled()
+                else None
+            ),
+            span_id=worker_span_id,
+        )
+        memory_ordinal = 0
+        for role, content in context:
+            if role != "memory":
+                continue
+            self._record_evidence(
+                run,
+                step_category="retrieval",
+                evidence_kind="memory_chunk",
+                media_classification="structured",
+                media_type="application/json",
+                payload=(
+                    {
+                        "kind": "memory_chunk",
+                        "chunk": {
+                            "sourceId": "memory-context",
+                            "ordinal": memory_ordinal,
+                            "content": content,
+                            "score": None,
+                        },
+                    }
+                    if self._evidence_enabled()
+                    else None
+                ),
+                span_id=worker_span_id,
+            )
+            memory_ordinal += 1
         # Attached documents are grounded deterministically before inference;
         # the model never needs to discover them through a tool call.
         _, attached_documents = select_attachment_context(
@@ -875,6 +1273,29 @@ class RunCoordinator:
                 **self._metadata(run),
             )
             self._capture_document_evidence(run.id, {"items": scoped})
+            for ordinal, chunk in enumerate(scoped):
+                if isinstance(chunk.get("excerpt"), str):
+                    self._record_evidence(
+                        run,
+                        step_category="retrieval",
+                        evidence_kind="document_chunk",
+                        media_classification="structured",
+                        media_type="application/json",
+                        payload=(
+                            {
+                                "kind": "document_chunk",
+                                "chunk": {
+                                    "sourceId": str(chunk.get("documentId", "attached-document")),
+                                    "ordinal": ordinal,
+                                    "content": chunk["excerpt"],
+                                    "score": chunk.get("score"),
+                                },
+                            }
+                            if self._evidence_enabled()
+                            else None
+                        ),
+                        span_id=worker_span_id,
+                    )
             run.document_search_used = True
             mark_used = getattr(self.store, "mark_document_search_used", None)
             if callable(mark_used):
@@ -908,6 +1329,24 @@ class RunCoordinator:
         if provenance_getter is not None and not _provenance_matches(run, provenance):
             raise RunExecutionFailure("persistence")
         messages = self._provider_messages(context)
+        self._record_evidence(
+            run,
+            step_category="prompt",
+            evidence_kind="compiled_prompt",
+            media_classification="text",
+            media_type="text/plain",
+            payload=(
+                {
+                    "kind": "compiled_prompt",
+                    "prompt": "\n".join(
+                        f"{message.role}: {message.content}" for message in messages
+                    ),
+                }
+                if self._evidence_enabled()
+                else None
+            ),
+            span_id=worker_span_id,
+        )
         native = getattr(provider, "stream_chat_with_tools", None)
         policy_loader = getattr(self.store, "tool_policy_for_run", None)
         policy = None
@@ -996,6 +1435,7 @@ class RunCoordinator:
         # Re-authorize and reload immediately before the direct provider call;
         # attachment bytes are never reused from an earlier admission step.
         messages = await self._with_image_parts(conversation, run, messages)
+        self._record_model_attachments(run, messages, worker_span_id)
         stream = aiter(self._stream_chat(provider, run.model_id, messages))
         next_chunk: asyncio.Future[object] | None = None
         stop_waiter: asyncio.Task[bool] | None = None
@@ -1045,6 +1485,20 @@ class RunCoordinator:
                 else:
                     raise RunExecutionFailure("provider")
                 output_characters[0] += len(chunk)
+                self._record_evidence(
+                    run,
+                    step_category="generation",
+                    evidence_kind="generation_output",
+                    media_classification="text",
+                    media_type="text/plain",
+                    payload=(
+                        {"kind": "generation_output", "text": chunk}
+                        if self._evidence_enabled()
+                        else None
+                    ),
+                    span_id=inference_span_id,
+                    parent_span_id=worker_span_id,
+                )
                 try:
                     current = await self.store.find_run_any(run.id)
                 except Exception as exc:
@@ -1159,6 +1613,46 @@ class RunCoordinator:
         approved = (
             run.tool_lifecycle_status in {"approved", "executing"} and approval_status == "approved"
         )
+        self._record_evidence(
+            run,
+            step_category="policy",
+            evidence_kind="approval_decision",
+            media_classification="structured",
+            media_type="application/json",
+            payload=(
+                {
+                    "kind": "approval_decision",
+                    "decision": {
+                        "decision": "approved" if approved else "denied",
+                        "reason": "owner_approval" if approved else "owner_denied_or_expired",
+                    },
+                }
+                if self._evidence_enabled()
+                else None
+            ),
+            span_id=worker_span_id,
+        )
+        normalized_arguments = getattr(proposal, "normalized_arguments", None)
+        if isinstance(normalized_arguments, Mapping):
+            self._record_evidence(
+                run,
+                step_category="tool",
+                evidence_kind="tool_arguments",
+                media_classification="structured",
+                media_type="application/json",
+                payload=(
+                    {
+                        "kind": "tool_arguments",
+                        "toolName": resumed_tool_id,
+                        "content": json.dumps(
+                            dict(normalized_arguments), sort_keys=True, separators=(",", ":")
+                        ),
+                    }
+                    if self._evidence_enabled()
+                    else None
+                ),
+                span_id=worker_span_id,
+            )
         self.metrics.increment(
             "aura.governance.approval_workflow",
             "approval_resume_outcome",
@@ -1256,6 +1750,25 @@ class RunCoordinator:
                     "status": reminder.status.value,
                     "dueAt": reminder.due_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
                 }
+            self._record_evidence(
+                run,
+                step_category="tool",
+                evidence_kind="tool_result",
+                media_classification="structured",
+                media_type="application/json",
+                payload=(
+                    {
+                        "kind": "tool_result",
+                        "toolName": resumed_tool_id,
+                        "content": json.dumps(
+                            result_value, sort_keys=True, separators=(",", ":"), default=str
+                        ),
+                    }
+                    if self._evidence_enabled()
+                    else None
+                ),
+                span_id=worker_span_id,
+            )
             active_attempt = self._active_tool_attempts.get(run.id)
             if active_attempt is not None:
                 execution_started = active_attempt.get("execution_started")
@@ -1599,6 +2112,7 @@ class RunCoordinator:
         # images at this boundary so deletion or authorization changes between
         # context construction and invocation take effect.
         messages = await self._with_image_parts(conversation, run, messages)
+        self._record_model_attachments(run, messages, worker_span_id)
         selection_started = perf_counter()
         stream = aiter(native(run.model_id, messages, tool_specs))
         first_kind: str | None = None
@@ -1656,6 +2170,26 @@ class RunCoordinator:
                         protocol_failure = (uuid4(), event.name, "TOOL_MULTIPLE_CALLS")
                         break
                     call = ToolCall(event.name, event.arguments)
+                    self._record_evidence(
+                        run,
+                        step_category="tool",
+                        evidence_kind="tool_arguments",
+                        media_classification="structured",
+                        media_type="application/json",
+                        payload=(
+                            {
+                                "kind": "tool_arguments",
+                                "toolName": event.name,
+                                "content": json.dumps(
+                                    event.arguments, sort_keys=True, separators=(",", ":")
+                                ),
+                            }
+                            if self._evidence_enabled()
+                            else None
+                        ),
+                        span_id=selection_span_id,
+                        parent_span_id=worker_span_id,
+                    )
                 elif isinstance(event, ModelStreamCompleted):
                     completed = True
                 else:
@@ -1699,6 +2233,20 @@ class RunCoordinator:
                 )
             if call is None:
                 for chunk in text_chunks:
+                    self._record_evidence(
+                        run,
+                        step_category="generation",
+                        evidence_kind="generation_output",
+                        media_classification="text",
+                        media_type="text/plain",
+                        payload=(
+                            {"kind": "generation_output", "text": chunk}
+                            if self._evidence_enabled()
+                            else None
+                        ),
+                        span_id=selection_span_id,
+                        parent_span_id=worker_span_id,
+                    )
                     await self._append_text_delta(
                         conversation, run, attempt_id, chunk, output_characters
                     )
@@ -1786,6 +2334,26 @@ class RunCoordinator:
                 "tool_policy_decision",
                 outcome="allowed" if decision.allowed else "denied",
                 **self._metadata(run),
+            )
+            self._record_evidence(
+                run,
+                step_category="policy",
+                evidence_kind="policy_decision",
+                media_classification="structured",
+                media_type="application/json",
+                payload=(
+                    {
+                        "kind": "policy_decision",
+                        "decision": {
+                            "decision": "allowed" if decision.allowed else "denied",
+                            "reason": decision.error_class or "policy_grant",
+                        },
+                    }
+                    if self._evidence_enabled()
+                    else None
+                ),
+                span_id=policy_span_id,
+                parent_span_id=selection_span_id,
             )
             if not decision.allowed:
                 if call.name == DOCUMENT_SEARCH_TOOL_ID:
@@ -2150,6 +2718,31 @@ class RunCoordinator:
                 self._active_tool_attempts.pop(run.id, None)
                 return False
             active_attempt = self._active_tool_attempts.pop(run.id, None)
+            self._record_evidence(
+                run,
+                step_category="tool",
+                evidence_kind="tool_result",
+                media_classification="structured",
+                media_type="application/json",
+                payload=(
+                    {
+                        "kind": "tool_result",
+                        "toolName": call.name,
+                        "content": json.dumps(
+                            result.result, sort_keys=True, separators=(",", ":"), default=str
+                        )
+                        if result.result is not None
+                        else result.status,
+                    }
+                    if self._evidence_enabled()
+                    else None
+                ),
+                span_id=execution_span_id,
+                parent_span_id=policy_span_id,
+            )
+            # The model-visible result is the final boundary of the tool
+            # exchange; publish its execution outcome immediately after it so
+            # the evidence sequence mirrors the native provider order.
             self._record_tool_execution(run, active_attempt, result.status, result.error_class)
             if result.error_class == "validation":
                 self.metrics.increment(
@@ -2389,6 +2982,7 @@ class RunCoordinator:
     ) -> bool:
         del started
         messages = await self._with_image_parts(conversation, run, messages)
+        self._record_model_attachments(run, messages, worker_span_id)
         synthesis_started = perf_counter()
         synthesis_span_id = secrets.token_hex(8)
         synthesis_outcome = "error"
@@ -2438,6 +3032,20 @@ class RunCoordinator:
                     chunk = event
                 else:
                     raise RunExecutionFailure("provider")
+                self._record_evidence(
+                    run,
+                    step_category="synthesis",
+                    evidence_kind="response_synthesis",
+                    media_classification="text",
+                    media_type="text/plain",
+                    payload=(
+                        {"kind": "response_synthesis", "text": chunk}
+                        if self._evidence_enabled()
+                        else None
+                    ),
+                    span_id=synthesis_span_id,
+                    parent_span_id=worker_span_id,
+                )
                 await self._append_text_delta(
                     conversation, run, attempt_id, chunk, output_characters
                 )
@@ -2704,6 +3312,32 @@ class RunCoordinator:
             "tool_execution_outcome",
             outcome=status,
             **self._metadata(run),
+        )
+        self._record_evidence(
+            run,
+            step_category="tool",
+            evidence_kind="execution_outcome",
+            media_classification="structured",
+            media_type="application/json",
+            payload=(
+                {
+                    "kind": "execution_outcome",
+                    "outcome": (
+                        "timed_out"
+                        if error_class == "timeout"
+                        else {
+                            "completed": "succeeded",
+                            "failed": "failed",
+                            "denied": "rejected",
+                            "awaiting_confirmation": "rejected",
+                            "canceled": "cancelled",
+                        }.get(status, "failed")
+                    ),
+                    "detail": error_class or status,
+                }
+                if self._evidence_enabled()
+                else None
+            ),
         )
         if error_class == "timeout":
             self.metrics.increment(
@@ -3173,6 +3807,51 @@ class RunCoordinator:
         )
 
     def _terminal(self, run: Run, started: float) -> None:
+        self._record_evidence(
+            run,
+            step_category="persistence",
+            evidence_kind="persistence_record",
+            media_classification="structured",
+            media_type="application/json",
+            payload=(
+                {
+                    "kind": "persistence_record",
+                    "record": {"name": "run.settlement", "content": run.status.value},
+                }
+                if self._evidence_enabled()
+                else None
+            ),
+        )
+        self._record_evidence(
+            run,
+            step_category="delivery",
+            evidence_kind="delivery_record",
+            media_classification="structured",
+            media_type="application/json",
+            payload=(
+                {
+                    "kind": "delivery_record",
+                    "record": {"name": "run.response", "content": run.status.value},
+                }
+                if self._evidence_enabled()
+                else None
+            ),
+        )
+        self._record_evidence(
+            run,
+            step_category="worker",
+            evidence_kind="worker_output",
+            media_classification="structured",
+            media_type="application/json",
+            payload=(
+                {
+                    "kind": "worker_output",
+                    "content": {"name": "run.execute", "content": run.status.value},
+                }
+                if self._evidence_enabled()
+                else None
+            ),
+        )
         self.metrics.observe(
             "aura.execution.run_coordinator",
             "run_duration_ms",

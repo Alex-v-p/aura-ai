@@ -21,6 +21,7 @@ const FOCUS_DEFAULTS: Readonly<Record<AnalyticsFocus, AnalyticsMetricName>> = {
   all: 'operation_duration_ms', model: 'inference_duration_ms', queue: 'queue_wait_ms', retrieval: 'document_retrieval_duration_ms',
   tool: 'tool_execution_duration_ms', memory: 'memory_operation_duration_ms', automation: 'reminder_scheduler_scan_duration_ms',
 };
+const MAX_ANALYTICS_POINTS = 200;
 
 @Component({
   selector: 'observatory-analytics',
@@ -56,16 +57,16 @@ const FOCUS_DEFAULTS: Readonly<Record<AnalyticsFocus, AnalyticsMetricName>> = {
       @if (store.analytics().state === 'disconnected') { <div class="state notice" role="status" aria-live="polite"><strong>Live analytics updates are disconnected.</strong><p>Showing the last known bounded snapshot until the stream reconnects.</p><button type="button" (click)="refresh()">Refresh metrics</button></div> }
 
       @if (store.analytics().snapshot; as snapshot) {
-        <div class="query-summary" aria-label="Applied analytics query"><span>{{ snapshot.query.from | date:'medium':'UTC' }} UTC – {{ snapshot.query.to | date:'medium':'UTC' }}</span><span>{{ bucketLabel(snapshot.query.bucket) }} · {{ snapshot.query.groupBy === 'none' ? 'One series' : groupLabel(snapshot.query.groupBy) }}</span><span>{{ snapshot.query.unit }} · {{ aggregationLabel(snapshot.query.aggregation) }}</span><span>{{ snapshot.scan.scannedRows | number }} rows scanned</span></div>
+        <div class="query-summary" aria-label="Applied analytics query"><span>{{ snapshot.query.from | date:'medium':'UTC' }} UTC – {{ snapshot.query.to | date:'medium':'UTC' }}</span><span>{{ bucketLabel(snapshot.query.bucket) }} · {{ snapshot.query.groupBy === 'none' ? 'One series' : groupLabel(snapshot.query.groupBy) }}</span><span><strong>Unit:</strong> {{ unitLabel(snapshot.query.unit) }} · {{ aggregationLabel(snapshot.query.aggregation) }}</span><span>{{ snapshot.scan.scannedRows | number }} rows scanned · max {{ MAX_ANALYTICS_POINTS }} points/series</span></div>
         @if (snapshot.freshness.state !== 'fresh' || snapshot.partial || snapshot.unavailableSignals.length) { <div class="state notice" role="status"><strong>{{ freshnessLabel(snapshot) }}</strong><p>{{ freshnessExplanation(snapshot) }}</p>@if (snapshot.partialReasons.length) { <p>Partial reasons: {{ formatReasons(snapshot.partialReasons) }}.</p> } @if (snapshot.unavailableSignals.length) { <p>Unavailable signals: {{ formatReasons(snapshot.unavailableSignals) }}.</p> }</div> }
         @if (store.analytics().state === 'empty') { <p class="empty" role="status">No measurements match this bounded window and filter set. A zero is only shown when the service reports a measured zero.</p> }
         @if (snapshot.series.length) {
-          <section class="series-section" aria-labelledby="series-title"><div class="section-heading"><div><h3 id="series-title">{{ metricLabel(snapshot.query.metric) }}</h3><p class="muted">Values are {{ snapshot.query.unit }}. Percentiles use {{ snapshot.percentileMethod }}.</p></div><span class="status-label" [class]="snapshot.freshness.state">{{ snapshot.freshness.state }}</span></div>
+          <section class="series-section" aria-labelledby="series-title"><div class="section-heading"><div><h3 id="series-title">{{ metricLabel(snapshot.query.metric) }}</h3><p class="muted">Values are measured in {{ unitLabel(snapshot.query.unit) }}. Percentiles use {{ snapshot.percentileMethod }}.</p></div><span class="status-label" [class]="snapshot.freshness.state">{{ snapshot.freshness.state }}</span></div>
             <div class="series-grid">@for (series of snapshot.series; track series.seriesKey) {
               <article class="series-card" [attr.aria-labelledby]="'series-' + safeId(series.seriesKey)"><div class="card-heading"><div><h4 [id]="'series-' + safeId(series.seriesKey)">{{ seriesLabel(series) }}</h4>@if (facetLabel(series)) { <p class="facet-label">{{ facetLabel(series) }}</p> }<p class="muted">{{ series.summary.sampleCount | number }} samples · {{ availabilityLabel(series.availability) }}</p></div><span class="status-label" [class]="series.partial ? 'partial' : series.availability">{{ series.partial ? 'Partial' : availabilityLabel(series.availability) }}</span></div>
-                <div class="chart" aria-hidden="true">@for (point of series.points; track point.startAt) { <span class="bar" [style.height.%]="barHeight(point.value, series)"></span> }</div><p class="chart-detail">Decorative trend preview. Use the adjacent keyboard-accessible table for exact UTC values and samples.</p><div class="chart-meta" aria-label="Chart scale"><span>Relative trend</span><span>Scale: 0–{{ number(series.summary.maximum) }} {{ snapshot.query.unit }}</span></div>
+                <div class="chart" aria-hidden="true">@for (point of series.points.slice(0, MAX_ANALYTICS_POINTS); track point.startAt) { <span class="bar" [style.height.%]="barHeight(point.value, series)"></span> }</div><p class="chart-detail">Decorative trend preview in {{ unitLabel(snapshot.query.unit) }}. Use the adjacent keyboard-accessible table for exact UTC values and samples.</p><div class="chart-meta" aria-label="Chart scale"><span>Relative trend · {{ unitLabel(snapshot.query.unit) }}</span><span>Scale: 0–{{ number(series.summary.maximum) }}</span></div>
                 <dl class="summary-grid"><div><dt>Minimum</dt><dd>{{ number(series.summary.minimum) }}</dd></div><div><dt>Average</dt><dd>{{ number(series.summary.average) }}</dd></div><div><dt>Maximum</dt><dd>{{ number(series.summary.maximum) }}</dd></div><div><dt>Samples</dt><dd>{{ series.summary.sampleCount | number }}</dd></div></dl>
-                <div class="table-wrap" tabindex="0" role="region" [attr.aria-label]="'Scrollable data table for ' + seriesLabel(series)"><table><caption class="sr-only">{{ seriesLabel(series) }}{{ facetLabel(series) ? ' · ' + facetLabel(series) : '' }} data in {{ snapshot.query.unit }}</caption><thead><tr><th scope="col">Start (UTC)</th><th scope="col">End (UTC)</th><th scope="col">Value</th><th scope="col">Samples</th><th scope="col">Availability</th></tr></thead><tbody>@for (point of series.points; track point.startAt) { <tr><th scope="row">{{ point.startAt | date:'short':'UTC' }} UTC</th><td>{{ point.endAt | date:'short':'UTC' }} UTC</td><td>{{ number(point.value) }}</td><td>{{ point.sampleCount | number }}</td><td>{{ point.partial ? 'Partial' : availabilityLabel(point.availability) }}</td></tr> } @empty { <tr><td colspan="5">No points in this series.</td></tr> }</tbody></table></div>
+                <div class="table-wrap" tabindex="0" role="region" [attr.aria-label]="'Scrollable data table for ' + seriesLabel(series)"><table><caption class="sr-only">{{ seriesLabel(series) }}{{ facetLabel(series) ? ' · ' + facetLabel(series) : '' }} data in {{ unitLabel(snapshot.query.unit) }}</caption><thead><tr><th scope="col">Start (UTC)</th><th scope="col">End (UTC)</th><th scope="col">Value ({{ unitLabel(snapshot.query.unit) }})</th><th scope="col">Samples</th><th scope="col">Availability</th></tr></thead><tbody>@for (point of series.points.slice(0, MAX_ANALYTICS_POINTS); track point.startAt) { <tr><th scope="row">{{ point.startAt | date:'short':'UTC' }} UTC</th><td>{{ point.endAt | date:'short':'UTC' }} UTC</td><td>{{ number(point.value) }}</td><td>{{ point.sampleCount | number }}</td><td>{{ point.partial ? 'Partial' : availabilityLabel(point.availability) }}</td></tr> } @empty { <tr><td colspan="5">No points in this series.</td></tr> }</tbody></table></div>
               </article>
             }</div>
           </section>
@@ -109,6 +110,7 @@ const FOCUS_DEFAULTS: Readonly<Record<AnalyticsFocus, AnalyticsMetricName>> = {
 })
 export class ObservatoryAnalyticsComponent {
   readonly store = inject(ObservatoryStore);
+  readonly MAX_ANALYTICS_POINTS = MAX_ANALYTICS_POINTS;
   readonly focusOptions = FOCUS_OPTIONS;
   filters: AnalyticsFilters = { ...DEFAULT_ANALYTICS_FILTERS };
   fromInput = '';
@@ -158,6 +160,7 @@ export class ObservatoryAnalyticsComponent {
   }
   refresh(): void { this.store.refreshAnalytics(); }
   metricLabel(metric: AnalyticsMetricName): string { return metric.replaceAll('_', ' '); }
+  unitLabel(unit: string): string { return ({ milliseconds: 'milliseconds (ms)', bytes: 'bytes', count: 'count', ratio: 'ratio', score: 'score' })[unit] ?? unit; }
   aggregationLabel(aggregation: AnalyticsAggregation): string { return aggregation === 'average' ? 'Average' : aggregation === 'rate' ? 'Rate' : aggregation.toUpperCase(); }
   groupLabel(group: AnalyticsGroupBy): string { return group === 'none' ? 'One series' : group.replaceAll('_', ' '); }
   bucketLabel(bucket: AnalyticsBucket): string { const labels: Record<AnalyticsBucket, string> = { auto: 'Automatic buckets', one_minute: '1 minute', five_minutes: '5 minutes', fifteen_minutes: '15 minutes', one_hour: '1 hour', six_hours: '6 hours', one_day: '1 day' }; return labels[bucket] ?? this.humanize(bucket); }

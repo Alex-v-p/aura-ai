@@ -1,0 +1,55 @@
+agent: test_evaluation_engineer
+work_item: AURA-0117
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0115_test
+  worktree: shared
+scope:
+  ownership_zone: evaluation.aura0117-contracts
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/tests/test_aura0117_run_evidence_contract.py
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.spec.ts
+  - work-items/handoffs/AURA-0117-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0117.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0117.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0117.yaml (declared not applicable)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0117.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0117.yaml (no protected changes)
+    - UV_CACHE_DIR=/tmp/aura-0117-uv uv run pytest -q contracts/tests/test_aura0117_run_evidence_contract.py contracts/tests/test_observatory_v1.py contracts/tests/test_observatory_v1_compatibility.py (36 passed)
+    - cd frontend && corepack pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && corepack pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && corepack pnpm exec nx test observatory-api-client (9 passed)
+    - cd frontend && corepack pnpm exec nx lint observatory-api-client
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - Added concrete reference-validation fixtures for accepted text evidence, RFC 8785 JSON canonicalization, malformed and oversized payloads, invalid base64, real PNG/PDF container structure, prohibited text and embedded binary secrets, duplicate stable-ID collisions, retry delivery identity, digest and byte-count mismatches, and captured/non-captured state invariants.
+  - Retained structural contract tests for closed and bounded envelopes, explicit coverage of every evidence kind, payload variant closure, bounded text and attachment sizes, prohibited secret and provider-hidden-reasoning exclusion shapes, unsupported media declarations, retry identity, and additive API compatibility.
+  - Added OpenAPI assertions for owner-session authorization, no-store responses, CSRF and bounded idempotency deletion headers, durable content-free deletion status, and metadata-only SSE.
+  - Added a generated-client test proving approved evidence is transported as an unchanged Blob and deletion headers remain typed without introducing domain behavior.
+  - Kept Aura Web and the Aura API client out of the evidence contract and Observatory client dependency surface through the existing isolation regression.
+risks:
+  - The Python reference validator is an executable test oracle rather than production ingestion; Core/Observatory implementations must independently enforce the same digest/byte-count, duplicate collision, admission, and out-of-order rules at runtime.
+  - Cross-field equality between envelope evidenceKind and payload.kind and out-of-order assembly remain runtime-ingestion responsibilities because the current JSON Schema does not encode those cross-record or cross-field rules.
+  - Browser zero-persistence, inert rendering, and screenshot exclusion are outside this contract/client ownership slice.
+unresolved:
+  - Follow-up implementation work must add Core capture, Observatory storage/API behavior, UI behavior, and full-stack failure/isolation tests.

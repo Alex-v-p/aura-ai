@@ -47,6 +47,9 @@ COMPONENT_SPAN_COMPONENTS = frozenset(
         "aura.observatory.annotations",
         "aura.observatory.telemetry_ingestion",
         "aura.observatory.telemetry_storage",
+        "aura.observatory.run_evidence_ingestion",
+        "aura.observatory.run_evidence_storage",
+        "aura.observatory.run_inspection_query",
     }
 )
 # The legacy duration metric is an evaluation-specific compatibility surface.
@@ -119,6 +122,16 @@ COMPONENT_SPAN_OPERATIONS = frozenset(
         "capture_authorization_admission",
         "artifact_admission",
         "local_judge_admission",
+        "run_evidence.ingest_validate",
+        "run_evidence.ingest_deduplicate",
+        "run_evidence.manifest_write",
+        "run_evidence.object_write",
+        "run_evidence.object_delete",
+        "run_evidence.deletion_finalize",
+        "run_inspection.metadata_query",
+        "run_inspection.manifest_query",
+        "run_inspection.merge",
+        "run_evidence.object_stream",
     }
 )
 COMPONENT_SPAN_DEPENDENCIES = frozenset(
@@ -142,6 +155,14 @@ COMPONENT_SPAN_OUTCOMES = frozenset(
 )
 COMPONENT_SPAN_ERRORS = frozenset(
     {
+        # ADR-0017 run-evidence error classes.
+        "queue_pressure",
+        "serialization_rejected",
+        "ingest_rejected",
+        "manifest_store_unavailable",
+        "object_store_unavailable",
+        "digest_mismatch",
+        "deletion_failed",
         "database_failure",
         "storage_failure",
         "transport_unavailable",
@@ -189,6 +210,10 @@ COMPONENT_SPAN_ERRORS = frozenset(
         "lease_lost",
         "idempotency_conflict",
         "dependency_unavailable",
+        "evidence_rejected",
+        "duplicate_collision",
+        "object_delete_failed",
+        "unknown_capture_gap",
     }
 )
 MAX_LAG_MS = 604_800_000.0
@@ -312,7 +337,7 @@ class BoundedLatencyWindow:
 
 @dataclass(frozen=True, slots=True)
 class ComponentSpan:
-    """Bounded metadata-only operation span; never contains lifecycle IDs."""
+    """Bounded metadata-only operation span with run correlation only."""
 
     component_id: str
     component_version: str
@@ -324,6 +349,8 @@ class ComponentSpan:
     error_code: str | None = None
     trace_id: str = ""
     span_id: str = ""
+    parent_span_id: str | None = None
+    run_id: str | None = None
 
 
 class ComponentSpanExporter(Protocol):
@@ -549,6 +576,13 @@ class ObservatoryMetrics:
             "observatory_evaluator_duration_ms",
             "observatory_local_judge_duration_ms",
             "observatory_alert_evaluation_duration_ms",
+            "run_evidence_ingest_validation_latency_ms",
+            "run_evidence_ingest_dedupe_latency_ms",
+            "run_evidence_manifest_storage_latency_ms",
+            "run_evidence_object_storage_latency_ms",
+            "run_evidence_deletion_latency_ms",
+            "run_inspection_query_latency_ms",
+            "run_inspection_merge_latency_ms",
         }
     )
 
@@ -640,6 +674,16 @@ class ObservatoryMetrics:
         "observatory_operations_backlog_count",
         "observatory_operations_oldest_due_lag_ms",
         "observatory_operations_lease_outcome_count",
+        "run_evidence_ingest_outcome_count",
+        "run_evidence_storage_outcome_count",
+        "run_evidence_deletion_outcome_count",
+        "run_evidence_ingest_validation_latency_ms",
+        "run_evidence_ingest_dedupe_latency_ms",
+        "run_evidence_manifest_storage_latency_ms",
+        "run_evidence_object_storage_latency_ms",
+        "run_evidence_deletion_latency_ms",
+        "run_inspection_query_latency_ms",
+        "run_inspection_merge_latency_ms",
     }
     LABELS: dict[str, set[str]] = {
         "observatory_ingest_intake_lag_ms": set(),
@@ -670,6 +714,16 @@ class ObservatoryMetrics:
         "observatory_operations_backlog_count": set(),
         "observatory_operations_oldest_due_lag_ms": set(),
         "observatory_operations_lease_outcome_count": {"outcome"},
+        "run_evidence_ingest_outcome_count": {"outcome"},
+        "run_evidence_storage_outcome_count": {"outcome"},
+        "run_evidence_deletion_outcome_count": {"outcome"},
+        "run_evidence_ingest_validation_latency_ms": set(),
+        "run_evidence_ingest_dedupe_latency_ms": set(),
+        "run_evidence_manifest_storage_latency_ms": set(),
+        "run_evidence_object_storage_latency_ms": set(),
+        "run_evidence_deletion_latency_ms": set(),
+        "run_inspection_query_latency_ms": set(),
+        "run_inspection_merge_latency_ms": set(),
         "observatory_comparison_partial_count": set(),
         "observatory_comparison_unavailable_marker_count": set(),
         "observatory_sse_connection_count": {"event_type"},
@@ -992,6 +1046,9 @@ class ObservatoryMetrics:
         outcome: str,
         dependency: str | None = None,
         error_code: str | None = None,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Record one finite, content-free span at the telemetry boundary."""
 
@@ -1007,6 +1064,18 @@ class ObservatoryMetrics:
             raise ValueError("component span dependency is not allowlisted")
         if error_code is not None and error_code not in COMPONENT_SPAN_ERRORS:
             raise ValueError("component span error is not allowlisted")
+        if trace_id is not None and (
+            len(trace_id) != 32
+            or any(char not in "0123456789abcdef" for char in trace_id)
+        ):
+            raise ValueError("component span trace is invalid")
+        if parent_span_id is not None and (
+            len(parent_span_id) != 16
+            or any(char not in "0123456789abcdef" for char in parent_span_id)
+        ):
+            raise ValueError("component span parent is invalid")
+        if run_id is not None and len(run_id) != 36:
+            raise ValueError("component span run is invalid")
         duration = bounded_latency_ms(duration_ms)
         if duration is None:
             raise ValueError("component span duration is invalid")
@@ -1020,8 +1089,10 @@ class ObservatoryMetrics:
             outcome=outcome,
             dependency=dependency,
             error_code=error_code,
-            trace_id=_TRACE_CONTEXT.get() or self._trace_id,
+            trace_id=trace_id or _TRACE_CONTEXT.get() or self._trace_id,
             span_id=uuid4().hex[:16],
+            parent_span_id=parent_span_id,
+            run_id=run_id,
         )
         self._component_spans.append(span)
         if self.span_exporter is not None:

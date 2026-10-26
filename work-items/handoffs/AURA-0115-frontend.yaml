@@ -1,0 +1,85 @@
+agent: frontend_worker
+work_item: AURA-0115
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0115_frontend
+  worktree: shared
+scope:
+  ownership_zone: frontend.observatory.run-inspector
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/observatory/src/lib/features/traces/trace-inspector.utils.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - work-items/handoffs/AURA-0115-frontend.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - frontend.observatory.run-inspector
+  metrics_added: []
+verification:
+  passed:
+    - corepack pnpm exec nx test observatory --skip-nx-cache (63 tests passed)
+    - corepack pnpm exec nx lint observatory --skip-nx-cache (0 errors; existing warnings only)
+    - corepack pnpm exec nx lint observatory-web-e2e --skip-nx-cache (0 errors; existing warning only)
+    - cd frontend && corepack pnpm exec tsc --noEmit -p tsconfig.json
+    - >-
+      corepack pnpm exec nx build observatory-web --configuration=production
+      --skip-nx-cache (Angular production build passed after the nullability
+      correction)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0115.yaml (12 changed paths validated in shared worktree)
+    - git diff --check
+  failed: []
+  not_run:
+    - Full AURA-0115 architecture, service, contract, and integration checks
+      remain delivery/integration owned.
+decisions:
+  - >-
+    Derived the foreground boundary from the latest terminal run_status
+    observation, with finishedAt as a truthful fallback only when a terminal
+    lifecycle observation is absent. Observations after that boundary are not
+    rendered as request phases.
+  - >-
+    Added a metadata-only post-run continuation card with count, UTC time
+    range, outcomes, a collapsed disclosure, and a bounded 25-record preview.
+    The disclosure state is held in the component so live refreshes do not
+    auto-expand or replace the owner's selection.
+  - >-
+    Preserved the existing capture-policy disclosure and did not add content,
+    API calls, contracts, Aura Web imports, browser persistence, or SSE data.
+  - >-
+    Added utility and mocked browser coverage for terminal cutoff, late
+    continuation summaries, bounded preview rendering, and accessibility.
+  - >-
+    Treat detail.partial and a non-null continuation cursor as page-bounded
+    evidence: counts render as lower bounds, ranges are labelled as the loaded
+    metadata window, and previews explicitly say that more metadata may exist.
+    The observation boundary includes the canonical run_duration_ms timestamp
+    after terminal run_status, while selected primary trace spans remain in
+    the foreground lineage.
+  - >-
+    Show an explicit incomplete-page notice even when no post-boundary rows are
+    present, because an empty loaded page cannot establish a zero continuation
+    total or range. Primary run.execute spans remain foreground even when their
+    export timestamp follows status and duration; only late detail worker
+    observations become continuation activity.
+  - >-
+    Scoped the mocked browser assertions to the phase-count badge so its
+    decorative continuation icon does not make exact DOM text assertions
+    brittle; the accessible label and visible copy remain unchanged.
+risks:
+  - >-
+    The continuation count and range are bounded by the existing RunDetail
+    response window; page-bounded copy now makes that limitation explicit and
+    the API's opaque cursor remains available for a future explicit continuation
+    view without changing this presentation boundary.
+  - >-
+    Browser execution uses the repository's supported Node and pnpm versions;
+    the focused acceptance was rerun successfully on a manually served app.
+unresolved: []

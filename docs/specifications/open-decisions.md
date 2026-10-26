@@ -8,7 +8,9 @@
 - Retention and encryption periods for memory, files, credentials, recordings, telemetry, and other platform data.
 - File-source inclusion, exclusion, authorization, and confirmation rules.
 - Home Assistant allowlists and high-impact action classification.
-- Detailed telemetry and captured-content retention periods.
+- Detailed retention periods for metadata telemetry and captured content not
+  covered by accepted manual-only policies. Production run evidence governed
+  by ADR-0017 is retained until explicit owner deletion.
 - Repository licensing and public/private policy.
 - External-provider credential retention, rotation, and revocation periods.
 
@@ -45,6 +47,10 @@ The following distinctions are already settled and are not open decisions:
 - Evaluation artifacts are retained until an explicitly authorized manual deletion; automatic expiry and background purge are not part of this policy.
 - Deterministic evaluators are preferred and model-assisted judges are restricted to local Ollama; cloud judges are not enabled.
 - Baselines are immutable and require explicit owner promotion from a defined result set; automatic promotion and protected repository baseline mutation are prohibited.
+- Owner-enabled production run evidence is permitted only on the separate
+  `run-evidence-v1` channel; its manual-only retention, owner-only access,
+  dedicated Observatory storage, and permanent exclusions are settled by
+  ADR-0017. OTLP and SSE remain metadata-only.
 
 ## Related working summaries
 
