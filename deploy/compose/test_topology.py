@@ -2037,5 +2037,68 @@ exit 0
                 )
 
 
+    def test_calendar_secret_mounts_are_api_only_and_api_keeps_external_egress(
+        self,
+    ) -> None:
+        document = yaml.safe_load(self.compose)
+        self.assertIsInstance(document, dict)
+        services = document["services"]
+        self.assertIsInstance(services, dict)
+        calendar_secrets = {
+            "aura-google-calendar-client-secret",
+            "aura-provider-credential-key-ring",
+        }
+        api = services["aura-core-api"]
+        self.assertFalse(calendar_secrets.intersection(set(api["secrets"])))
+        self.assertIn("aura-core-egress", api["networks"])
+        for name, service in services.items():
+            if name == "aura-core-api":
+                continue
+            self.assertFalse(calendar_secrets.intersection(set(service.get("secrets", []))), name)
+            self.assertNotIn("AURA_GOOGLE_CALENDAR_CLIENT_SECRET_FILE", repr(service), name)
+            self.assertNotIn("AURA_PROVIDER_CREDENTIAL_KEY_RING_FILE", repr(service), name)
+        overlay = yaml.safe_load(
+            (ROOT / "deploy/compose/google-calendar.yaml").read_text(encoding="utf-8")
+        )
+        self.assertIsInstance(overlay, dict)
+        overlay_api = overlay["services"]["aura-core-api"]
+        self.assertTrue(calendar_secrets <= set(overlay_api["secrets"]))
+        self.assertEqual(set(overlay["services"]), {"aura-core-api"})
+
+    def test_calendar_secret_definitions_are_file_only_and_values_never_rendered(self) -> None:
+        document = yaml.safe_load(self.compose)
+        self.assertIsInstance(document, dict)
+        secrets = document["secrets"]
+        self.assertIsInstance(secrets, dict)
+        self.assertFalse(
+            {
+                "aura-google-calendar-client-secret",
+                "aura-provider-credential-key-ring",
+            }.intersection(secrets)
+        )
+        overlay = yaml.safe_load(
+            (ROOT / "deploy/compose/google-calendar.yaml").read_text(encoding="utf-8")
+        )
+        self.assertIsInstance(overlay, dict)
+        secrets = overlay["secrets"]
+        for name in (
+            "aura-google-calendar-client-secret",
+            "aura-provider-credential-key-ring",
+        ):
+            definition = secrets[name]
+            self.assertEqual(set(definition), {"file"})
+            self.assertNotIn("value", definition)
+            self.assertNotIn("content", definition)
+        self.assertNotIn("client-secret-value", self.compose)
+        self.assertNotIn("BEGIN PRIVATE KEY", self.compose)
+
+    def test_local_calendar_placeholders_are_owner_readable_only_and_generated_without_values(
+        self,
+    ) -> None:
+        launcher = (ROOT / "deploy/compose/local-http.sh").read_text(encoding="utf-8")
+        self.assertNotIn("AURA_GOOGLE_CALENDAR_CLIENT_SECRET_FILE", launcher)
+        self.assertNotIn("AURA_PROVIDER_CREDENTIAL_KEY_RING_FILE", launcher)
+
+
 if __name__ == "__main__":
     unittest.main()

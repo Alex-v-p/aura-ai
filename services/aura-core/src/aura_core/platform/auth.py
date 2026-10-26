@@ -64,7 +64,12 @@ class SessionCookiePolicy:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AURA_", extra="ignore", populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="AURA_",
+        extra="ignore",
+        populate_by_name=True,
+        hide_input_in_errors=True,
+    )
 
     environment: str = "development"
     role: str = "api"
@@ -221,6 +226,54 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("AURA_SESSION_COOKIE_SECURE", "AURA_SECURE_COOKIES"),
     )
+    # Google Calendar OAuth is a disabled-by-default API-only integration.
+    # Provider secrets are intentionally file-only and remain repr-safe.
+    google_calendar_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "AURA_GOOGLE_CALENDAR_ENABLED", "AURA_CALENDAR_GOOGLE_ENABLED"
+        ),
+    )
+    google_calendar_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "AURA_GOOGLE_CALENDAR_CLIENT_ID", "AURA_CALENDAR_GOOGLE_CLIENT_ID"
+        ),
+    )
+    google_calendar_client_secret: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices(
+            "AURA_GOOGLE_CALENDAR_CLIENT_SECRET", "AURA_CALENDAR_GOOGLE_CLIENT_SECRET"
+        ),
+    )
+    google_calendar_client_secret_file: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices(
+            "AURA_GOOGLE_CALENDAR_CLIENT_SECRET_FILE",
+            "AURA_CALENDAR_GOOGLE_CLIENT_SECRET_FILE",
+        ),
+    )
+    provider_credential_key_ring_file: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices(
+            "AURA_PROVIDER_CREDENTIAL_KEY_RING_FILE",
+            "AURA_CREDENTIAL_ENCRYPTION_KEY_RING_FILE",
+            "AURA_GOOGLE_CALENDAR_KEY_RING_FILE",
+        ),
+    )
+    google_calendar_key_ring_file: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("AURA_GOOGLE_CALENDAR_KEY_RING_FILE"),
+    )
+    google_calendar_callback_uri: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("AURA_GOOGLE_CALENDAR_CALLBACK_URI"),
+    )
 
     @field_validator("document_embedding_dimension")
     @classmethod
@@ -327,7 +380,31 @@ class Settings(BaseSettings):
                 raise ValueError("secure session cookies are required in production")
             if not self.owner_subject.strip():
                 raise ValueError("owner subject is required in production")
+        # The calendar boundary is deliberately composed here, while no
+        # provider HTTP or durable credential work is performed.  Disabled
+        # settings remain valid without mounted calendar secret files.
+        if self.google_calendar_enabled or self.google_calendar_client_secret:
+            from aura_core.platform.calendar_oauth import GoogleCalendarOAuthConfig
+
+            try:
+                GoogleCalendarOAuthConfig.from_settings(self)
+            except ValueError as exc:
+                raise ValueError("invalid calendar OAuth configuration") from exc
         return self
+
+    def calendar_oauth_config(self) -> Any:
+        """Return the validated API-owned Calendar OAuth boundary."""
+
+        from aura_core.platform.calendar_oauth import GoogleCalendarOAuthConfig
+
+        return GoogleCalendarOAuthConfig.from_settings(self)
+
+    def calendar_oauth_readiness(self) -> Any:
+        """Return content-free Calendar OAuth readiness."""
+
+        from aura_core.platform.calendar_oauth import calendar_oauth_readiness
+
+        return calendar_oauth_readiness(self)
 
 
 def read_secret(value: str, file_path: str) -> str:

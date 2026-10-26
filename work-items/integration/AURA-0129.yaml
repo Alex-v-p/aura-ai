@@ -1,0 +1,108 @@
+agent: integration_maintainer
+work_item: AURA-0129
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0129-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0129-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0129-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0129.yaml
+  - work-items/integration/AURA-0129.yaml
+checks:
+  passed:
+    - >-
+      Both implementation handoffs are schema-valid, complete, within their
+      authorized ownership zones, and contain no unresolved blocking items.
+    - >-
+      All three required review artifacts are schema-valid PASS verdicts with
+      no findings or unresolved blocking issues.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0129.yaml passed before archival, and the
+      archived integrated work item passed the same validator after archival.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0129.yaml passed before archival for 16 paths;
+      final validation against the archived work item passed for all final
+      authorized paths.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0129.yaml skipped because no contract changes
+      were detected.
+    - python3 tooling/architecture/validate-generated-sync.py passed.
+    - python3 tooling/architecture/validate-import-boundaries.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0129.yaml skipped as expected because
+      no protected baseline or threshold changed.
+    - >-
+      python3 -m unittest tooling.architecture.tests.test_common
+      tooling.architecture.tests.test_modules -v passed (27 tests).
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/src/aura_core/platform/auth.py
+      services/aura-core/src/aura_core/platform/calendar_oauth.py
+      services/aura-core/tests/test_aura0129_calendar_oauth_platform.py
+      services/aura-core/tests/test_security_configuration.py
+      deploy/tests/test_aura0129_calendar_oauth.py passed.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/platform/auth.py
+      services/aura-core/src/aura_core/platform/calendar_oauth.py
+      services/aura-core/tests/test_aura0129_calendar_oauth_platform.py
+      services/aura-core/tests/test_security_configuration.py passed with 0
+      errors, 0 warnings, and 0 informations.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0129_calendar_oauth_platform.py
+      services/aura-core/tests/test_security_configuration.py
+      deploy/tests/test_aura0129_calendar_oauth.py -q passed (75 passed).
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      deploy/compose/test_topology.py::ComposeTopologyTests::test_calendar_secret_mounts_are_api_only_and_api_keeps_external_egress
+      deploy/compose/test_topology.py::ComposeTopologyTests::test_calendar_secret_definitions_are_file_only_and_values_never_rendered
+      deploy/compose/test_topology.py::ComposeTopologyTests::test_local_calendar_placeholders_are_owner_readable_only_and_generated_without_values
+      -q passed (3 passed).
+    - docker compose config --quiet passed.
+    - >-
+      AURA_GOOGLE_CALENDAR_CLIENT_ID=compose-validation-client
+      AURA_GOOGLE_CALENDAR_CLIENT_SECRET_FILE=/dev/null
+      AURA_PROVIDER_CREDENTIAL_KEY_RING_FILE=/dev/null docker compose -f
+      compose.yaml -f deploy/compose/google-calendar.yaml config --quiet
+      passed.
+    - >-
+      docker compose -f compose.yaml -f deploy/compose/local-identity.yaml
+      -f deploy/compose/local-http.yaml config --quiet passed.
+    - git diff --check passed.
+    - >-
+      The active work item was moved to
+      work-items/archived/AURA-0129.yaml with status integrated, and final
+      changed-path validation confirms all discovered paths remain within the
+      authorized scope.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The reviewed integration remains uncommitted in the shared worktree for
+    the Delivery Lead's focused checkpoint; no push was performed.
+  - >-
+    AURA-0130 must define the durable credential record lifetime, key-rotation
+    rewrite process, and revocation-recovery workflow inside the approved
+    AES-256-GCM key-version boundary.
+  - >-
+    The parent checkpoint records two unrelated Pyright failures and one
+    unrelated Garage topology assertion failure outside AURA-0129; this slice
+    did not change, waive, or update those baselines.

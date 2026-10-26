@@ -1,0 +1,21 @@
+name: aura
+
+# Explicit opt-in production/deployment overlay for the read-only Google
+# Calendar platform boundary. The base stack and local-http overlay keep the
+# integration disabled and require no Calendar secret files.
+services:
+  aura-core-api:
+    environment:
+      AURA_GOOGLE_CALENDAR_ENABLED: "true"
+      AURA_GOOGLE_CALENDAR_CLIENT_ID: ${AURA_GOOGLE_CALENDAR_CLIENT_ID:?AURA_GOOGLE_CALENDAR_CLIENT_ID is required when Google Calendar is enabled}
+      AURA_GOOGLE_CALENDAR_CLIENT_SECRET_FILE: /run/secrets/aura-google-calendar-client-secret
+      AURA_PROVIDER_CREDENTIAL_KEY_RING_FILE: /run/secrets/aura-provider-credential-key-ring
+    secrets:
+      - aura-google-calendar-client-secret
+      - aura-provider-credential-key-ring
+
+secrets:
+  aura-google-calendar-client-secret:
+    file: ${AURA_GOOGLE_CALENDAR_CLIENT_SECRET_FILE:?AURA_GOOGLE_CALENDAR_CLIENT_SECRET_FILE is required when Google Calendar is enabled}
+  aura-provider-credential-key-ring:
+    file: ${AURA_PROVIDER_CREDENTIAL_KEY_RING_FILE:?AURA_PROVIDER_CREDENTIAL_KEY_RING_FILE is required when Google Calendar is enabled}

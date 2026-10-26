@@ -1,0 +1,12 @@
+agent: architecture_guardian
+work_item: AURA-0129
+verdict: PASS
+checked:
+  - Rechecked the final 13-path diff, approved work item, complete handoffs, architecture handover, module boundaries, Stage 2 plan, AURA-0128, and ADR-0013, ADR-0015, and ADR-0016.
+  - Verified the explicit opt-in overlay augments only aura-core-api, reuses existing API egress, and gives no Calendar secret or network attachment to workers, scheduler, migration, evaluation, Aura Web, or Observatory.
+  - Verified the slice remains configuration and policy only, with no domain, provider HTTP, route, entrypoint, persistence, migration, contract, frontend, or Observatory behavior introduced prematurely.
+  - Verified fixed provider endpoints, callback path, and read-only scope have no runtime override; the opaque key-ring boundary remains outside persistence and cryptographic use remains AURA-0130 scope.
+  - Verified the module registry, dependency direction, service ownership, provider isolation, thin entrypoints, Core/Observatory separation, and frontend boundaries hold.
+  - Verified Settings validation error redaction changes no architecture boundary and no new trust boundary or architectural exception requires an ADR.
+  - Independently passed all relevant validators, 27 architecture tests, Ruff, focused Pyright, 75 focused tests, 3 topology tests, all required Compose renders, and git diff checking.
+findings: []

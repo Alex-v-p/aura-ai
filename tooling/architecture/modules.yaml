@@ -769,6 +769,13 @@ modules:
   - aura_core.platform.run_evidence
   dependencies:
   - aura-core.domains.execution.runs.ports
+- id: aura-core.platform.calendar-oauth
+  root: services/aura-core/src/aura_core/platform/calendar_oauth.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/platform/calendar_oauth.py
+  python_modules:
+  - aura_core.platform.calendar_oauth
+  dependencies: []
 - id: aura-core.platform.object-store
   root: services/aura-core/src/aura_core/platform/object_store
   kind: package
@@ -2097,6 +2104,7 @@ modules:
   - aura_core.platform.auth
   dependencies:
   - aura-core.domains.governance.identity.models
+  - aura-core.platform.calendar-oauth
 - id: aura-core.platform.database.base
   root: services/aura-core/src/aura_core/platform/database/base.py
   kind: python
