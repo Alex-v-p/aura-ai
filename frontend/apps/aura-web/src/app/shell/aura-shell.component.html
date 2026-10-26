@@ -1,15 +1,15 @@
 <aura-adaptive-layout>
   <div class="app-shell">
-    <header class="mobile-header">
+    <header class="mobile-header" [attr.aria-hidden]="mobileOpen && isMobileViewport() ? 'true' : null" [attr.inert]="mobileOpen && isMobileViewport() ? '' : null">
       <button #mobileTrigger class="icon-button" type="button" aria-label="Open navigation" aria-controls="primary-navigation" [attr.aria-expanded]="mobileOpen" (click)="mobileOpenChange.emit(true)"><span aria-hidden="true">☰</span></button>
-      <a class="wordmark" routerLink="/conversation" aria-label="Aura home"><span class="wordmark-mark" aria-hidden="true">✦</span>Aura</a>
+      <a class="wordmark" routerLink="/today" aria-label="Aura home"><span class="wordmark-mark" aria-hidden="true">✦</span>Aura</a>
       <span class="mobile-header-spacer" aria-hidden="true"></span>
     </header>
 
-    @if (mobileOpen && isMobileViewport()) { <button class="scrim" type="button" aria-label="Close navigation" (click)="closeMobileNavigation()"></button> }
-    <nav id="primary-navigation" class="sidebar" [class.is-collapsed]="collapsed && isWideDesktopViewport()" [class.is-mobile-open]="mobileOpen && isMobileViewport()" [cdkTrapFocus]="mobileOpen && isMobileViewport()" [cdkTrapFocusAutoCapture]="mobileOpen && isMobileViewport()" (transitionend)="handleSidebarTransitionEnd($event)" aria-label="Primary navigation">
+    @if (mobileOpen && isMobileViewport()) { <div class="scrim" role="presentation" aria-hidden="true" (click)="closeMobileNavigation()"></div> }
+    <nav id="primary-navigation" class="sidebar" [class.is-collapsed]="collapsed && isWideDesktopViewport()" [class.is-mobile-open]="mobileOpen && isMobileViewport()" [attr.aria-hidden]="isMobileViewport() && !mobileOpen ? 'true' : null" [attr.inert]="isMobileViewport() && !mobileOpen ? '' : null" [cdkTrapFocus]="mobileOpen && isMobileViewport()" [cdkTrapFocusAutoCapture]="mobileOpen && isMobileViewport()" (transitionend)="handleSidebarTransitionEnd($event)" aria-label="Primary navigation">
       <div class="sidebar-top">
-        <a class="wordmark" routerLink="/conversation" aria-label="Aura home" (click)="closeMobileNavigation(isMobileViewport())"><span class="wordmark-mark" aria-hidden="true">✦</span><span class="wordmark-text">Aura</span></a>
+        <a class="wordmark" routerLink="/today" aria-label="Aura home" (click)="closeMobileNavigation(isMobileViewport())"><span class="wordmark-mark" aria-hidden="true">✦</span><span class="wordmark-text">Aura</span></a>
         @if (isMobileViewport()) {
           <button class="icon-button mobile-close-button" type="button" aria-label="Close navigation" (click)="closeMobileNavigation()"><span aria-hidden="true">×</span></button>
         } @else {
@@ -20,7 +20,14 @@
       <button class="new-conversation" type="button" aria-label="New conversation" title="New conversation" (click)="startNewConversation()"><span aria-hidden="true">＋</span><span class="label">New conversation</span></button>
 
       <div class="sidebar-scroll-region">
-      <div class="product-nav" aria-label="Aura destinations">
+      <div class="product-nav" aria-label="Aura destinations" [style.flex]="isCompactSidebar() ? null : '0 1 auto'" [style.min-height]="isCompactSidebar() ? null : '0'">
+        <section class="nav-group nav-group-today" aria-labelledby="nav-group-today">
+          <h2 id="nav-group-today" class="nav-group-heading">Today</h2>
+          <a class="product-link" routerLink="/today" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Today" title="Today" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/></svg>
+            <span class="label">Today</span><span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+        </section>
         <section class="nav-group nav-group-conversations" aria-labelledby="nav-group-conversations">
           <h2 id="nav-group-conversations" class="nav-group-heading">Conversations</h2>
           <a class="product-link" routerLink="/conversation" routerLinkActive="is-active" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page" aria-label="Conversations" title="Conversations" (click)="closeMobileNavigation(isMobileViewport())">
@@ -108,12 +115,12 @@
       <div #preferencesPanel id="preferences-panel" class="preferences-popover" role="dialog" aria-label="Preferences" tabindex="-1"><aura-theme-select [value]="theme" (preferenceChange)="themeChange.emit($event)" /></div>
     </ng-template>
 
-    <main id="main-content" class="main-content" tabindex="-1"><ng-content /></main>
+    <main id="main-content" class="main-content" tabindex="-1" [attr.inert]="mobileOpen && isMobileViewport() ? '' : null"><ng-content /></main>
   </div>
 </aura-adaptive-layout>
 
 <ng-template #conversationLibrary>
-  <div class="conversation-nav" aria-label="Conversations">
+  <div class="conversation-nav" aria-label="Conversations" [style.flex]="isCompactSidebar() ? null : '1 1 50%'" [style.min-height]="isCompactSidebar() ? null : '0'">
     <div class="library-heading"><p class="nav-label">Conversation library</p><button #filterTrigger cdkOverlayOrigin #filterOrigin="cdkOverlayOrigin" class="library-filter-toggle" type="button" aria-haspopup="dialog" aria-controls="conversation-filters" [attr.aria-expanded]="filterPanelOpen()" (click)="toggleFilterPanel($event, filterOrigin)">Filter</button></div>
     <label class="library-search"><span class="sr-only">Search conversation titles</span><span class="search-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.2 4.2"/></svg></span><input type="search" maxlength="200" placeholder="Search titles" [value]="libraryFilters().q ?? ''" (input)="setQuery($any($event.target).value)" /></label>
     <ng-template cdkConnectedOverlay [cdkConnectedOverlayOrigin]="filterOverlayOrigin()" [cdkConnectedOverlayOpen]="filterPanelOpen()" [cdkConnectedOverlayPositions]="filterOverlayPositions" [cdkConnectedOverlayPush]="true" (attach)="handleFilterOverlayAttach()" (overlayOutsideClick)="closeFilterPanel()">

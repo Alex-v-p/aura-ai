@@ -1,0 +1,64 @@
+agent: integration_maintainer
+work_item: AURA-0127
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0127-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0127-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0127-security-privacy.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0127-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0127.yaml
+  - work-items/integration/AURA-0127.yaml
+checks:
+  passed:
+    - >-
+      All three implementation handoffs are complete, schema-valid, within
+      their authorized ownership zones, and contain no unresolved items.
+    - >-
+      All four required review artifacts are schema-valid PASS verdicts with
+      no findings or unresolved blocking issues; the UX advisory was cleared
+      by the follow-up review recorded in its PASS artifact.
+    - >-
+      Work-item validation passed before and after archival, changed-path
+      validation validated 39 paths, and repository-shape, module-registry,
+      and frontend-boundary validators passed.
+    - >-
+      cd frontend && pnpm exec nx test aura-web passed with 9 tests.
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/daily-action passed with 8 tests.
+    - >-
+      cd frontend && pnpm exec nx build aura-web --configuration=production
+      passed.
+    - >-
+      cd frontend && pnpm exec nx run storybook:build-storybook passed.
+    - >-
+      The required 729-case Playwright target passed on dedicated local app
+      and Storybook ports with one worker: 316 passed, 413 skipped, and 0
+      failed. The default invocation was unavailable because local port 4300
+      was already occupied; the dedicated-port run used the same required
+      test files and completed successfully.
+    - git diff --check passed.
+    - >-
+      The work item was moved from active to archived with status integrated,
+      and the final changed paths remain within its authorized scope.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The integration checkpoint is intentionally left uncommitted for the
+    Delivery Lead; the shared worktree contains the reviewed AURA-0127 change.
+  - >-
+    The aggregate browser run retains the existing project-level skips; all
+    executed cases passed.

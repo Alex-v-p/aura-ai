@@ -5,7 +5,7 @@ import { AfterViewChecked, ChangeDetectionStrategy, ChangeDetectorRef, Component
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
-import { ConversationStore, attachmentSelectionForHydration, memoryActivityIndicators, visibleMemoryActivities, type DocumentCitation } from './conversation-store';
+import { ConversationStore, attachmentSelectionForHydration, memoryActivityIndicators, shouldClearComposerDraftAfterAcceptance, visibleMemoryActivities, type DocumentCitation } from './conversation-store';
 import { AgentStore, isBuiltInAuraAgent, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
@@ -50,6 +50,8 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
   readonly documentsStore = inject(DocumentsStore);
   readonly attachmentPickerOpen = signal(false);
   readonly attachmentPickerView = signal<'upload' | 'documents' | 'images'>('upload');
+  /** Keep the live composer value while the store bootstraps or changes selection. */
+  readonly composerDraft = signal('');
   readonly attachmentAccept = `${IMAGE_ATTACHMENT_ACCEPT},.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document`;
   readonly attachmentMax = ATTACHMENT_MAX_PER_MESSAGE;
   readonly imageMax = ATTACHMENT_MAX_IMAGES_PER_MESSAGE;
@@ -111,6 +113,9 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
   private deleteDialogOpener: HTMLElement | null = null;
   private attachmentPrincipal: string | null = null;
   private hydratedAttachmentConversationId: string | null = null;
+  private composerDraftConversationId: string | null = null;
+  private composerDraftDirty = false;
+  private composerSubmissionDraft: string | null = null;
 
   configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
     return configurationRevisionValue(reference, useAgentDefault);
@@ -146,10 +151,34 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
     effect(() => {
       const conversationId = this.store.selectedId();
       const loading = this.store.loading();
-       const previousConversationId = this.hydratedAttachmentConversationId;
-       const switchedConversation = previousConversationId !== null && previousConversationId !== conversationId;
-       if (switchedConversation) { this.orphanedEditAction.set(null); this.pendingOrphanedEditFocus.set(null); this.orphanedEditActionTrigger = null; }
-      if (switchedConversation && (loading || previousConversationId?.startsWith('draft-'))) this.handoffLiveComposerDraft();
+      const storeDraft = this.store.draft();
+      const runState = this.store.runState();
+      const localDraft = untracked(() => this.composerDraft());
+      if (shouldClearComposerDraftAfterAcceptance(localDraft, storeDraft, this.composerSubmissionDraft, runState)) {
+        this.composerDraft.set('');
+        this.composerDraftDirty = false;
+        this.composerSubmissionDraft = null;
+      } else if (this.composerSubmissionDraft !== null && (localDraft !== this.composerSubmissionDraft || runState === 'error' || runState === 'interrupted')) {
+        this.composerSubmissionDraft = null;
+      }
+      const previousComposerConversationId = this.composerDraftConversationId;
+      if (previousComposerConversationId === null) {
+        this.composerDraftConversationId = conversationId;
+        if (!this.composerDraftDirty) this.composerDraft.set(this.store.draft());
+      } else if (previousComposerConversationId !== conversationId) {
+        if (loading || previousComposerConversationId.startsWith('draft-'))
+          untracked(() => this.handoffLiveComposerDraft(previousComposerConversationId));
+        this.composerDraftConversationId = conversationId;
+        this.composerDraftDirty = false;
+        this.composerSubmissionDraft = null;
+        this.composerDraft.set(this.store.draft());
+      } else if (!this.composerDraftDirty) {
+        if (storeDraft !== untracked(() => this.composerDraft())) this.composerDraft.set(storeDraft);
+      }
+      const previousConversationId = this.hydratedAttachmentConversationId;
+      const switchedConversation = previousConversationId !== null && previousConversationId !== conversationId;
+      if (switchedConversation) { this.orphanedEditAction.set(null); this.pendingOrphanedEditFocus.set(null); this.orphanedEditActionTrigger = null; }
+      if (switchedConversation && (loading || previousConversationId?.startsWith('draft-'))) this.handoffLiveComposerDraft(previousConversationId);
       this.hydratedAttachmentConversationId = conversationId;
       // Hydration is scoped to conversation changes. Reading the draft's
       // attachment map here would make the hydration effect observe the
@@ -314,7 +343,18 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
   approvalLabel(status: ApprovalSummary['status']): string { return this.approvalStore.statusLabel(status); }
   thinkingRunId(): string | null { return this.store.selected().currentRun?.id ?? this.store.selected().runs.at(-1)?.id ?? null; }
 
-  submit(event?: Event): void { event?.preventDefault(); if (this.branchEditActive()) return; this.syncComposerDraft(); if (!this.defaultAgentReady() || this.submissionBlocked()) return; this.store.setDraftAttachments(this.attachmentStore.selected()); if (this.store.send()) queueMicrotask(() => this.composer?.nativeElement.focus()); }
+  submit(event?: Event): void {
+    event?.preventDefault();
+    if (this.branchEditActive()) return;
+    this.syncComposerDraft();
+    if (!this.defaultAgentReady() || this.submissionBlocked()) return;
+    this.store.setDraftAttachments(this.attachmentStore.selected());
+    const submittedDraft = untracked(() => this.composerDraft());
+    if (this.store.send()) {
+      this.composerSubmissionDraft = submittedDraft;
+      queueMicrotask(() => this.composer?.nativeElement.focus());
+    }
+  }
   submitBranchEdit(event: Event): void {
     event.preventDefault();
     const conversationId = this.store.selectedId();
@@ -775,14 +815,28 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
     return `Persona ${persona.displayName} revision ${persona.revision}${persona.status === 'disabled' ? ', disabled' : ''}${this.hasNewerPersonaRevision() ? ', newer revision available' : ''}`;
   }
 
-  private syncComposerDraft(): void {
-    const value = this.composer?.nativeElement.value;
-    if (value !== undefined && value !== this.store.draft()) this.store.updateDraft(value);
+  updateComposerDraft(value: string): void {
+    if (this.composerSubmissionDraft !== null && value !== this.composerSubmissionDraft) this.composerSubmissionDraft = null;
+    this.composerDraftDirty = true;
+    this.composerDraft.set(value);
+    this.store.updateDraft(value);
   }
 
-  private handoffLiveComposerDraft(): void {
+  private syncComposerDraft(): void {
     const value = this.composer?.nativeElement.value;
-    if (value !== undefined && value.trim() && !this.store.draft().trim()) this.store.updateDraft(value);
+    if (value !== undefined) {
+      if (this.composerSubmissionDraft !== null && value !== this.composerSubmissionDraft) this.composerSubmissionDraft = null;
+      this.composerDraftDirty = true;
+      this.composerDraft.set(value);
+      if (value !== this.store.draft()) this.store.updateDraft(value);
+    }
+  }
+
+  private handoffLiveComposerDraft(conversationId = this.composerDraftConversationId): void {
+    const value = untracked(() => this.composerDraft());
+    if (!conversationId) return;
+    const storedDraft = untracked(() => this.store.drafts()[conversationId] ?? '');
+    if (value.trim() && !storedDraft.trim()) this.store.updateDraftFor(conversationId, value);
   }
 
   modelMetadataLabel(): string { return `Model ${this.store.selectedModelId() || 'not selected'}`; }

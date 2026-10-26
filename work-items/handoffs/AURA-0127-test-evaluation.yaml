@@ -1,0 +1,111 @@
+agent: test_evaluation_engineer
+work_item: AURA-0127
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0127_tests
+  worktree: shared-main
+scope:
+  ownership_zone: evaluation.aura-web.daily-action
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web-e2e/src/today.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - work-items/handoffs/AURA-0127-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0127.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0127.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - cd frontend && pnpm exec prettier --check apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+    - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts --list
+    - >-
+      cd frontend && pnpm exec playwright test
+      apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts
+      apps/aura-web-e2e/src/storybook-a11y.spec.ts --workers=1 executed 729 tests;
+      316 passed, 413 skipped, 0 failed, using dedicated app and Storybook ports.
+    - >-
+      AURA_WEB_E2E_APP_PORT=4310 AURA_WEB_E2E_STORYBOOK_PORT=6310
+      AURA_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test
+      apps/aura-web-e2e/src/today.spec.ts --project=desktop --workers=1
+      --grep "clears private Today data" (passed)
+    - >-
+      Same-document 403 authorization regressions using the post-load SSE
+      transition: desktop 2 passed, mobile 2 passed; tablet cases also passed
+      in the aggregate target below.
+    - >-
+      UX-review focused rerun across desktop/tablet/mobile: 37 passed, 38
+      skipped, including the post-load 403 authorization distinction, direct
+      unauthenticated sign-in, unread freshness after History, responsive
+      Today canvas, mobile drawer isolation, and all Today Storybook states.
+    - git diff --check
+    - >-
+      Targeted sidebar viewport regression on desktop/tablet: 2 passed, 1
+      mobile case skipped.
+  failed: []
+  not_run:
+    - Full aura-web unit, production build, Storybook build, and aggregate work-item checks are owned by the frontend worker and Delivery Lead.
+decisions:
+  - >-
+    Added dedicated Today browser fixtures covering root redirect, bounded cards,
+    canonical detail links, no inline mutation controls, private-summary exclusion,
+    empty/all-clear, partial source failure and retry, authorization failure, and
+    request-amplification bounds.
+  - >-
+    Kept open SSE fixture requests pending so healthy loaded sources do not become
+    reconnecting merely because a test response closed; page teardown aborts them.
+  - >-
+    Updated existing Aura Web conversation-focused tests to navigate to /conversation
+    (including query-fixture routes) after the root route moved to /today, while
+    adding explicit root and home-link regression coverage and updating the
+    destination-count baseline for Today.
+  - >-
+    Added mobile closed/open navigation semantics assertions for aria-hidden, inert
+    background content, Escape, and focus restoration.
+  - >-
+    Synchronized mobile New conversation transitions with the existing drawer
+    closed-state helper before interacting with inert main content.
+  - >-
+    Kept the legacy Aura Web E2E formatting baseline intact; only route semantics
+    and focused root/mobile regression assertions are changed in that file.
+  - >-
+    Added responsive browser coverage for mobile reading order, 44px touch-sized
+    cards, reduced-motion transitions, and 200 percent reflow overflow.
+  - >-
+    Registered populated and calm-empty Today Storybook stories in the existing
+    light/dark axe matrix without changing any accessibility thresholds.
+  - >-
+    Added UX-review acceptance for the bounded `.sidebar-scroll-region` owner
+    at 1280x720 with Preferences separation, the effective single-column
+    900x1000 Today canvas, mobile header/main isolation with an operable scrim,
+    direct unauthenticated sign-in versus 403 auth reset, and unread projection
+    freshness after visiting notification History.
+  - >-
+    Switched existing mobile drawer trigger locators to the stable
+    `aria-controls="primary-navigation"` contract so the trigger remains
+    testable while the open header is intentionally aria-hidden/inert.
+  - >-
+    Replaced reload-based authorization coverage with a delayed, valid
+    `approval.pending` SSE fixture event that forces the existing ApprovalStore
+    to refresh and receive 403 while Today remains mounted, proving hydrated
+    private cards clear within the same document/session boundary.
+risks:
+  - >-
+    The complete browser target includes existing project-level skips for
+    viewport-specific cases; all executed assigned acceptance cases passed.
+  - >-
+    The full Playwright harness requires dedicated app and Storybook ports when the
+    default port is occupied by another local service; no network dependency was used.
+unresolved: []

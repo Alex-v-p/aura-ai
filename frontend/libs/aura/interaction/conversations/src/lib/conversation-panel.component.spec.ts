@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { focusBranchAction } from './branch-action-focus';
 import { selectedDocumentIsPending } from './conversation-attachment-readiness';
-import { attachmentSelectionForHydration } from './conversation-store';
+import { attachmentSelectionForHydration, shouldClearComposerDraftAfterAcceptance } from './conversation-store';
 
 const template = readFileSync(resolve(process.cwd(), 'libs/aura/interaction/conversations/src/lib/conversation-panel.component.html'), 'utf8');
 const componentSource = readFileSync(resolve(process.cwd(), 'libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts'), 'utf8');
@@ -104,6 +104,29 @@ describe('conversation configuration select bindings', () => {
     expect(componentSource).toContain('!this.agentStore.loading() && this.defaultAgentReady()');
   });
 
+  it('keeps an immediately typed draft across bootstrap selection changes', () => {
+    expect(template).toContain('[value]="composerDraft()"');
+    expect(template).toContain('(input)="updateComposerDraft($any($event.target).value)"');
+    expect(componentSource).toContain("readonly composerDraft = signal('')");
+    expect(componentSource).toContain('this.composerDraftDirty = true');
+    expect(componentSource).toContain('this.store.updateDraft(value)');
+    expect(componentSource).toContain('this.store.updateDraftFor(conversationId, value)');
+    expect(componentSource).toContain('untracked(() => this.handoffLiveComposerDraft(previousComposerConversationId))');
+    expect(componentSource).toContain("previousComposerConversationId.startsWith('draft-')");
+  });
+
+  it('clears the local composer only after the store confirms acceptance', () => {
+    expect(shouldClearComposerDraftAfterAcceptance('Send this once', '', 'Send this once', 'working')).toBe(true);
+    expect(shouldClearComposerDraftAfterAcceptance('Keep this after rejection', 'Keep this after rejection', 'Keep this after rejection', 'error')).toBe(false);
+    expect(shouldClearComposerDraftAfterAcceptance('Keep this after uncertainty', 'Keep this after uncertainty', 'Keep this after uncertainty', 'interrupted')).toBe(false);
+    expect(shouldClearComposerDraftAfterAcceptance('A newer draft', '', 'Submitted draft', 'working')).toBe(false);
+  });
+
+  it('resets the local composer mirror when acceptance clears the submitted store draft', () => {
+    expect(componentSource).toContain('shouldClearComposerDraftAfterAcceptance');
+    expect(componentSource).toContain('this.composerSubmissionDraft = submittedDraft');
+  });
+
   it('renders a branch retry only when the store exposes a retryable action', () => {
     expect(template).toContain('@if (store.selectedBranch().errorAction)');
     expect(template).not.toContain('{{ branchError }} <button type="button" class="inline-action" (click)="retryBranchAction()">');
@@ -136,7 +159,7 @@ describe('conversation configuration select bindings', () => {
     expect(componentSource).toContain('const authorizationEnded = this.store.authState() !== \'authenticated\'');
     expect(componentSource).toContain('untracked(() => this.store.attachmentsFor(conversationId))');
     expect(componentSource).toContain('switchedConversation && !loading');
-    expect(componentSource).toContain('this.handoffLiveComposerDraft()');
+    expect(componentSource).toContain('this.handoffLiveComposerDraft(previousConversationId)');
     expect(componentSource).toContain("if (!this.attachmentPickerOpen() || this.attachmentPickerView() !== 'images') return;");
     expect(componentSource).toContain('modelVisionRequiredFor');
     expect(componentSource).toContain('attachmentAcceptanceConversationId');

@@ -5,6 +5,20 @@ const componentSource = readFileSync('apps/aura-web/src/app/shell/aura-shell.com
 const templateSource = readFileSync('apps/aura-web/src/app/shell/aura-shell.component.html', 'utf8');
 
 describe('AuraShellComponent conversation library controls', () => {
+  it('makes Today the first destination and keeps Aura home links on Today', () => {
+    expect(templateSource).toContain('routerLink="/today"');
+    expect(templateSource.indexOf('nav-group-today')).toBeLessThan(templateSource.indexOf('nav-group-conversations'));
+    expect(templateSource).not.toContain('routerLink="/conversation" aria-label="Aura home"');
+  });
+
+  it('keeps closed mobile navigation out of the accessibility tree and makes the page inert while open', () => {
+    expect(templateSource).toContain("[attr.aria-hidden]=\"isMobileViewport() && !mobileOpen ? 'true' : null\"");
+    expect(templateSource).toContain("[attr.inert]=\"isMobileViewport() && !mobileOpen ? '' : null\"");
+    expect(templateSource).toContain("[attr.inert]=\"mobileOpen && isMobileViewport() ? '' : null\"");
+    expect(templateSource).toContain('<header class="mobile-header" [attr.aria-hidden]="mobileOpen && isMobileViewport() ? \'true\' : null"');
+    expect(templateSource).toContain('<div class="scrim" role="presentation" aria-hidden="true"');
+  });
+
   it('keeps the connected overlay focus lifecycle explicit', () => {
     expect(componentSource).toContain('this.filterPanelOpen.set(true)');
     expect(componentSource).toContain('queueMicrotask(() => this.focusFilterPanel())');

@@ -107,6 +107,16 @@ const approvalStories = [
   'recovery',
   'mobile',
 ] as const;
+const todayStories = [
+  'action-center',
+  'calm-empty',
+  'loading',
+  'partial-failure',
+  'permission-denied',
+  'offline',
+  'reconnecting',
+  'unauthenticated',
+] as const;
 const applyStoryTheme = (theme: 'light' | 'dark'): void => {
   document.documentElement.dataset['theme'] = theme;
   document.documentElement.style.colorScheme = theme;
@@ -146,6 +156,58 @@ const watchRuntimeErrors = (page: import('@playwright/test').Page): (() => void)
   page.on('pageerror', (error) => errors.push(error.message));
   return () => expect(errors).toEqual([]);
 };
+
+for (const story of todayStories) {
+  for (const theme of themes) {
+    test(`Today Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
+      test.skip(
+        testInfo.project.name !== 'desktop',
+        'Today Storybook axe coverage runs once in the desktop project.',
+      );
+      const assertNoRuntimeErrors = watchRuntimeErrors(page);
+      await page.goto(
+        `${storybookBaseUrl}/iframe.html?id=aura-today-action-center--${story}&viewMode=story`,
+      );
+      await expect(page.locator('.daily-action').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      if (story === 'action-center') {
+        await expect(
+          page.getByRole('heading', { name: 'Needs attention', exact: true }),
+        ).toBeVisible();
+        await expect(page.getByText('Bring the library books back', { exact: true })).toBeVisible();
+      } else if (story === 'calm-empty') {
+        await expect(page.getByText('All clear for now.', { exact: true })).toBeVisible();
+      } else if (story === 'loading') {
+        await expect(
+          page
+            .getByRole('status')
+            .filter({ hasText: /Loading/ })
+            .first(),
+        ).toBeVisible();
+        await expect(page.getByText('All clear for now.', { exact: true })).toHaveCount(0);
+      } else if (story === 'partial-failure') {
+        await expect(
+          page.locator('.section-status').filter({ hasText: /notifications/i }),
+        ).toBeVisible();
+      } else if (story === 'permission-denied') {
+        await expect(
+          page.getByText(/Today access is unavailable|permission/i).first(),
+        ).toBeVisible();
+        await expect(page.getByText('All clear for now.', { exact: true })).toHaveCount(0);
+      } else if (story === 'offline') {
+        await expect(page.getByText(/offline|unavailable/i).first()).toBeVisible();
+      } else if (story === 'reconnecting') {
+        await expect(page.getByText(/out of date|reconnect/i).first()).toBeVisible();
+      } else {
+        await expect(page.getByText(/Sign in to see your private Today view/i)).toBeVisible();
+        await expect(page.getByText('All clear for now.', { exact: true })).toHaveCount(0);
+      }
+      const results = await new AxeBuilder({ page }).include('.daily-action').analyze();
+      expect(results.violations).toEqual([]);
+      assertNoRuntimeErrors();
+    });
+  }
+}
 
 for (const story of stories) {
   for (const theme of themes) {
@@ -192,7 +254,9 @@ for (const story of stories) {
         await expect(page.getByRole('alert')).toContainText(/verified vision model/i);
       }
       if (story === 'attachment-tombstone') {
-        await expect(page.getByText('Attachment unavailable is unavailable', { exact: true })).toHaveCount(2);
+        await expect(
+          page.getByText('Attachment unavailable is unavailable', { exact: true }),
+        ).toHaveCount(2);
         await expect(page.getByText('Unavailable', { exact: true })).toHaveCount(2);
         await expect(page.getByText('application/pdf', { exact: true })).toHaveCount(0);
       }

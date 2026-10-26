@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { ReminderStore } from '@aura/aura/automation/reminders';
 import { AuraNotificationsApi } from './notifications-api';
-import { appendNotificationPage, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection, type NotificationRecord, type NotificationsApi, type NotificationStream, type NotificationStatus, type NotificationView, type NotificationApiError } from './notification-models';
+import { appendNotificationPage, loadUnreadProjection, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection, type NotificationRecord, type NotificationsApi, type NotificationStream, type NotificationStatus, type NotificationView, type NotificationApiError } from './notification-models';
 
 const emptyCollection = (): NotificationCollection => ({ items: [], nextCursor: null, unacknowledgedCount: 0 });
 const retryDelaysMs = [500, 1_000, 2_000, 4_000, 8_000, 15_000] as const;
@@ -23,6 +23,9 @@ export class NotificationStore {
   readonly connectionState = signal<'offline' | 'connecting' | 'reconnecting' | 'live' | 'unavailable'>('offline');
   readonly view = signal<NotificationView>('unread');
   readonly loadedView = signal<NotificationView | null>(null);
+  /** Stable unread projection for cross-surface consumers such as Today. */
+  readonly unreadCollection = signal<NotificationCollection | null>(null);
+  readonly unreadLoaded = computed(() => this.unreadCollection() !== null);
   /** Kept as a compatibility projection for existing consumers. */
   readonly filter = signal<'all' | NotificationStatus>('delivered');
   readonly unreadCount = computed(() => this.collection().unacknowledgedCount);
@@ -52,6 +55,15 @@ export class NotificationStore {
       const page = await this.api.list(undefined, this.selectedStatus());
       if (session !== this.sessionGeneration || generation !== this.listGeneration || view !== this.view()) return false;
       this.collection.set(page); this.loadedView.set(view);
+      if (view === 'unread') this.unreadCollection.set(page);
+      else {
+        try {
+          const unread = await loadUnreadProjection(this.api);
+          if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) this.unreadCollection.set(unread);
+        } catch (error: unknown) {
+          if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) this.setError(error, 'Unread notifications are temporarily unavailable.');
+        }
+      }
       return true;
     } catch (error: unknown) {
       if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) { this.collection.set(emptyCollection()); this.loadedView.set(null); this.setError(error, 'Notifications are temporarily unavailable.'); }
@@ -62,7 +74,14 @@ export class NotificationStore {
   async loadMore(): Promise<void> {
     const current = this.collection(); if (!current.nextCursor || this.loading()) return;
     const session = this.sessionGeneration; const generation = this.listGeneration; const view = this.view(); this.loading.set(true);
-    try { const page = await this.api.list(current.nextCursor, this.selectedStatus()); if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) this.collection.set(appendNotificationPage(current, page)); }
+    try {
+      const page = await this.api.list(current.nextCursor, this.selectedStatus());
+      if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) {
+        const merged = appendNotificationPage(current, page);
+        this.collection.set(merged);
+        if (view === 'unread') this.unreadCollection.set(merged);
+      }
+    }
     catch (error: unknown) { if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) this.setError(error, 'More notifications could not be loaded.'); }
     finally { if (session === this.sessionGeneration && generation === this.listGeneration) this.loading.set(false); }
   }
@@ -88,7 +107,10 @@ export class NotificationStore {
       // Do not apply an optimistic decrement onto a collection that was
       // replaced by an intervening authoritative refresh (for example, SSE).
       // The accepted mutation still performs its own authoritative refresh.
-      if (listGeneration === this.listGeneration) this.collection.update((current) => reconcileAcknowledged(current, updated, currentView));
+      if (listGeneration === this.listGeneration) {
+        this.collection.update((current) => reconcileAcknowledged(current, updated, currentView));
+        this.unreadCollection.update((current) => current ? reconcileAcknowledged(current, updated, 'unread') : current);
+      }
       if (sameRoute()) this.selected.set(updated);
       if (this.acknowledgeGuard.isSessionMutationCurrent(token)) await this.refresh();
       return this.acknowledgeGuard.isSessionMutationCurrent(token);
@@ -101,7 +123,7 @@ export class NotificationStore {
   async setView(view: NotificationView): Promise<void> { if (this.view() === view) return; this.view.set(view); this.filter.set(view === 'unread' ? 'delivered' : 'acknowledged'); this.loadedView.set(null); this.collection.set(emptyCollection()); await this.refresh(); }
   async setFilter(filter: 'all' | NotificationStatus): Promise<void> { this.filter.set(filter); this.view.set(filter === 'acknowledged' ? 'history' : 'unread'); this.loadedView.set(null); this.collection.set(emptyCollection()); await this.refresh(); }
 
-  resetSessionState(): void { ++this.sessionGeneration; ++this.listGeneration; ++this.detailGeneration; this.detailKey = ''; this.acknowledgeGuard.resetSession(); this.api.clearSession?.(); this.stop(); this.collection.set(emptyCollection()); this.loadedView.set(null); this.clearDetail(); this.loading.set(false); this.saving.set(false); this.notice.set(null); this.errorStatus.set(null); this.lastEventId = undefined; this.retryAttempt = 0; this.resetEpoch.update((value) => value + 1); }
+  resetSessionState(): void { ++this.sessionGeneration; ++this.listGeneration; ++this.detailGeneration; this.detailKey = ''; this.acknowledgeGuard.resetSession(); this.api.clearSession?.(); this.stop(); this.collection.set(emptyCollection()); this.unreadCollection.set(null); this.loadedView.set(null); this.clearDetail(); this.loading.set(false); this.saving.set(false); this.notice.set(null); this.errorStatus.set(null); this.lastEventId = undefined; this.retryAttempt = 0; this.resetEpoch.update((value) => value + 1); }
   /** Reconnect only after the application has accepted a new session. */
   resumeAfterAcceptedSession(): void { void this.start(); }
 

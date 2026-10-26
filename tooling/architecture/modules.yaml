@@ -2381,6 +2381,16 @@ modules:
   public_api: frontend/libs/aura/knowledge/documents/src/index.ts
   dependencies:
   - aura-web.api-client
+- id: aura-web.daily-action
+  root: frontend/libs/aura/daily-action
+  kind: frontend-feature
+  public_api: frontend/libs/aura/daily-action/src/index.ts
+  dependencies:
+  - aura-web.automation-reminders
+  - aura-web.automation-notifications
+  - aura-web.governance-approvals
+  - aura-web.interaction-conversations
+  - aura-web.api-client
 - id: aura-contract.observatory-openapi
   root: contracts/openapi/observatory-v1.yaml
   kind: openapi-contract

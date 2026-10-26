@@ -138,7 +138,11 @@ export class AuraShellComponent implements OnDestroy {
     if (this.libraryPanelOpen()) this.closeLibraryPanel(false);
     if (this.preferencesOpen() && this.isCompactSidebar()) this.closePreferences(false);
     this.mobileOpenChange.emit(false);
-    if (restoreFocus && this.isMobileViewport()) queueMicrotask(() => this.mobileTrigger?.nativeElement.focus());
+    if (restoreFocus && this.isMobileViewport()) {
+      const restore = (): void => this.mobileTrigger?.nativeElement.focus();
+      queueMicrotask(restore);
+      setTimeout(restore, 0);
+    }
   }
 
   isCompactSidebar(): boolean { return !this.isWideDesktopViewport() || this.collapsed; }

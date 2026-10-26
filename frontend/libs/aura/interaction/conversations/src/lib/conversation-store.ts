@@ -13,6 +13,20 @@ export type TurnRole = 'user' | 'assistant';
 export type RunState = 'idle' | 'working' | 'waiting' | 'interrupted' | 'error';
 export type AuthState = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 
+/** Keep a submitted composer value only until the store observes authoritative acceptance. */
+export function shouldClearComposerDraftAfterAcceptance(
+  localDraft: string,
+  storedDraft: string,
+  submittedDraft: string | null,
+  runState: RunState,
+): boolean {
+  return submittedDraft !== null
+    && storedDraft.length === 0
+    && localDraft === submittedDraft
+    && runState !== 'error'
+    && runState !== 'interrupted';
+}
+
 /** Metadata-only source reference accepted by Core for this run. */
 export interface DocumentCitation { readonly documentId: string; readonly displayLabel: string; readonly locator: string; }
 const citationIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -729,7 +743,12 @@ export class ConversationStore {
     this.defaultDraftAgentError.set(message);
   }
 
-  updateDraft(value: string): void { const id = this.selectedId(); this.drafts.update((drafts) => ({ ...drafts, [id]: value })); if (value.trim()) this.setNotice(id, null); }
+  updateDraft(value: string): void { this.updateDraftFor(this.selectedId(), value); }
+  updateDraftFor(conversationId: string, value: string): void {
+    if (!this.conversations().some((conversation) => conversation.id === conversationId)) return;
+    this.drafts.update((drafts) => ({ ...drafts, [conversationId]: value }));
+    if (conversationId === this.selectedId() && value.trim()) this.setNotice(conversationId, null);
+  }
   setDraftAttachments(items: ReadonlyArray<AttachmentSelection>): void { const id = this.selectedId(); const current = this.draftAttachments()[id] ?? []; if (sameAttachmentSelections(current, items)) return; this.draftAttachments.update((attachments) => ({ ...attachments, [id]: [...items] })); }
   setDraftAttachmentsFor(conversationId: string, items: ReadonlyArray<AttachmentSelection>): void { this.draftAttachments.update((attachments) => ({ ...attachments, [conversationId]: [...items] })); }
   attachmentsFor(conversationId: string): ReadonlyArray<AttachmentSelection> { return this.draftAttachments()[conversationId] ?? []; }

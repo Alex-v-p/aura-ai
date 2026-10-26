@@ -7,9 +7,11 @@ import { DocumentsPageComponent } from '@aura/aura/knowledge/documents';
 import { RemindersPageComponent } from '@aura/aura/automation/reminders';
 import { NotificationsPageComponent } from '@aura/aura/automation/notifications';
 import { ApprovalsPageComponent } from '@aura/aura/governance/approvals';
+import { DailyActionPageComponent } from '@aura/aura/daily-action';
 
 export const routes: Routes = [
-  { path: '', pathMatch: 'full', redirectTo: 'conversation' },
+  { path: '', pathMatch: 'full', redirectTo: 'today' },
+  { path: 'today', component: DailyActionPageComponent },
   { path: 'conversation/:conversationId', component: ConversationPanelComponent },
   { path: 'conversation', component: ConversationPanelComponent },
   { path: 'agents', component: AgentListPageComponent },
@@ -33,5 +35,5 @@ export const routes: Routes = [
   { path: 'approvals', component: ApprovalsPageComponent },
   { path: 'approvals/:id', component: ApprovalsPageComponent },
   { path: 'agents/:id/memory', component: AgentMemoryPolicyPageComponent },
-  { path: '**', redirectTo: 'conversation' },
+  { path: '**', redirectTo: 'today' },
 ];

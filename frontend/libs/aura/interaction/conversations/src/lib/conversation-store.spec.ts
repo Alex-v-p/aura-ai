@@ -300,6 +300,19 @@ describe('ConversationStore', () => {
   beforeEach(async () => { store = new ConversationStore(fakeApi()); await new Promise<void>((resolve) => queueMicrotask(resolve)); hydrateDefaultAgent(store); });
 
   it('keeps drafts in memory and validates empty sends', () => { store.updateDraft(''); expect(store.send()).toBe(false); expect(store.notice()).toContain('Write a message'); });
+  it('updates a captured conversation draft without writing into the selected destination', async () => {
+    const first = { ...summary('conversation-a'), messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const second = { ...summary('conversation-b'), messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
+    const addressed = new ConversationStore(fakeApi(async () => ({ items: [first, second], nextCursor: null }), [first, second]));
+    await vi.waitFor(() => expect(addressed.selectedId()).toBe('conversation-a'));
+    addressed.updateDraftFor('conversation-a', 'Draft from A');
+    addressed.select('conversation-b');
+    expect(addressed.draft()).toBe('');
+    addressed.updateDraftFor('conversation-a', 'Draft retained by A');
+    expect(addressed.draft()).toBe('');
+    addressed.select('conversation-a');
+    expect(addressed.draft()).toBe('Draft retained by A');
+  });
   it('migrates text and attachments typed during bootstrap when a persisted conversation replaces the draft', async () => {
     const detail = { ...summary('bootstrapped-conversation'), messages: [], recentRuns: [], currentRun: null } as ConversationDetail;
     const bootstrapped = new ConversationStore(fakeApi(async () => ({ items: [detail], nextCursor: null }), [detail]));

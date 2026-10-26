@@ -1,8 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Notification } from '@aura/aura-api-client';
-import { appendNotificationPage, isValidNotificationEvent, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection } from './notification-models';
-import { NotificationApiError } from './notification-models';
+import { appendNotificationPage, isValidNotificationEvent, loadUnreadProjection, NotificationApiError, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection, type NotificationsApi } from './notification-models';
 import { NotificationSessionHydrator } from './notification-session-hydration';
 
 const page = readFileSync('libs/aura/automation/notifications/src/lib/notifications-page.component.html', 'utf8');
@@ -38,6 +37,34 @@ describe('notification centre contracts', () => {
     expect(store).toContain('async refresh(): Promise<boolean>');
     expect(store).toContain('if (!reconciled) { this.connectionState.set(\'unavailable\'); return; }');
     expect(store).toContain('private async reconcileAndConnect()');
+  });
+
+  it('keeps Today on a stable unread projection when the workspace changes view', () => {
+    expect(store).toContain('readonly unreadCollection = signal<NotificationCollection | null>(null)');
+    expect(store).toContain("if (view === 'unread') this.unreadCollection.set(page)");
+    expect(store).toContain('this.unreadCollection.set(null)');
+    expect(store).toContain('loadUnreadProjection(this.api)');
+    expect(store).toContain("reconcileAcknowledged(current, updated, 'unread')");
+    expect(readFileSync('libs/aura/daily-action/src/lib/daily-action-page.component.ts', 'utf8')).toContain('this.notifications.unreadCollection()');
+  });
+
+  it('fetches a fresh unread projection without changing the active workspace view', async () => {
+    const delivered: Notification = { id: 'notification-1', reminderId: 'reminder-1', status: 'delivered', version: 1, createdAt: '2026-10-08T09:00:00.000Z', updatedAt: '2026-10-08T09:00:00.000Z', deliveredAt: '2026-10-08T09:00:00.000Z', acknowledgedAt: null };
+    const laterDelivered: Notification = { ...delivered, id: 'notification-2', reminderId: 'reminder-2' };
+    const unreadPage = (items: Notification[]): NotificationCollection => ({ items, nextCursor: null, unacknowledgedCount: items.length });
+    const historyPage: NotificationCollection = { items: [], nextCursor: null, unacknowledgedCount: 0 };
+    let latestUnread = unreadPage([delivered]);
+    const api: NotificationsApi = {
+      list: vi.fn(async (_cursor?: string, status?: Notification['status']) => status === 'delivered' ? latestUnread : historyPage),
+      get: vi.fn(),
+      acknowledge: vi.fn(),
+      stream: vi.fn(() => ({ close: vi.fn() })),
+    };
+    latestUnread = unreadPage([delivered, laterDelivered]);
+    const refreshed = await loadUnreadProjection(api);
+    expect(refreshed.items.map((item) => item.id)).toEqual(['notification-1', 'notification-2']);
+    expect(api.list).toHaveBeenCalledTimes(1);
+    expect(api.list).toHaveBeenCalledWith(undefined, 'delivered');
   });
 
   it('uses the generated notification operations and owner mutation headers', () => {

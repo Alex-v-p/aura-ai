@@ -63,6 +63,11 @@ export interface NotificationStream {
   close(): void;
 }
 
+/** Fetches the owner-authorized unread projection without changing workspace view. */
+export function loadUnreadProjection(api: Pick<NotificationsApi, 'list'>): Promise<NotificationCollection> {
+  return api.list(undefined, 'delivered');
+}
+
 export class NotificationApiError extends Error {
   constructor(readonly status: number | null, message: string, readonly retryable = true) {
     super(message);
