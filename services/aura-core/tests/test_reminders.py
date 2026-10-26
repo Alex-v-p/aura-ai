@@ -19,10 +19,18 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
+from aura_core.domains.automation.notifications.public import (
+    DueDeliveryResult as NotificationDeliveryResult,
+)
+from aura_core.domains.automation.notifications.repository import (
+    SqlNotificationRepository,
+    _delivery_has_work,  # pyright: ignore[reportPrivateUsage]
+)
 from aura_core.domains.automation.reminders.public import (
     REMINDER_TOPIC,
     ReminderApplicationService,
     ReminderCommandProposal,
+    ReminderDeliveryResult,
     ReminderIdempotencyConflict,
     ReminderNotFound,
     ReminderSeries,
@@ -599,6 +607,134 @@ async def test_lifecycle_transitions_allow_expected_paths_and_keep_terminal_rows
         OWNER_ISSUER, OWNER, fired.id, expected_version=2, idempotency_key="complete-fired"
     )
     assert completed_fired.status is ReminderStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_sql_notification_empty_delivery_is_not_observed() -> None:
+    class Session:
+        async def __aenter__(self) -> Session:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def begin(self) -> Session:
+            return self
+
+    class Sessions:
+        def __call__(self) -> Session:
+            return Session()
+
+    class EmptyDelivery:
+        async def fire_due_result(
+            self, *, transaction: object, now: datetime, limit: int
+        ) -> ReminderDeliveryResult:
+            del transaction, now, limit
+            return ReminderDeliveryResult((), 0, 0, 0)
+
+    metrics = MetadataMetrics()
+    repository = SqlNotificationRepository(cast(Any, Sessions()), metrics=metrics)
+    repository.set_reminder_delivery(cast(Any, EmptyDelivery()))
+
+    result = await repository.deliver_due()
+    assert result == NotificationDeliveryResult((), 0, 0, 0.0)
+    assert metrics.snapshot() == ()
+
+
+@pytest.mark.asyncio
+async def test_sql_notification_duplicate_delivery_keeps_duplicate_observability() -> None:
+    class Result:
+        def first(self) -> None:
+            return None
+
+    class Session:
+        async def __aenter__(self) -> Session:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def begin(self) -> Session:
+            return self
+
+        async def execute(self, _statement: object, _parameters: object) -> Result:
+            return Result()
+
+    class Sessions:
+        def __call__(self) -> Session:
+            return Session()
+
+    reminder = await _create(
+        _repo(), key="duplicate-delivery", due_at=NOW + timedelta(minutes=1)
+    )
+
+    class DuplicateDelivery:
+        async def fire_due_result(
+            self, *, transaction: object, now: datetime, limit: int
+        ) -> ReminderDeliveryResult:
+            del transaction, now, limit
+            return ReminderDeliveryResult((reminder,), 0, 0, 0)
+
+    metrics = MetadataMetrics()
+    repository = SqlNotificationRepository(cast(Any, Sessions()), metrics=metrics)
+    repository.set_reminder_delivery(cast(Any, DuplicateDelivery()))
+
+    result = await repository.deliver_due()
+    assert result.notifications == ()
+    assert result.fired_count == 1
+    assert result.duplicate_count == 1
+    measurements = metrics.snapshot()
+    assert {
+        item.metric
+        for item in measurements
+        if item.kind == "metric"
+    } >= {
+        "reminder_duplicate_prevention_count",
+        "reminder_fire_persistence_outcome",
+    }
+    assert "reminder_fired_count" not in {
+        item.metric for item in measurements if item.kind == "metric"
+    }
+    assert any(
+        item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "reminder.fire"
+        for item in measurements
+    )
+
+
+def test_delivery_work_classifier_keeps_duplicate_and_occurrence_work_observable() -> None:
+    assert not _delivery_has_work(
+        due_count=0,
+        fired_count=0,
+        duplicate_count=0,
+        generated_count=0,
+        skipped_count=0,
+        missed_count=0,
+    )
+    assert _delivery_has_work(
+        due_count=1,
+        fired_count=0,
+        duplicate_count=0,
+        generated_count=0,
+        skipped_count=0,
+        missed_count=0,
+    )
+    assert _delivery_has_work(
+        due_count=0,
+        fired_count=0,
+        duplicate_count=1,
+        generated_count=0,
+        skipped_count=0,
+        missed_count=0,
+    )
+    assert _delivery_has_work(
+        due_count=0,
+        fired_count=0,
+        duplicate_count=0,
+        generated_count=0,
+        skipped_count=0,
+        missed_count=1,
+    )
 
 
 @pytest.mark.asyncio

@@ -77,6 +77,30 @@ def _idempotency_lock_key(issuer: str, subject: str, idempotency_key: str) -> st
     return f"aura.notification:{encoded}"
 
 
+def _delivery_has_work(
+    *,
+    due_count: int,
+    fired_count: int,
+    duplicate_count: int,
+    generated_count: int,
+    skipped_count: int,
+    missed_count: int,
+) -> bool:
+    """Classify a delivery transaction without observing an idle poll."""
+
+    return any(
+        value > 0
+        for value in (
+            due_count,
+            fired_count,
+            duplicate_count,
+            generated_count,
+            skipped_count,
+            missed_count,
+        )
+    )
+
+
 def _notification(row: NotificationRow | dict[str, object]) -> Notification:
     def value(name: str) -> object:
         return row[name] if isinstance(row, dict) else getattr(row, name)
@@ -342,30 +366,32 @@ class MemoryNotificationRepository:
             generated = delivery_result.generated_count
             skipped = delivery_result.skipped_count
             missed = delivery_result.missed_count
-            if self.metrics is not None:
-                self.metrics.increment(
-                    SCHEDULER_COMPONENT,
-                    "reminder_fired_count",
-                    outcome="ok",
-                )
-                self.metrics.observe(
-                    SCHEDULER_COMPONENT,
-                    "reminder_occurrence_generated_count",
-                    float(generated),
-                    outcome="ok",
-                )
-                self.metrics.observe(
-                    SCHEDULER_COMPONENT,
-                    "reminder_occurrence_skipped_count",
-                    float(skipped),
-                    outcome="ok",
-                )
-                self.metrics.observe(
-                    SCHEDULER_COMPONENT,
-                    "reminder_occurrence_missed_count",
-                    float(missed),
-                    outcome="ok",
-                )
+            has_work = _delivery_has_work(
+                due_count=len(fired_reminders),
+                fired_count=len(fired),
+                duplicate_count=duplicates,
+                generated_count=generated,
+                skipped_count=skipped,
+                missed_count=missed,
+            )
+            if self.metrics is not None and has_work:
+                if fired:
+                    self.metrics.increment(
+                        SCHEDULER_COMPONENT,
+                        "reminder_fired_count",
+                        outcome="ok",
+                    )
+                for metric, value in (
+                    ("reminder_occurrence_generated_count", generated),
+                    ("reminder_occurrence_skipped_count", skipped),
+                    ("reminder_occurrence_missed_count", missed),
+                ):
+                    self.metrics.observe(
+                        SCHEDULER_COMPONENT,
+                        metric,
+                        float(value),
+                        outcome="ok",
+                    )
             return DueDeliveryResult(
                 tuple(fired), len(fired_reminders), duplicates, lag, generated, skipped, missed
             )
@@ -736,35 +762,38 @@ class SqlNotificationRepository:
                 float(duplicates),
                 outcome="duplicate",
             )
-        if self.metrics is not None:
-            self.metrics.increment(
-                SCHEDULER_COMPONENT,
-                "reminder_fired_count",
-                outcome="ok",
-            )
-            self.metrics.observe(
-                SCHEDULER_COMPONENT,
-                "reminder_occurrence_generated_count",
-                float(delivery_result.generated_count),
-                outcome="ok",
-            )
-            self.metrics.observe(
-                SCHEDULER_COMPONENT,
-                "reminder_occurrence_skipped_count",
-                float(delivery_result.skipped_count),
-                outcome="ok",
-            )
-            self.metrics.observe(
-                SCHEDULER_COMPONENT,
-                "reminder_occurrence_missed_count",
-                float(delivery_result.missed_count),
-                outcome="ok",
-            )
+        has_work = _delivery_has_work(
+            due_count=len(fired_reminders),
+            fired_count=len(fired),
+            duplicate_count=duplicates,
+            generated_count=delivery_result.generated_count,
+            skipped_count=delivery_result.skipped_count,
+            missed_count=delivery_result.missed_count,
+        )
+        if self.metrics is not None and has_work:
+            if fired:
+                self.metrics.increment(
+                    SCHEDULER_COMPONENT,
+                    "reminder_fired_count",
+                    outcome="ok",
+                )
+            for metric, value in (
+                ("reminder_occurrence_generated_count", delivery_result.generated_count),
+                ("reminder_occurrence_skipped_count", delivery_result.skipped_count),
+                ("reminder_occurrence_missed_count", delivery_result.missed_count),
+            ):
+                self.metrics.observe(
+                    SCHEDULER_COMPONENT,
+                    metric,
+                    float(value),
+                    outcome="ok",
+                )
         if fired:
             self._wake.set()
             self._wake = asyncio.Event()
-        self._metric("reminder_fire_persistence_outcome", outcome="ok")
-        self._record_fire_span(started, "ok")
+        if has_work:
+            self._metric("reminder_fire_persistence_outcome", outcome="ok")
+            self._record_fire_span(started, "ok")
         return DueDeliveryResult(
             tuple(fired),
             len(fired_reminders),

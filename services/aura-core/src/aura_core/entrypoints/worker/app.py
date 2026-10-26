@@ -699,11 +699,12 @@ async def run_approval_housekeeping(
     while True:
         try:
             expired = await approval_service.expire_due(limit=100)
-            metrics.increment(
-                "aura.governance.approval_workflow",
-                "approval_expiry_outcome",
-                outcome="expired" if expired else "empty",
-            )
+            if expired:
+                metrics.increment(
+                    "aura.governance.approval_workflow",
+                    "approval_expiry_outcome",
+                    outcome="expired",
+                )
             for approval in expired:
                 try:
                     await _resume_approval(

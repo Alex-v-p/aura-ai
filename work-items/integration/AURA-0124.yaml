@@ -1,0 +1,62 @@
+agent: integration_maintainer
+work_item: AURA-0124
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0124-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0124-architecture.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0124-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0124.yaml
+  - work-items/integration/AURA-0124.yaml
+checks:
+  passed:
+    - >-
+      All three implementation handoffs are complete, schema-valid, within
+      the authorized ownership zones, and contain no unresolved items.
+    - >-
+      All three required review artifacts are PASS verdicts with no findings
+      or unresolved blocking issues.
+    - >-
+      Work-item, changed-path, contract-change, generated-sync, import-boundary,
+      service-isolation, frontend-boundary, observability, repository-shape, and
+      baseline-protection validators passed; contract and baseline checks had no
+      applicable changes.
+    - >-
+      The focused Core suite passed with 58 passed and 9 environment-dependent
+      tests skipped.
+    - >-
+      The focused Observatory regression and AURA-0124 suite passed with 50
+      passed and one pre-existing Authlib deprecation warning.
+    - >-
+      Scoped Ruff validation passed for all changed Python implementation and
+      test files.
+    - >-
+      A restarted local stack measured four targeted idle producers at four
+      records in sixty seconds, projected at 240 records per hour versus the
+      28800-record-per-hour baseline subtotal, a 99.167 percent reduction.
+      Reminder scheduling and approval expiry produced zero records; the two
+      retained records per minute were the bounded evaluation scheduler and
+      evaluation orchestration heartbeat spans.
+    - git diff --check
+    - >-
+      The work item was moved from active to archived with status integrated,
+      and all discovered changed paths remain within its authorized scope.
+failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Existing stored observations are intentionally retained; the reduction
+    applies to new idle cycles after stack restart only.
+  - >-
+    Other high-volume producers, including memory housekeeping and retry
+    redelivery telemetry, remain outside AURA-0124 and require a separately
+    scoped work item if further rate reduction is desired.

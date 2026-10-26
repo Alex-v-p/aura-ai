@@ -727,6 +727,52 @@ async def test_memory_approval_terminal_outcomes_are_owner_scoped_and_replayed()
 
 
 @pytest.mark.asyncio
+async def test_memory_empty_expiry_poll_has_no_success_span() -> None:
+    metrics = MetadataMetrics()
+    repository = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: CREATED),
+        clock=lambda: CREATED,
+        metrics=metrics,
+    )
+
+    assert await repository.expire_due(now=CREATED) == ()
+    assert metrics.snapshot() == ()
+
+
+@pytest.mark.asyncio
+async def test_approval_housekeeping_keeps_empty_success_silent() -> None:
+    from aura_core.entrypoints.worker.app import run_approval_housekeeping
+
+    class EmptyService:
+        attempts = 0
+
+        async def expire_due(self, *, limit: int) -> tuple[Approval, ...]:
+            del limit
+            if self.attempts == 0:
+                self.attempts += 1
+                return ()
+            raise asyncio.CancelledError
+
+    metrics = MetadataMetrics()
+    with pytest.raises(asyncio.CancelledError):
+        await run_approval_housekeeping(
+            cast(Any, EmptyService()),
+            cast(Any, None),
+            cast(Any, None),
+            cast(Any, None),
+            metrics,
+            interval_seconds=0.1,
+        )
+
+    assert not [
+        measurement
+        for measurement in metrics.snapshot()
+        if measurement.kind == "metric"
+        and measurement.metric == "approval_expiry_outcome"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sql_expiry_failure_records_one_post_rollback_error_span(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -812,6 +858,136 @@ async def test_sql_expiry_failure_records_one_post_rollback_error_span(
     assert row.version == 1
     assert sessions.session.added == []
     assert metrics.stats().rejected == 0
+
+
+@pytest.mark.asyncio
+async def test_sql_empty_expiry_poll_emits_no_success_span() -> None:
+    class Result:
+        def scalars(self) -> Result:
+            return self
+
+        def all(self) -> list[ApprovalRow]:
+            return []
+
+    class Session:
+        async def __aenter__(self) -> Session:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def begin(self) -> Session:
+            return self
+
+        async def execute(self, _statement: object) -> Result:
+            return Result()
+
+    class Sessions:
+        def __call__(self) -> Session:
+            return Session()
+
+    metrics = MetadataMetrics()
+    repository = SqlApprovalRepository(
+        cast(Any, Sessions()),
+        proposal_repository=cast(Any, None),
+        clock=lambda: CREATED,
+        metrics=metrics,
+    )
+
+    assert await repository.expire_due(now=CREATED) == ()
+    assert not [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "approval.expire"
+    ]
+    assert metrics.snapshot() == ()
+
+
+@pytest.mark.asyncio
+async def test_sql_expiry_transition_keeps_success_span_and_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    row = ApprovalRow(
+        id=uuid4(),
+        principal_issuer=ISSUER,
+        principal_subject=OWNER,
+        proposal_id=uuid4(),
+        run_id=uuid4(),
+        conversation_id=uuid4(),
+        tool_call_id=uuid4(),
+        tool_id="reminder.create",
+        tool_version=1,
+        status=ApprovalStatus.PENDING.value,
+        execution_status=ApprovalExecutionStatus.NOT_STARTED.value,
+        version=1,
+        created_at=CREATED - timedelta(minutes=10),
+        updated_at=CREATED - timedelta(minutes=10),
+        expires_at=CREATED,
+    )
+
+    class Result:
+        def scalars(self) -> Result:
+            return self
+
+        def all(self) -> list[ApprovalRow]:
+            return [row]
+
+    class Session:
+        async def __aenter__(self) -> Session:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def begin(self) -> Session:
+            return self
+
+        async def execute(self, _statement: object) -> Result:
+            return Result()
+
+    class Sessions:
+        def __call__(self) -> Session:
+            return Session()
+
+    metrics = MetadataMetrics()
+    repository = SqlApprovalRepository(
+        cast(Any, Sessions()),
+        proposal_repository=cast(Any, None),
+        clock=lambda: CREATED,
+        metrics=metrics,
+    )
+
+    async def stage(*_: object, **__: object) -> None:
+        return None
+
+    async def lock_owner(*_: object, **__: object) -> None:
+        return None
+
+    monkeypatch.setattr(repository, "_stage", stage)
+    monkeypatch.setattr(repository, "_lock_owner_stream", lock_owner)
+
+    result = await repository.expire_due(now=CREATED)
+    assert len(result) == 1
+    assert result[0].status is ApprovalStatus.EXPIRED
+    spans = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "span"
+        and dict(item.trace_attributes).get("operation") == "approval.expire"
+    ]
+    assert len(spans) == 1
+    assert dict(spans[0].dimensions) == {
+        "dependency": "postgresql",
+        "outcome": "ok",
+    }
+    counts = [
+        item
+        for item in metrics.snapshot()
+        if item.kind == "metric" and item.metric == "approval_expiry_count"
+    ]
+    assert len(counts) == 1
+    assert counts[0].value == 1.0
 
 
 @pytest.mark.asyncio
