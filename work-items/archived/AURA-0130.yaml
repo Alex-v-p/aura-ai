@@ -1,0 +1,237 @@
+id: AURA-0130
+title: Implement the Core calendar read foundation
+status: integrated
+change_class: repository_governance
+intent: >
+  Implement the owner-scoped Aura Core calendar connection, encrypted Google
+  credential lifecycle, explicit readable-calendar selection, bounded on-demand
+  event retrieval, timezone normalization, deterministic conflict evaluation,
+  thin v1.19.0 API routes, audit, and metadata-only observability without a
+  durable event-content cache or frontend behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/specifications/tools-automation-and-integrations.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - work-items/archived/AURA-0128.yaml
+    - work-items/archived/AURA-0129.yaml
+    - This is Stage 2 slice 3 only; it implements the integrated v1.19.0 calendar contract without changing that contract, deployment secret topology, or Aura Web.
+    - PostgreSQL owns one owner-scoped connection, encrypted credential record, discovered-calendar metadata, explicit selected-calendar set, idempotency results, revocation retry state, and content-free audit truth; no table, object, outbox event, or other durable store may contain event content.
+    - Credential ciphertext may exist only while the connection is connected, reauthorization_required, or revocation_uncertain. Confirmed provider revocation atomically destroys the ciphertext and disconnects the connection. Expiry or provider authentication rejection disables reads and transitions to reauthorization_required without exposing provider detail.
+    - An uncertain revocation disables reads before the provider call and retains the sealed credential for at most six total revocation attempts and a maximum 24-hour retry window. The API lifecycle resumes persisted retries while available; exhaustion or deadline expiry destroys the ciphertext, preserves only content-free revocation_uncertain audit truth, and requires owner-side provider revocation before reconnecting.
+    - Credentials are encrypted with the AURA-0129 active AES-256-GCM key, a fresh 96-bit nonce, and canonical owner-and-connection associated data. A successful owner-authorized load under a retained decrypt-only key is lazily re-encrypted with the active key and compare-and-swap persisted before provider use; failed authentication, decryption, or ownership checks never rewrite or reveal material.
+    - OAuth navigation attempts and callback results are Valkey-only, owner-, session-, and attempt-bound, single-use, superseding, and expire after ten minutes. Callback results contain at most sealed credential material and closed status metadata; Valkey loss is safe and creates no durable content or alternate source of truth.
+    - Provider pagination state is held behind short-lived owner-and-normalized-query-bound opaque Valkey cursor handles. Provider page tokens, calendar identifiers, event content, and request values are never exposed through a cursor or retained after its bounded expiry.
+    - Newly discovered readable calendars receive Aura-owned UUIDs and selected=false. Selection is replaced atomically with optimistic versioning and rejects undiscovered, unreadable, owner-mismatched, duplicate, or more than fifty calendars.
+    - Google HTTP calls use only the fixed AURA-0129 HTTPS endpoints and read-only scope, reject redirects, enforce response-size and schema bounds, honor cancellation and the request deadline, and retry only safe rate-limit or transient reads with bounded backoff. Raw provider payloads and diagnostics never cross the adapter.
+    - The direct cryptography runtime dependency may be declared and locked only for the approved AES-256-GCM implementation; no unrelated dependency or lockfile changes are authorized.
+    - Implementation uses four disjoint writer assignments. The domain writer owns domains/integrations/connections/calendar plus migration 0024 and mapping registration; the provider writer owns providers/calendars/google_calendar plus the direct crypto dependency and module registry entries; the API writer owns calendar_uow, API route/composition/error wiring, Core access-log privacy, and the telemetry registry; the test and evaluation writer owns only AURA-0130 tests and the four component manifests.
+    - Baseline evidence inherited from AURA-0129 records two unrelated Pyright errors in test_aura0125_idle_memory_telemetry.py; this item uses strict targeted Pyright for every changed Python path and does not change or waive that baseline.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AUT-014
+  - AUT-016
+  - GOV-007
+  - GOV-024
+  - INT-007
+ownership_zones:
+  - services.aura-core.calendar
+  - services.aura-core.calendar-postgresql
+  - services.aura-core.google-calendar-adapter
+  - services.aura-core.calendar-api-bootstrap
+  - services.aura-core.calendar-observability
+  - evaluation.calendar-planning
+  - repository.core-module-registry
+  - delivery.aura0130
+allowed_paths:
+  - work-items/active/AURA-0130.yaml
+  - work-items/archived/AURA-0130.yaml
+  - work-items/handoffs/AURA-0130-*.yaml
+  - work-items/reviews/AURA-0130-*.yaml
+  - work-items/integration/AURA-0130.yaml
+  - pyproject.toml
+  - uv.lock
+  - services/aura-core/migrations/versions/0024_calendar_read_foundation.py
+  - services/aura-core/src/aura_core/domains/integrations/**
+  - services/aura-core/src/aura_core/providers/calendars/**
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/bootstrap/calendar_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/errors.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/calendar.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/calendar-connection.yaml
+  - services/aura-core/resources/component-manifests/google-calendar-provider.yaml
+  - services/aura-core/resources/component-manifests/calendar-retrieval.yaml
+  - services/aura-core/resources/component-manifests/calendar-conflict.yaml
+  - services/aura-core/tests/test_aura0130_*.py
+  - services/aura-core/tests/test_migration_0024_calendar_read_foundation.py
+  - services/aura-core/tests/system/test_aura0130_calendar_api.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/tests/test_modules.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - .env
+  - .env.*
+  - .secrets/**
+  - docs/**
+  - contracts/**
+  - compose.yaml
+  - deploy/**
+  - infra/**
+  - frontend/**
+  - services/aura-observatory/**
+  - satellites/**
+  - extensions/**
+  - services/aura-core/migrations/versions/000*.py
+  - services/aura-core/migrations/versions/001*.py
+  - services/aura-core/migrations/versions/0020_document_search_tool_citations.py
+  - services/aura-core/migrations/versions/0021_conversation_branching.py
+  - services/aura-core/migrations/versions/0022_conversation_attachments.py
+  - services/aura-core/migrations/versions/0023_evaluation_runner.py
+  - services/aura-core/src/aura_core/domains/artifacts/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/execution/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/domains/interaction/**
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/calendar_oauth.py
+  - services/aura-core/src/aura_core/platform/oidc.py
+  - services/aura-core/src/aura_core/platform/outbox/**
+  - services/aura-core/src/aura_core/runtime/**
+  - services/aura-core/src/aura_core/entrypoints/worker/**
+  - services/aura-core/src/aura_core/entrypoints/scheduler/**
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - aura-v1 calendar integration resources implemented by Aura Core
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: integrations.calendar
+observability:
+  applicable: true
+  affected_components:
+    - aura.integration.calendar_connection
+    - aura.provider.google_calendar
+    - aura.integration.calendar_retrieval
+    - aura.automation.calendar_conflict
+  required_metrics:
+    - calendar_connection_command_duration_ms
+    - calendar_connection_command_outcome
+    - google_calendar_provider_request_duration_ms
+    - google_calendar_provider_request_outcome
+    - google_calendar_provider_retry_count
+    - calendar_retrieval_duration_ms
+    - calendar_retrieval_outcome
+    - calendar_returned_event_count_bucket
+    - calendar_rate_limit_state
+    - calendar_connection_health
+    - calendar_conflict_evaluation_duration_ms
+    - calendar_conflict_evaluation_outcome
+  required_evaluators:
+    - calendar.provider-boundary.v1
+    - calendar.normalization.v1
+    - calendar.conflict.v1
+    - calendar.credential-lifecycle.v1
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Access refresh and revocation tokens authorization codes state nonce client secrets encryption keys plaintext credentials provider account identity and internal credential references must never enter browser contracts URLs outside the unavoidable fixed callback logs telemetry metrics traces SSE audit metadata prompts tool results exceptions or serialized arbitrary objects.
+    - Every lifecycle and selection mutation requires the existing owner session origin-aware CSRF UUID idempotency and optimistic or transactional concurrency controls; reads require the same owner authorization and fail closed outside connected state.
+    - OAuth navigation handles attempts callback results and cursors must be high-entropy owner- and session-bound where applicable TTL-bounded atomically single-consumed when contractual and safe under Valkey loss replay prefetch supersession races and callback duplication.
+    - Credential encryption must use the approved key ring AES-256-GCM random nonces canonical associated data strict key-version lookup opaque non-serializable plaintext wrappers and zero secret-bearing diagnostic fields.
+    - Disconnect must disable reads before attempting revocation and must never report disconnected or delete revocation truth while the provider outcome is uncertain; retry exhaustion deletes local ciphertext and directs the owner to external revocation.
+    - Calendar names event titles descriptions attendees locations provider identifiers request ranges timezone values and owner identity are private and prohibited from ordinary telemetry logs audit metadata SSE URLs cursor values durable event storage browser persistence and service-worker caches.
+    - Provider event text is untrusted display evidence and cannot become policy instructions prompts memory model-facing tools or authority; normalization must enforce closed schemas string and collection bounds and valid timezone provenance.
+    - Google requests must use fixed endpoints least-privilege scope no redirects finite response bytes finite pages bounded retries deadline propagation cancellation and closed Aura-owned error mapping.
+    - Error and no-store behavior must exactly implement the closed v1.19.0 calendar response contract and never echo request fields resource identifiers provider diagnostics URLs or private content.
+  data_classes:
+    - AES-256-GCM encrypted owner OAuth credential and key version
+    - short-lived sealed OAuth attempt callback and cursor state
+    - owner-private discovered calendar metadata and explicit selection
+    - transient owner-private normalized event content
+    - content-free connection revocation idempotency audit and observability metadata
+required_agents:
+  implementation:
+    - core_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Migration 0024 advances from 0023_evaluation_runner and creates only Core-owned owner-scoped connection credential calendar-selection idempotency and bounded revocation-retry state with constraints and indexes; it creates no event-content table and remains forward-only.
+  - The calendar domain exposes one provider-neutral public application boundary for connection lifecycle discovery selection on-demand retrieval and conflict queries; it depends only on inward ports and never imports Google API routes or another domain's private persistence.
+  - Connection start and reauthorization issue one ten-minute Valkey attempt with independent high-entropy state nonce and same-origin navigation handle bound to owner session and attempt; newer attempts supersede older state and authorization navigation rejects replay prefetch cross-session cross-owner and expired use.
+  - The fixed provider callback atomically consumes valid state once exchanges the code without logging or echoing it validates the server-held attempt nonce and exact read-only scope stores only a sealed ten-minute callback result and redirects with no credential provider payload or secret in the Aura-facing location.
+  - Completion atomically consumes the exact owner-session-attempt callback result once and commits connection metadata and encrypted credentials; missing duplicate expired superseded or mismatched completion fails closed and produces no partial durable connection.
+  - Credentials are encrypted and authenticated with the active AURA-0129 key and owner-and-connection associated data; retained key versions decrypt only and an authorized successful old-key load lazily compare-and-swap rewrites the record under the active key before provider use.
+  - Expired or provider-rejected credentials transition to reauthorization_required and disable reads. Confirmed revocation destroys ciphertext and reaches disconnected; uncertain revocation disables reads immediately retries no more than six times within 24 hours and then destroys ciphertext while retaining content-free uncertain audit truth.
+  - Discovery returns at most one hundred readable calendars per page with Aura-owned identifiers and bounded private metadata; every new calendar remains unselected and provider identifiers remain server-side.
+  - Selection replacement accepts an explicit empty set or at most fifty unique currently discovered readable owner calendars, uses expected-version concurrency and UUID idempotency, and never selects a calendar implicitly.
+  - Event queries validate a positive half-open range of at most 31 days an IANA display timezone one to fifty explicitly selected calendars limits cursors timeout and cancellation before provider dispatch; pagination handles are short-lived owner-query-bound and contain no provider state.
+  - The Google adapter uses only the fixed AURA-0129 endpoints and scope, follows no redirects, bounds pages and response bytes, retries only safe transient or rate-limited reads, maps malformed partial canceled timeout auth and unavailable results to closed Aura outcomes, and never leaks provider payloads.
+  - Timed all-day multi-day DST-gap DST-overlap and cross-timezone events normalize deterministically with explicit provenance and schema bounds; event content is returned on demand and never persisted emitted or captured.
+  - Conflict evaluation excludes free and zero-duration adjacency pairs emits each positive-duration pair once in canonical order classifies overlaps contains contained_by and same_interval deterministically and enforces the contract's 200-relationship bound and cursor semantics.
+  - Lifecycle commands stage only fixed content-free audit action state and outcome metadata; calendar names event content provider identifiers request values credentials and owner identity do not enter audit telemetry logs traces metrics SSE or exception text.
+  - The four component manifests and runtime instrumentation use the approved stable identities versions durations closed outcomes retry classes event-count buckets rate-limit state and connection health with low-cardinality metadata-only dimensions and the named synthetic evaluators.
+  - Thin API routes implement all nine v1.19.0 operations plus the internal authorization-navigation and fixed provider-callback endpoints through the shared application service with owner authorization CSRF and idempotency where contracted closed sanitized errors no-store responses and no duplicated domain rules.
+  - Focused migration domain crypto provider route security privacy observability and deterministic evaluation tests cover fresh state retries races key rotation owner isolation malformed upstream bounds pagination cancellation timezone edges conflicts redaction and Valkey or provider loss.
+  - No OpenAPI generated client event contract frontend deployment Observatory worker scheduler model-facing tool memory write durable event cache protected baseline or unrelated dependency behavior changes occur.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0130.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0130.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0130.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0130.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0130.yaml
+  - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules tooling.architecture.tests.test_observability -v
+  - UV_CACHE_DIR=.local-state/uv-cache uv lock --check
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/domains/integrations services/aura-core/src/aura_core/providers/calendars services/aura-core/src/aura_core/bootstrap/calendar_uow.py services/aura-core/src/aura_core/bootstrap/database.py services/aura-core/src/aura_core/entrypoints/api services/aura-core/src/aura_core/platform/telemetry.py services/aura-core/tests/test_aura0130_*.py services/aura-core/tests/test_migration_0024_calendar_read_foundation.py services/aura-core/tests/system/test_aura0130_calendar_api.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/integrations services/aura-core/src/aura_core/providers/calendars services/aura-core/src/aura_core/bootstrap/calendar_uow.py services/aura-core/src/aura_core/bootstrap/database.py services/aura-core/src/aura_core/entrypoints/api/app.py services/aura-core/src/aura_core/entrypoints/api/errors.py services/aura-core/src/aura_core/entrypoints/api/state.py services/aura-core/src/aura_core/entrypoints/api/routes/calendar.py services/aura-core/src/aura_core/platform/telemetry.py services/aura-core/tests/test_aura0130_*.py services/aura-core/tests/test_migration_0024_calendar_read_foundation.py services/aura-core/tests/system/test_aura0130_calendar_api.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0128_calendar_contract.py services/aura-core/tests/test_aura0129_calendar_oauth_platform.py services/aura-core/tests/test_aura0130_*.py services/aura-core/tests/test_migration_0024_calendar_read_foundation.py services/aura-core/tests/system/test_aura0130_calendar_api.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - AURA-0131 owns Aura Web connection management and daily agenda presentation after this backend slice is integrated.
+  - Network-enforced Google destination allowlisting or any new provider trust boundary remains ADR-required and is not authorized here.

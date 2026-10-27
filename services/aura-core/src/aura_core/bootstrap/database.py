@@ -9,6 +9,7 @@ from aura_core.domains.execution.runs import persistence as run_persistence
 from aura_core.domains.governance.approvals import persistence as approval_persistence
 from aura_core.domains.governance.audit import persistence as audit_persistence
 from aura_core.domains.governance.identity import persistence as identity_persistence
+from aura_core.domains.integrations.calendar import persistence as calendar_persistence
 from aura_core.domains.interaction.agents import persistence as agent_persistence
 from aura_core.domains.interaction.conversations import persistence as conversation_persistence
 from aura_core.domains.interaction.personas import persistence as persona_persistence
@@ -27,6 +28,7 @@ _MAPPING_MODULES = (
     persona_persistence,
     conversation_persistence,
     outbox_persistence,
+    calendar_persistence,
 )
 
 

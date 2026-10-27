@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, cast
 from uuid import UUID
 
-from aura_core.bootstrap import memory_uow
+from aura_core.bootstrap import calendar_uow, memory_uow
 from aura_core.bootstrap.approval_uow import approval_repository, approval_service
 from aura_core.bootstrap.attachment_uow import attachment_service
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
@@ -265,6 +265,7 @@ class AppState:
         self.notification_service: NotificationApplicationService
         self.approval_repository: ApprovalRepository
         self.approval_service: ApprovalApplicationService
+        self.calendar_service: Any
         self.memory_worker: object | None = None
         self.document_service: DocumentService
         self.attachment_service: Any
@@ -493,6 +494,13 @@ class AppState:
                 ),
                 "ollama": CallableProbe(self._model_ready, "provider unavailable"),
             }
+        self.calendar_service = calendar_uow.calendar_service(
+            self.sessions_factory,
+            settings=self.settings,
+            metrics=self.metrics,
+            testing=self.testing,
+            transient_client=getattr(self.sessions.backend, "client", None),
+        )
         self.memory_model_service = memory_public.MemoryModelApplicationService(
             self.memory_repository, cast(ModelSelectionPort, self.provider), self.memory_worker
         )

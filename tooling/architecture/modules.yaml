@@ -556,6 +556,83 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/domains/interaction/__init__.py
   dependencies: []
+- id: aura-core.domains.integrations
+  root: services/aura-core/src/aura_core/domains/integrations
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/integrations/__init__.py
+  python_modules:
+  - aura_core.domains.integrations
+  source_files:
+  - services/aura-core/src/aura_core/domains/integrations/__init__.py
+  dependencies:
+  - aura-core.domains.integrations.calendar
+- id: aura-core.domains.integrations.calendar
+  root: services/aura-core/src/aura_core/domains/integrations/calendar
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/integrations/calendar/public.py
+  python_modules:
+  - aura_core.domains.integrations.calendar
+  source_files:
+  - services/aura-core/src/aura_core/domains/integrations/calendar/__init__.py
+  dependencies:
+  - aura-core.domains.integrations.calendar.application
+  - aura-core.domains.integrations.calendar.internal
+  - aura-core.domains.integrations.calendar.persistence
+  - aura-core.domains.integrations.calendar.ports
+  - aura-core.domains.integrations.calendar.public
+  - aura-core.domains.integrations.calendar.repository
+- id: aura-core.domains.integrations.calendar.internal
+  root: services/aura-core/src/aura_core/domains/integrations/calendar/internal.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/integrations/calendar/internal.py
+  python_modules:
+  - aura_core.domains.integrations.calendar.internal
+  dependencies:
+  - aura-core.domains.integrations.calendar.public
+- id: aura-core.domains.integrations.calendar.public
+  root: services/aura-core/src/aura_core/domains/integrations/calendar/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/integrations/calendar/public.py
+  python_modules:
+  - aura_core.domains.integrations.calendar.public
+  dependencies: []
+- id: aura-core.domains.integrations.calendar.ports
+  root: services/aura-core/src/aura_core/domains/integrations/calendar/ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/integrations/calendar/ports.py
+  python_modules:
+  - aura_core.domains.integrations.calendar.ports
+  dependencies:
+  - aura-core.domains.integrations.calendar.internal
+  - aura-core.domains.integrations.calendar.public
+- id: aura-core.domains.integrations.calendar.application
+  root: services/aura-core/src/aura_core/domains/integrations/calendar/application.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/integrations/calendar/application.py
+  python_modules:
+  - aura_core.domains.integrations.calendar.application
+  dependencies:
+  - aura-core.domains.integrations.calendar.internal
+  - aura-core.domains.integrations.calendar.ports
+  - aura-core.domains.integrations.calendar.public
+- id: aura-core.domains.integrations.calendar.persistence
+  root: services/aura-core/src/aura_core/domains/integrations/calendar/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/integrations/calendar/persistence.py
+  python_modules:
+  - aura_core.domains.integrations.calendar.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.integrations.calendar.repository
+  root: services/aura-core/src/aura_core/domains/integrations/calendar/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/integrations/calendar/repository.py
+  python_modules:
+  - aura_core.domains.integrations.calendar.repository
+  dependencies:
+  - aura-core.domains.integrations.calendar.internal
+  - aura-core.domains.integrations.calendar.persistence
+  - aura-core.domains.integrations.calendar.public
 - id: aura-core.domains.knowledge
   root: services/aura-core/src/aura_core/domains/knowledge
   kind: package
@@ -841,6 +918,7 @@ modules:
   - aura-core.domains.governance.audit.public
   - aura-core.domains.governance.identity
   - aura-core.domains.governance.identity.persistence
+  - aura-core.domains.integrations.calendar.persistence
   - aura-core.domains.governance.identity.public
   - aura-core.domains.interaction.agents
   - aura-core.domains.interaction.agents.persistence
@@ -1248,11 +1326,29 @@ modules:
   - aura-core.domains.interaction.conversations.persistence
   - aura-core.domains.interaction.personas
   - aura-core.domains.interaction.personas.persistence
+  - aura-core.domains.integrations.calendar
+  - aura-core.domains.integrations.calendar.persistence
   - aura-core.domains.knowledge.memory
   - aura-core.domains.knowledge.memory.persistence
   - aura-core.platform.database.base
   - aura-core.platform.outbox
   - aura-core.platform.outbox.persistence
+- id: aura-core.bootstrap.calendar-uow
+  root: services/aura-core/src/aura_core/bootstrap/calendar_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/calendar_uow.py
+  python_modules:
+  - aura_core.bootstrap.calendar_uow
+  dependencies:
+  - aura-core.domains.integrations.calendar.application
+  - aura-core.domains.integrations.calendar.internal
+  - aura-core.domains.integrations.calendar.ports
+  - aura-core.domains.integrations.calendar.public
+  - aura-core.domains.integrations.calendar.persistence
+  - aura-core.domains.integrations.calendar.repository
+  - aura-core.platform.calendar-oauth
+  - aura-core.platform.telemetry
+  - aura-core.providers.calendars.google-calendar
 - id: aura-core.bootstrap.health
   root: services/aura-core/src/aura_core/bootstrap/health.py
   kind: python
@@ -1783,6 +1879,7 @@ modules:
   - aura-core.entrypoints.api.routes.attachments
   - aura-core.entrypoints.api.routes.auth
   - aura-core.entrypoints.api.routes.approvals
+  - aura-core.entrypoints.api.routes.calendar
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.documents
   - aura-core.entrypoints.api.routes.health
@@ -1942,6 +2039,7 @@ modules:
   dependencies:
   - aura-core.bootstrap.approval-uow
   - aura-core.bootstrap.attachment-uow
+  - aura-core.bootstrap.calendar-uow
   - aura-core.bootstrap.document-uow
   - aura-core.domains.governance.approvals
   - aura-core.bootstrap
@@ -1979,6 +2077,20 @@ modules:
   - aura-core.runtime.models.ports
   - aura-core.runtime.tools
   - aura-core.runtime.streaming.publisher
+- id: aura-core.entrypoints.api.routes.calendar
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/calendar.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/calendar.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.calendar
+  dependencies:
+  - aura-core.domains.integrations.calendar.public
+  - aura-core.entrypoints.api.errors
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+  - aura-core.platform.calendar-oauth
+  - aura-core.platform.telemetry
 - id: aura-core.entrypoints.api.routes.reminders
   root: services/aura-core/src/aura_core/entrypoints/api/routes/reminders.py
   kind: python
@@ -2205,6 +2317,26 @@ modules:
   - aura_core.providers.embeddings.ollama.adapter
   dependencies:
   - aura-core.runtime.models.ports
+- id: aura-core.providers.calendars
+  root: services/aura-core/src/aura_core/providers/calendars
+  kind: package
+  public_api: services/aura-core/src/aura_core/providers/calendars/__init__.py
+  python_modules:
+  - aura_core.providers.calendars
+  source_files:
+  - services/aura-core/src/aura_core/providers/calendars/__init__.py
+  dependencies:
+  - aura-core.providers.calendars.google-calendar
+- id: aura-core.providers.calendars.google-calendar
+  root: services/aura-core/src/aura_core/providers/calendars/google_calendar.py
+  kind: provider
+  public_api: services/aura-core/src/aura_core/providers/calendars/google_calendar.py
+  python_modules:
+  - aura_core.providers.calendars.google_calendar
+  dependencies:
+  - aura-core.domains.integrations.calendar.internal
+  - aura-core.domains.integrations.calendar.public
+  - aura-core.platform.calendar-oauth
 - id: aura-core.providers.object-storage
   root: services/aura-core/src/aura_core/providers/object_storage
   kind: package

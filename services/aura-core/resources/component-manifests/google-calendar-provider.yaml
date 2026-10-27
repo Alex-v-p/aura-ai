@@ -1,0 +1,42 @@
+component:
+  id: aura.provider.google_calendar
+  version: 1.0.0
+  owner: providers.calendars.google
+  category: provider
+input:
+  schema: aura-calendar-provider-request-v1
+  replayable: false
+  replay_reason: Provider reads depend on transient owner-authorized credentials and uncaptured provider state.
+output:
+  schema: aura-calendar-provider-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - google_calendar
+  - valkey
+metrics:
+  - google_calendar_provider_request_duration_ms
+  - google_calendar_provider_request_outcome
+  - google_calendar_provider_retry_count
+  - calendar_rate_limit_state
+metric_semantics:
+  google_calendar_provider_request_duration_ms: Bounded provider read duration in milliseconds.
+  google_calendar_provider_request_outcome: Closed provider adapter outcome without provider detail.
+  google_calendar_provider_retry_count: Bounded safe-read retry count.
+  calendar_rate_limit_state: Coarse rate-limit state without endpoint, request, or provider payload.
+capture_policy: metadata_only
+evaluators:
+  - calendar.provider-boundary.v1
+  - calendar.normalization.v1
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, provider, retry_class, status, rate_limit_state]
+  trace_only: [trace_id, span_id, parent_span_id, correlation_id, attempt_id, provider_page_index]
+  prohibited: [content, event_title, calendar_name, provider_identifier, owner_identity, credential, token, url, endpoint, payload, response]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown

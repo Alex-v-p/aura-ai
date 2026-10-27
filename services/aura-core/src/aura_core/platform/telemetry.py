@@ -65,6 +65,10 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.automation.notification_delivery": "1.1.0",
     "aura.governance.approval_workflow": "1.1.0",
     "aura.evaluation.runner": "1.0.0",
+    "aura.integration.calendar_connection": "1.0.0",
+    "aura.provider.google_calendar": "1.0.0",
+    "aura.integration.calendar_retrieval": "1.0.0",
+    "aura.automation.calendar_conflict": "1.0.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -446,6 +450,34 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "evaluation_runner_nats_identity_conflict_count",
         }
     ),
+    "aura.integration.calendar_connection": frozenset(
+        {
+            "calendar_connection_command_duration_ms",
+            "calendar_connection_command_outcome",
+            "calendar_connection_health",
+        }
+    ),
+    "aura.provider.google_calendar": frozenset(
+        {
+            "google_calendar_provider_request_duration_ms",
+            "google_calendar_provider_request_outcome",
+            "google_calendar_provider_retry_count",
+            "calendar_rate_limit_state",
+        }
+    ),
+    "aura.integration.calendar_retrieval": frozenset(
+        {
+            "calendar_retrieval_duration_ms",
+            "calendar_retrieval_outcome",
+            "calendar_returned_event_count_bucket",
+        }
+    ),
+    "aura.automation.calendar_conflict": frozenset(
+        {
+            "calendar_conflict_evaluation_duration_ms",
+            "calendar_conflict_evaluation_outcome",
+        }
+    ),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -631,6 +663,25 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     ),
     "aura.knowledge.document_deletion": frozenset({"document.delete"}),
     "aura.evaluation.runner": frozenset({"evaluation.execute", "evaluation.fixture.load"}),
+    "aura.integration.calendar_connection": frozenset(
+        {
+            "calendar.connection.get",
+            "calendar.connection.start",
+            "calendar.connection.complete",
+            "calendar.connection.reauthorize",
+            "calendar.connection.disconnect",
+            "calendar.connection.selection",
+            "calendar.connection.authorize",
+            "calendar.connection.callback",
+        }
+    ),
+    "aura.provider.google_calendar": frozenset({"calendar.provider.request"}),
+    "aura.integration.calendar_retrieval": frozenset(
+        {"calendar.discovery.list", "calendar.events.query"}
+    ),
+    "aura.automation.calendar_conflict": frozenset(
+        {"calendar.conflicts.query", "calendar.conflicts.evaluate"}
+    ),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -664,6 +715,10 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.artifacts.attachment_deletion": "attachment_deletion_duration_ms",
     "aura.models.inference": "inference_duration_ms",
     "aura.evaluation.runner": "evaluation_runner_execution_duration_ms",
+    "aura.integration.calendar_connection": "calendar_connection_command_duration_ms",
+    "aura.provider.google_calendar": "google_calendar_provider_request_duration_ms",
+    "aura.integration.calendar_retrieval": "calendar_retrieval_duration_ms",
+    "aura.automation.calendar_conflict": "calendar_conflict_evaluation_duration_ms",
 }
 
 _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
@@ -764,8 +819,58 @@ _DIMENSION_KEYS = frozenset(
         "retrieval_stage",
         "degradation",
         "operation",
+        "connection_health",
+        "rate_limit_state",
+        "event_count_bucket",
+        "relationship_count_bucket",
+        "retry_class",
     }
 )
+
+CALENDAR_TERMINAL_OUTCOMES = frozenset(
+    {"ok", "partial", "canceled", "rejected", "timeout", "error"}
+)
+CALENDAR_ERROR_CLASSES = frozenset(
+    {
+        "authorization",
+        "validation",
+        "conflict",
+        "provider_auth",
+        "provider_rate_limit",
+        "provider_unavailable",
+        "dependency_unavailable",
+        "deadline",
+        "budget",
+        "internal",
+    }
+)
+
+
+def classify_calendar_terminal(
+    outcome: str,
+    *,
+    error_class: str | None = None,
+) -> tuple[str, str | None]:
+    """Normalize one calendar terminal outcome to the closed metadata vocabulary."""
+
+    normalized_error = error_class if error_class in CALENDAR_ERROR_CLASSES else None
+    if outcome == "ok":
+        return "ok", normalized_error
+    if outcome == "partial":
+        return "partial", normalized_error
+    if outcome in {"canceled", "cancelled"}:
+        return "canceled", normalized_error or "budget"
+    if outcome in {"provider_auth", "provider_rate_limit", "provider_unavailable"}:
+        return "rejected", outcome
+    if outcome in {"deadline", "deadline_exceeded", "timeout"}:
+        return "timeout", normalized_error or "deadline"
+    if outcome in {"authorization", "validation", "conflict"}:
+        return "rejected", normalized_error or outcome
+    if outcome == "rejected":
+        return "rejected", normalized_error or "internal"
+    if outcome == "error":
+        return "error", normalized_error or "internal"
+    return "error", normalized_error or "internal"
 _TRACE_ATTRIBUTE_KEYS = frozenset(
     {
         "aggregate_id",
@@ -929,6 +1034,11 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "authorization",
             "cancel",
             "conflict",
+            "provider_auth",
+            "provider_rate_limit",
+            "provider_unavailable",
+            "dependency_unavailable",
+            "internal",
             "identity",
             "delivery",
             "disabled",
@@ -951,6 +1061,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "purged",
             "queue",
             "timeout",
+            "deadline",
             "validation",
             "query_embedding",
             "database",
@@ -979,6 +1090,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "conflict",
             "duplicate",
             "error",
+            "partial",
+            "rejected",
+            "timeout",
             "fallback",
             "generated",
             "ignored",
@@ -1004,8 +1118,6 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "allowed",
             "completed",
             "failed",
-            "timeout",
-            "rejected",
             "personal",
             "explicit_request",
             "none",
@@ -1132,6 +1244,10 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "identity_mismatch",
         }
     ),
+    "connection_health": frozenset({"connected", "disconnected", "degraded", "unavailable"}),
+    "rate_limit_state": frozenset({"not_limited", "limited", "unknown"}),
+    "event_count_bucket": frozenset({"0", "1_10", "11_50", "51_100"}),
+    "retry_class": frozenset({"none", "rate_limit", "transient", "unknown"}),
 }
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 _OTLP_NO_TRACE_NAMESPACE = UUID("9e8e7f18-92ed-4c10-82ec-a0d1cdb0b35c")
@@ -1239,6 +1355,38 @@ class MemoryTraceContext:
             }.items()
             if value is not None
         }
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarTraceContext:
+    """Metadata-only context shared by one calendar API request."""
+
+    trace_id: str
+    span_id: str
+    deadline: float | None = None
+    cancelled: Callable[[], bool] | None = None
+
+
+_CALENDAR_TRACE_CONTEXT: ContextVar[CalendarTraceContext | None] = ContextVar(
+    "aura_calendar_trace_context", default=None
+)
+
+
+@contextmanager
+def calendar_trace_context(context: CalendarTraceContext):
+    """Propagate one request trace and deadline across calendar adapters."""
+
+    token = _CALENDAR_TRACE_CONTEXT.set(context)
+    try:
+        yield context
+    finally:
+        _CALENDAR_TRACE_CONTEXT.reset(token)
+
+
+def current_calendar_trace_context() -> CalendarTraceContext | None:
+    """Return the active calendar request context without private values."""
+
+    return _CALENDAR_TRACE_CONTEXT.get()
 
 
 _MEMORY_TRACE_CONTEXT: ContextVar[MemoryTraceContext | None] = ContextVar(
@@ -2013,6 +2161,10 @@ class MetadataMetrics:
         retrieval_stage: str | None = None,
         scope_type: str | None = None,
         degradation: str | None = None,
+        connection_health: str | None = None,
+        rate_limit_state: str | None = None,
+        event_count_bucket: str | None = None,
+        retry_class: str | None = None,
         run_id: str | None = None,
         conversation_id: str | None = None,
         metric_name: str | None = None,
@@ -2057,6 +2209,14 @@ class MetadataMetrics:
             dimensions["scope_type"] = scope_type
         if degradation is not None:
             dimensions["degradation"] = degradation
+        if connection_health is not None:
+            dimensions["connection_health"] = connection_health
+        if rate_limit_state is not None:
+            dimensions["rate_limit_state"] = rate_limit_state
+        if event_count_bucket is not None:
+            dimensions["event_count_bucket"] = event_count_bucket
+        if retry_class is not None:
+            dimensions["retry_class"] = retry_class
         normalized = self._normalize(
             component,
             trace_id,

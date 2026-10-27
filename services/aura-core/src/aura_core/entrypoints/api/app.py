@@ -13,6 +13,7 @@ from aura_core.entrypoints.api.routes import (
     approvals,
     attachments,
     auth,
+    calendar,
     conversations,
     documents,
     health,
@@ -157,6 +158,9 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
             response.headers["Cache-Control"] = "no-store"
         if request.url.path.startswith("/api/v1/attachments"):
             response.headers["Cache-Control"] = "no-store"
+        if request.url.path.startswith("/api/v1/integrations/calendar"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     app.include_router(auth.router)
@@ -174,6 +178,7 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
     app.include_router(notifications.router)
     app.include_router(documents.router)
     app.include_router(attachments.router)
+    app.include_router(calendar.router)
     app.include_router(health.router)
     return app
 
