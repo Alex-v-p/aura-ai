@@ -388,6 +388,36 @@ test.describe('Today action center', () => {
     expect(results.violations).toEqual([]);
   });
 
+  test('keeps Today graceful when a typed briefing notification has no detail route yet', async ({ page }) => {
+    await installTodayFixture(page, {
+      notifications: [
+        {
+          id: 'notification-briefing',
+          briefingScheduleId: 'briefing-schedule-private',
+          briefingOccurrenceId: 'briefing-occurrence-private',
+          briefingResultId: 'briefing-result-private',
+          status: 'delivered',
+          version: 1,
+          createdAt: today.toISOString(),
+          updatedAt: today.toISOString(),
+          deliveredAt: today.toISOString(),
+          acknowledgedAt: null,
+        },
+      ],
+    });
+    await page.goto('/today');
+
+    const briefingCard = page.getByRole('link', { name: /Briefing ready/ });
+    await expect(briefingCard).toBeVisible();
+    await expect(briefingCard).toHaveAttribute('href', /\/notifications\/notification-briefing$/);
+    await expect(briefingCard).not.toHaveAttribute('href', /briefing-result-private/);
+    await expect(page.getByText('Call the dentist', { exact: true })).toBeVisible();
+    await expect(page.getByText('Plan the weekend', { exact: true })).toBeVisible();
+    await expect(page.locator('.action-card')).toHaveCount(5);
+    const results = await new AxeBuilder({ page }).include('.daily-action').analyze();
+    expect(results.violations).toEqual([]);
+  });
+
   test('keeps available sections when one source fails and exposes scoped retry without request amplification', async ({
     page,
   }) => {
@@ -408,7 +438,7 @@ test.describe('Today action center', () => {
     await page
       .locator('p.section-status')
       .filter({ hasText: /notifications (could not be loaded|may be out of date)/i })
-      .getByRole('button', { name: 'Retry', exact: true })
+      .getByRole('button', { name: 'Retry unread notifications', exact: true })
       .click();
     await expect
       .poll(() => fixture.requestCounts['GET /api/v1/notifications'] ?? 0)

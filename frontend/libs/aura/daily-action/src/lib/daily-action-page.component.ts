@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { ReminderStore } from '@aura/aura/automation/reminders';
-import { NotificationStore } from '@aura/aura/automation/notifications';
+import { notificationSource, NotificationStore } from '@aura/aura/automation/notifications';
 import { ApprovalStore, type ApprovalSummary } from '@aura/aura/governance/approvals';
 import { ConversationStore, type AuthState, type Conversation } from '@aura/aura/interaction/conversations';
 import {
@@ -69,14 +69,19 @@ export class DailyActionPageComponent {
   readonly authenticationNotice = computed(() => dailyAuthenticationNotice(this.authenticationState()));
   readonly reminderState = computed<DailySourceState>(() => this.sourceState(this.reminders.loading(), this.reminders.errorStatus(), this.reminders.upcoming().items.length > 0 || this.reminders.series().items.length > 0, this.reminders.notice()));
   readonly notificationState = computed<DailySourceState>(() => {
+    const historyWorkspaceActive = this.notifications.view() === 'history';
     return this.sourceState(
-      this.notifications.loading(),
-      this.notifications.errorStatus(),
+      historyWorkspaceActive ? this.notifications.unreadProjectionLoading() : this.notifications.loading(),
+      historyWorkspaceActive ? this.notifications.unreadProjectionErrorStatus() : this.notifications.errorStatus(),
       (this.notifications.unreadCollection()?.items.length ?? 0) > 0,
-      this.notifications.notice(),
+      historyWorkspaceActive ? this.notifications.unreadProjectionNotice() : this.notifications.notice(),
       this.notifications.unreadLoaded(),
-      this.notifications.connectionState(),
+      historyWorkspaceActive ? null : this.notifications.connectionState(),
     );
+  });
+  readonly notificationLiveState = computed<DailySourceState>(() => {
+    if (this.notifications.view() !== 'history') return 'ready';
+    return this.sourceState(false, this.notifications.errorStatus(), true, this.notifications.notice(), true, this.notifications.connectionState());
   });
   readonly approvalState = computed<DailySourceState>(() => {
     return this.sourceState(
@@ -114,11 +119,16 @@ export class DailyActionPageComponent {
     // calendar projection owns an idempotent connection/discovery start at
     // this same authenticated Today boundary.
     void this.reminders.load();
+    // History is a separate inbox view, so reconcile Today’s stable unread
+    // projection when the owner returns to this route.
+    if (this.notifications.view() === 'history') void this.notifications.refreshUnreadProjection();
     void this.calendar?.start();
   }
 
   retryReminders(): void { void this.reminders.load(); }
-  retryNotifications(): void { this.notifications.retryConnection(); }
+  retryNotifications(): void { if (this.notifications.view() === 'history') this.notifications.retryUnreadProjection(); else this.notifications.retryConnection(); }
+  retryNotificationConnection(): void { this.notifications.retryConnection(); }
+  notificationErrorStatus(): number | null { return this.notifications.view() === 'history' ? this.notifications.unreadProjectionErrorStatus() : this.notifications.errorStatus(); }
   retryApprovals(): void { this.approvals.retryConnection(); }
   retryConversations(): void { void this.conversations.load(); }
   signIn(): void { this.conversations.login(); }
@@ -129,6 +139,7 @@ export class DailyActionPageComponent {
   formatUpdatedAt(value: number): string { return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)); }
   conversationStatus(conversation: Conversation): string { return conversation.currentRun?.status ? conversation.currentRun.status.replaceAll('_', ' ') : 'Ready to continue'; }
   approvalLabel(approval: ApprovalSummary): string { return approval.expiresAt ? `Approval awaiting review · expires ${this.formatDate(approval.expiresAt)}` : 'Approval awaiting review'; }
+  notificationLabel(notification: Parameters<typeof notificationSource>[0]): string { return notificationSource(notification)?.kind === 'briefing' ? 'Briefing ready' : 'Reminder notification'; }
   sourceState(loading: boolean, errorStatus: number | null, hasData: boolean, notice: string | null = null, loaded = true, connection: DailyConnectionState = null): DailySourceState {
     return classifyDailySourceState({ loading, errorStatus, hasData, notice, loaded, connection });
   }

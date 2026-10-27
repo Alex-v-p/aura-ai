@@ -1,0 +1,57 @@
+agent: core_worker
+work_item: AURA-0132
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: services.aura-core.domains.automation.notifications
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0025_notification_briefing_source.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/__init__.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/public.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/repository.py
+  - services/aura-core/tests/test_migration_0025_notification_briefing_source.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_notifications.py
+contracts: {changed: false}
+migrations:
+  changed: true
+observability:
+  components:
+    - aura.automation.notification_delivery@1.1.0
+  metrics_added: []
+verification:
+  passed:
+    - cd services/aura-core && uv run ruff check src/aura_core/domains/automation/notifications migrations/versions/0025_notification_briefing_source.py tests/test_notifications.py tests/test_migration_0025_notification_briefing_source.py tests/test_notification_api.py
+    - cd services/aura-core && uv run pyright src/aura_core/domains/automation/notifications
+    - cd services/aura-core && uv run pytest -p no:cacheprovider tests/test_migration_0025_notification_briefing_source.py tests/test_notifications.py -q (11 passed, 5 skipped)
+    - cd services/aura-core && uv run pytest -p no:cacheprovider tests/test_notification_api.py tests/test_migration_0025_notification_briefing_source.py tests/test_notifications.py -q (13 passed, 5 skipped)
+    - cd services/aura-core && uv run pytest -p no:cacheprovider tests/test_notifications.py tests/test_notification_stream.py tests/test_notification_api.py tests/test_notification_evaluation.py tests/test_migration_0025_notification_briefing_source.py -q (18 passed, 7 skipped)
+    - cd services/aura-core && uv run pytest -p no:cacheprovider tests/test_notifications.py tests/test_notification_stream.py tests/test_notification_api.py tests/test_notification_evaluation.py -q (14 passed, 6 skipped before concurrent contract refresh)
+    - cd services/aura-core && uv run pytest -p no:cacheprovider tests/test_notifications.py tests/test_migration_0025_notification_briefing_source.py tests/test_notification_api.py tests/test_notification_stream.py tests/test_notification_evaluation.py -q (18 passed, 8 skipped)
+    - git diff --check
+  failed: []
+  not_run:
+    - Full AURA-0132 aggregate checks pending concurrent contract/frontend steward changes
+    - Live PostgreSQL briefing acknowledgement/replay regression skipped because AURA_0055_DATABASE_URL is unavailable
+    - Live PostgreSQL concurrent briefing idempotency regression skipped because AURA_0055_DATABASE_URL is unavailable
+decisions:
+  - Existing reminder rows retain reminder_id and the established unique reminder delivery invariant.
+  - Briefing notifications use schedule, occurrence, and result UUIDs and never fabricate a reminder identifier.
+  - Briefing result content, schedule state, execution state, provider data, and briefing-owned tables remain outside Notifications.
+  - The public delivery command is owner-scoped, source-neutral, idempotent, and content-free; both memory and SQL repositories enforce duplicate result delivery prevention.
+  - SQL briefing creation acquires owner/idempotency and source-result advisory locks in one deterministic lexical order, mapping changed-payload reuse to NotificationIdempotencyConflict.
+  - SQL acknowledgement replay copies the complete briefing schedule, occurrence, and result lineage into lifecycle events.
+  - API payloads and replay events preserve the legacy reminder shape while adding a closed briefing response/event variant.
+risks:
+  - Concurrent contract steward changes are still settling; aggregate contract validation must run after the shared contract/frontend changes settle.
+  - PostgreSQL integration coverage remains environment-dependent and was skipped when AURA_0055_DATABASE_URL was unavailable.
+unresolved:
+  - Reconcile the final generated OpenAPI/event contract and frontend transport shape with the concurrent contract steward before integration.

@@ -27,6 +27,10 @@ describe('AuraShellComponent conversation library controls', () => {
     expect(templateSource).toContain('<div class="scrim" role="presentation" aria-hidden="true"');
   });
 
+  it('closes mobile navigation after a route completes', () => {
+    expect(componentSource).toContain('if (this.mobileOpen) this.closeMobileNavigation(this.isMobileViewport());');
+  });
+
   it('keeps the connected overlay focus lifecycle explicit', () => {
     expect(componentSource).toContain('this.filterPanelOpen.set(true)');
     expect(componentSource).toContain('queueMicrotask(() => this.focusFilterPanel())');

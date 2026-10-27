@@ -99,6 +99,7 @@ export class AuraShellComponent implements OnDestroy {
     this.conversationContext.set(event.urlAfterRedirects.split('?')[0].startsWith('/conversation'));
     // A contextual library is detached from the rail. Preserve a predictable
     // focus return when a row navigates to a conversation and closes it.
+    if (this.mobileOpen) this.closeMobileNavigation(this.isMobileViewport());
     this.closeLibraryPanel(this.libraryPanelOpen() && this.isCompactSidebar());
     this.closeFilterPanel(false);
   });

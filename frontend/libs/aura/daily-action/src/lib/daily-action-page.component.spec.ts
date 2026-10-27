@@ -7,6 +7,7 @@ describe('DailyActionPageComponent aggregation', () => {
   const templateSource = readFileSync('libs/aura/daily-action/src/lib/daily-action-page.component.html', 'utf8');
   const componentSource = readFileSync('libs/aura/daily-action/src/lib/daily-action-page.component.ts', 'utf8');
   const styleSource = readFileSync('libs/aura/daily-action/src/lib/daily-action-page.component.css', 'utf8');
+  const storySource = readFileSync('apps/storybook/src/daily-action.stories.ts', 'utf8');
 
   it('renders a server-projected calendar agenda without making the browser a conflict authority', () => {
     expect(templateSource).toContain('Calendar agenda');
@@ -61,6 +62,25 @@ describe('DailyActionPageComponent aggregation', () => {
     expect(templateSource).toContain('routerLink="/conversation"');
   });
 
+  it('reconciles Today after the notification workspace was left on History', () => {
+    expect(componentSource).toContain("if (this.notifications.view() === 'history') void this.notifications.refreshUnreadProjection();");
+    expect(componentSource).toContain('historyWorkspaceActive ? this.notifications.unreadProjectionLoading() : this.notifications.loading()');
+    expect(componentSource).toContain('readonly notificationLiveState = computed<DailySourceState>');
+    expect(componentSource).toContain('this.notifications.connectionState()');
+    expect(componentSource).toContain("if (this.notifications.view() === 'history') this.notifications.retryUnreadProjection(); else this.notifications.retryConnection();");
+    expect(componentSource).toContain('retryNotificationConnection(): void');
+    expect(componentSource).toContain("return this.notifications.view() === 'history' ? this.notifications.unreadProjectionErrorStatus() : this.notifications.errorStatus();");
+    expect(templateSource).toContain('Retry live updates');
+    expect(storySource).toContain('unreadProjectionLoading: signal(false)');
+    expect(storySource).toContain('retryUnreadProjection: () => undefined');
+  });
+
+  it('keeps the Today Storybook notification fixture compatible with the public store surface', () => {
+    expect(storySource).toContain("const notificationView = config.notificationView ?? 'unread'");
+    expect(storySource).toContain("view: signal<'unread' | 'history'>(notificationView)");
+    expect(storySource).toContain('refreshUnreadProjection: async () => true');
+  });
+
   it('keeps navigation records bounded and excludes terminal or duplicate series reminders', () => {
     const today = new Date();
     const due = { id: 'due', content: 'Due item', dueAt: new Date(today.getTime() - 10_000).toISOString(), status: 'fired', version: 1, createdAt: today.toISOString(), updatedAt: today.toISOString(), firedAt: today.toISOString(), completedAt: null, canceledAt: null } as never;
@@ -87,6 +107,17 @@ describe('DailyActionPageComponent aggregation', () => {
     expect(classifyDailySourceState({ loading: true, errorStatus: 503, notice: 'Unavailable', hasData: false, loaded: false })).toBe('error');
     expect(classifyDailySourceState({ loading: false, errorStatus: null, notice: 'Network unavailable', hasData: false, loaded: true })).toBe('error');
     expect(classifyDailySourceState({ loading: true, errorStatus: 403, notice: 'Forbidden', hasData: false, loaded: false })).toBe('auth');
+  });
+
+  it('keeps a failed unread projection stale while preserving its last cards for retry', () => {
+    expect(classifyDailySourceState({ loading: false, errorStatus: 503, notice: 'Unread notifications are temporarily unavailable.', hasData: true, loaded: true })).toBe('stale');
+    expect(classifyDailySourceState({ loading: false, errorStatus: 503, notice: 'Unread notifications are temporarily unavailable.', hasData: false, loaded: true })).toBe('error');
+  });
+
+  it('surfaces History live degradation independently after unread projection recovery', () => {
+    expect(classifyDailySourceState({ loading: false, errorStatus: null, notice: 'Live notifications stopped.', hasData: true, loaded: true, connection: 'unavailable' })).toBe('stale');
+    expect(classifyDailySourceState({ loading: false, errorStatus: null, notice: null, hasData: true, loaded: true, connection: 'reconnecting' })).toBe('stale');
+    expect(classifyDailySourceState({ loading: false, errorStatus: null, notice: null, hasData: true, loaded: true, connection: 'live' })).toBe('ready');
   });
 
   it('keeps an active initial refresh in loading despite an offline connection default', () => {

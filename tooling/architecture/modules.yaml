@@ -2581,6 +2581,11 @@ modules:
   kind: event-contract
   public_api: contracts/events/automation/v1/notification-events.schema.json
   dependencies: []
+- id: aura-contract.automation-briefing-events
+  root: contracts/events/automation/v1/briefing-events.schema.json
+  kind: event-contract
+  public_api: contracts/events/automation/v1/briefing-events.schema.json
+  dependencies: []
 - id: aura-observatory.evaluation-orchestration
   root: services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
   kind: python

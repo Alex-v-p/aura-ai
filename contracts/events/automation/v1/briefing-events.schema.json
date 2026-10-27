@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/automation/v1/briefing-events.schema.json",
+  "title": "Aura briefing lifecycle events v1",
+  "description": "Closed metadata-only briefing lifecycle facts. Briefing output, document identifiers or text, calendar identifiers or values, reminder content, source grants, prompts, owner identity, credentials, provider material, and executor state are prohibited.",
+  "oneOf": [
+    { "$ref": "#/$defs/ScheduleEvent" },
+    { "$ref": "#/$defs/OccurrenceEvent" },
+    { "$ref": "#/$defs/ResultEvent" },
+    { "$ref": "#/$defs/DeletionEvent" }
+  ],
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "Version": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "ScheduleStatus": { "type": "string", "enum": ["active", "paused", "deleted"] },
+    "OccurrenceStatus": { "type": "string", "enum": ["scheduled", "admitted", "running", "completed", "partial", "failed", "canceled", "skipped", "unknown"] },
+    "ResultStatus": { "type": "string", "enum": ["completed", "partial", "failed", "canceled", "unknown", "deleted"] },
+    "SourceCompleteness": { "type": "string", "enum": ["complete", "partial", "unavailable", "unknown"] },
+    "ScheduleEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "scheduleId", "scheduleStatus", "scheduleVersion", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["briefing.schedule.created", "briefing.schedule.paused", "briefing.schedule.resumed", "briefing.schedule.deleted"] },
+        "scheduleId": { "$ref": "#/$defs/Uuid" },
+        "scheduleStatus": { "$ref": "#/$defs/ScheduleStatus" },
+        "scheduleVersion": { "$ref": "#/$defs/Version" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "OccurrenceEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "scheduleId", "occurrenceId", "occurrenceStatus", "occurrenceVersion", "dueAt", "sourceCompleteness", "runId", "resultId", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["briefing.occurrence.scheduled", "briefing.occurrence.admitted", "briefing.occurrence.running", "briefing.occurrence.completed", "briefing.occurrence.partial", "briefing.occurrence.failed", "briefing.occurrence.canceled", "briefing.occurrence.skipped", "briefing.occurrence.unknown"] },
+        "scheduleId": { "$ref": "#/$defs/Uuid" },
+        "occurrenceId": { "$ref": "#/$defs/Uuid" },
+        "occurrenceStatus": { "$ref": "#/$defs/OccurrenceStatus" },
+        "occurrenceVersion": { "$ref": "#/$defs/Version" },
+        "dueAt": { "$ref": "#/$defs/Timestamp" },
+        "sourceCompleteness": { "$ref": "#/$defs/SourceCompleteness" },
+        "runId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "resultId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "ResultEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "scheduleId", "occurrenceId", "resultId", "runId", "resultStatus", "resultVersion", "sourceCompleteness", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["briefing.result.completed", "briefing.result.partial", "briefing.result.failed", "briefing.result.canceled", "briefing.result.unknown", "briefing.result.deleted"] },
+        "scheduleId": { "$ref": "#/$defs/Uuid" },
+        "occurrenceId": { "$ref": "#/$defs/Uuid" },
+        "resultId": { "$ref": "#/$defs/Uuid" },
+        "runId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "resultStatus": { "$ref": "#/$defs/ResultStatus" },
+        "resultVersion": { "$ref": "#/$defs/Version" },
+        "sourceCompleteness": { "$ref": "#/$defs/SourceCompleteness" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "DeletionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "deletionId", "scope", "scheduleId", "occurrenceId", "resultId", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["briefing.history.deleted", "briefing.result-content.deleted"] },
+        "deletionId": { "$ref": "#/$defs/Uuid" },
+        "scope": { "type": "string", "enum": ["occurrence_history", "result_content"] },
+        "scheduleId": { "$ref": "#/$defs/Uuid" },
+        "occurrenceId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "resultId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    }
+  }
+}

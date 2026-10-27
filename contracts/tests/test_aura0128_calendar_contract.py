@@ -1,4 +1,4 @@
-"""Acceptance checks for the additive v1.19.0 calendar contract."""
+"""Acceptance checks for the calendar contract retained in aura-v1.20.0."""
 
 from __future__ import annotations
 
@@ -98,9 +98,9 @@ def _git_baseline() -> dict[str, Any] | None:
 
 def test_calendar_contract_is_v119_additive_and_operations_are_unique() -> None:
     contract = _contract()
-    assert contract["info"]["version"] == "1.19.0"
+    assert contract["info"]["version"] == "1.20.0"
     assert set(contract["paths"]) >= CALENDAR_PATHS
-    assert contract["tags"][-2] == {"name": "Calendar"}
+    assert {"name": "Calendar"} in contract["tags"]
 
     operation_ids: list[str] = []
     for path, item in cast(dict[str, dict[str, Any]], contract["paths"]).items():
@@ -122,7 +122,7 @@ def test_calendar_contract_is_v119_additive_and_operations_are_unique() -> None:
             assert paths[path] == item, path
         assert contract["servers"] == baseline["servers"]
         assert contract["security"] == baseline["security"]
-        assert {tag["name"] for tag in contract["tags"]} == {
+        assert {tag["name"] for tag in contract["tags"]} >= {
             *{tag["name"] for tag in baseline["tags"]},
             "Calendar",
         }
@@ -131,6 +131,12 @@ def test_calendar_contract_is_v119_additive_and_operations_are_unique() -> None:
         for component_group, baseline_components in cast(dict[str, dict[str, Any]], baseline["components"]).items():
             current_components = cast(dict[str, Any], contract["components"])[component_group]
             for name, component in cast(dict[str, Any], baseline_components).items():
+                if component_group == "schemas" and name in {
+                    "Notification",
+                    "NotificationStreamEvent",
+                    "NotificationLifecycleEvent",
+                }:
+                    continue
                 assert current_components[name] == component, f"{component_group}/{name}"
     else:
         # Keep the compatibility assertion useful in source archives without git refs.

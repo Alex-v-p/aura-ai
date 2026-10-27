@@ -1,0 +1,15 @@
+agent: observability_steward
+work_item: AURA-0132
+verdict: PASS
+checked:
+  - Verified the affected component retains the stable identity aura.automation.notification_delivery@1.1.0 and that leaving the manifest version unchanged is justified for this additive notification-events-v1 source union; no new scheduler, execution, persistence, or delivery component is implemented in this slice.
+  - Traced notification acknowledgement and SSE replay across the public source union, in-memory and PostgreSQL repositories, migration constraints, durable lifecycle rows, outbox metadata, API serialization, and deterministic evaluator coverage.
+  - Verified notification.sse.connect, notification.sse.replay, notification.acknowledge, and NATS wakeup spans measure their local operations rather than total briefing-run latency; the existing duration metrics and bounded persistence, conflict, validation, not-found, and delivery error classifications remain registered.
+  - Verified PostgreSQL, NATS JetStream, and SSE client boundaries remain explicit; notification, event, trace, span, parent, status, and version correlation fields remain trace-only and do not become metric dimensions.
+  - Verified the required notification connection, replay, acknowledgement, failure, and latency measurements and the notification_owner_authorization and notification_replay_recovery evaluators remain registered, deterministic, metadata-only, and synthetic.
+  - Verified the event contracts and runtime payloads exclude briefing output, source content, document identifiers, owner identity, prompts, credentials, and provider material; ordinary capture remains metadata_only with no governed-evidence path.
+  - Verified metric dimensions remain the finite dependency, outcome, error_class, and status set; briefing identifiers are not emitted as metric labels, and the bounded process-buffer, drop, retry, export-health, and deployment-owned ordinary telemetry retention policies are unchanged.
+  - Reverified the corrected SqlNotificationRepository.acknowledge path now persists briefing schedule, occurrence, and result identifiers together, satisfies ck_notification_events_source, and reconstructs the complete typed source through _replay while preserving the legacy reminder shape.
+  - Verified the added PostgreSQL briefing regression creates, acknowledges, and replays delivered and acknowledged lifecycle events with complete content-free source lineage; the integration case is environment-gated, while the focused notification, stream, and evaluator suite passed with 13 passed and 8 PostgreSQL-dependent skips.
+  - Ran validate-observability, validate-changed-paths, validate-work-item, focused notification/stream/evaluator tests, and git diff --check successfully.
+findings: []

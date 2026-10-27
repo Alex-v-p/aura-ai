@@ -85,6 +85,7 @@ const recurringReminderStories = [
 ] as const;
 const notificationStories = [
   'inbox',
+  'briefing',
   'history',
   'detail',
   'loading',
@@ -419,6 +420,14 @@ for (const story of reminderStories) {
         await page.getByRole('button', { name: /History/ }).click();
         await expect(page.getByRole('heading', { name: 'History', exact: true })).toBeVisible();
         await expect(page.getByText('Call the dentist', { exact: true })).toBeVisible();
+      }
+      if (story === 'briefing') {
+        const detail = page.getByRole('dialog', { name: 'Your daily briefing is ready.' });
+        await expect(detail).toBeVisible();
+        await expect(detail.getByRole('heading', { name: 'Dedicated briefing result', exact: true })).toBeVisible();
+        await expect(detail.getByRole('button', { name: /Open dedicated briefing result/ })).toBeDisabled();
+        await expect(page).toHaveURL(/aura-notifications-centre--briefing/);
+        await expect(page).not.toHaveURL(/briefing-result-story/);
       }
       if (story === 'composer') {
         await page.getByRole('button', { name: 'New reminder', exact: true }).click();

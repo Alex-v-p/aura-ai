@@ -20,7 +20,13 @@ class NotificationRow(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     principal_issuer: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     principal_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    reminder_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="reminder"
+    )
+    reminder_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    briefing_schedule_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    briefing_occurrence_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    briefing_result_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="delivered")
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -29,7 +35,16 @@ class NotificationRow(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    __table_args__ = (UniqueConstraint("reminder_id", name="uq_notification_reminder"),)
+    __table_args__ = (
+        UniqueConstraint("reminder_id", name="uq_notification_reminder"),
+        UniqueConstraint(
+            "principal_issuer",
+            "principal_subject",
+            "source_kind",
+            "briefing_result_id",
+            name="uq_notification_briefing",
+        ),
+    )
 
 
 class NotificationEventRow(Base):
@@ -38,7 +53,13 @@ class NotificationEventRow(Base):
     principal_issuer: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     principal_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     notification_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    reminder_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="reminder"
+    )
+    reminder_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    briefing_schedule_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    briefing_occurrence_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    briefing_result_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(

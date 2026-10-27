@@ -13,11 +13,14 @@ from uuid import uuid4
 
 import pytest
 from aura_core.domains.automation.notifications.public import (
+    BriefingNotificationSource,
+    CreateBriefingNotification,
     DueDeliveryResult,
     NotificationApplicationService,
     NotificationIdempotencyConflict,
     NotificationNotFound,
     NotificationView,
+    as_payload,
 )
 from aura_core.domains.automation.notifications.repository import (
     MemoryNotificationRepository,
@@ -195,6 +198,40 @@ async def test_application_service_keeps_owner_scope_and_batch_boundaries() -> N
 
 
 @pytest.mark.asyncio
+async def test_briefing_notification_command_is_source_neutral_idempotent_and_content_free(
+) -> None:
+    repository = MemoryNotificationRepository()
+    schedule_id = uuid4()
+    occurrence_id = uuid4()
+    result_id = uuid4()
+    command = CreateBriefingNotification(
+        "issuer",
+        "briefing-owner",
+        schedule_id,
+        occurrence_id,
+        result_id,
+        "briefing-key",
+    )
+
+    first = await repository.create_briefing_notification(command)
+    retry = await repository.create_briefing_notification(command)
+
+    assert first.id == retry.id
+    assert isinstance(first.source, BriefingNotificationSource)
+    assert first.reminder_id is None
+    assert first.briefing_result_id == result_id
+    payload = as_payload(first)
+    assert payload["briefingScheduleId"] == str(schedule_id)
+    assert payload["briefingOccurrenceId"] == str(occurrence_id)
+    assert payload["briefingResultId"] == str(result_id)
+    assert "reminderId" not in payload
+    events = await repository.replay("issuer", "briefing-owner")
+    assert len(events) == 1
+    assert "reminderId" not in events[0].payload()
+    assert not {"content", "prompt", "response"} & set(events[0].payload())
+
+
+@pytest.mark.asyncio
 async def test_concurrent_memory_scans_create_one_notification_and_fire_once() -> None:
     now = [datetime(2026, 1, 1, 12, tzinfo=UTC)]
     reminders = MemoryReminderRepository(clock=lambda: now[0])
@@ -216,6 +253,126 @@ async def test_concurrent_memory_scans_create_one_notification_and_fire_once() -
     assert stored.status is ReminderStatus.FIRED
     page = await notifications.list("issuer", "owner", view=NotificationView.ALL, limit=10)
     assert len(page.items) == 1
+
+
+@pytest.mark.asyncio
+async def test_postgresql_briefing_acknowledgement_replays_complete_source_lineage() -> None:
+    """The SQL event row must satisfy the migration's three-ID briefing check."""
+
+    async with sql_repositories() as (_, sessions, _, notifications, _):
+        prefix = f"aura0132-briefing-{uuid4()}-"
+        issuer = "https://aura0132.example"
+        subject = f"{prefix}owner"
+        schedule_id = uuid4()
+        occurrence_id = uuid4()
+        result_id = uuid4()
+        try:
+            created = await notifications.create_briefing_notification(
+                CreateBriefingNotification(
+                    issuer,
+                    subject,
+                    schedule_id,
+                    occurrence_id,
+                    result_id,
+                    "briefing-delivery-1",
+                )
+            )
+            acknowledged = await notifications.acknowledge(
+                issuer,
+                subject,
+                created.id,
+                expected_version=1,
+                idempotency_key="briefing-ack-1",
+            )
+            events = await notifications.replay(issuer, subject)
+            assert acknowledged.status.value == "acknowledged"
+            assert len(events) == 2
+            for event in events:
+                source = event.source
+                assert isinstance(source, BriefingNotificationSource)
+                assert source.briefing_schedule_id == schedule_id
+                assert source.briefing_occurrence_id == occurrence_id
+                assert source.briefing_result_id == result_id
+                payload = event.payload()
+                assert payload["briefingScheduleId"] == str(schedule_id)
+                assert payload["briefingOccurrenceId"] == str(occurrence_id)
+                assert payload["briefingResultId"] == str(result_id)
+                assert "reminderId" not in payload
+        finally:
+            await cleanup_sql_subjects(sessions, prefix)
+
+
+@pytest.mark.asyncio
+async def test_postgresql_briefing_idempotency_serializes_changed_payload_and_duplicates() -> None:
+    """Both advisory locks make conflicts deterministic under concurrent delivery."""
+
+    async with sql_repositories() as (_, sessions, _, notifications, _):
+        prefix = f"aura0132-idempotency-{uuid4()}-"
+        issuer = "https://aura0132.example"
+        subject = f"{prefix}owner"
+        schedule_id = uuid4()
+        occurrence_id = uuid4()
+        first_result_id = uuid4()
+        second_result_id = uuid4()
+        try:
+            changed_payload = await asyncio.gather(
+                notifications.create_briefing_notification(
+                    CreateBriefingNotification(
+                        issuer,
+                        subject,
+                        schedule_id,
+                        occurrence_id,
+                        first_result_id,
+                        "same-key",
+                    )
+                ),
+                notifications.create_briefing_notification(
+                    CreateBriefingNotification(
+                        issuer,
+                        subject,
+                        schedule_id,
+                        occurrence_id,
+                        second_result_id,
+                        "same-key",
+                    )
+                ),
+                return_exceptions=True,
+            )
+            assert (
+                sum(
+                    isinstance(item, NotificationIdempotencyConflict)
+                    for item in changed_payload
+                )
+                == 1
+            )
+            assert sum(not isinstance(item, Exception) for item in changed_payload) == 1
+
+            duplicate = await asyncio.gather(
+                notifications.create_briefing_notification(
+                    CreateBriefingNotification(
+                        issuer,
+                        subject,
+                        schedule_id,
+                        occurrence_id,
+                        first_result_id,
+                        "distinct-key-a",
+                    )
+                ),
+                notifications.create_briefing_notification(
+                    CreateBriefingNotification(
+                        issuer,
+                        subject,
+                        schedule_id,
+                        occurrence_id,
+                        first_result_id,
+                        "distinct-key-b",
+                    )
+                ),
+            )
+            assert duplicate[0].id == duplicate[1].id
+            assert len(await notifications.replay(issuer, subject)) == 1
+        finally:
+            await cleanup_sql_subjects(sessions, prefix)
 
 
 @pytest.mark.asyncio

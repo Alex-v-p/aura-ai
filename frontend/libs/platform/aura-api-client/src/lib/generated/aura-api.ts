@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: b34ac2a7a35ae4c5d07a1be9f29dad7a75626cd2f19f0e68fba8b7174d786d9d
+// Contract SHA-256: fbd2113f02252694b04161d7c908bef5fc02fcab14d2c69b499f71c55920d3f6
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -348,17 +348,63 @@ export type ApprovalHeartbeatEvent = { readonly "schemaVersion": 1; readonly "ev
 
 export type NotificationStatus = "delivered" | "acknowledged";
 
-export type Notification = { readonly "id": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
+export type Notification = ReminderNotification | BriefingNotification;
+
+export type ReminderNotification = { readonly "id": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
+
+export type BriefingNotification = { readonly "id": string; readonly "briefingScheduleId": string; readonly "briefingOccurrenceId": string; readonly "briefingResultId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
 
 export type NotificationPage = { readonly "items": ReadonlyArray<Notification>; readonly "nextCursor": string | null; readonly "unacknowledgedCount": number; };
 
 export type NotificationAcknowledgeRequest = { readonly "expectedVersion": number; };
 
-export type NotificationStreamEvent = NotificationLifecycleEvent | NotificationHeartbeatEvent;
+export type NotificationStreamEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent | NotificationHeartbeatEvent;
 
-export type NotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
+export type NotificationLifecycleEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent;
+
+export type ReminderNotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
+
+export type BriefingNotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "briefingScheduleId": string; readonly "briefingOccurrenceId": string; readonly "briefingResultId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
 
 export type NotificationHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
+
+export type BriefingScheduleStatus = "active" | "paused" | "deleted";
+
+export type BriefingOccurrenceStatus = "scheduled" | "admitted" | "running" | "completed" | "partial" | "failed" | "canceled" | "skipped" | "unknown";
+
+export type BriefingResultStatus = "completed" | "partial" | "failed" | "canceled" | "unknown" | "deleted";
+
+export type BriefingSourceCompleteness = "complete" | "partial" | "unavailable" | "unknown";
+
+export type BriefingDeletionScope = "schedule" | "occurrence_history" | "result_content";
+
+export type BriefingDailyCadence = { readonly "kind": "daily"; readonly "localTime": string; readonly "timeZone": ClientTimeZone; };
+
+export type BriefingSourceGrants = { readonly "includeReminders": true; readonly "calendarIds": ReadonlyArray<string>; readonly "documentIds": ReadonlyArray<string>; };
+
+export type BriefingExecutionPolicyReferences = { readonly "executionPolicyRevisionId": string; readonly "promptBundleRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId": string; };
+
+export type CreateBriefingScheduleRequest = { readonly "displayName": string; readonly "cadence": BriefingDailyCadence; readonly "sources": BriefingSourceGrants; readonly "agentRevisionId": string; readonly "executionPolicies": BriefingExecutionPolicyReferences; };
+
+export type BriefingSchedule = { readonly "id": string; readonly "displayName": string; readonly "status": BriefingScheduleStatus; readonly "version": number; readonly "cadence": BriefingDailyCadence; readonly "sources": BriefingSourceGrants; readonly "agentRevisionId": string; readonly "executionPolicies": BriefingExecutionPolicyReferences; readonly "nextDueAt": string | null; readonly "createdAt": string; readonly "updatedAt": string; readonly "deletedAt": string | null; };
+
+export type BriefingSchedulePage = { readonly "items": ReadonlyArray<BriefingSchedule>; readonly "nextCursor": string | null; };
+
+export type BriefingVersionCommand = { readonly "expectedVersion": number; };
+
+export type BriefingOccurrence = { readonly "id": string; readonly "scheduleId": string; readonly "sequence": number; readonly "status": BriefingOccurrenceStatus; readonly "version": number; readonly "dueAt": string; readonly "dueLocalDate": string; readonly "dueLocalTime": string; readonly "timeZone": ClientTimeZone; readonly "sourceCompleteness": BriefingSourceCompleteness; readonly "runId": string | null; readonly "resultId": string | null; readonly "createdAt": string; readonly "updatedAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; };
+
+export type BriefingOccurrencePage = { readonly "items": ReadonlyArray<BriefingOccurrence>; readonly "nextCursor": string | null; };
+
+export type BriefingResult = { readonly "id": string; readonly "scheduleId": string; readonly "occurrenceId": string; readonly "runId": string | null; readonly "status": BriefingResultStatus; readonly "version": number; readonly "sourceCompleteness": BriefingSourceCompleteness; readonly "content": string | null; readonly "createdAt": string; readonly "updatedAt": string; readonly "deletedAt": string | null; };
+
+export type DeleteBriefingScheduleRequest = { readonly "scope": "schedule"; readonly "expectedVersion": number; };
+
+export type DeleteBriefingHistoryRequest = { readonly "scope": "occurrence_history"; readonly "expectedScheduleVersion": number; };
+
+export type DeleteBriefingResultRequest = { readonly "scope": "result_content"; readonly "expectedVersion": number; };
+
+export type BriefingDeletionReceipt = { readonly "deletionId": string; readonly "scope": BriefingDeletionScope; readonly "scheduleId": string; readonly "occurrenceId": string | null; readonly "resultId": string | null; readonly "deletedAt": string; };
 
 export type DocumentAttachmentReference = { readonly "kind": "document"; readonly "documentId": string; };
 
@@ -574,6 +620,17 @@ export interface AuraApiOperations {
   readonly getNotification: { readonly response: Notification; readonly body: never; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly acknowledgeNotification: { readonly response: Notification; readonly body: NotificationAcknowledgeRequest; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly streamNotificationEvents: { readonly response: NotificationStreamEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
+  readonly listBriefingSchedules: { readonly response: BriefingSchedulePage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "status"?: BriefingScheduleStatus; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createBriefingSchedule: { readonly response: BriefingSchedule; readonly body: CreateBriefingScheduleRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getBriefingSchedule: { readonly response: BriefingSchedule; readonly body: never; readonly path: { readonly "schedule_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly pauseBriefingSchedule: { readonly response: BriefingSchedule; readonly body: BriefingVersionCommand; readonly path: { readonly "schedule_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly resumeBriefingSchedule: { readonly response: BriefingSchedule; readonly body: BriefingVersionCommand; readonly path: { readonly "schedule_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly deleteBriefingSchedule: { readonly response: BriefingDeletionReceipt; readonly body: DeleteBriefingScheduleRequest; readonly path: { readonly "schedule_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listBriefingOccurrences: { readonly response: BriefingOccurrencePage; readonly body: never; readonly path: { readonly "schedule_id": string; }; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getBriefingOccurrence: { readonly response: BriefingOccurrence; readonly body: never; readonly path: { readonly "schedule_id": string; readonly "occurrence_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly deleteBriefingOccurrenceHistory: { readonly response: BriefingDeletionReceipt; readonly body: DeleteBriefingHistoryRequest; readonly path: { readonly "schedule_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getBriefingResult: { readonly response: BriefingResult; readonly body: never; readonly path: { readonly "result_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly deleteBriefingResult: { readonly response: BriefingDeletionReceipt; readonly body: DeleteBriefingResultRequest; readonly path: { readonly "result_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly createAttachmentUpload: { readonly response: AttachmentUploadSession; readonly body: CreateAttachmentUploadRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly uploadAttachmentContent: { readonly response: AttachmentUploadReceipt; readonly body: AuraBinaryRequestBody; readonly path: { readonly "upload_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; readonly "X-Expected-Version": string; readonly "Content-Length": string; readonly "Content-Type": string; }; };
   readonly listAttachments: { readonly response: AttachmentPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; readonly "status"?: AttachmentStatus; readonly "mediaType"?: AttachmentMediaType; }; readonly headers: Readonly<Record<string, never>>; };
@@ -697,6 +754,17 @@ export const AURA_API_OPERATIONS = {
   getNotification: { method: 'GET', pathTemplate: '/api/v1/notifications/{notification_id}', requestMode: 'none', responseMode: 'json' },
   acknowledgeNotification: { method: 'POST', pathTemplate: '/api/v1/notifications/{notification_id}/acknowledge', requestMode: 'json', responseMode: 'json' },
   streamNotificationEvents: { method: 'GET', pathTemplate: '/api/v1/notifications/stream', requestMode: 'none', responseMode: 'event-stream' },
+  listBriefingSchedules: { method: 'GET', pathTemplate: '/api/v1/briefing-schedules', requestMode: 'none', responseMode: 'json' },
+  createBriefingSchedule: { method: 'POST', pathTemplate: '/api/v1/briefing-schedules', requestMode: 'json', responseMode: 'json' },
+  getBriefingSchedule: { method: 'GET', pathTemplate: '/api/v1/briefing-schedules/{schedule_id}', requestMode: 'none', responseMode: 'json' },
+  pauseBriefingSchedule: { method: 'POST', pathTemplate: '/api/v1/briefing-schedules/{schedule_id}/pause', requestMode: 'json', responseMode: 'json' },
+  resumeBriefingSchedule: { method: 'POST', pathTemplate: '/api/v1/briefing-schedules/{schedule_id}/resume', requestMode: 'json', responseMode: 'json' },
+  deleteBriefingSchedule: { method: 'POST', pathTemplate: '/api/v1/briefing-schedules/{schedule_id}/deletions', requestMode: 'json', responseMode: 'json' },
+  listBriefingOccurrences: { method: 'GET', pathTemplate: '/api/v1/briefing-schedules/{schedule_id}/occurrences', requestMode: 'none', responseMode: 'json' },
+  getBriefingOccurrence: { method: 'GET', pathTemplate: '/api/v1/briefing-schedules/{schedule_id}/occurrences/{occurrence_id}', requestMode: 'none', responseMode: 'json' },
+  deleteBriefingOccurrenceHistory: { method: 'POST', pathTemplate: '/api/v1/briefing-schedules/{schedule_id}/history-deletions', requestMode: 'json', responseMode: 'json' },
+  getBriefingResult: { method: 'GET', pathTemplate: '/api/v1/briefing-results/{result_id}', requestMode: 'none', responseMode: 'json' },
+  deleteBriefingResult: { method: 'POST', pathTemplate: '/api/v1/briefing-results/{result_id}/deletions', requestMode: 'json', responseMode: 'json' },
   createAttachmentUpload: { method: 'POST', pathTemplate: '/api/v1/attachments/uploads', requestMode: 'json', responseMode: 'json' },
   uploadAttachmentContent: { method: 'PUT', pathTemplate: '/api/v1/attachments/uploads/{upload_id}/content', requestMode: 'binary', responseMode: 'json' },
   listAttachments: { method: 'GET', pathTemplate: '/api/v1/attachments', requestMode: 'none', responseMode: 'json' },

@@ -1,0 +1,11 @@
+agent: architecture_guardian
+work_item: AURA-0132
+verdict: PASS
+checked:
+  - The AURA-0132 work item authorizes the additive OpenAPI and event contracts, notification-owned source migration and public API evolution, generated client update, existing Aura Web consumers, and module-registry entry; changed paths remain within that scope.
+  - The new briefing contracts keep scheduler, worker, executor, checkpoint, provider, content, owner identity, credentials, and Observatory concepts outside the public transport boundary.
+  - Notifications continues to own inbox records, acknowledgement, idempotency, replay, SSE serialization, and its migration without creating or reading briefing-owned tables.
+  - Core and Observatory remain isolated, provider direction is unchanged, API entrypoints remain thin, frontend features consume the generated Aura client through public library APIs, and the architecture boundary validators pass.
+  - The additive contract and existing-module evolution are authorized by the accepted architecture and owner decisions, so no ADR is required.
+  - Reverification confirmed SqlNotificationRepository.acknowledge now persists briefing schedule, occurrence, and result identifiers together, matching migration 0025's closed source constraint; PostgreSQL-backed create-acknowledge-replay regression coverage asserts the complete serialized lineage.
+findings: []

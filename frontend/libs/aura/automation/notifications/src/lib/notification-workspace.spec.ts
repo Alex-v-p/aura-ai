@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { Notification } from '@aura/aura-api-client';
-import { appendNotificationPage, isValidNotificationEvent, loadUnreadProjection, NotificationApiError, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection, type NotificationsApi } from './notification-models';
+import { appendNotificationPage, isValidNotificationEvent, loadUnreadProjection, notificationBriefingResult, notificationSource, NotificationApiError, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection, type NotificationsApi } from './notification-models';
 import { NotificationSessionHydrator } from './notification-session-hydration';
 
 const page = readFileSync('libs/aura/automation/notifications/src/lib/notifications-page.component.html', 'utf8');
@@ -21,6 +21,8 @@ describe('notification centre contracts', () => {
 
   it('keeps the inbox actions accessible and durable', () => {
     expect(page).toContain('aria-labelledby="notifications-heading"');
+    expect(page).toContain('Activity · delivery updates');
+    expect(page).toContain('When something needs your attention, its notification will appear here.');
     expect(page).toContain('Acknowledge');
     expect(page).toContain('Mark reminder complete');
     expect(page).toContain('<ul class="notification-list"');
@@ -41,11 +43,53 @@ describe('notification centre contracts', () => {
 
   it('keeps Today on a stable unread projection when the workspace changes view', () => {
     expect(store).toContain('readonly unreadCollection = signal<NotificationCollection | null>(null)');
-    expect(store).toContain("if (view === 'unread') this.unreadCollection.set(page)");
+    expect(store).toContain('if (view === \'unread\') {');
+    expect(store).toContain('this.unreadCollection.set(page)');
     expect(store).toContain('this.unreadCollection.set(null)');
     expect(store).toContain('loadUnreadProjection(this.api)');
     expect(store).toContain("reconcileAcknowledged(current, updated, 'unread')");
     expect(readFileSync('libs/aura/daily-action/src/lib/daily-action-page.component.ts', 'utf8')).toContain('this.notifications.unreadCollection()');
+  });
+
+  it('does not consume a second unread request while switching to History', () => {
+    expect(store).not.toContain("else {\n        try {\n          const unread = await loadUnreadProjection(this.api);");
+    expect(store).toContain("if (this.view() === 'history') void this.refreshUnreadProjection()");
+    expect(store).toContain('async refreshUnreadProjection(): Promise<boolean>');
+  });
+
+  it('exposes an explicit Today reconciliation without changing the inbox view', () => {
+    expect(store).toContain('async refreshUnreadProjection(): Promise<boolean>');
+    expect(store).toContain('this.unreadCollection.set(unread)');
+    expect(store).toContain('readonly unreadProjectionLoading = signal(false)');
+    expect(store).toContain('readonly unreadProjectionErrorStatus = signal<number | null>(null)');
+    expect(store).toContain('readonly unreadProjectionNotice = signal<string | null>(null)');
+    expect(store).toContain('retryUnreadProjection(): void');
+    expect(store).not.toContain("this.setError(error, 'Unread notifications are temporarily unavailable.')");
+  });
+
+  it('keeps Today projection recovery separate from the active History connection', () => {
+    const daily = readFileSync('libs/aura/daily-action/src/lib/daily-action-page.component.ts', 'utf8');
+    expect(daily).toContain('historyWorkspaceActive ? this.notifications.unreadProjectionLoading() : this.notifications.loading()');
+    expect(daily).toContain('historyWorkspaceActive ? this.notifications.unreadProjectionErrorStatus() : this.notifications.errorStatus()');
+    expect(daily).toContain('historyWorkspaceActive ? this.notifications.unreadProjectionNotice() : this.notifications.notice()');
+    expect(daily).toContain('historyWorkspaceActive ? null : this.notifications.connectionState()');
+    expect(daily).toContain("if (this.notifications.view() === 'history') this.notifications.retryUnreadProjection(); else this.notifications.retryConnection();");
+    expect(daily).toContain('readonly notificationLiveState = computed<DailySourceState>');
+    expect(daily).toContain('retryNotificationConnection(): void');
+    expect(page).toContain('Retry live updates');
+  });
+
+  it('falls back to the notifications heading when an acknowledged opener no longer exists', () => {
+    const component = readFileSync('libs/aura/automation/notifications/src/lib/notifications-page.component.ts', 'utf8');
+    expect(component).toContain('if (await this.store.acknowledge(notification) && !detailOpen) this.scheduleHeadingFocus()');
+    expect(component).toContain('focusNotificationReturnTarget(this.returnFocusState.returnFocusId)');
+    expect(component).toContain('private scheduleHeadingFocus(): void');
+    expect(readFileSync('libs/aura/automation/notifications/src/lib/notification-focus.ts', 'utf8')).toContain('const target = opener ??');
+  });
+
+  it('does not present a deferred briefing destination as busy', () => {
+    expect(page).toContain('class="secondary-button deferred-action"');
+    expect(readFileSync('libs/aura/automation/notifications/src/lib/notifications-page.component.css', 'utf8')).toContain('button.deferred-action:disabled { cursor: default; }');
   });
 
   it('fetches a fresh unread projection without changing the active workspace view', async () => {
@@ -90,6 +134,22 @@ describe('notification centre contracts', () => {
     const base = { schemaVersion: 1, eventType: 'notification.delivered', notificationId: 'notification-1', reminderId: 'reminder-1', status: 'delivered', notificationVersion: 1, occurredAt: '2026-10-08T09:00:00.000Z' } as const;
     expect(isValidNotificationEvent({ ...base, eventId: 'notification-event-1' })).toBe(false);
     expect(isValidNotificationEvent({ ...base, eventId: '550e8400-e29b-41d4-a716-446655440000' })).toBe(true);
+  });
+
+  it('recognizes briefing sources without inventing a reminder identity or exposing content', () => {
+    const briefing = { id: 'notification-briefing', briefingScheduleId: 'schedule-1', briefingOccurrenceId: 'occurrence-1', briefingResultId: 'result-1', status: 'delivered', version: 1, createdAt: '2026-10-08T09:00:00.000Z', updatedAt: '2026-10-08T09:00:00.000Z', deliveredAt: '2026-10-08T09:00:00.000Z', acknowledgedAt: null } as unknown as Notification;
+    expect(notificationSource(briefing)).toEqual({ kind: 'briefing', briefingResultId: 'result-1', destination: 'briefing_result' });
+    expect(notificationBriefingResult(briefing)?.destination).toBe('briefing_result');
+    expect(notificationSource(briefing)).not.toHaveProperty('reminderId');
+    expect(isValidNotificationEvent({ schemaVersion: 1, eventId: '550e8400-e29b-41d4-a716-446655440000', eventType: 'notification.delivered', notificationId: 'notification-briefing', briefingScheduleId: 'schedule-1', briefingOccurrenceId: 'occurrence-1', briefingResultId: 'result-1', status: 'delivered', notificationVersion: 1, occurredAt: '2026-10-08T09:00:00.000Z' })).toBe(true);
+  });
+
+  it('rejects incomplete, mixed, and non-contract notification event sources', () => {
+    const base = { schemaVersion: 1, eventId: '550e8400-e29b-41d4-a716-446655440000', eventType: 'notification.delivered', notificationId: 'notification-briefing', status: 'delivered', notificationVersion: 1, occurredAt: '2026-10-08T09:00:00.000Z' } as const;
+    expect(isValidNotificationEvent({ ...base, briefingResultId: 'result-1' })).toBe(false);
+    expect(isValidNotificationEvent({ ...base, reminderId: 'reminder-1', briefingScheduleId: 'schedule-1', briefingOccurrenceId: 'occurrence-1', briefingResultId: 'result-1' })).toBe(false);
+    expect(isValidNotificationEvent({ ...base, source: { kind: 'briefing', briefingResultId: 'result-1', destination: 'briefing_result' } })).toBe(false);
+    expect(isValidNotificationEvent({ ...base, reminderId: 'reminder-1', extra: 'not-in-contract' })).toBe(false);
   });
 
   it('does not let an old hydration repopulate after clearSession and new hydration', async () => {

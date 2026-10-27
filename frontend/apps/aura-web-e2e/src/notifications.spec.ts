@@ -5,6 +5,66 @@ const session = { principal: { issuer: 'https://authentik.test', subject: 'fixtu
 const now = '2099-10-08T09:00:00.000Z';
 
 test.describe('notification centre', () => {
+  test('renders a typed briefing source, acknowledges it, and keeps the deferred result route safe', async ({ page }) => {
+    let acknowledged = false;
+    let briefingResultRequests = 0;
+    const briefing = {
+      id: 'notification-briefing',
+      briefingScheduleId: 'briefing-schedule-private',
+      briefingOccurrenceId: 'briefing-occurrence-private',
+      briefingResultId: 'briefing-result-private',
+      status: 'delivered',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      deliveredAt: now,
+      acknowledgedAt: null,
+    };
+    const current = () => ({
+      ...briefing,
+      status: acknowledged ? 'acknowledged' : 'delivered',
+      version: acknowledged ? 2 : 1,
+      acknowledgedAt: acknowledged ? now : null,
+    });
+
+    await page.route('**/api/v1/**', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: session });
+      if (url.pathname.endsWith('/models')) return route.fulfill({ json: { models: [], defaultModelId: null, observedAt: now } });
+      if (url.pathname.endsWith('/agents')) return route.fulfill({ json: { items: [] } });
+      if (url.pathname.endsWith('/personas')) return route.fulfill({ json: { items: [] } });
+      if (url.pathname.endsWith('/conversations')) return route.fulfill({ json: { items: [], nextCursor: null } });
+      if (url.pathname.endsWith('/notifications/stream')) return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: 'event: heartbeat\ndata: {"schemaVersion":1,"eventType":"heartbeat","occurredAt":"2099-10-08T09:00:00.000Z"}\n\n' });
+      if (url.pathname === '/api/v1/notifications' && request.method() === 'GET') return route.fulfill({ json: { items: [current()], nextCursor: null, unacknowledgedCount: acknowledged ? 0 : 1 } });
+      if (url.pathname.endsWith('/notifications/notification-briefing') && request.method() === 'GET') return route.fulfill({ json: current() });
+      if (url.pathname.endsWith('/notifications/notification-briefing/acknowledge') && request.method() === 'POST') { acknowledged = true; return route.fulfill({ json: current() }); }
+      if (url.pathname.includes('/briefing-results/')) { briefingResultRequests += 1; return route.fulfill({ status: 404, json: { detail: 'briefing result route is not available in this slice' } }); }
+      return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
+    });
+
+    await page.goto('/notifications');
+    await expect(page.getByText('Your daily briefing is ready.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open notification: Your daily briefing is ready.', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Open notification: Your daily briefing is ready.', exact: true }).click();
+    const detail = page.getByRole('dialog', { name: 'Your daily briefing is ready.' });
+    await expect(detail).toBeVisible();
+    await expect(detail.getByRole('heading', { name: 'Dedicated briefing result', exact: true })).toBeVisible();
+    const resultButton = detail.getByRole('button', { name: /Open dedicated briefing result/ });
+    await expect(resultButton).toBeDisabled();
+    await expect(page).toHaveURL(/\/notifications\/notification-briefing$/);
+    expect(page.url()).not.toContain('briefing-result-private');
+    expect(briefingResultRequests).toBe(0);
+
+    await detail.getByRole('button', { name: 'Acknowledge', exact: true }).click();
+    await expect.poll(() => acknowledged).toBe(true);
+    await expect(detail.getByRole('status')).toContainText('Acknowledged');
+    expect(page.url()).not.toContain('Fixture Owner');
+    const results = await new AxeBuilder({ page }).include('.notifications-page').analyze();
+    expect(results.violations).toEqual([]);
+  });
+
   test('shows the durable inbox, acknowledges, completes the reminder, and resumes SSE', async ({ page }) => {
     let acknowledged = false;
     let completed = false;
@@ -44,6 +104,12 @@ test.describe('notification centre', () => {
     const mobileNavigationTrigger = page.getByRole('button', { name: 'Open navigation' });
     if (await mobileNavigationTrigger.isVisible()) await mobileNavigationTrigger.click();
     await expect(page.getByRole('link', { name: 'Notifications, 1 unread' })).toBeVisible();
+    // This fixture starts on /notifications. Inspecting the active destination
+    // does not produce a NavigationEnd, so close the drawer explicitly before
+    // interacting with the content beneath it.
+    const mobileNavigationClose = page.locator('#primary-navigation').getByRole('button', { name: 'Close navigation' });
+    if (await mobileNavigationClose.isVisible()) await mobileNavigationClose.click();
+    await expect(page.locator('#primary-navigation')).not.toHaveClass(/is-mobile-open/);
     await expect(page.getByText('A reminder is due.', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Open notification: A reminder is due.' }).click();
@@ -52,7 +118,14 @@ test.describe('notification centre', () => {
     await expect.poll(() => completed).toBe(true);
     await page.getByRole('dialog').getByRole('button', { name: 'Acknowledge' }).click();
     await expect.poll(() => acknowledged).toBe(true);
-    await expect(page.getByRole('link', { name: 'Notifications', exact: true })).toBeVisible();
+    if (await mobileNavigationTrigger.isVisible()) {
+      await page.getByRole('dialog').getByRole('button', { name: 'Close notification details' }).click();
+      await mobileNavigationTrigger.click();
+      await expect(page.getByRole('link', { name: 'Notifications', exact: true })).toBeVisible();
+      await page.locator('#primary-navigation').getByRole('button', { name: 'Close navigation' }).click();
+    } else {
+      await expect(page.getByRole('link', { name: 'Notifications', exact: true })).toBeVisible();
+    }
     await expect.poll(() => streamRequests).toBeGreaterThanOrEqual(2);
     expect(streamHeaders[1]).toBe('11111111-1111-4111-8111-111111111111');
 

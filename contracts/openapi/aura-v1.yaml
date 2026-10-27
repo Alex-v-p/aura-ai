@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.19.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, image attachment, reminder, notification, approval, read-only calendar integration, and governed tool transport contract. Provider tokens, client secrets, authorization codes, internal credential references, provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, image bytes outside authorized no-store streams, content hashes, and embedding vectors are never exposed by this API. Calendar names, event titles, descriptions, attendees, locations, provider identifiers, and owner identity are private and are never placed in URLs, ordinary logs, telemetry, SSE invalidations, browser persistence, or service-worker caches. Events are retrieved on demand without a durable event-content cache. Calendar create, update, delete, RSVP, attendee mutation, automatic rescheduling, background content synchronization, calendar-to-memory writes, and model-facing calendar tools are intentionally excluded."
+    "version": "1.20.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, image attachment, reminder, notification, approval, read-only calendar integration, scheduled briefing, and governed tool transport contract. Provider tokens, client secrets, authorization codes, internal credential references, provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, image bytes outside authorized no-store streams, content hashes, and embedding vectors are never exposed by this API. Calendar names, event titles, descriptions, attendees, locations, provider identifiers, and owner identity are private and are never placed in URLs, ordinary logs, telemetry, SSE invalidations, browser persistence, or service-worker caches. Briefing definitions, source grants, and results are owner-private, never enter notification events, and have manual-only retention. Events are retrieved on demand without a durable event-content cache. Calendar mutation, automatic rescheduling, background content synchronization, calendar-to-memory writes, briefing execution internals, and model-facing calendar tools are intentionally excluded."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -22,6 +22,7 @@
     { "name": "Notifications" },
     { "name": "Approvals" },
     { "name": "Calendar" },
+    { "name": "Briefings" },
     { "name": "Health" }
   ],
   "paths": {
@@ -1200,6 +1201,145 @@
         }
       }
     },
+    "/api/v1/briefing-schedules": {
+      "get": {
+        "operationId": "listBriefingSchedules",
+        "tags": ["Briefings"],
+        "parameters": [
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/BriefingScheduleStatus" } },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped schedules with manual-only retention", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedulePage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      },
+      "post": {
+        "operationId": "createBriefingSchedule",
+        "tags": ["Briefings"],
+        "description": "Creates one owner-scoped daily schedule. Calendar, reminder, and explicitly selected document content is untrusted evidence and cannot alter policies, grants, permissions, or execution flow.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateBriefingScheduleRequest" } } } },
+        "responses": {
+          "201": { "description": "Schedule created", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedule" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }],
+      "get": {
+        "operationId": "getBriefingSchedule",
+        "tags": ["Briefings"],
+        "responses": {
+          "200": { "description": "Owner-scoped schedule", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedule" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/pause": {
+      "post": {
+        "operationId": "pauseBriefingSchedule",
+        "tags": ["Briefings"],
+        "description": "Pauses future admission without canceling an occurrence already admitted.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingVersionCommand" } } } },
+        "responses": {
+          "200": { "description": "Schedule paused", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedule" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/resume": {
+      "post": {
+        "operationId": "resumeBriefingSchedule",
+        "tags": ["Briefings"],
+        "description": "Resumes the original daily local-time cadence without catch-up beyond the bounded missed-occurrence policy.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingVersionCommand" } } } },
+        "responses": {
+          "200": { "description": "Schedule resumed", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedule" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/deletions": {
+      "post": {
+        "operationId": "deleteBriefingSchedule",
+        "tags": ["Briefings"],
+        "description": "Stops future admission and tombstones only the schedule. Occurrence history and results remain until their separate explicit owner commands.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteBriefingScheduleRequest" } } } },
+        "responses": {
+          "200": { "description": "Schedule-only deletion receipt", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingDeletionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/occurrences": {
+      "get": {
+        "operationId": "listBriefingOccurrences",
+        "tags": ["Briefings"],
+        "parameters": [
+          { "$ref": "#/components/parameters/BriefingScheduleId" },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Manually retained owner-scoped occurrence history", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingOccurrencePage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/occurrences/{occurrence_id}": {
+      "get": {
+        "operationId": "getBriefingOccurrence",
+        "tags": ["Briefings"],
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/BriefingOccurrenceId" }],
+        "responses": {
+          "200": { "description": "Owner-scoped occurrence and lineage", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingOccurrence" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/history-deletions": {
+      "post": {
+        "operationId": "deleteBriefingOccurrenceHistory",
+        "tags": ["Briefings"],
+        "description": "Explicitly removes retained occurrence detail while preserving content-free audit truth and independently retained results.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteBriefingHistoryRequest" } } } },
+        "responses": {
+          "200": { "description": "Occurrence-history deletion receipt", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingDeletionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-results/{result_id}": {
+      "get": {
+        "operationId": "getBriefingResult",
+        "tags": ["Briefings"],
+        "parameters": [{ "$ref": "#/components/parameters/BriefingResultId" }],
+        "responses": {
+          "200": { "description": "Owner-private durable briefing result", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingResult" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/briefing-results/{result_id}/deletions": {
+      "post": {
+        "operationId": "deleteBriefingResult",
+        "tags": ["Briefings"],
+        "description": "Explicitly removes one result's private content while preserving content-free audit truth and occurrence lineage.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingResultId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteBriefingResultRequest" } } } },
+        "responses": {
+          "200": { "description": "Result-content deletion receipt", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingDeletionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
     "/api/v1/attachments/uploads": {
       "post": {
         "operationId": "createAttachmentUpload",
@@ -1672,6 +1812,9 @@
       "ReminderId": { "name": "reminder_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ReminderSeriesId": { "name": "series_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "NotificationId": { "name": "notification_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "BriefingScheduleId": { "name": "schedule_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped briefing schedule identifier." },
+      "BriefingOccurrenceId": { "name": "occurrence_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped briefing occurrence identifier." },
+      "BriefingResultId": { "name": "result_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped briefing result identifier." },
       "ApprovalId": { "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "DocumentId": { "name": "document_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "DocumentUploadId": { "name": "upload_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
@@ -3197,12 +3340,36 @@
       },
       "NotificationStatus": { "type": "string", "enum": ["delivered", "acknowledged"] },
       "Notification": {
+        "description": "Closed owner-authorized reminder-or-briefing inbox source union. Existing reminder payloads remain valid byte-for-byte.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/ReminderNotification" },
+          { "$ref": "#/components/schemas/BriefingNotification" }
+        ]
+      },
+      "ReminderNotification": {
         "type": "object", "additionalProperties": false,
         "description": "Owner-authorized durable inbox record. Reminder content is retrieved separately through the reminder API.",
         "required": ["id", "reminderId", "status", "version", "createdAt", "updatedAt", "deliveredAt", "acknowledgedAt"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "reminderId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "deliveredAt": { "type": "string", "format": "date-time" },
+          "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "BriefingNotification": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized durable inbox record linking only by opaque identifiers to a dedicated briefing result. Briefing output and source content are excluded.",
+        "required": ["id", "briefingScheduleId", "briefingOccurrenceId", "briefingResultId", "status", "version", "createdAt", "updatedAt", "deliveredAt", "acknowledgedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "briefingScheduleId": { "type": "string", "format": "uuid" },
+          "briefingOccurrenceId": { "type": "string", "format": "uuid" },
+          "briefingResultId": { "type": "string", "format": "uuid" },
           "status": { "$ref": "#/components/schemas/NotificationStatus" },
           "version": { "type": "integer", "minimum": 1 },
           "createdAt": { "type": "string", "format": "date-time" },
@@ -3226,14 +3393,21 @@
         "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
       },
       "NotificationStreamEvent": {
-        "description": "Metadata-only notification stream envelope. Reminder content, notification content, owner identity, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "description": "Metadata-only notification stream envelope. Reminder content, briefing output and source content, notification content, owner identity, prompts, responses, credentials, provider material, and hidden reasoning are prohibited.",
         "oneOf": [
-          { "$ref": "#/components/schemas/NotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/ReminderNotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/BriefingNotificationLifecycleEvent" },
           { "$ref": "#/components/schemas/NotificationHeartbeatEvent" }
-        ],
-        "discriminator": { "propertyName": "eventType" }
+        ]
       },
       "NotificationLifecycleEvent": {
+        "description": "Closed source-typed lifecycle union preserving the legacy reminder event shape.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/ReminderNotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/BriefingNotificationLifecycleEvent" }
+        ]
+      },
+      "ReminderNotificationLifecycleEvent": {
         "type": "object", "additionalProperties": false,
         "required": ["schemaVersion", "eventId", "eventType", "notificationId", "reminderId", "status", "notificationVersion", "occurredAt"],
         "properties": {
@@ -3247,6 +3421,22 @@
           "occurredAt": { "type": "string", "format": "date-time" }
         }
       },
+      "BriefingNotificationLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "notificationId", "briefingScheduleId", "briefingOccurrenceId", "briefingResultId", "status", "notificationVersion", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventId": { "type": "string", "format": "uuid" },
+          "eventType": { "type": "string", "enum": ["notification.delivered", "notification.acknowledged"] },
+          "notificationId": { "type": "string", "format": "uuid" },
+          "briefingScheduleId": { "type": "string", "format": "uuid" },
+          "briefingOccurrenceId": { "type": "string", "format": "uuid" },
+          "briefingResultId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "notificationVersion": { "type": "integer", "minimum": 1 },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
       "NotificationHeartbeatEvent": {
         "type": "object", "additionalProperties": false,
         "required": ["schemaVersion", "eventType", "occurredAt"],
@@ -3254,6 +3444,171 @@
           "schemaVersion": { "type": "integer", "const": 1 },
           "eventType": { "type": "string", "const": "heartbeat" },
           "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BriefingScheduleStatus": { "type": "string", "enum": ["active", "paused", "deleted"] },
+      "BriefingOccurrenceStatus": { "type": "string", "enum": ["scheduled", "admitted", "running", "completed", "partial", "failed", "canceled", "skipped", "unknown"] },
+      "BriefingResultStatus": { "type": "string", "enum": ["completed", "partial", "failed", "canceled", "unknown", "deleted"] },
+      "BriefingSourceCompleteness": { "type": "string", "enum": ["complete", "partial", "unavailable", "unknown"] },
+      "BriefingDeletionScope": { "type": "string", "enum": ["schedule", "occurrence_history", "result_content"] },
+      "BriefingDailyCadence": {
+        "type": "object", "additionalProperties": false,
+        "description": "Exactly one daily local wall-clock cadence. Core validates timeZone against its supported IANA timezone database and computes due instants; clients do not calculate occurrences.",
+        "required": ["kind", "localTime", "timeZone"],
+        "properties": {
+          "kind": { "type": "string", "const": "daily" },
+          "localTime": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$" },
+          "timeZone": { "$ref": "#/components/schemas/ClientTimeZone" }
+        }
+      },
+      "BriefingSourceGrants": {
+        "type": "object", "additionalProperties": false,
+        "description": "Closed owner-selected source set. Identifiers are private grants reauthorized at admission. Calendar, reminder, and document values are untrusted evidence. Memory is intentionally unrepresentable.",
+        "required": ["includeReminders", "calendarIds", "documentIds"],
+        "properties": {
+          "includeReminders": { "type": "boolean", "const": true },
+          "calendarIds": { "type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" }, "description": "Explicitly selected readable Aura calendar identifiers." },
+          "documentIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" }, "description": "Explicitly owner-selected ready documents. Ownership, readiness, and current authorization are revalidated at admission." }
+        }
+      },
+      "BriefingExecutionPolicyReferences": {
+        "type": "object", "additionalProperties": false,
+        "description": "Immutable policy references pinned by the schedule. The referenced policies own deadlines and bounded model, tool, and resource budgets; provider and executor configuration is not exposed.",
+        "required": ["executionPolicyRevisionId", "promptBundleRevisionId", "modelPolicyRevisionId", "toolPolicyRevisionId"],
+        "properties": {
+          "executionPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "promptBundleRevisionId": { "type": "string", "format": "uuid" },
+          "modelPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "toolPolicyRevisionId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "CreateBriefingScheduleRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["displayName", "cadence", "sources", "agentRevisionId", "executionPolicies"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "cadence": { "$ref": "#/components/schemas/BriefingDailyCadence" },
+          "sources": { "$ref": "#/components/schemas/BriefingSourceGrants" },
+          "agentRevisionId": { "type": "string", "format": "uuid" },
+          "executionPolicies": { "$ref": "#/components/schemas/BriefingExecutionPolicyReferences" }
+        }
+      },
+      "BriefingSchedule": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-private versioned schedule retained until explicit deletion. deleted tombstones prevent future admission without implicitly deleting history or results.",
+        "required": ["id", "displayName", "status", "version", "cadence", "sources", "agentRevisionId", "executionPolicies", "nextDueAt", "createdAt", "updatedAt", "deletedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "status": { "$ref": "#/components/schemas/BriefingScheduleStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "cadence": { "$ref": "#/components/schemas/BriefingDailyCadence" },
+          "sources": { "$ref": "#/components/schemas/BriefingSourceGrants" },
+          "agentRevisionId": { "type": "string", "format": "uuid" },
+          "executionPolicies": { "$ref": "#/components/schemas/BriefingExecutionPolicyReferences" },
+          "nextDueAt": { "type": ["string", "null"], "format": "date-time", "description": "Server-calculated next due instant; null when paused or deleted." },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "deletedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "BriefingSchedulePage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/BriefingSchedule" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "BriefingVersionCommand": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "BriefingOccurrence": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-scoped occurrence with deterministic due-time and run/result lineage. No source content, provider material, prompt, or hidden execution state is exposed.",
+        "required": ["id", "scheduleId", "sequence", "status", "version", "dueAt", "dueLocalDate", "dueLocalTime", "timeZone", "sourceCompleteness", "runId", "resultId", "createdAt", "updatedAt", "startedAt", "finishedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "scheduleId": { "type": "string", "format": "uuid" },
+          "sequence": { "type": "integer", "minimum": 1 },
+          "status": { "$ref": "#/components/schemas/BriefingOccurrenceStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "dueAt": { "type": "string", "format": "date-time", "description": "Server-authoritative due instant." },
+          "dueLocalDate": { "type": "string", "format": "date" },
+          "dueLocalTime": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$" },
+          "timeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "sourceCompleteness": { "$ref": "#/components/schemas/BriefingSourceCompleteness" },
+          "runId": { "type": ["string", "null"], "format": "uuid", "description": "At most one admitted Aura run identifier." },
+          "resultId": { "type": ["string", "null"], "format": "uuid" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "startedAt": { "type": ["string", "null"], "format": "date-time" },
+          "finishedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "BriefingOccurrencePage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/BriefingOccurrence" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "BriefingResult": {
+        "type": "object", "additionalProperties": false,
+        "description": "Dedicated owner-private durable result with manual-only retention. content is untrusted generated output and never appears in notifications, URLs, logs, telemetry, or lifecycle events.",
+        "required": ["id", "scheduleId", "occurrenceId", "runId", "status", "version", "sourceCompleteness", "content", "createdAt", "updatedAt", "deletedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "scheduleId": { "type": "string", "format": "uuid" },
+          "occurrenceId": { "type": "string", "format": "uuid" },
+          "runId": { "type": ["string", "null"], "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/BriefingResultStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "sourceCompleteness": { "$ref": "#/components/schemas/BriefingSourceCompleteness" },
+          "content": { "type": ["string", "null"], "maxLength": 100000, "description": "Private result text, null for failed, canceled, unknown, or deleted outcomes." },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "deletedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "DeleteBriefingScheduleRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["scope", "expectedVersion"],
+        "properties": {
+          "scope": { "type": "string", "const": "schedule" },
+          "expectedVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "DeleteBriefingHistoryRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["scope", "expectedScheduleVersion"],
+        "properties": {
+          "scope": { "type": "string", "const": "occurrence_history" },
+          "expectedScheduleVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "DeleteBriefingResultRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["scope", "expectedVersion"],
+        "properties": {
+          "scope": { "type": "string", "const": "result_content" },
+          "expectedVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "BriefingDeletionReceipt": {
+        "type": "object", "additionalProperties": false,
+        "description": "Content-free idempotent deletion receipt. Audit truth and unaffected resources remain retained.",
+        "required": ["deletionId", "scope", "scheduleId", "occurrenceId", "resultId", "deletedAt"],
+        "properties": {
+          "deletionId": { "type": "string", "format": "uuid" },
+          "scope": { "$ref": "#/components/schemas/BriefingDeletionScope" },
+          "scheduleId": { "type": "string", "format": "uuid" },
+          "occurrenceId": { "type": ["string", "null"], "format": "uuid" },
+          "resultId": { "type": ["string", "null"], "format": "uuid" },
+          "deletedAt": { "type": "string", "format": "date-time" }
         }
       },
       "DocumentAttachmentReference": {
