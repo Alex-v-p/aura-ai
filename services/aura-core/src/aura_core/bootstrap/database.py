@@ -2,6 +2,7 @@
 
 from sqlalchemy import MetaData
 
+from aura_core.domains.automation.briefings import persistence as briefing_persistence
 from aura_core.domains.automation.notifications import persistence as notification_persistence
 from aura_core.domains.automation.reminders import persistence as reminder_persistence
 from aura_core.domains.automation.reminders import proposals as reminder_proposals
@@ -20,6 +21,7 @@ _MAPPING_MODULES = (
     run_persistence,
     reminder_persistence,
     reminder_proposals,
+    briefing_persistence,
     notification_persistence,
     audit_persistence,
     approval_persistence,

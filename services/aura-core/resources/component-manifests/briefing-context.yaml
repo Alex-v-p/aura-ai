@@ -1,0 +1,40 @@
+component:
+  id: aura.execution.briefing_context
+  version: 1.0.0
+  owner: execution.briefings
+  category: application
+input:
+  schema: aura-briefing-context-request-v1
+  replayable: true
+  replay_reason: Context assembly replays only controlled synthetic calendar, reminder, and document snapshots.
+output:
+  schema: aura-briefing-context-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - aura.integration.calendar_retrieval
+  - aura.automation.reminders
+  - aura.knowledge.documents
+  - aura.runtime.prompting
+metrics:
+  - briefing_context_assembly_duration_ms
+  - briefing_outcome_count
+metric_semantics:
+  briefing_context_assembly_duration_ms: Active duration of bounded public source queries and closed evidence serialization.
+  briefing_outcome_count: Count of complete, partial, unavailable, or error source-assembly outcomes.
+capture_policy: metadata_only
+evaluators:
+  - briefing.source-completeness.v1
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, status]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, schedule_id, occurrence_id, source_kind, source_count, correlation_id, causation_id]
+  prohibited: [content, prompt, response, payload, token, credential, owner_identity, owner_subject, event_title, document_text, source_value, raw_error, url]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

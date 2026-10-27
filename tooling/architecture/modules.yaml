@@ -745,6 +745,23 @@ modules:
   - aura-core.domains.governance.identity.public
   - aura-core.platform.database.base
   - aura-core.platform.telemetry
+- id: aura-core.domains.automation.briefings
+  root: services/aura-core/src/aura_core/domains/automation/briefings
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  python_modules:
+  - aura_core.domains.automation.briefings
+  dependencies:
+  - aura-core.platform.outbox
+  - aura-core.domains.governance.identity.public
+  - aura-core.platform.database.base
+  - aura-core.platform.telemetry
+  - aura-core.domains.integrations.calendar.public
+  - aura-core.domains.automation.reminders
+  - aura-core.domains.knowledge.documents.public
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.automation.notifications
+  - aura-core.domains.interaction.agents.public
 - id: aura-core.domains.automation.reminders.proposals
   root: services/aura-core/src/aura_core/domains/automation/reminders/proposals.py
   kind: python
@@ -819,7 +836,8 @@ modules:
   public_api: services/aura-core/src/aura_core/domains/automation/__init__.py
   python_modules:
   - aura_core.domains.automation
-  dependencies: []
+  dependencies:
+  - aura-core.domains.automation.briefings
 - id: aura-core.entrypoints
   root: services/aura-core/src/aura_core/entrypoints
   kind: package
@@ -1147,6 +1165,7 @@ modules:
   source_files:
   - services/aura-core/src/aura_core/entrypoints/api/routes/__init__.py
   dependencies:
+  - aura-core.entrypoints.api.routes.briefings
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.public
   - aura-core.domains.governance.identity.application
@@ -1191,11 +1210,14 @@ modules:
   - services/aura-core/src/aura_core/entrypoints/scheduler/__init__.py
   - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
   dependencies:
+  - aura-core.bootstrap.briefing-uow
   - aura-core.bootstrap.reminder_uow
   - aura-core.bootstrap.notification_uow
+  - aura-core.domains.automation.briefings
   - aura-core.domains.automation.reminders
   - aura-core.platform.auth
   - aura-core.platform.database.engine
+  - aura-core.platform.outbox
   - aura-core.platform.telemetry
 - id: aura-core.platform.database
   root: services/aura-core/src/aura_core/platform/database
@@ -1222,6 +1244,7 @@ modules:
   - aura-core.platform.outbox.persistence
   - aura-core.platform.outbox.repository
   - aura-core.platform.outbox.service
+  - aura-core.platform.outbox.nats
 - id: aura-core.providers.models.ollama
   root: services/aura-core/src/aura_core/providers/models/ollama
   kind: package
@@ -1310,6 +1333,7 @@ modules:
   - aura_core.bootstrap.database
   dependencies:
   - aura-core.domains.artifacts.attachments.ports
+  - aura-core.domains.automation.briefings
   - aura-core.domains.automation.reminders.proposals
   - aura-core.domains.governance.approvals
   - aura-core.domains.automation.reminders
@@ -1333,6 +1357,16 @@ modules:
   - aura-core.platform.database.base
   - aura-core.platform.outbox
   - aura-core.platform.outbox.persistence
+- id: aura-core.bootstrap.briefing-uow
+  root: services/aura-core/src/aura_core/bootstrap/briefing_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/briefing_uow.py
+  python_modules:
+  - aura_core.bootstrap.briefing_uow
+  dependencies:
+  - aura-core.domains.automation.briefings
+  - aura-core.platform.outbox
+  - aura-core.platform.telemetry
 - id: aura-core.bootstrap.calendar-uow
   root: services/aura-core/src/aura_core/bootstrap/calendar_uow.py
   kind: python
@@ -1879,6 +1913,7 @@ modules:
   - aura-core.entrypoints.api.routes.attachments
   - aura-core.entrypoints.api.routes.auth
   - aura-core.entrypoints.api.routes.approvals
+  - aura-core.entrypoints.api.routes.briefings
   - aura-core.entrypoints.api.routes.calendar
   - aura-core.entrypoints.api.routes.conversations
   - aura-core.entrypoints.api.routes.documents
@@ -1900,6 +1935,17 @@ modules:
   python_modules:
   - aura_core.entrypoints.api.errors
   dependencies: []
+- id: aura-core.entrypoints.api.routes.briefings
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.briefings
+  dependencies:
+  - aura-core.domains.automation.briefings
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
 - id: aura-core.entrypoints.api.routes.auth
   root: services/aura-core/src/aura_core/entrypoints/api/routes/auth.py
   kind: python
@@ -2037,6 +2083,7 @@ modules:
   python_modules:
   - aura_core.entrypoints.api.state
   dependencies:
+  - aura-core.bootstrap.briefing-uow
   - aura-core.bootstrap.approval-uow
   - aura-core.bootstrap.attachment-uow
   - aura-core.bootstrap.calendar-uow
@@ -2048,6 +2095,7 @@ modules:
   - aura-core.bootstrap.notification_uow
   - aura-core.bootstrap.reminder_uow
   - aura-core.bootstrap.document-uow
+  - aura-core.domains.automation.briefings
   - aura-core.domains.automation.notifications
   - aura-core.domains.automation.reminders
   - aura-core.domains.execution.runs.public
@@ -2157,13 +2205,17 @@ modules:
   python_modules:
   - aura_core.entrypoints.worker.app
   dependencies:
+  - aura-core.domains.automation.briefings
+  - aura-core.bootstrap.briefing-uow
   - aura-core.bootstrap.approval-uow
   - aura-core.bootstrap
   - aura-core.bootstrap.conversation-uow
+  - aura-core.bootstrap.calendar-uow
   - aura-core.bootstrap.memory-uow
   - aura-core.bootstrap.reminder_uow
   - aura-core.bootstrap.document-uow
   - aura-core.bootstrap.attachment-uow
+  - aura-core.bootstrap.notification_uow
   - aura-core.domains.execution.runs.events
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.execution.runs.public

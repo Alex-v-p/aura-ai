@@ -63,6 +63,12 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.automation.reminder_management": "1.2.0",
     "aura.automation.reminder_scheduler": "1.1.0",
     "aura.automation.notification_delivery": "1.1.0",
+    "aura.automation.briefing_scheduler": "1.0.0",
+    "aura.execution.briefing_admission": "1.0.0",
+    "aura.execution.briefing_context": "1.0.0",
+    "aura.automation.briefing_persistence": "1.0.0",
+    "aura.automation.briefing_cancellation": "1.0.0",
+    "aura.automation.briefing_delivery": "1.0.0",
     "aura.governance.approval_workflow": "1.1.0",
     "aura.evaluation.runner": "1.0.0",
     "aura.integration.calendar_connection": "1.0.0",
@@ -129,6 +135,9 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "conversation_regeneration_outcome",
             "consumer_acknowledged",
             "consumer_received",
+            "consumer_nacked",
+            "consumer_rejected",
+            "consumer_redelivered",
             "errors",
             "lease_expired",
             "outbox_dispatched",
@@ -260,6 +269,39 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "notification_sse_replay_duration_ms",
             "notification_acknowledgement_duration_ms",
         }
+    ),
+    "aura.automation.briefing_scheduler": frozenset(
+        {
+            "briefing_schedule_lag_ms",
+            "briefing_schedule_claim_duration_ms",
+            "briefing_outcome_count",
+            "consumer_received",
+            "consumer_acknowledged",
+            "consumer_nacked",
+            "consumer_rejected",
+            "consumer_redelivered",
+            "outbox_duplicates",
+            "errors",
+        }
+    ),
+    "aura.execution.briefing_admission": frozenset(
+        {
+            "briefing_admission_duration_ms",
+            "briefing_outcome_count",
+            "briefing_budget_exhaustion_count",
+        }
+    ),
+    "aura.execution.briefing_context": frozenset(
+        {"briefing_context_assembly_duration_ms", "briefing_outcome_count"}
+    ),
+    "aura.automation.briefing_persistence": frozenset(
+        {"briefing_result_persistence_duration_ms", "briefing_outcome_count"}
+    ),
+    "aura.automation.briefing_cancellation": frozenset(
+        {"briefing_cancellation_duration_ms", "briefing_outcome_count"}
+    ),
+    "aura.automation.briefing_delivery": frozenset(
+        {"briefing_delivery_duration_ms", "briefing_outcome_count"}
     ),
     "aura.governance.approval_workflow": frozenset(
         {
@@ -595,6 +637,14 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.automation.notification_delivery": frozenset(
         {"notification.sse.connect", "notification.sse.replay", "notification.acknowledge"}
     ),
+    "aura.automation.briefing_scheduler": frozenset(
+        {"briefing.schedule.scan", "briefing.schedule.claim"}
+    ),
+    "aura.execution.briefing_admission": frozenset({"briefing.admission"}),
+    "aura.execution.briefing_context": frozenset({"briefing.context.assemble"}),
+    "aura.automation.briefing_persistence": frozenset({"briefing.result.persist"}),
+    "aura.automation.briefing_cancellation": frozenset({"briefing.cancel"}),
+    "aura.automation.briefing_delivery": frozenset({"briefing.delivery"}),
     "aura.governance.approval_workflow": frozenset(
         {
             "approval.create",
@@ -701,6 +751,12 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.automation.reminder_management": "reminder_command_duration_ms",
     "aura.automation.reminder_scheduler": "reminder_scheduler_scan_duration_ms",
     "aura.automation.notification_delivery": "notification_sse_duration_ms",
+    "aura.automation.briefing_scheduler": "briefing_schedule_claim_duration_ms",
+    "aura.execution.briefing_admission": "briefing_admission_duration_ms",
+    "aura.execution.briefing_context": "briefing_context_assembly_duration_ms",
+    "aura.automation.briefing_persistence": "briefing_result_persistence_duration_ms",
+    "aura.automation.briefing_cancellation": "briefing_cancellation_duration_ms",
+    "aura.automation.briefing_delivery": "briefing_delivery_duration_ms",
     "aura.governance.approval_workflow": "approval_decision_duration_ms",
     "aura.knowledge.memory_extraction": "operation_duration_ms",
     "aura.knowledge.memory_maintenance": "operation_duration_ms",
@@ -794,6 +850,31 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
         "aura.automation.notification_delivery",
         "notification.acknowledge",
     ): "notification_acknowledgement_duration_ms",
+    (
+        "aura.automation.briefing_scheduler",
+        "briefing.schedule.scan",
+    ): "briefing_schedule_claim_duration_ms",
+    (
+        "aura.automation.briefing_scheduler",
+        "briefing.schedule.claim",
+    ): "briefing_schedule_claim_duration_ms",
+    ("aura.execution.briefing_admission", "briefing.admission"): "briefing_admission_duration_ms",
+    (
+        "aura.execution.briefing_context",
+        "briefing.context.assemble",
+    ): "briefing_context_assembly_duration_ms",
+    (
+        "aura.automation.briefing_persistence",
+        "briefing.result.persist",
+    ): "briefing_result_persistence_duration_ms",
+    (
+        "aura.automation.briefing_cancellation",
+        "briefing.cancel",
+    ): "briefing_cancellation_duration_ms",
+    (
+        "aura.automation.briefing_delivery",
+        "briefing.delivery",
+    ): "briefing_delivery_duration_ms",
     ("aura.governance.approval_workflow", "approval.sse.connect"): "approval_sse_duration_ms",
     ("aura.governance.approval_workflow", "approval.sse.replay"): "approval_sse_replay_duration_ms",
     ("aura.governance.approval_workflow", "approval.resume"): "approval_resume_duration_ms",
@@ -936,6 +1017,9 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "document_id",
         "attachment_id",
         "evidence_id",
+        "briefing_schedule_id",
+        "briefing_occurrence_id",
+        "briefing_result_id",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
@@ -975,6 +1059,9 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "document_id",
         "attachment_id",
         "evidence_id",
+        "briefing_schedule_id",
+        "briefing_occurrence_id",
+        "briefing_result_id",
     }
 )
 _COUNT_TRACE_ATTRIBUTES = frozenset(

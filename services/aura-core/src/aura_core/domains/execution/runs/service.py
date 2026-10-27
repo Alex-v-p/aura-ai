@@ -13,6 +13,7 @@ import re
 import secrets
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
 from datetime import UTC, datetime
 from time import monotonic, perf_counter
 from typing import cast
@@ -129,6 +130,8 @@ class RunCoordinator:
         attachment_resolver: AttachmentResolutionPort | None = None,
         thinking_publisher: ThinkingDeltaPublisher | None = None,
         run_evidence: RunEvidencePort | None = None,
+        briefing_provider: ChatCompletionPort | None = None,
+        briefing_cancellation: Callable[[object], Awaitable[None]] | None = None,
     ) -> None:
         self.store = store
         self.publisher = publisher
@@ -150,6 +153,17 @@ class RunCoordinator:
         self.attachment_resolver = attachment_resolver
         self.thinking_publisher = thinking_publisher
         self.run_evidence = run_evidence
+        # Scheduled briefings use this same provider-neutral coordinator seam,
+        # but their durable lineage/result repository remains briefing-owned.
+        # Composition may attach the provider after constructing the shared
+        # coordinator; no briefing code receives the provider directly.
+        self.briefing_provider = briefing_provider
+        # Retained only for source compatibility with an older composition
+        # call site.  It is deliberately never invoked: briefing cancellation
+        # is an in-flight, coordinator-owned signal and durable settlement is
+        # performed by the briefing repository owner.
+        self.briefing_cancellation = briefing_cancellation
+        self._briefing_cancellations: dict[UUID, asyncio.Event] = {}
         self._thinking_offsets: dict[UUID, int] = {}
         self._thinking_offset_expiry: dict[UUID, float] = {}
         # Keep in-flight metadata long enough for an outer run timeout to
@@ -413,6 +427,181 @@ class RunCoordinator:
         except Exception:
             self._error(run, "queue")
             raise
+
+    def set_briefing_provider(self, provider: ChatCompletionPort) -> None:
+        """Attach the composition-owned provider for scheduled briefings."""
+
+        self.briefing_provider = provider
+
+    def execute_briefing(
+        self,
+        request: object,
+        messages: Sequence[ChatMessage],
+        *,
+        deadline_monotonic: float,
+        cancelled: Callable[[], bool] | None,
+        max_output_tokens: int,
+    ) -> AsyncIterator[object]:
+        """Stream a briefing through the existing coordinator boundary.
+
+        This additive seam intentionally does not create a conversation ``Run``
+        or read conversation persistence. The briefing execution service owns
+        its stable occurrence/run lineage and terminal settlement while the
+        coordinator owns provider access and the cancellation/deadline guard.
+        """
+
+        provider = self.briefing_provider
+        if provider is None:
+            raise RunExecutionFailure("briefing provider is unavailable")
+        model_id = getattr(request, "model_id", None)
+        if not isinstance(model_id, str) or not model_id:
+            raise RunExecutionFailure("briefing model selection is unavailable")
+        lineage = getattr(request, "lineage", None)
+        schedule_id = getattr(lineage, "schedule_id", None)
+        occurrence_id = getattr(lineage, "occurrence_id", None)
+        run_id = getattr(lineage, "run_id", None)
+        if (
+            not isinstance(schedule_id, UUID)
+            or not isinstance(occurrence_id, UUID)
+            or not isinstance(run_id, UUID)
+        ):
+            raise RunExecutionFailure("briefing run lineage is unavailable")
+        # Providers may expose the additive bounded briefing stream. Legacy
+        # providers remain behind the generic public port and are guarded by
+        # the deterministic fallback budget below.
+        briefing_stream = getattr(provider, "stream_briefing", None)
+        if callable(briefing_stream):
+            try:
+                stream = briefing_stream(
+                    model_id,
+                    messages,
+                    max_output_tokens=max_output_tokens,
+                )
+            except TypeError:
+                stream = self._stream_chat(provider, model_id, messages)
+        else:
+            stream = self._stream_chat(provider, model_id, messages)
+        # The generic Ollama-compatible stream has no token-budget argument.
+        # UTF-8 bytes provide a conservative upper bound for token
+        # consumption even when a chunk is dense Unicode; retain the
+        # character ceiling as a second deterministic guard.
+        fallback_output_char_limit = max(1, min(max_output_tokens * 4, 65_536))
+        fallback_output_byte_limit = max(1, max_output_tokens)
+        cancellation = asyncio.Event()
+        if run_id in self._briefing_cancellations:
+            raise RunExecutionFailure("briefing run is already active")
+        self._briefing_cancellations[run_id] = cancellation
+        context = getattr(request, "context", None)
+        trace_id = getattr(context, "trace_id", None) or run_id.hex
+        parent_span_id = getattr(context, "span_id", None)
+        coordinator_span_id = secrets.token_hex(8)
+        started = perf_counter()
+
+        async def guarded() -> AsyncIterator[object]:
+            outcome = "error"
+            error_class: str | None = None
+            output_size = 0
+            output_bytes = 0
+            try:
+                iterator = stream.__aiter__()
+                while True:
+                    if cancellation.is_set() or (cancelled is not None and cancelled()):
+                        raise asyncio.CancelledError
+                    remaining = deadline_monotonic - monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("briefing timeout")
+                    async def next_item() -> object:
+                        return await iterator.__anext__()
+
+                    next_chunk = asyncio.create_task(next_item())
+                    cancel_wait = asyncio.create_task(cancellation.wait())
+                    done, _ = await asyncio.wait(
+                        (next_chunk, cancel_wait),
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if not done:
+                        next_chunk.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await next_chunk
+                        cancel_wait.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await cancel_wait
+                        raise TimeoutError("briefing timeout")
+                    if cancel_wait in done and cancellation.is_set():
+                        next_chunk.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await next_chunk
+                        raise asyncio.CancelledError
+                    cancel_wait.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await cancel_wait
+                    try:
+                        chunk = next_chunk.result()
+                    except StopAsyncIteration:
+                        break
+                    if cancelled is not None and cancelled():
+                        raise asyncio.CancelledError
+                    if isinstance(chunk, str):
+                        output_size += len(chunk)
+                        output_bytes += len(chunk.encode("utf-8"))
+                        if (
+                            output_size > fallback_output_char_limit
+                            or output_bytes > fallback_output_byte_limit
+                        ):
+                            self.metrics.increment(
+                                "aura.execution.briefing_admission",
+                                "briefing_budget_exhaustion_count",
+                                outcome="failed",
+                            )
+                            raise RunExecutionFailure("briefing output budget exceeded")
+                    yield chunk
+                outcome = "ok"
+            except asyncio.CancelledError:
+                outcome, error_class = "canceled", "cancellation"
+                raise
+            except TimeoutError:
+                outcome, error_class = "timeout", "timeout"
+                raise
+            except Exception:
+                outcome, error_class = "error", "execution"
+                raise
+            finally:
+                try:
+                    self.metrics.record_span(
+                        "aura.execution.run_coordinator",
+                        "run.execute",
+                        (perf_counter() - started) * 1000,
+                        trace_id=trace_id,
+                        span_id=coordinator_span_id,
+                        parent_span_id=parent_span_id,
+                        dependency="model_provider",
+                        outcome=outcome,
+                        error_class=error_class,
+                        run_id=str(run_id),
+                    )
+                except Exception:
+                    pass
+                if self._briefing_cancellations.get(run_id) is cancellation:
+                    self._briefing_cancellations.pop(run_id, None)
+
+        return guarded()
+
+    async def cancel_briefing(self, lineage: object) -> None:
+        """Signal one active briefing stream without touching conversation state."""
+
+        schedule_id = getattr(lineage, "schedule_id", None)
+        occurrence_id = getattr(lineage, "occurrence_id", None)
+        run_id = getattr(lineage, "run_id", None)
+        if (
+            not isinstance(schedule_id, UUID)
+            or not isinstance(occurrence_id, UUID)
+            or not isinstance(run_id, UUID)
+        ):
+            raise RunExecutionFailure("briefing run lineage is unavailable")
+        cancellation = self._briefing_cancellations.get(run_id)
+        if cancellation is not None:
+            cancellation.set()
 
     @staticmethod
     def _provider_messages(context: list[tuple[str, str]]) -> list[ChatMessage]:

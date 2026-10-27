@@ -1,0 +1,71 @@
+agent: platform_worker
+work_item: AURA-0133
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: repository.module-registry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - tooling/architecture/modules.yaml
+  - services/aura-core/resources/component-manifests/briefing-scheduler.yaml
+  - services/aura-core/resources/component-manifests/briefing-admission.yaml
+  - services/aura-core/resources/component-manifests/briefing-context.yaml
+  - services/aura-core/resources/component-manifests/briefing-persistence.yaml
+  - services/aura-core/resources/component-manifests/briefing-cancellation.yaml
+  - services/aura-core/resources/component-manifests/briefing-delivery.yaml
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/outbox/service.py
+  - services/aura-core/tests/test_aura0133_outbox.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.automation.briefing_scheduler@1.0.0
+    - aura.execution.briefing_admission@1.0.0
+    - aura.execution.briefing_context@1.0.0
+    - aura.automation.briefing_persistence@1.0.0
+    - aura.automation.briefing_cancellation@1.0.0
+    - aura.automation.briefing_delivery@1.0.0
+  metrics_added:
+    - briefing_schedule_lag_ms
+    - briefing_schedule_claim_duration_ms
+    - briefing_admission_duration_ms
+    - briefing_context_assembly_duration_ms
+    - briefing_result_persistence_duration_ms
+    - briefing_cancellation_duration_ms
+    - briefing_delivery_duration_ms
+    - briefing_outcome_count
+    - briefing_budget_exhaustion_count
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0133.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0133.yaml
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0133.yaml
+    - python3 -m unittest tooling.architecture.tests.test_modules tooling.architecture.tests.test_observability -v
+    - git diff --check
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/platform/outbox/nats.py services/aura-core/src/aura_core/platform/outbox/service.py services/aura-core/src/aura_core/platform/outbox/repository.py services/aura-core/tests/test_aura0133_outbox.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/platform/outbox/nats.py services/aura-core/src/aura_core/platform/outbox/service.py services/aura-core/src/aura_core/platform/outbox/repository.py services/aura-core/tests/test_aura0133_outbox.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_outbox.py services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_scheduler.py services/aura-core/tests/test_aura0133_observability.py -q
+  failed: []
+  not_run:
+    - product and integration checks owned by Core and evaluation workers
+decisions:
+  - Registered aura-core.domains.automation.briefings as a Core package rooted at the runtime worker's public.py package boundary.
+  - Declared the six new briefing component manifests at version 1.0.0; the existing aura.execution.run_coordinator@1.9.0 remains the seventh affected component and was not modified.
+  - Kept all briefing capture metadata-only with bounded metric dimensions and identifier trace-only attributes; content, owner identity, source values, credentials, and raw errors are prohibited.
+  - Registered the briefing bootstrap UOW and API route as their exact module owners, and declared briefing dependencies for Core bootstrap, API state/assembly, scheduler, worker, domain package, and outbox-to-NATS relative imports.
+  - Added the final scheduler and worker composition dependencies for briefing UOW, calendar UOW, notification UOW, and scheduler outbox access after runtime composition imports were enabled.
+  - Declared the briefing UOW dependency on the public transactional outbox module; existing run-coordinator component ownership remains unchanged.
+  - Added a separate exact parser branch for the existing briefing lifecycle event subject. It rehydrates only the closed v1 metadata payload and NATS republishes that payload unchanged; generic identifier-only wake envelopes remain on the existing parser and subject.
+  - Registered the canonical briefing policy import dependency on aura-core.domains.interaction.agents.public.
+risks:
+  - The existing run-coordinator manifest remains the authoritative 1.9.0 manifest; briefing.execution.v1 is declared on the briefing admission boundary as the additive briefing execution evaluator without changing the existing component ownership.
+unresolved: []

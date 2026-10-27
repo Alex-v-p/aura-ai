@@ -1,0 +1,41 @@
+component:
+  id: aura.automation.briefing_delivery
+  version: 1.0.0
+  owner: automation.briefings
+  category: delivery
+input:
+  schema: aura-briefing-delivery-command-v1
+  replayable: true
+  replay_reason: Settled briefing metadata and notification idempotency keys are durable across transport redelivery.
+output:
+  schema: aura-notification-events-v1
+  additional_schemas:
+    - contracts/events/automation/v1/notification-events.schema.json
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - transactional_outbox
+  - aura.automation.notification_delivery
+metrics:
+  - briefing_delivery_duration_ms
+  - briefing_outcome_count
+metric_semantics:
+  briefing_delivery_duration_ms: Active duration of the owner-private notification command and durable delivery result.
+  briefing_outcome_count: Count of delivered, duplicate-prevented, rejected, or error outcomes.
+capture_policy: metadata_only
+evaluators:
+  - briefing.delivery.v1
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, status]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, schedule_id, occurrence_id, result_id, notification_id, command_id, correlation_id, causation_id, event_type, event_status, event_version]
+  prohibited: [content, prompt, response, payload, token, credential, owner_identity, owner_subject, result_content, raw_error, url]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

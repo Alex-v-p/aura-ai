@@ -10,11 +10,22 @@ from uuid import UUID
 from aura_core.bootstrap import calendar_uow, memory_uow
 from aura_core.bootstrap.approval_uow import approval_repository, approval_service
 from aura_core.bootstrap.attachment_uow import attachment_service
+from aura_core.bootstrap.briefing_uow import briefing_repository, briefing_service
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
 from aura_core.bootstrap.document_uow import SqlDocumentCommandSink, document_service
 from aura_core.bootstrap.health import ReadinessService
 from aura_core.bootstrap.notification_uow import notification_repository, notification_service
 from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
+from aura_core.domains.automation.briefings.application import BriefingRunStateAdapter
+from aura_core.domains.automation.briefings.execution import (
+    BriefingRunCancellationAdapter,
+    PublicBriefingRunRepository,
+    RunCoordinatorBriefingAdapter,
+)
+from aura_core.domains.automation.briefings.public import (
+    BriefingApplicationService,
+    BriefingRepository,
+)
 from aura_core.domains.automation.notifications.public import (
     NOTIFICATION_COMPONENT,
     NOTIFICATION_TOPIC,
@@ -263,6 +274,8 @@ class AppState:
         self.reminder_service: ReminderApplicationService
         self.notification_repository: NotificationRepository
         self.notification_service: NotificationApplicationService
+        self.briefing_repository: BriefingRepository
+        self.briefing_service: BriefingApplicationService
         self.approval_repository: ApprovalRepository
         self.approval_service: ApprovalApplicationService
         self.calendar_service: Any
@@ -312,6 +325,8 @@ class AppState:
                 metrics=self.metrics,
             )
             self.notification_service = notification_service(self.notification_repository)
+            self.briefing_repository = briefing_repository(None, testing=True, metrics=self.metrics)
+            self.briefing_service = briefing_service(self.briefing_repository)
             self.approval_repository = approval_repository(None, testing=True, metrics=self.metrics)
             self.approval_service = approval_service(
                 self.approval_repository,
@@ -429,6 +444,10 @@ class AppState:
                 metrics=self.metrics,
             )
             self.notification_service = notification_service(self.notification_repository)
+            self.briefing_repository = briefing_repository(
+                self.sessions_factory, metrics=self.metrics
+            )
+            self.briefing_service = briefing_service(self.briefing_repository)
             self.approval_repository = approval_repository(
                 self.sessions_factory, metrics=self.metrics, execution_port=self.store
             )
@@ -545,6 +564,18 @@ class AppState:
             attachment_resolver=self.store,
             thinking_publisher=thinking_publisher,
             run_evidence=self.run_evidence,
+        )
+        # Schedule deletion uses the briefing-owned typed cancellation seam.
+        # The adapter requests cancellation through the public coordinator
+        # boundary and delegates durable settlement to the briefing state
+        # repository; it never targets a generic conversation Run.
+        briefing_state = BriefingRunStateAdapter(self.briefing_service)
+        briefing_repository_port = PublicBriefingRunRepository(briefing_state)
+        self.briefing_service.set_cancellation_port(
+            BriefingRunCancellationAdapter(
+                RunCoordinatorBriefingAdapter(self.coordinator),
+                briefing_repository_port,
+            )
         )
 
     async def startup(self) -> None:

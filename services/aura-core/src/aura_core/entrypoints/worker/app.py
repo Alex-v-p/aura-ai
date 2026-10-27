@@ -14,6 +14,21 @@ from typing import Any, Protocol, cast
 from uuid import UUID, uuid4, uuid5
 
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
+from aura_core.domains.automation.briefings.application import (
+    BriefingExecutionApplication,
+    BriefingRunStateAdapter,
+)
+from aura_core.domains.automation.briefings.execution import (
+    BriefingRunCancellationAdapter,
+    PublicBriefingRunRepository,
+    RunCoordinatorBriefingAdapter,
+)
+from aura_core.domains.automation.briefings.recovery import BriefingRecovery
+from aura_core.domains.automation.briefings.worker import (
+    BriefingWorker,
+    BriefingWorkerApplication,
+)
+from aura_core.domains.automation.briefings.worker import run_once as run_briefing_once_impl
 from aura_core.domains.execution.runs.events import RunEvent
 from aura_core.domains.execution.runs.ports import RunEventPort
 from aura_core.domains.execution.runs.public import (
@@ -52,11 +67,18 @@ from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.outbox import (
     APPROVAL_EVENT_TOPIC,
     ATTACHMENT_EVENT_TOPIC,
+    BRIEFING_EVENT_SUBJECT,
+    BRIEFING_WAKE_SUBJECT,
     RUN_RESUME_TOPIC,
     OutboxCommand,
     TransactionalOutboxTransport,
 )
-from aura_core.platform.outbox.nats import NatsIdentifierConsumer, NatsOutbox, NatsRunConsumer
+from aura_core.platform.outbox.nats import (
+    NatsBriefingConsumer,
+    NatsIdentifierConsumer,
+    NatsOutbox,
+    NatsRunConsumer,
+)
 from aura_core.platform.run_evidence import (
     BoundedRunEvidenceRecorder,
     JetStreamRunEvidencePublisher,
@@ -97,6 +119,34 @@ async def run_document_once(worker: DocumentWorker, consumer: object) -> None:
     await _run_document_once(worker, consumer)
 
 
+async def run_briefing_once(
+    worker: BriefingWorker, consumer: NatsIdentifierConsumer
+) -> object | None:
+    """Expose the briefing identifier-only dispatch seam for Core workers."""
+
+    return await run_briefing_once_impl(worker, consumer)
+
+
+async def run_briefing_loop(worker: BriefingWorker, consumer: NatsBriefingConsumer) -> None:
+    """Keep the durable briefing consumer alive until worker shutdown."""
+
+    while True:
+        await run_briefing_once(worker, consumer)
+
+
+async def run_briefing_recovery(recovery: BriefingRecovery) -> None:
+    """Reconcile bounded stale claims without owning schedule policy."""
+
+    while True:
+        try:
+            await recovery.recover_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        await asyncio.sleep(60.0)
+
+
 class MemoryJobProcessor(Protocol):
     async def process_command(self, command: MemoryProcessingCommand) -> object: ...
 
@@ -134,7 +184,7 @@ async def run_memory_once(
 
     try:
         command = await consumer.receive()
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         # A malformed generic envelope is a poison delivery.  Terminate it
         # explicitly rather than letting an unbounded retry loop consume the
         # memory worker.
@@ -152,7 +202,7 @@ async def run_memory_once(
         # generic command identity for Core's durable job checks.
         memory_command = MemoryProcessingCommand.from_payload(command.payload())
         _verify_memory_trace_links(command, memory_command)
-    except (MemoryValidationError, TypeError, ValueError):
+    except MemoryValidationError, TypeError, ValueError:
         await consumer.reject(error_class="validation")
         return
     context = _memory_context(memory_command)
@@ -205,7 +255,7 @@ async def run_resume_once(
 
     try:
         command = await consumer.receive()
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         await consumer.reject(error_class="validation")
         return
     if command is None:
@@ -217,7 +267,7 @@ async def run_resume_once(
         if event_id is None:
             raise ValueError("resume command is missing eventId")
         await handler(UUID(event_id))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         await consumer.reject(error_class="validation")
         return
     except Exception:
@@ -324,8 +374,10 @@ async def emit_memory_activity(
     # the command path returns a settlement wrapper.  Accept only the
     # candidate's stable public shape here; never serialize an arbitrary
     # provider/result object.
-    if candidate is None and result is not None and all(
-        hasattr(result, attribute) for attribute in ("action", "state")
+    if (
+        candidate is None
+        and result is not None
+        and all(hasattr(result, attribute) for attribute in ("action", "state"))
     ):
         candidate = result
     candidate_action = getattr(getattr(candidate, "action", None), "value", None)
@@ -363,9 +415,7 @@ async def emit_memory_activity(
     candidate_id = getattr(candidate, "id", None)
     memory_id = getattr(candidate, "memory_id", None)
     revision_id = getattr(result, "revision_id", None) if result is not None else None
-    policy_revision_id = (
-        getattr(result, "policy_revision_id", None) if result is not None else None
-    )
+    policy_revision_id = getattr(result, "policy_revision_id", None) if result is not None else None
     embedding_generation_id = (
         getattr(result, "embedding_generation_id", None) if result is not None else None
     )
@@ -652,10 +702,11 @@ async def _resume_approval(
             raise RuntimeError("approval resume lease is still active")
         await coordinator.execute(run_id, provider)
         _conversation, after = await store.find_run_any(run_id)
-        if (
-            after.status.value == "running"
-            and after.tool_lifecycle_status in {"approved", "denied", "executing"}
-        ):
+        if after.status.value == "running" and after.tool_lifecycle_status in {
+            "approved",
+            "denied",
+            "executing",
+        }:
             raise RuntimeError("approval resume remains in progress")
 
     async def reconcile_completed() -> bool:
@@ -668,10 +719,11 @@ async def _resume_approval(
         _conversation, current_run = await store.find_run_any(run_id)
         if current_run.status.value == "completed" and await reconcile_completed():
             return
-        if (
-            current_run.status.value == "running"
-            and current_run.tool_lifecycle_status in {"approved", "denied", "executing"}
-        ):
+        if current_run.status.value == "running" and current_run.tool_lifecycle_status in {
+            "approved",
+            "denied",
+            "executing",
+        }:
             # A redelivery can arrive after the tool marked the run executing
             # but before its lease was recovered. Let start_run reclaim the
             # expired lease and replay the idempotent mutation.
@@ -682,10 +734,11 @@ async def _resume_approval(
         _conversation, current_run = await store.find_run_any(run_id)
         if current_run.status.value == "completed" and await reconcile_completed():
             return
-        if (
-            current_run.status.value == "running"
-            and current_run.tool_lifecycle_status in {"approved", "denied", "executing"}
-        ):
+        if current_run.status.value == "running" and current_run.tool_lifecycle_status in {
+            "approved",
+            "denied",
+            "executing",
+        }:
             await execute_recoverable()
             return
         metrics.record_span(
@@ -805,10 +858,29 @@ async def run_forever(settings: Settings | None = None) -> None:
 
     attachment_service_instance = attachment_service(sessions, settings=config, metrics=metrics)
     store.set_attachment_services(attachment_service_instance, None)
+    from aura_core.bootstrap import calendar_uow
     from aura_core.bootstrap.approval_uow import approval_repository, approval_service
+    from aura_core.bootstrap.briefing_uow import briefing_repository, briefing_service
+    from aura_core.bootstrap.notification_uow import notification_repository, notification_service
     from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
+
     reminder_repository_instance = reminder_repository(sessions, metrics=metrics)
     reminder_service_instance = reminder_service(reminder_repository_instance)
+    briefing_repository_instance = briefing_repository(sessions, metrics=metrics)
+    briefing_service_instance = briefing_service(briefing_repository_instance)
+    import redis.asyncio
+
+    redis_module: Any = redis.asyncio
+    calendar_client = redis_module.from_url(config.valkey_url, decode_responses=True)
+    calendar_service_instance = calendar_uow.calendar_service(
+        sessions,
+        settings=config,
+        metrics=metrics,
+        transient_client=calendar_client,
+    )
+    notification_service_instance = notification_service(
+        notification_repository(sessions, metrics=metrics)
+    )
     approval_repository_instance = approval_repository(
         sessions, metrics=metrics, execution_port=store
     )
@@ -866,6 +938,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         durable="aura-core-document-delete-worker",
         component="aura.knowledge.document_deletion",
     )
+    briefing_consumer = NatsBriefingConsumer(config.nats_url, metrics=metrics)
     event_transport = NatsOutbox(
         config.nats_url,
         additional_subjects=(
@@ -876,6 +949,8 @@ async def run_forever(settings: Settings | None = None) -> None:
             document_delete_topic,
             document_event_topic,
             ATTACHMENT_EVENT_TOPIC,
+            BRIEFING_EVENT_SUBJECT,
+            BRIEFING_WAKE_SUBJECT,
         ),
         metrics=metrics,
     )
@@ -891,7 +966,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             )
             if callable(getattr(candidate, "process_command", None)):
                 memory_processor = cast(MemoryJobProcessor, candidate)
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         # The composition root remains importable while a deployment is
         # running an older Core module; no memory command is acknowledged in
         # that state.
@@ -900,6 +975,8 @@ async def run_forever(settings: Settings | None = None) -> None:
     document_process_task: asyncio.Task[None] | None = None
     document_delete_task: asyncio.Task[None] | None = None
     document_housekeeping_task: asyncio.Task[None] | None = None
+    briefing_task: asyncio.Task[None] | None = None
+    briefing_recovery_task: asyncio.Task[None] | None = None
     resume_task: asyncio.Task[None] | None = None
     housekeeping_task: asyncio.Task[None] | None = None
     approval_task: asyncio.Task[None] | None = None
@@ -909,6 +986,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         await resume_consumer.connect()
         await document_process_consumer.connect()
         await document_delete_consumer.connect()
+        await briefing_consumer.connect()
         if memory_processor is not None:
             await memory_consumer.connect()
         await event_transport.connect()
@@ -944,9 +1022,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         document_delete_task = asyncio.create_task(
             run_document_loop(document_worker, document_delete_consumer)
         )
-        document_housekeeping_task = asyncio.create_task(
-            run_document_housekeeping(document_worker)
-        )
+        document_housekeeping_task = asyncio.create_task(run_document_housekeeping(document_worker))
         coordinator = RunCoordinator(
             store,
             PersistentEventPublisher(
@@ -968,6 +1044,44 @@ async def run_forever(settings: Settings | None = None) -> None:
             thinking_publisher=event_transport,
             run_evidence=run_evidence,
         )
+        coordinator.set_briefing_provider(provider)
+        briefing_state = BriefingRunStateAdapter(
+            briefing_service_instance,
+            run_evidence=run_evidence,
+        )
+        briefing_execution_application = BriefingExecutionApplication(
+            briefing_service_instance,
+            calendar=calendar_service_instance,
+            reminders=reminder_service_instance,
+            documents=document_worker.service,
+            agent_service=agent_service,
+            coordinator=coordinator,
+            notifications=notification_service_instance,
+            model_id=config.default_model,
+            metrics=metrics,
+            state=briefing_state,
+            run_evidence=run_evidence,
+        )
+        briefing_repository = PublicBriefingRunRepository(briefing_state)
+        briefing_cancellation = BriefingRunCancellationAdapter(
+            RunCoordinatorBriefingAdapter(coordinator), briefing_repository
+        )
+        briefing_service_instance.set_cancellation_port(briefing_cancellation)
+        coordinator.briefing_cancellation = cast(
+            Callable[[object], Awaitable[None]], briefing_execution_application.cancel
+        )
+        briefing_service_instance.set_execution_application(briefing_execution_application)
+        briefing_application = cast(BriefingWorkerApplication, briefing_execution_application)
+        briefing_recovery = BriefingRecovery(
+            briefing_execution_application,
+            briefing_cancellation,
+            metrics=metrics,
+        )
+        briefing_task = asyncio.create_task(
+            run_briefing_loop(BriefingWorker(briefing_application), briefing_consumer)
+        )
+        briefing_recovery_task = asyncio.create_task(run_briefing_recovery(briefing_recovery))
+
         # Approval/resumption wakeups are identifier-only; the worker always
         # reloads owner-authorized state through the governance public port.
         async def resume_wakeup(event_id: UUID) -> None:
@@ -1040,7 +1154,8 @@ async def run_forever(settings: Settings | None = None) -> None:
                 try:
                     if (
                         expired_run.approval_id is not None
-                        and expired_run.tool_lifecycle_status in {
+                        and expired_run.tool_lifecycle_status
+                        in {
                             "approved",
                             "denied",
                             "executing",
@@ -1094,11 +1209,25 @@ async def run_forever(settings: Settings | None = None) -> None:
         if memory_task is not None:
             memory_task.cancel()
             await asyncio.gather(memory_task, return_exceptions=True)
-        for task in (document_process_task, document_delete_task):
+        for task in (
+            document_process_task,
+            document_delete_task,
+            briefing_task,
+            briefing_recovery_task,
+        ):
             if task is not None:
                 task.cancel()
         await asyncio.gather(
-            *(task for task in (document_process_task, document_delete_task) if task is not None),
+            *(
+                task
+                for task in (
+                    document_process_task,
+                    document_delete_task,
+                    briefing_task,
+                    briefing_recovery_task,
+                )
+                if task is not None
+            ),
             return_exceptions=True,
         )
         if document_housekeeping_task is not None:
@@ -1110,11 +1239,15 @@ async def run_forever(settings: Settings | None = None) -> None:
         await memory_consumer.close()
         await document_process_consumer.close()
         await document_delete_consumer.close()
+        await briefing_consumer.close()
         await resume_consumer.close()
         await consumer.close()
         await run_evidence.stop()
         await event_transport.close()
         await telemetry.stop()
+        close_calendar = getattr(calendar_client, "aclose", None)
+        if callable(close_calendar):
+            await cast(Callable[[], Awaitable[object]], close_calendar)()
         await engine.dispose()
 
 
