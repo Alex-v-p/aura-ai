@@ -136,6 +136,7 @@ const calendarStories = [
   'empty-selection',
   'long-titles',
 ] as const;
+const briefingStories = ['management'] as const;
 const applyStoryTheme = (theme: 'light' | 'dark'): void => {
   document.documentElement.dataset['theme'] = theme;
   document.documentElement.style.colorScheme = theme;
@@ -343,6 +344,40 @@ for (const story of managementStories) {
       await applyAndSettleStoryTheme(page, theme);
       const results = await new AxeBuilder({ page }).include('[data-feature-root]').analyze();
       expect(results.violations).toEqual([]);
+    });
+  }
+}
+
+for (const story of briefingStories) {
+  for (const theme of themes) {
+    test(`Briefing Storybook ${story} is accessible in ${theme} theme`, async ({
+      page,
+    }, testInfo) => {
+      test.skip(
+        testInfo.project.name !== 'desktop',
+        'Briefing Storybook axe coverage runs once in the desktop project.',
+      );
+      const assertNoRuntimeErrors = watchRuntimeErrors(page);
+      await page.goto(
+        `${storybookBaseUrl}/iframe.html?id=aura-automate-briefings--${story}&viewMode=story`,
+      );
+      await expect(page.locator('.briefing-page').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      await expect(page.getByRole('heading', { name: /briefing/i }).first()).toBeVisible();
+      if (story === 'responsive-and-private') {
+        await expect(page.getByText(/private result|metadata only/i).first()).toBeVisible();
+        await page.evaluate(() => {
+          document.documentElement.style.zoom = '2';
+        });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          ),
+        ).toBe(true);
+      }
+      const results = await new AxeBuilder({ page }).include('.briefing-page').analyze();
+      expect(results.violations).toEqual([]);
+      assertNoRuntimeErrors();
     });
   }
 }

@@ -51,8 +51,14 @@ test.describe('notification centre', () => {
     const detail = page.getByRole('dialog', { name: 'Your daily briefing is ready.' });
     await expect(detail).toBeVisible();
     await expect(detail.getByRole('heading', { name: 'Dedicated briefing result', exact: true })).toBeVisible();
-    const resultButton = detail.getByRole('button', { name: /Open dedicated briefing result/ });
-    await expect(resultButton).toBeDisabled();
+    const resultLink = detail.getByRole('link', {
+      name: 'Open dedicated briefing result',
+      exact: true,
+    });
+    await expect(resultLink).toHaveAttribute(
+      'href',
+      /briefings\/briefing-schedule-private\/occurrences\/briefing-occurrence-private$/,
+    );
     await expect(page).toHaveURL(/\/notifications\/notification-briefing$/);
     expect(page.url()).not.toContain('briefing-result-private');
     expect(briefingResultRequests).toBe(0);
@@ -63,6 +69,10 @@ test.describe('notification centre', () => {
     expect(page.url()).not.toContain('Fixture Owner');
     const results = await new AxeBuilder({ page }).include('.notifications-page').analyze();
     expect(results.violations).toEqual([]);
+    await resultLink.click();
+    await expect(page).toHaveURL(
+      /\/briefings\/briefing-schedule-private\/occurrences\/briefing-occurrence-private$/,
+    );
   });
 
   test('shows the durable inbox, acknowledges, completes the reminder, and resumes SSE', async ({ page }) => {

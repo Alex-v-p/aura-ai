@@ -118,7 +118,7 @@ def test_message_attachment_summary_tombstone_one_of_is_content_free() -> None:
 
 def test_document_api_uses_canonical_streaming_paths_and_backward_compatible_schemas() -> None:
     contract = _contract()
-    assert contract["info"]["version"] == "1.20.0"
+    assert contract["info"]["version"] == "1.21.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     expected = {
         "/api/v1/documents/uploads",

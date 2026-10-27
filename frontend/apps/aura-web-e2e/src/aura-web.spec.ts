@@ -9,6 +9,7 @@ const DESTINATION_LABELS = [
   'Memory',
   'Documents',
   'Reminders',
+  'Briefings',
   'Calendar',
   'Approvals',
   'Notifications',

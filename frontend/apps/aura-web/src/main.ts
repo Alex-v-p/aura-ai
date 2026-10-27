@@ -8,6 +8,7 @@ import { PERSONA_API, AuraPersonaApi, PersonaStore } from '@aura/aura/interactio
 import { MemoryStore } from '@aura/aura/knowledge/memory';
 import { DocumentsStore } from '@aura/aura/knowledge/documents';
 import { ReminderStore } from '@aura/aura/automation/reminders';
+import { BriefingStore } from '@aura/aura/automation/briefings';
 import { NotificationStore } from '@aura/aura/automation/notifications';
 import { ApprovalStore } from '@aura/aura/governance/approvals';
 import { DAILY_CALENDAR_AGENDA, type DailyCalendarAgendaProjection, type DailyCalendarAgendaStatus } from '@aura/aura/daily-action';
@@ -84,7 +85,8 @@ bootstrapApplication(AppComponent, {
         const notificationStore = inject(NotificationStore);
         const approvalStore = inject(ApprovalStore);
         const calendarStore = inject(CalendarStore);
-        const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore), inject(MemoryStore), inject(DocumentsStore), inject(ReminderStore), notificationStore, approvalStore, calendarStore];
+        const briefingStore = inject(BriefingStore);
+        const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore), inject(MemoryStore), inject(DocumentsStore), inject(ReminderStore), briefingStore, notificationStore, approvalStore, calendarStore];
         let authorizationFailure = false;
         let resetting = false;
         return {

@@ -16,7 +16,7 @@ export type NotificationView = 'unread' | 'history';
  */
 export type NotificationSourceView =
   | { readonly kind: 'reminder'; readonly reminderId: string }
-  | { readonly kind: 'briefing'; readonly briefingResultId: string; readonly destination: 'briefing_result' };
+  | { readonly kind: 'briefing'; readonly briefingScheduleId: string; readonly briefingOccurrenceId: string; readonly briefingResultId: string; readonly destination: 'briefing_result' };
 
 function isBoundedIdentifier(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 160;
@@ -26,16 +26,26 @@ function isBoundedIdentifier(value: unknown): value is string {
 export function notificationSource(notification: NotificationRecord): NotificationSourceView | null {
   const source = (notification as unknown as { readonly source?: unknown }).source;
   if (source && typeof source === 'object') {
-    const candidate = source as { readonly kind?: unknown; readonly reminderId?: unknown; readonly briefingResultId?: unknown; readonly destination?: unknown };
+    const candidate = source as { readonly kind?: unknown; readonly reminderId?: unknown; readonly briefingScheduleId?: unknown; readonly briefingOccurrenceId?: unknown; readonly briefingResultId?: unknown; readonly destination?: unknown };
     if (candidate.kind === 'reminder' && isBoundedIdentifier(candidate.reminderId)) return { kind: 'reminder', reminderId: candidate.reminderId };
-    if (candidate.kind === 'briefing' && isBoundedIdentifier(candidate.briefingResultId) && candidate.destination === 'briefing_result') {
-      return { kind: 'briefing', briefingResultId: candidate.briefingResultId, destination: 'briefing_result' };
+    if (candidate.kind === 'briefing' && isBoundedIdentifier(candidate.briefingScheduleId) && isBoundedIdentifier(candidate.briefingOccurrenceId) && isBoundedIdentifier(candidate.briefingResultId) && candidate.destination === 'briefing_result') {
+      return briefingSource(candidate.briefingScheduleId, candidate.briefingOccurrenceId, candidate.briefingResultId);
     }
   }
   const briefingResultId = (notification as unknown as { readonly briefingResultId?: unknown }).briefingResultId;
-  if (isBoundedIdentifier(briefingResultId)) return { kind: 'briefing', briefingResultId, destination: 'briefing_result' };
+  const briefingScheduleId = (notification as unknown as { readonly briefingScheduleId?: unknown }).briefingScheduleId;
+  const briefingOccurrenceId = (notification as unknown as { readonly briefingOccurrenceId?: unknown }).briefingOccurrenceId;
+  if (isBoundedIdentifier(briefingScheduleId) && isBoundedIdentifier(briefingOccurrenceId) && isBoundedIdentifier(briefingResultId)) return briefingSource(briefingScheduleId, briefingOccurrenceId, briefingResultId);
   const legacyReminderId = (notification as unknown as { readonly reminderId?: unknown }).reminderId;
   return isBoundedIdentifier(legacyReminderId) ? { kind: 'reminder', reminderId: legacyReminderId } : null;
+}
+
+/** Keeps the canonical route lineage available to the feature while retaining
+ * the compact source projection's historical enumerable shape. */
+function briefingSource(scheduleId: string, occurrenceId: string, resultId: string): Extract<NotificationSourceView, { readonly kind: 'briefing' }> {
+  const source = { kind: 'briefing' as const, briefingResultId: resultId, destination: 'briefing_result' as const } as Extract<NotificationSourceView, { readonly kind: 'briefing' }> & { briefingScheduleId: string; briefingOccurrenceId: string };
+  Object.defineProperties(source, { briefingScheduleId: { value: scheduleId, enumerable: false }, briefingOccurrenceId: { value: occurrenceId, enumerable: false } });
+  return source;
 }
 
 export function notificationReminderId(notification: NotificationRecord): string | null {

@@ -29,6 +29,7 @@ from aura_core.domains.automation.briefings.context import (
 )
 from aura_core.domains.automation.briefings.public import (
     BriefingCancellationLineage,
+    BriefingCapabilities,
     briefing_phase_span_id,
 )
 from aura_core.domains.execution.runs.public import ChatMessage, RunEvidenceItem
@@ -120,6 +121,21 @@ class BriefingExecutionPolicy:
             raise ValueError("briefing runs cannot use memory")
         if not self.policy_revision or len(self.policy_revision) > 128:
             raise ValueError("briefing policy revision is invalid")
+
+
+def canonical_briefing_capabilities() -> BriefingCapabilities:
+    """Project the canonical fixed policy into the public capability DTO."""
+
+    policy = BriefingExecutionPolicy()
+    return BriefingCapabilities(
+        execution_policy_revision_id=policy.policy_id,
+        execution_policy_revision=policy.policy_revision,
+        deadline_seconds=int(policy.deadline_seconds),
+        max_output_tokens=policy.max_output_tokens,
+        max_output_chars=policy.max_output_chars,
+        memory_enabled=policy.memory_recall or policy.memory_write,
+        tools_enabled=policy.tool_calls > 0,
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -2561,6 +2561,15 @@ modules:
   dependencies:
   - aura-web.api-client
   - aura-web.automation-reminders
+- id: aura-web.automation-briefings
+  root: frontend/libs/aura/automation/briefings
+  kind: frontend-feature
+  public_api: frontend/libs/aura/automation/briefings/src/index.ts
+  dependencies:
+  - aura-web.api-client
+  - aura-web.interaction-agents
+  - aura-web.integrations-calendar
+  - aura-web.knowledge-documents
 - id: aura-web.governance-approvals
   root: frontend/libs/aura/governance/approvals
   kind: frontend-feature

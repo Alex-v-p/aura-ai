@@ -150,6 +150,23 @@ async def list_briefing_schedules(
     return {"items": [as_schedule_payload(x) for x in page.items], "nextCursor": page.next_cursor}
 
 
+@router.get("/api/v1/briefing-capabilities")
+async def get_briefing_capabilities(
+    request: Request,
+    response: Response,
+    session: Session = Depends(require_session),
+) -> dict[str, object]:
+    """Return the owner-authenticated, fixed briefing capability projection."""
+
+    del session
+    _no_store(response)
+    try:
+        capabilities = await _service(request).get_capabilities()
+    except Exception as exc:
+        raise _error(exc) from exc
+    return capabilities.as_payload()
+
+
 @router.post("/api/v1/briefing-schedules", status_code=status.HTTP_201_CREATED)
 async def create_briefing_schedule(
     request: Request,

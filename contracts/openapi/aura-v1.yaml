@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.20.0",
+    "version": "1.21.0",
     "description": "Owner-authenticated agent, persona, conversation, run, memory, document, image attachment, reminder, notification, approval, read-only calendar integration, scheduled briefing, and governed tool transport contract. Provider tokens, client secrets, authorization codes, internal credential references, provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, image bytes outside authorized no-store streams, content hashes, and embedding vectors are never exposed by this API. Calendar names, event titles, descriptions, attendees, locations, provider identifiers, and owner identity are private and are never placed in URLs, ordinary logs, telemetry, SSE invalidations, browser persistence, or service-worker caches. Briefing definitions, source grants, and results are owner-private, never enter notification events, and have manual-only retention. Events are retrieved on demand without a durable event-content cache. Calendar mutation, automatic rescheduling, background content synchronization, calendar-to-memory writes, briefing execution internals, and model-facing calendar tools are intentionally excluded."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
@@ -1198,6 +1198,18 @@
           "404": { "description": "Last-Event-ID is not an owner-authorized persisted notification event", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
           "410": { "description": "Requested owner-authorized event cursor is no longer available; reconcile from the notification list before reconnecting", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/briefing-capabilities": {
+      "get": {
+        "operationId": "getBriefingCapabilities",
+        "tags": ["Briefings"],
+        "description": "Returns the one Aura-owned scheduled-briefing execution capability needed to construct a create request. Provider, model, prompt, tool-grant, owner, source, and private runtime state are intentionally excluded.",
+        "responses": {
+          "200": { "description": "Fixed public briefing capability metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingCapabilities" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
         }
       }
     },
@@ -3451,6 +3463,21 @@
       "BriefingResultStatus": { "type": "string", "enum": ["completed", "partial", "failed", "canceled", "unknown", "deleted"] },
       "BriefingSourceCompleteness": { "type": "string", "enum": ["complete", "partial", "unavailable", "unknown"] },
       "BriefingDeletionScope": { "type": "string", "enum": ["schedule", "occurrence_history", "result_content"] },
+      "BriefingCapabilities": {
+        "type": "object", "additionalProperties": false,
+        "description": "Fixed public metadata for the one supported Aura-owned briefing execution policy. This capability contains no provider, model, prompt, tool-grant, owner, source, or private runtime state.",
+        "required": ["executionPolicyRevisionId", "executionPolicyRevision", "deadlineSeconds", "maxOutputTokens", "maxOutputChars", "cadenceKind", "memoryEnabled", "toolsEnabled"],
+        "properties": {
+          "executionPolicyRevisionId": { "type": "string", "format": "uuid", "const": "e80e8c61-575a-5a8c-862e-0c7cc91baa61" },
+          "executionPolicyRevision": { "type": "string", "const": "briefing-execution-v1" },
+          "deadlineSeconds": { "type": "integer", "const": 300 },
+          "maxOutputTokens": { "type": "integer", "const": 16384 },
+          "maxOutputChars": { "type": "integer", "const": 32768 },
+          "cadenceKind": { "type": "string", "const": "daily" },
+          "memoryEnabled": { "type": "boolean", "const": false },
+          "toolsEnabled": { "type": "boolean", "const": false }
+        }
+      },
       "BriefingDailyCadence": {
         "type": "object", "additionalProperties": false,
         "description": "Exactly one daily local wall-clock cadence. Core validates timeZone against its supported IANA timezone database and computes due instants; clients do not calculate occurrences.",

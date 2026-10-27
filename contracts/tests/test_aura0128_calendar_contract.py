@@ -1,4 +1,4 @@
-"""Acceptance checks for the calendar contract retained in aura-v1.20.0."""
+"""Acceptance checks for the calendar contract retained in aura-v1.21.0."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def _git_baseline() -> dict[str, Any] | None:
 
 def test_calendar_contract_is_v119_additive_and_operations_are_unique() -> None:
     contract = _contract()
-    assert contract["info"]["version"] == "1.20.0"
+    assert contract["info"]["version"] == "1.21.0"
     assert set(contract["paths"]) >= CALENDAR_PATHS
     assert {"name": "Calendar"} in contract["tags"]
 

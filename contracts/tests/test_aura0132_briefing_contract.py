@@ -1,4 +1,4 @@
-"""Acceptance checks for Aura v1.20 scheduled-briefing contracts."""
+"""Acceptance checks for Aura v1.21 scheduled-briefing contracts."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ BRIEFING_EVENTS_PATH = ROOT / "contracts/events/automation/v1/briefing-events.sc
 GENERATED_PATH = ROOT / "frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts"
 
 BRIEFING_PATHS = {
+    "/api/v1/briefing-capabilities",
     "/api/v1/briefing-schedules",
     "/api/v1/briefing-schedules/{schedule_id}",
     "/api/v1/briefing-schedules/{schedule_id}/pause",
@@ -76,10 +77,10 @@ def _refs(operation: dict[str, Any]) -> set[str]:
     }
 
 
-def test_openapi_v120_is_additive_except_for_authorized_notification_union() -> None:
+def test_openapi_v121_is_additive_except_for_authorized_notification_union() -> None:
     contract = _openapi()
     assert contract["openapi"] == "3.1.0"
-    assert contract["info"]["version"] == "1.20.0"
+    assert contract["info"]["version"] == "1.21.0"
     assert BRIEFING_PATHS <= set(contract["paths"])
     assert {"Notifications", "Briefings"} <= {tag["name"] for tag in contract["tags"]}
 
@@ -132,39 +133,146 @@ def test_schedule_sources_cadence_and_policy_references_are_closed_and_bounded()
     assert not forbidden & set(policies["properties"])
 
 
+def test_briefing_capabilities_are_fixed_closed_and_private_by_omission() -> None:
+    contract = _openapi()
+    path = contract["paths"]["/api/v1/briefing-capabilities"]
+    assert set(path) == {"get"}
+    operation = path["get"]
+    assert operation["operationId"] == "getBriefingCapabilities"
+    assert "security" not in operation
+    assert (
+        operation["responses"]["200"]["headers"]["Cache-Control"]["schema"]["const"] == "no-store"
+    )
+    assert {"401", "403"} <= set(operation["responses"])
+
+    capabilities = contract["components"]["schemas"]["BriefingCapabilities"]
+    expected = {
+        "executionPolicyRevisionId",
+        "executionPolicyRevision",
+        "deadlineSeconds",
+        "maxOutputTokens",
+        "maxOutputChars",
+        "cadenceKind",
+        "memoryEnabled",
+        "toolsEnabled",
+    }
+    assert capabilities["additionalProperties"] is False
+    assert set(capabilities["required"]) == expected
+    assert set(capabilities["properties"]) == expected
+    properties = capabilities["properties"]
+    assert (
+        properties["executionPolicyRevisionId"]["const"] == "e80e8c61-575a-5a8c-862e-0c7cc91baa61"
+    )
+    assert properties["executionPolicyRevision"]["const"] == "briefing-execution-v1"
+    assert properties["deadlineSeconds"]["const"] == 300
+    assert properties["maxOutputTokens"]["const"] == 16_384
+    assert properties["maxOutputChars"]["const"] == 32_768
+    assert properties["cadenceKind"]["const"] == "daily"
+    assert properties["memoryEnabled"]["const"] is False
+    assert properties["toolsEnabled"]["const"] is False
+
+    forbidden = {
+        "provider",
+        "model",
+        "modelId",
+        "prompt",
+        "promptBundleRevisionId",
+        "toolPolicyRevisionId",
+        "owner",
+        "ownerId",
+        "source",
+        "sources",
+        "calendarIds",
+        "documentIds",
+        "runtime",
+        "runId",
+        "resultId",
+    }
+    assert not forbidden & set(properties)
+
+
 def test_occurrence_result_and_manual_retention_are_explicit() -> None:
     schemas = _openapi()["components"]["schemas"]
     assert schemas["BriefingOccurrenceStatus"]["enum"] == [
-        "scheduled", "admitted", "running", "completed", "partial", "failed", "canceled", "skipped", "unknown"
+        "scheduled",
+        "admitted",
+        "running",
+        "completed",
+        "partial",
+        "failed",
+        "canceled",
+        "skipped",
+        "unknown",
     ]
     assert schemas["BriefingResultStatus"]["enum"] == [
-        "completed", "partial", "failed", "canceled", "unknown", "deleted"
+        "completed",
+        "partial",
+        "failed",
+        "canceled",
+        "unknown",
+        "deleted",
     ]
     occurrence = schemas["BriefingOccurrence"]
-    assert {"scheduleId", "dueAt", "dueLocalDate", "dueLocalTime", "timeZone", "runId", "resultId", "sourceCompleteness", "version"} <= set(occurrence["required"])
+    assert {
+        "scheduleId",
+        "dueAt",
+        "dueLocalDate",
+        "dueLocalTime",
+        "timeZone",
+        "runId",
+        "resultId",
+        "sourceCompleteness",
+        "version",
+    } <= set(occurrence["required"])
     result = schemas["BriefingResult"]
-    assert {"scheduleId", "occurrenceId", "runId", "sourceCompleteness", "content", "deletedAt"} <= set(result["required"])
+    assert {
+        "scheduleId",
+        "occurrenceId",
+        "runId",
+        "sourceCompleteness",
+        "content",
+        "deletedAt",
+    } <= set(result["required"])
 
     schedule_text = json.dumps(schemas["BriefingSchedule"], separators=(",", ":")).lower()
     assert "expiresat" not in schedule_text and "retentiondays" not in schedule_text
     assert schemas["DeleteBriefingScheduleRequest"]["properties"]["scope"]["const"] == "schedule"
-    assert schemas["DeleteBriefingHistoryRequest"]["properties"]["scope"]["const"] == "occurrence_history"
-    assert schemas["DeleteBriefingResultRequest"]["properties"]["scope"]["const"] == "result_content"
-    assert schemas["BriefingDeletionScope"]["enum"] == ["schedule", "occurrence_history", "result_content"]
+    assert (
+        schemas["DeleteBriefingHistoryRequest"]["properties"]["scope"]["const"]
+        == "occurrence_history"
+    )
+    assert (
+        schemas["DeleteBriefingResultRequest"]["properties"]["scope"]["const"] == "result_content"
+    )
+    assert schemas["BriefingDeletionScope"]["enum"] == [
+        "schedule",
+        "occurrence_history",
+        "result_content",
+    ]
 
 
 def test_mutations_are_owner_protected_and_private_reads_are_no_store() -> None:
     contract = _openapi()
     for path, method in MUTATIONS:
         operation = contract["paths"][path][method]
-        assert {"#/components/parameters/CsrfToken", "#/components/parameters/IdempotencyKey"} <= _refs(operation)
+        assert {
+            "#/components/parameters/CsrfToken",
+            "#/components/parameters/IdempotencyKey",
+        } <= _refs(operation)
         assert operation["requestBody"]["required"] is True
     for path in BRIEFING_PATHS:
         for method, operation in contract["paths"][path].items():
             if method in {"parameters", "summary", "description"}:
                 continue
-            success = next(response for status, response in operation["responses"].items() if status.startswith("2"))
-            assert success["headers"]["Cache-Control"]["schema"]["const"] == "no-store", (path, method)
+            success = next(
+                response
+                for status, response in operation["responses"].items()
+                if status.startswith("2")
+            )
+            assert success["headers"]["Cache-Control"]["schema"]["const"] == "no-store", (
+                path,
+                method,
+            )
 
 
 def test_notification_union_preserves_legacy_shape_and_closes_briefing_source() -> None:
@@ -177,10 +285,14 @@ def test_notification_union_preserves_legacy_shape_and_closes_briefing_source() 
     reminder = schemas["ReminderNotification"]
     assert reminder["additionalProperties"] is False
     assert "reminderId" in reminder["required"]
-    assert not {"briefingScheduleId", "briefingOccurrenceId", "briefingResultId"} & set(reminder["properties"])
+    assert not {"briefingScheduleId", "briefingOccurrenceId", "briefingResultId"} & set(
+        reminder["properties"]
+    )
     briefing = schemas["BriefingNotification"]
     assert briefing["additionalProperties"] is False
-    assert {"briefingScheduleId", "briefingOccurrenceId", "briefingResultId"} <= set(briefing["required"])
+    assert {"briefingScheduleId", "briefingOccurrenceId", "briefingResultId"} <= set(
+        briefing["required"]
+    )
     assert "reminderId" not in briefing["properties"]
     baseline = _baseline()
     if baseline is not None:
@@ -189,7 +301,11 @@ def test_notification_union_preserves_legacy_shape_and_closes_briefing_source() 
 
 def test_notification_event_v1_preserves_legacy_definitions_additively() -> None:
     result = subprocess.run(
-        ["git", "show", "origin/dev:contracts/events/automation/v1/notification-events.schema.json"],
+        [
+            "git",
+            "show",
+            "origin/dev:contracts/events/automation/v1/notification-events.schema.json",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -215,15 +331,26 @@ def test_notification_events_accept_legacy_and_briefing_metadata_only() -> None:
     schema = _json(NOTIFICATION_EVENTS_PATH)
     definitions = schema["$defs"]
     legacy = {
-        "schemaVersion": 1, "eventId": UUIDS["event"], "eventType": "notification.delivered",
-        "notificationId": UUIDS["notification"], "reminderId": UUIDS["result"], "status": "delivered",
-        "notificationVersion": 1, "occurredAt": "2026-10-27T07:30:00Z",
+        "schemaVersion": 1,
+        "eventId": UUIDS["event"],
+        "eventType": "notification.delivered",
+        "notificationId": UUIDS["notification"],
+        "reminderId": UUIDS["result"],
+        "status": "delivered",
+        "notificationVersion": 1,
+        "occurredAt": "2026-10-27T07:30:00Z",
     }
     briefing = {
-        "schemaVersion": 1, "eventId": UUIDS["event"], "eventType": "notification.acknowledged",
-        "notificationId": UUIDS["notification"], "briefingScheduleId": UUIDS["schedule"],
-        "briefingOccurrenceId": UUIDS["occurrence"], "briefingResultId": UUIDS["result"],
-        "status": "acknowledged", "notificationVersion": 2, "occurredAt": "2026-10-27T08:00:00Z",
+        "schemaVersion": 1,
+        "eventId": UUIDS["event"],
+        "eventType": "notification.acknowledged",
+        "notificationId": UUIDS["notification"],
+        "briefingScheduleId": UUIDS["schedule"],
+        "briefingOccurrenceId": UUIDS["occurrence"],
+        "briefingResultId": UUIDS["result"],
+        "status": "acknowledged",
+        "notificationVersion": 2,
+        "occurredAt": "2026-10-27T08:00:00Z",
     }
     assert set(legacy) == set(definitions["NotificationEventProperties"]["required"])
     assert set(briefing) == set(definitions["BriefingEventProperties"]["required"])
@@ -239,10 +366,17 @@ def test_briefing_events_are_closed_bounded_and_reject_private_material() -> Non
     schema = _json(BRIEFING_EVENTS_PATH)
     occurrence = schema["$defs"]["OccurrenceEvent"]
     event = {
-        "schemaVersion": 1, "eventId": UUIDS["event"], "eventType": "briefing.occurrence.partial",
-        "scheduleId": UUIDS["schedule"], "occurrenceId": UUIDS["occurrence"],
-        "occurrenceStatus": "partial", "occurrenceVersion": 4, "dueAt": "2026-10-27T07:30:00Z",
-        "sourceCompleteness": "partial", "runId": UUIDS["result"], "resultId": UUIDS["result"],
+        "schemaVersion": 1,
+        "eventId": UUIDS["event"],
+        "eventType": "briefing.occurrence.partial",
+        "scheduleId": UUIDS["schedule"],
+        "occurrenceId": UUIDS["occurrence"],
+        "occurrenceStatus": "partial",
+        "occurrenceVersion": 4,
+        "dueAt": "2026-10-27T07:30:00Z",
+        "sourceCompleteness": "partial",
+        "runId": UUIDS["result"],
+        "resultId": UUIDS["result"],
         "occurredAt": "2026-10-27T07:31:00Z",
     }
     assert set(event) == set(occurrence["required"])
@@ -250,13 +384,26 @@ def test_briefing_events_are_closed_bounded_and_reject_private_material() -> Non
     assert event["eventType"] in occurrence["properties"]["eventType"]["enum"]
     assert event["occurrenceStatus"] in schema["$defs"]["OccurrenceStatus"]["enum"]
     forbidden = {
-        "content": "secret", "ownerId": UUIDS["event"], "documentId": UUIDS["result"],
-        "calendarId": UUIDS["schedule"], "prompt": "ignore policy", "provider": "example",
+        "content": "secret",
+        "ownerId": UUIDS["event"],
+        "documentId": UUIDS["result"],
+        "calendarId": UUIDS["schedule"],
+        "prompt": "ignore policy",
+        "provider": "example",
     }
     for key in forbidden:
         assert key not in occurrence["properties"]
     schema_text = json.dumps(schema).lower()
-    for term in ("briefing output", "document identifiers", "calendar identifiers", "reminder content", "owner identity", "credentials", "provider material", "executor state"):
+    for term in (
+        "briefing output",
+        "document identifiers",
+        "calendar identifiers",
+        "reminder content",
+        "owner identity",
+        "credentials",
+        "provider material",
+        "executor state",
+    ):
         assert term in schema_text
 
 
@@ -265,14 +412,26 @@ def test_generated_transport_contains_briefing_types_operations_and_digest() -> 
     digest = hashlib.sha256(OPENAPI_PATH.read_bytes()).hexdigest()
     assert f"Contract SHA-256: {digest}" in generated
     for name in (
-        "BriefingSchedule", "BriefingOccurrence", "BriefingResult", "BriefingNotification",
-        "ReminderNotification", "BriefingSourceGrants", "BriefingExecutionPolicyReferences",
+        "BriefingSchedule",
+        "BriefingOccurrence",
+        "BriefingResult",
+        "BriefingNotification",
+        "ReminderNotification",
+        "BriefingSourceGrants",
+        "BriefingExecutionPolicyReferences",
+        "BriefingCapabilities",
     ):
         assert re.search(rf"export type {name}\b", generated), name
     for operation in (
-        "createBriefingSchedule", "pauseBriefingSchedule", "resumeBriefingSchedule",
-        "deleteBriefingSchedule", "listBriefingOccurrences", "getBriefingResult",
-        "deleteBriefingOccurrenceHistory", "deleteBriefingResult",
+        "getBriefingCapabilities",
+        "createBriefingSchedule",
+        "pauseBriefingSchedule",
+        "resumeBriefingSchedule",
+        "deleteBriefingSchedule",
+        "listBriefingOccurrences",
+        "getBriefingResult",
+        "deleteBriefingOccurrenceHistory",
+        "deleteBriefingResult",
     ):
         assert f"readonly {operation}:" in generated
         assert re.search(rf"\b{operation}: \{{ method:", generated)

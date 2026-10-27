@@ -1,0 +1,43 @@
+agent: test_evaluation_engineer
+work_item: AURA-0134
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: evaluation.aura-web.briefings
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web-e2e/src/briefings.spec.ts
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - cd frontend && pnpm exec prettier --check apps/aura-web-e2e/src/briefings.spec.ts
+    - cd frontend && pnpm exec eslint apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/briefings.spec.ts apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+    - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/briefings.spec.ts apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts --list (936 tests discovered across desktop, tablet, and mobile projects)
+    - cd frontend && AURA_WEB_E2E_APP_PORT=6501 AURA_WEB_E2E_STORYBOOK_PORT=8501 AURA_WEB_E2E_WORKERS=4 pnpm exec playwright test apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/briefings.spec.ts --grep "supports desktop collapse and tablet rail navigation|keeps compact destination controls fixed|keeps primary destinations structurally separate|keeps primary destinations available in the mobile drawer|supports permission recovery" --reporter=line (8 passed, 7 expected project skips)
+    - cd frontend && AURA_WEB_E2E_APP_PORT=6801 AURA_WEB_E2E_STORYBOOK_PORT=8801 AURA_WEB_E2E_WORKERS=4 pnpm exec playwright test apps/aura-web-e2e/src/notifications.spec.ts --project=desktop --grep "renders a typed briefing source" --reporter=line (1 passed)
+    - cd frontend && AURA_WEB_E2E_APP_PORT=6901 AURA_WEB_E2E_STORYBOOK_PORT=8901 pnpm exec playwright test apps/aura-web-e2e/src/briefings.spec.ts apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts --reporter=line (447 passed, 489 skipped, exit 0)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0134.yaml
+  failed: []
+  not_run: []
+decisions:
+  - "Evaluation uses deterministic Playwright API interception and opaque UUID fixtures; no production code, contract, baseline, or browser storage behavior was changed."
+  - "Coverage asserts closed capability discovery, returned execution-policy metadata, exact source grants, bounded requests, draft preservation and session reset, permission/offline/reconnect/unknown outcomes, retry/timeout/cancellation paths, and stale-version pause/resume recovery."
+  - "Coverage includes exact schedule/history/result deletion scopes, durable occurrence/result inspection, notification deep links without result identifiers, privacy containment, keyboard/focus confirmation, live announcements, reduced motion, themes, and 200% reflow."
+  - "Rendered calendar and document pagination journeys verify fail-closed source readiness while incomplete and recovery after explicit Load more."
+  - "The destination fixture expectation includes the intentional Briefings shell link, and the notification expectation follows the accessible schedule/occurrence-only deep link."
+  - "Private result content is asserted only on the authenticated occurrence route and is forbidden from URLs, local/session storage, caches, and console output."
+risks: []
+unresolved: []

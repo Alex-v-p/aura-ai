@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, HostListener, Injector, afterNextRender, effect, inject, signal } from '@angular/core';
 import { A11yModule } from '@angular/cdk/a11y';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { notificationBriefingResult, notificationReminderId, notificationSource, type NotificationRecord } from './notification-models';
 import { focusNotificationReturnTarget } from './notification-focus';
 import { NotificationStore } from './notification-store';
@@ -8,7 +8,7 @@ import { ReminderStore } from '@aura/aura/automation/reminders';
 
 type ReturnFocusState = { readonly returnFocusRequested?: boolean; readonly returnFocusId?: string | null };
 function boundedFocusId(value: unknown): string | null { return typeof value === 'string' && value.startsWith('notification-') && value.length <= 160 && /^[A-Za-z0-9_-]+$/.test(value) ? value : null; }
-@Component({ selector: 'aura-notifications-page', standalone: true, imports: [A11yModule], changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './notifications-page.component.html', styleUrl: './notifications-page.component.css' })
+@Component({ selector: 'aura-notifications-page', standalone: true, imports: [A11yModule, RouterLink], changeDetection: ChangeDetectionStrategy.OnPush, templateUrl: './notifications-page.component.html', styleUrl: './notifications-page.component.css' })
 export class NotificationsPageComponent {
   readonly store = inject(NotificationStore);
   readonly reminders = inject(ReminderStore);
@@ -31,6 +31,7 @@ export class NotificationsPageComponent {
   openReminder(notification: NotificationRecord): void { const reminderId = notificationReminderId(notification); if (reminderId) void this.router.navigate(['/reminders', reminderId]); }
   content(notification: NotificationRecord): string { const source = notificationSource(notification); if (source?.kind === 'briefing') return 'Your daily briefing is ready.'; const reminder = this.reminders.selected(); return source?.kind === 'reminder' && reminder?.id === source.reminderId ? reminder.content : 'A reminder is due.'; }
   briefingResult(notification: NotificationRecord): ReturnType<typeof notificationBriefingResult> { return notificationBriefingResult(notification); }
+  briefingRoute(notification: NotificationRecord): ReadonlyArray<string> { const source = notificationBriefingResult(notification); return source ? ['/briefings', source.briefingScheduleId, 'occurrences', source.briefingOccurrenceId] : ['/briefings']; }
   formatDate(value: string | null | undefined): string { return value ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(value)) : 'Unknown time'; }
   isAcknowledged(notification: NotificationRecord): boolean { return notification.status === 'acknowledged'; }
   @HostListener('document:keydown.escape') onEscape(): void { if (this.selectedId()) this.closeDetail(); }

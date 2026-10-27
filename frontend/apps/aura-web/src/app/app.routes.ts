@@ -9,6 +9,7 @@ import { NotificationsPageComponent } from '@aura/aura/automation/notifications'
 import { ApprovalsPageComponent } from '@aura/aura/governance/approvals';
 import { DailyActionPageComponent } from '@aura/aura/daily-action';
 import { CalendarManagementPageComponent, IntegrationsPageComponent } from '@aura/aura/integrations/calendar';
+import { BriefingsPageComponent } from '@aura/aura/automation/briefings';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'today' },
@@ -33,6 +34,10 @@ export const routes: Routes = [
   { path: 'reminders', component: RemindersPageComponent },
   { path: 'reminders/series/:seriesId', component: RemindersPageComponent },
   { path: 'reminders/:id', component: RemindersPageComponent },
+  { path: 'briefings', component: BriefingsPageComponent },
+  { path: 'briefings/new', component: BriefingsPageComponent },
+  { path: 'briefings/:id/occurrences/:occurrenceId', component: BriefingsPageComponent },
+  { path: 'briefings/:id', component: BriefingsPageComponent },
   { path: 'notifications', component: NotificationsPageComponent },
   { path: 'notifications/:id', component: NotificationsPageComponent },
   { path: 'approvals', component: ApprovalsPageComponent },

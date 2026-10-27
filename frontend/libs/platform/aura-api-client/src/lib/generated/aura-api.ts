@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: fbd2113f02252694b04161d7c908bef5fc02fcab14d2c69b499f71c55920d3f6
+// Contract SHA-256: 4bde49dbdc345999a1af922b0a66de55c8e31f5f6fba08ab5046f383f005627c
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -378,6 +378,8 @@ export type BriefingSourceCompleteness = "complete" | "partial" | "unavailable" 
 
 export type BriefingDeletionScope = "schedule" | "occurrence_history" | "result_content";
 
+export type BriefingCapabilities = { readonly "executionPolicyRevisionId": "e80e8c61-575a-5a8c-862e-0c7cc91baa61"; readonly "executionPolicyRevision": "briefing-execution-v1"; readonly "deadlineSeconds": 300; readonly "maxOutputTokens": 16384; readonly "maxOutputChars": 32768; readonly "cadenceKind": "daily"; readonly "memoryEnabled": false; readonly "toolsEnabled": false; };
+
 export type BriefingDailyCadence = { readonly "kind": "daily"; readonly "localTime": string; readonly "timeZone": ClientTimeZone; };
 
 export type BriefingSourceGrants = { readonly "includeReminders": true; readonly "calendarIds": ReadonlyArray<string>; readonly "documentIds": ReadonlyArray<string>; };
@@ -620,6 +622,7 @@ export interface AuraApiOperations {
   readonly getNotification: { readonly response: Notification; readonly body: never; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly acknowledgeNotification: { readonly response: Notification; readonly body: NotificationAcknowledgeRequest; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly streamNotificationEvents: { readonly response: NotificationStreamEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
+  readonly getBriefingCapabilities: { readonly response: BriefingCapabilities; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listBriefingSchedules: { readonly response: BriefingSchedulePage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "status"?: BriefingScheduleStatus; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly createBriefingSchedule: { readonly response: BriefingSchedule; readonly body: CreateBriefingScheduleRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getBriefingSchedule: { readonly response: BriefingSchedule; readonly body: never; readonly path: { readonly "schedule_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
@@ -754,6 +757,7 @@ export const AURA_API_OPERATIONS = {
   getNotification: { method: 'GET', pathTemplate: '/api/v1/notifications/{notification_id}', requestMode: 'none', responseMode: 'json' },
   acknowledgeNotification: { method: 'POST', pathTemplate: '/api/v1/notifications/{notification_id}/acknowledge', requestMode: 'json', responseMode: 'json' },
   streamNotificationEvents: { method: 'GET', pathTemplate: '/api/v1/notifications/stream', requestMode: 'none', responseMode: 'event-stream' },
+  getBriefingCapabilities: { method: 'GET', pathTemplate: '/api/v1/briefing-capabilities', requestMode: 'none', responseMode: 'json' },
   listBriefingSchedules: { method: 'GET', pathTemplate: '/api/v1/briefing-schedules', requestMode: 'none', responseMode: 'json' },
   createBriefingSchedule: { method: 'POST', pathTemplate: '/api/v1/briefing-schedules', requestMode: 'json', responseMode: 'json' },
   getBriefingSchedule: { method: 'GET', pathTemplate: '/api/v1/briefing-schedules/{schedule_id}', requestMode: 'none', responseMode: 'json' },

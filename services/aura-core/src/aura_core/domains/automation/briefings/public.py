@@ -61,6 +61,50 @@ class BriefingTransitionError(BriefingError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class BriefingCapabilities:
+    """The bounded public execution capability exposed to Aura Web.
+
+    This is intentionally a closed, metadata-only DTO.  It contains the
+    canonical execution policy identity and the fixed limits needed by the
+    existing schedule-create request, but no provider, model, prompt, tool,
+    owner, or runtime state.
+    """
+
+    execution_policy_revision_id: UUID
+    execution_policy_revision: str
+    deadline_seconds: int
+    max_output_tokens: int
+    max_output_chars: int
+    cadence_kind: str = "daily"
+    memory_enabled: bool = False
+    tools_enabled: bool = False
+
+    def __post_init__(self) -> None:
+        if self.cadence_kind != "daily":
+            raise ValueError("briefing capabilities only support daily cadence")
+        if self.memory_enabled or self.tools_enabled:
+            raise ValueError("briefing capabilities cannot enable memory or tools")
+        if self.deadline_seconds <= 0 or self.max_output_tokens <= 0 or self.max_output_chars <= 0:
+            raise ValueError("briefing capability budgets must be positive")
+        if not self.execution_policy_revision:
+            raise ValueError("briefing execution policy revision is required")
+
+    def as_payload(self) -> dict[str, object]:
+        """Serialize the closed API resource without private runtime fields."""
+
+        return {
+            "executionPolicyRevisionId": str(self.execution_policy_revision_id),
+            "executionPolicyRevision": self.execution_policy_revision,
+            "deadlineSeconds": self.deadline_seconds,
+            "maxOutputTokens": self.max_output_tokens,
+            "maxOutputChars": self.max_output_chars,
+            "cadenceKind": self.cadence_kind,
+            "memoryEnabled": self.memory_enabled,
+            "toolsEnabled": self.tools_enabled,
+        }
+
+
 class BriefingScheduleStatus(StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"
@@ -702,6 +746,17 @@ class BriefingApplicationService:
     def set_execution_application(self, application: object) -> None:
         """Bind the worker's execution application at the composition root."""
         self.execution_application = application
+
+    async def get_capabilities(self) -> BriefingCapabilities:
+        """Return the canonical, metadata-only briefing capability resource."""
+
+        # Keep the fixed policy in the execution boundary.  The application
+        # facade exposes only its deliberately closed public projection.
+        from aura_core.domains.automation.briefings.execution import (
+            canonical_briefing_capabilities,
+        )
+
+        return canonical_briefing_capabilities()
 
     async def process_command(self, command: object) -> object:
         """Process an identifier-only wake through the composed execution app."""
