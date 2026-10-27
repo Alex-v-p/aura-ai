@@ -68,6 +68,14 @@
           </a>
         </section>
 
+        <section class="nav-group nav-group-connect" aria-labelledby="nav-group-connect">
+          <h2 id="nav-group-connect" class="nav-group-heading">Connect</h2>
+          <a class="product-link" routerLink="/integrations" routerLinkActive="is-active" [routerLinkActiveOptions]="{ exact: false }" ariaCurrentWhenActive="page" aria-label="Calendar integrations" title="Calendar integrations" (click)="closeMobileNavigation(isMobileViewport())">
+            <svg class="product-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5.5" width="16" height="15" rx="2"/><path d="M8 3.5v4M16 3.5v4M4 10h16M8 14h.01M12 14h.01M16 14h.01M8 17.5h.01M12 17.5h.01"/></svg>
+            <span class="label">Calendar</span><span class="product-current-marker" aria-hidden="true"></span>
+          </a>
+        </section>
+
         <section class="nav-group" aria-labelledby="nav-group-activity">
           <h2 id="nav-group-activity" class="nav-group-heading">Activity</h2>
           <a class="product-link" routerLink="/approvals" routerLinkActive="is-active" ariaCurrentWhenActive="page" aria-label="Approvals" title="Approvals" (click)="closeMobileNavigation(isMobileViewport())">

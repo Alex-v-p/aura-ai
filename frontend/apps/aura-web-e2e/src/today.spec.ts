@@ -57,6 +57,9 @@ type TodayFixture = {
   notificationsStatus?: number;
   remindersStatus?: number;
   conversationsStatus?: number;
+  calendarState?: 'disconnected' | 'ready' | 'partial' | 'stale' | 'rate-limited' | 'permission-denied' | 'offline';
+  calendarComplex?: boolean;
+  calendarLongTitle?: boolean;
   approvals: ReadonlyArray<Record<string, unknown>>;
   notifications: ReadonlyArray<Record<string, unknown>>;
   notificationsAfterHistory?: ReadonlyArray<Record<string, unknown>>;
@@ -120,6 +123,7 @@ async function installTodayFixture(
         archivedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
       },
     ],
+    calendarState: 'disconnected',
     requestCounts: {},
     ...overrides,
   };
@@ -170,6 +174,34 @@ async function installTodayFixture(
     }
     if (url.pathname === '/api/v1/reminder-series') {
       return route.fulfill({ json: { items: [], nextCursor: null } });
+    }
+    if (url.pathname === '/api/v1/integrations/calendar/connection' && request.method() === 'GET') {
+      if (fixture.calendarState === 'permission-denied') return route.fulfill({ status: 403, json: { category: 'authorization', message: 'Calendar permission was denied.', retryable: false, recoveryAction: 'contact_administrator' } });
+      if (fixture.calendarState === 'rate-limited') return route.fulfill({ status: 429, json: { category: 'provider_rate_limit', message: 'Calendar reads are temporarily rate-limited.', retryable: true, recoveryAction: 'wait' } });
+      if (fixture.calendarState === 'offline') return route.abort();
+      return route.fulfill({ json: { status: fixture.calendarState === 'ready' || fixture.calendarState === 'partial' || fixture.calendarState === 'stale' ? 'connected' : 'disconnected', readsEnabled: fixture.calendarState !== 'disconnected', selectedCalendarCount: fixture.calendarState === 'disconnected' ? 0 : 1, connectedAt: fixture.calendarState === 'disconnected' ? null : today.toISOString(), updatedAt: today.toISOString(), lastError: null, availableActions: fixture.calendarState === 'disconnected' ? ['connect'] : ['disconnect'] } });
+    }
+    if (url.pathname === '/api/v1/integrations/calendar/calendars') {
+      return route.fulfill({ json: { items: [{ id: '00000000-0000-4000-8000-000000000001', displayName: 'Personal', timeZone: 'Europe/Brussels', selected: true, discoveredAt: today.toISOString() }], nextCursor: null, selectionVersion: 1, observedAt: today.toISOString() } });
+    }
+    if (url.pathname === '/api/v1/integrations/calendar/events/query') {
+      if (fixture.calendarState === 'stale') return route.fulfill({ status: 503, json: { category: 'provider_unavailable', message: 'Calendar agenda is temporarily unavailable.', retryable: true, recoveryAction: 'retry' } });
+      const baseEvents = [
+        { kind: 'all_day', id: 'today-calendar-all-day', calendarId: '00000000-0000-4000-8000-000000000001', title: 'Planning day', description: null, location: null, availability: 'busy', startDate: today.toISOString().slice(0, 10), endDateExclusive: tomorrow.toISOString().slice(0, 10), eventTimeZone: 'Europe/Brussels', displayTimeZone: 'Europe/Brussels', spansMultipleDays: false },
+        { kind: 'timed', id: 'today-calendar-timed', calendarId: '00000000-0000-4000-8000-000000000001', title: 'Focus block', description: null, location: null, availability: 'busy', startInstant: today.toISOString(), endInstant: new Date(today.getTime() + 3_600_000).toISOString(), eventTimeZone: 'Europe/Brussels', displayTimeZone: 'Europe/Brussels', spansMultipleDays: false },
+      ];
+      const complexEvents = fixture.calendarComplex || fixture.calendarLongTitle ? [
+        { kind: 'all_day', id: 'shared-event', calendarId: '00000000-0000-4000-8000-000000000002', title: fixture.calendarLongTitle ? 'A deliberately long multi-day planning title that remains readable on narrow screens and at two hundred percent zoom' : 'Team offsite', description: null, location: 'Brussels', availability: 'busy', startDate: today.toISOString().slice(0, 10), endDateExclusive: new Date(today.getTime() + 3 * 86_400_000).toISOString().slice(0, 10), eventTimeZone: 'Europe/Brussels', displayTimeZone: 'Europe/Brussels', spansMultipleDays: true },
+        { kind: 'timed', id: 'shared-event', calendarId: '00000000-0000-4000-8000-000000000001', title: 'Focus block', description: null, location: null, availability: 'busy', startInstant: today.toISOString(), endInstant: new Date(today.getTime() + 3_600_000).toISOString(), eventTimeZone: 'Europe/Brussels', displayTimeZone: 'Europe/Brussels', spansMultipleDays: false },
+      ] : [];
+      return route.fulfill({ json: { rangeStart: today.toISOString(), rangeEnd: tomorrow.toISOString(), displayTimeZone: 'Europe/Brussels', items: [...baseEvents, ...complexEvents], nextCursor: null, partial: fixture.calendarState === 'partial', warnings: fixture.calendarState === 'partial' ? [{ calendarId: '00000000-0000-4000-8000-000000000001', category: 'provider_unavailable', retryable: true, recoveryAction: 'retry' }] : [], retrievedAt: today.toISOString() } });
+    }
+    if (url.pathname === '/api/v1/integrations/calendar/conflicts/query') {
+      const conflicts = fixture.calendarComplex ? [
+        { left: { eventId: 'shared-event', calendarId: '00000000-0000-4000-8000-000000000001' }, right: { eventId: 'shared-event', calendarId: '00000000-0000-4000-8000-000000000002' }, relationship: 'same_interval', overlapStart: today.toISOString(), overlapEnd: new Date(today.getTime() + 3_600_000).toISOString() },
+        { left: { eventId: 'today-calendar-all-day', calendarId: '00000000-0000-4000-8000-000000000001' }, right: { eventId: 'today-calendar-timed', calendarId: '00000000-0000-4000-8000-000000000001' }, relationship: 'contains', overlapStart: today.toISOString(), overlapEnd: new Date(today.getTime() + 3_600_000).toISOString() },
+      ] : [];
+      return route.fulfill({ json: { rangeStart: today.toISOString(), rangeEnd: tomorrow.toISOString(), displayTimeZone: 'Europe/Brussels', items: conflicts, nextCursor: null, partial: false, warnings: [], evaluatedAt: today.toISOString() } });
     }
     if (
       url.pathname === '/api/v1/approvals/stream' ||
@@ -249,6 +281,74 @@ async function installTodayFixture(
 }
 
 test.describe('Today action center', () => {
+  test('merges the read-only calendar agenda without displacing reminder and conversation sections', async ({ page }) => {
+    await installTodayFixture(page, { calendarState: 'ready' });
+    await page.goto('/today');
+    await expect(page.getByRole('heading', { name: 'Calendar agenda', exact: true })).toBeVisible();
+    await expect(page.getByText('Planning day', { exact: true })).toBeVisible();
+    await expect(page.getByText('Focus block', { exact: true })).toBeVisible();
+    await expect(page.locator('.calendar-agenda .agenda-region').nth(0)).toContainText('Planning day');
+    await expect(page.locator('.calendar-agenda .agenda-region').nth(1)).toContainText('Focus block');
+    await expect(page.getByText('Call the dentist', { exact: true })).toBeVisible();
+    await expect(page.getByText('Plan the weekend', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Calendar · timed/)).toBeVisible();
+    const results = await new AxeBuilder({ page }).include('.calendar-agenda').analyze();
+    expect(results.violations).toEqual([]);
+  });
+
+  test('keeps calendar partial and unavailable recovery local to the agenda', async ({ page }) => {
+    await installTodayFixture(page, { calendarState: 'partial' });
+    await page.goto('/today');
+    await page.locator('.calendar-agenda').getByRole('button', { name: 'Refresh', exact: true }).click();
+    await expect(page.locator('.calendar-agenda')).toContainText(/Some calendars could not be read|Some calendar events could not be loaded/i);
+    await expect(page.getByText('Call the dentist', { exact: true })).toBeVisible();
+
+    await page.unroute('**/api/v1/**');
+    await installTodayFixture(page, { calendarState: 'stale' });
+    await page.goto('/today');
+    await page.locator('.calendar-agenda').getByRole('button', { name: 'Retry', exact: true }).click();
+    await expect(page.locator('.calendar-agenda')).toContainText(/temporarily unavailable/i);
+    await expect(page.getByText('Plan the weekend', { exact: true })).toBeVisible();
+  });
+
+  test('renders multi-day events and server conflicts by composite calendar identity', async ({ page }) => {
+    await installTodayFixture(page, { calendarState: 'ready', calendarComplex: true });
+    await page.goto('/today');
+    await expect(page.getByText('Team offsite', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Calendar · all day · multi-day/)).toBeVisible();
+    await expect(page.getByText(/Conflicts with .*\(same time\)/)).toHaveCount(2);
+    await expect(page.getByText(/Conflicts with .*\(contains\)/)).toBeVisible();
+    await expect(page.locator('.calendar-agenda .agenda-region').nth(0)).toContainText('Team offsite');
+    await expect(page.locator('.calendar-agenda .agenda-region').nth(1)).toContainText('Focus block');
+  });
+
+  test('keeps long calendar titles readable on mobile at 200 percent zoom', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'Long-title geometry runs once in desktop.');
+    await installTodayFixture(page, { calendarState: 'ready', calendarLongTitle: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/today');
+    await expect(page.getByText(/A deliberately long multi-day planning title/)).toBeVisible();
+    await page.evaluate(() => { document.documentElement.style.zoom = '2'; });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await expect(page.getByText(/Calendar · all day · multi-day/)).toBeVisible();
+  });
+
+  for (const state of ['disconnected', 'rate-limited', 'permission-denied', 'offline'] as const) {
+    test(`keeps Today useful when calendar is ${state}`, async ({ page }) => {
+      await installTodayFixture(page, { calendarState: state });
+      await page.goto('/today');
+      await expect(page.locator('.calendar-agenda')).toContainText(/calendar|offline|permission|rate-limited/i);
+      await expect(page.getByText('Call the dentist', { exact: true })).toBeVisible();
+      await expect(page.getByText('Plan the weekend', { exact: true })).toBeVisible();
+      if (state === 'permission-denied') {
+        await expect(page.locator('.calendar-agenda')).toContainText(/permission(?: was)? denied/i);
+        await expect(page.getByText('Planning day', { exact: true })).toHaveCount(0);
+        await expect(page.getByText('Focus block', { exact: true })).toHaveCount(0);
+      }
+      await expect(page.locator('.action-card')).toHaveCount(5);
+    });
+  }
+
   test('redirects the root to Today and composes bounded navigation-only source cards', async ({
     page,
   }) => {
@@ -481,7 +581,7 @@ test.describe('Today action center', () => {
       .evaluateAll((sections) =>
         sections.map((section) => section.querySelector('h2')?.textContent?.trim()),
       );
-    expect(sectionOrder).toEqual(['Needs attention', 'Today', 'Continue', 'Later']);
+    expect(sectionOrder).toEqual(['Calendar agenda', 'Needs attention', 'Today', 'Continue', 'Later']);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);

@@ -9,9 +9,21 @@ const DESTINATION_LABELS = [
   'Memory',
   'Documents',
   'Reminders',
+  'Calendar',
   'Approvals',
   'Notifications',
 ] as const;
+const destinationTitle = (label: (typeof DESTINATION_LABELS)[number]): string =>
+  label === 'Calendar' ? 'Calendar integrations' : label;
+
+async function expectConnectDestinationGroup(navigation: Locator): Promise<void> {
+  const group = navigation.locator('.nav-group-connect');
+  await expect(group).toHaveCount(1);
+  await expect(group.locator('h2.nav-group-heading')).toHaveText('Connect');
+  await expect(
+    group.getByRole('link', { name: 'Calendar integrations', exact: true }),
+  ).toHaveAttribute('title', 'Calendar integrations');
+}
 
 function mobileNavigationTrigger(page: Page): Locator {
   return page.locator('button[aria-controls="primary-navigation"]');
@@ -201,7 +213,6 @@ async function expectDestinationPresentation(productNav: Locator): Promise<void>
 
   expect(presentation).toHaveLength(DESTINATION_LABELS.length);
   expect(presentation.map((item) => item.labelText)).toEqual(DESTINATION_LABELS);
-  const destinationLabel = new RegExp(`^(${DESTINATION_LABELS.join('|')})$`);
   const trayStyle = await productNav.evaluate((element) => {
     const style = getComputedStyle(element);
     return {
@@ -213,9 +224,12 @@ async function expectDestinationPresentation(productNav: Locator): Promise<void>
   expect(trayStyle.backgroundColor).toMatch(/rgba?\(0, 0, 0, 0\)|transparent/);
   expect(trayStyle.border).toMatch(/0px/);
   expect(trayStyle.boxShadow).toMatch(/none|0px 0px 0px 0px/);
-  for (const item of presentation) {
+  for (const [index, item] of presentation.entries()) {
+    const expectedLabel = DESTINATION_LABELS[index];
+    const expectedTitle = expectedLabel ? destinationTitle(expectedLabel) : '';
     expect(item.accessibleName).toMatch(/.+/);
-    expect(item.title).toMatch(destinationLabel);
+    expect(item.accessibleName).toBe(expectedTitle);
+    expect(item.title).toBe(expectedTitle);
     expect(item.labelWhiteSpace).toBe('nowrap');
     expect(item.labelClientWidth).toBeGreaterThan(0);
     expect(item.labelClientWidth).toBeGreaterThanOrEqual(item.labelScrollWidth);
@@ -264,11 +278,12 @@ async function expectCompactDestinationControls(productNav: Locator): Promise<vo
   );
 
   expect(controls).toHaveLength(DESTINATION_LABELS.length);
-  for (const control of controls) {
+  for (const [index, control] of controls.entries()) {
     expect(control.labelVisible).toBe(false);
-    const destinationLabel = new RegExp(`^(${DESTINATION_LABELS.join('|')})$`);
-    expect(control.accessibleName).toMatch(destinationLabel);
-    expect(control.title).toMatch(destinationLabel);
+    const expectedLabel = DESTINATION_LABELS[index];
+    const expectedTitle = expectedLabel ? destinationTitle(expectedLabel) : '';
+    expect(control.accessibleName).toBe(expectedTitle);
+    expect(control.title).toBe(expectedTitle);
     expect(control.iconCount).toBe(1);
     expect(control.iconShapes).toBeGreaterThan(0);
     expect(control.iconViewBox).toMatch(/\S+/);
@@ -1014,6 +1029,7 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   if (testInfo.project.name === 'desktop') {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/conversation');
+    await expectConnectDestinationGroup(navigation);
     await navigation.getByRole('button', { name: 'Collapse navigation' }).click();
     await expect(navigation).toHaveClass(/is-collapsed/);
     await expect(navigation).toHaveCSS('flex-basis', '72px');
@@ -1069,6 +1085,7 @@ test('supports desktop collapse and tablet rail navigation', async ({ page }, te
   }
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto('/conversation');
+  await expectConnectDestinationGroup(navigation);
   await expect(navigation).toHaveCSS('flex-basis', '72px');
   await expect(navigation.locator('.product-nav')).toBeVisible();
   await expect(navigation.locator('.product-nav a')).toHaveCount(DESTINATION_LABELS.length);
@@ -1433,6 +1450,7 @@ test('keeps primary destinations structurally separate from recent conversations
   const recentNav = navigation.locator('.conversation-nav');
 
   await expect(productNav).toBeVisible();
+  await expectConnectDestinationGroup(navigation);
   await expect(productNav.getByRole('link')).toHaveCount(DESTINATION_LABELS.length);
   await expect(productNav.getByRole('link', { name: /^Conversations$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
@@ -1481,13 +1499,14 @@ test('keeps primary destinations available in the mobile drawer', async ({ page 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/conversation');
   const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
-    await mobileNavigationTrigger(page).click();
+  await mobileNavigationTrigger(page).click();
   await expect(navigation).toHaveClass(/is-mobile-open/);
   await page.waitForTimeout(220);
 
   const productNav = navigation.locator('.product-nav');
   const recentNav = navigation.locator('.conversation-nav');
   await expect(productNav).toBeVisible();
+  await expectConnectDestinationGroup(navigation);
   await expect(productNav.getByRole('link', { name: /^Conversations$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Agents$/i })).toBeVisible();
   await expect(productNav.getByRole('link', { name: /^Personas$/i })).toBeVisible();

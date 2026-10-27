@@ -1,7 +1,66 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { attentionHasMore, attentionOverflowMessage, buildReminderItems, classifyConversationSourceState, classifyDailySourceState, dailyAuthenticationNotice, isTerminalReminder, limitDailyItems } from './daily-action-aggregation';
+import { calendarConflictsForEvent, calendarConflictForEvent, finalIncludedCalendarDate, invertCalendarConflictRelationship, type DailyCalendarConflictProjection } from './daily-calendar-agenda';
 
 describe('DailyActionPageComponent aggregation', () => {
+  const templateSource = readFileSync('libs/aura/daily-action/src/lib/daily-action-page.component.html', 'utf8');
+  const componentSource = readFileSync('libs/aura/daily-action/src/lib/daily-action-page.component.ts', 'utf8');
+  const styleSource = readFileSync('libs/aura/daily-action/src/lib/daily-action-page.component.css', 'utf8');
+
+  it('renders a server-projected calendar agenda without making the browser a conflict authority', () => {
+    expect(templateSource).toContain('Calendar agenda');
+    expect(templateSource.indexOf('calendar-all-day-heading')).toBeLessThan(templateSource.indexOf('calendar-timed-heading'));
+    expect(componentSource).toContain('Conflicts with');
+    expect(componentSource).toContain('this.calendar?.conflicts()');
+    expect(componentSource).toContain('calendarConflictsForEvent');
+    expect(templateSource).toContain('track calendarEventKey(event)');
+    expect(templateSource).toContain('track $index');
+    expect(componentSource).not.toContain('overlapStart <');
+    expect(styleSource).toContain('var(--warning-surface');
+    expect(styleSource).toContain('overflow-wrap: anywhere');
+    expect(styleSource).toContain('min-width: 0');
+    expect(styleSource).toContain(':host { display: block; min-width: 0; width: 100%; }');
+    expect(styleSource).toContain('.daily-action { max-width: 1180px; min-width: 0; width: 100%;');
+    expect(styleSource).toContain('.daily-section .section-heading { flex-direction: column; min-width: 0; }');
+    expect(styleSource).toContain('.daily-section .section-link { align-self: stretch; width: 100%; }');
+    expect(styleSource).toContain('.section-link { color: var(--accent-hover, #8e3f5e); font-size: .88rem; max-width: 100%; min-height: 2.75rem; overflow-wrap: anywhere; }');
+  });
+
+  it('matches conflicts by the compound calendar and event identity', () => {
+    const conflicts: DailyCalendarConflictProjection[] = [{ left: { calendarId: 'work', eventId: 'evt-1' }, right: { calendarId: 'home', eventId: 'evt-2' }, relationship: 'overlaps', overlapStart: '2026-10-27T09:00:00Z', overlapEnd: '2026-10-27T10:00:00Z' }];
+    expect(calendarConflictForEvent({ calendarId: 'home', id: 'evt-1' }, conflicts)).toBeNull();
+    expect(calendarConflictForEvent({ calendarId: 'home', id: 'evt-2' }, conflicts)?.other).toEqual({ calendarId: 'work', eventId: 'evt-1' });
+  });
+
+  it('inverts directional containment only for the rendered right endpoint', () => {
+    const conflict: DailyCalendarConflictProjection = { left: { calendarId: 'work', eventId: 'outer' }, right: { calendarId: 'work', eventId: 'inner' }, relationship: 'contains', overlapStart: '2026-10-27T09:00:00Z', overlapEnd: '2026-10-27T10:00:00Z' };
+    expect(calendarConflictForEvent({ calendarId: 'work', id: 'outer' }, [conflict])?.relationship).toBe('contains');
+    expect(calendarConflictForEvent({ calendarId: 'work', id: 'inner' }, [conflict])?.relationship).toBe('contained_by');
+    expect(invertCalendarConflictRelationship('contained_by')).toBe('contains');
+  });
+
+  it('retains every server conflict attached to an event', () => {
+    const conflicts: DailyCalendarConflictProjection[] = [
+      { left: { calendarId: 'work', eventId: 'evt-1' }, right: { calendarId: 'home', eventId: 'evt-2' }, relationship: 'overlaps', overlapStart: '2026-10-27T09:00:00Z', overlapEnd: '2026-10-27T10:00:00Z' },
+      { left: { calendarId: 'work', eventId: 'evt-3' }, right: { calendarId: 'work', eventId: 'evt-1' }, relationship: 'contained_by', overlapStart: '2026-10-27T09:15:00Z', overlapEnd: '2026-10-27T09:45:00Z' },
+    ];
+    expect(calendarConflictsForEvent({ calendarId: 'work', id: 'evt-1' }, conflicts)).toHaveLength(2);
+    expect(calendarConflictForEvent({ calendarId: 'work', id: 'evt-1' }, conflicts)?.relationship).toBe('overlaps');
+  });
+
+  it('renders a half-open multi-day range through its final included date', () => {
+    expect(finalIncludedCalendarDate('2026-10-29')).toBe('2026-10-28');
+  });
+
+  it('keeps calendar recovery independent from the existing Today sources', () => {
+    expect(componentSource).toContain('readonly calendar = inject(DAILY_CALENDAR_AGENDA)');
+    expect(componentSource).toContain('void this.calendar?.start()');
+    expect(componentSource).toContain('idempotent connection/discovery start');
+    expect(templateSource).toContain('routerLink="/reminders"');
+    expect(templateSource).toContain('routerLink="/conversation"');
+  });
+
   it('keeps navigation records bounded and excludes terminal or duplicate series reminders', () => {
     const today = new Date();
     const due = { id: 'due', content: 'Due item', dueAt: new Date(today.getTime() - 10_000).toISOString(), status: 'fired', version: 1, createdAt: today.toISOString(), updatedAt: today.toISOString(), firedAt: today.toISOString(), completedAt: null, canceledAt: null } as never;

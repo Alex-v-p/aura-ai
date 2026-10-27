@@ -6,7 +6,7 @@ import { ApprovalStore, type ApprovalSummary } from '@aura/aura/governance/appro
 import { NotificationStore } from '@aura/aura/automation/notifications';
 import { ReminderStore } from '@aura/aura/automation/reminders';
 import { ConversationStore, type AuthState } from '@aura/aura/interaction/conversations';
-import { DailyActionPageComponent } from '@aura/aura/daily-action';
+import { DAILY_CALENDAR_AGENDA, DailyActionPageComponent, type DailyCalendarAgendaStatus, type DailyCalendarEventProjection } from '@aura/aura/daily-action';
 
 const now = new Date('2026-10-26T09:00:00.000Z');
 const reminderId = 'reminder-story';
@@ -26,7 +26,32 @@ type FixtureOptions = {
   readonly approvalNotice?: string | null;
   readonly notificationConnection?: 'offline' | 'reconnecting' | 'live';
   readonly approvalConnection?: 'offline' | 'reconnecting' | 'live';
+  readonly calendarState?: DailyCalendarAgendaStatus;
+  readonly calendarNotice?: string | null;
 };
+
+const calendarEvents: ReadonlyArray<DailyCalendarEventProjection> = [
+  { kind: 'all_day', id: 'story-all-day', calendarId: 'personal', title: 'Planning day', location: null, availability: 'busy', startDate: '2026-10-27', endDateExclusive: '2026-10-28', eventTimeZone: 'Europe/Brussels', displayTimeZone: 'Europe/Brussels', spansMultipleDays: false },
+  { kind: 'timed', id: 'story-focus', calendarId: 'team', title: 'Focus block', location: 'Studio', availability: 'busy', startInstant: '2026-10-27T09:00:00Z', endInstant: '2026-10-27T10:00:00Z', eventTimeZone: 'America/New_York', displayTimeZone: 'Europe/Brussels', spansMultipleDays: false },
+];
+
+function calendarFixture(options: FixtureOptions): { provide: typeof DAILY_CALENDAR_AGENDA; useValue: unknown } {
+  const status = signal<DailyCalendarAgendaStatus>(options.calendarState ?? 'disconnected');
+  const events = signal<ReadonlyArray<DailyCalendarEventProjection>>(options.calendarState === 'ready' ? calendarEvents : []);
+  return {
+    provide: DAILY_CALENDAR_AGENDA,
+    useValue: {
+      start: () => undefined,
+      status,
+      events,
+      conflicts: signal([]),
+      displayTimeZone: signal('Europe/Brussels'),
+      visibleDate: signal('2026-10-27'),
+      notice: signal<string | null>(options.calendarNotice ?? null),
+      retry: () => undefined,
+    },
+  };
+}
 
 function fixtureStores(options: FixtureOptions | boolean = {}): Array<{ provide: unknown; useValue: unknown }> {
   const config = typeof options === 'boolean' ? { empty: options } : options;
@@ -45,6 +70,7 @@ function fixtureStores(options: FixtureOptions | boolean = {}): Array<{ provide:
     { provide: NotificationStore, useValue: notificationStore },
     { provide: ApprovalStore, useValue: approvalStore },
     { provide: ConversationStore, useValue: conversationStore },
+    calendarFixture(config),
   ];
 }
 
@@ -64,3 +90,9 @@ export const PermissionDenied: Story = { name: 'Permission denied', decorators: 
 export const Offline: Story = { name: 'Offline', decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), ...fixtureStores({ notificationConnection: 'offline', approvalConnection: 'offline' })] })] };
 export const Reconnecting: Story = { name: 'Reconnecting', decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), ...fixtureStores({ notificationConnection: 'reconnecting', approvalConnection: 'reconnecting' })] })] };
 export const Unauthenticated: Story = { name: 'Unauthenticated', decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), ...fixtureStores({ authState: 'unauthenticated', empty: true, approvalErrorStatus: 401, approvalNotice: 'Your session has expired. Sign in again to view approvals.', notificationErrorStatus: 401, notificationNotice: 'Your session has expired. Sign in again to view notifications.' })] })] };
+export const CalendarConnected: Story = { name: 'Calendar agenda connected', decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), ...fixtureStores({ calendarState: 'ready' })] })] };
+export const CalendarPartial: Story = { name: 'Calendar agenda partial read', decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), ...fixtureStores({ calendarState: 'partial', calendarNotice: 'Some calendar events could not be loaded. The available events are shown.' })] })] };
+export const CalendarStale: Story = { name: 'Calendar agenda stale snapshot', decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), ...fixtureStores({ calendarState: 'stale', calendarNotice: 'Showing the last calendar snapshot. Refresh when you are ready.' })] })] };
+export const CalendarRateLimited: Story = { name: 'Calendar agenda rate limited', decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), ...fixtureStores({ calendarState: 'rate-limited' })] })] };
+export const CalendarPermissionDenied: Story = { name: 'Calendar permission denied', decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), ...fixtureStores({ calendarState: 'permission-denied' })] })] };
+export const CalendarOffline: Story = { name: 'Calendar offline', decorators: [applicationConfig({ providers: [provideRouter([], withDisabledInitialNavigation()), ...fixtureStores({ calendarState: 'offline' })] })] };

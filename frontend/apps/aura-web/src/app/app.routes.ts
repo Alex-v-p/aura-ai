@@ -8,10 +8,13 @@ import { RemindersPageComponent } from '@aura/aura/automation/reminders';
 import { NotificationsPageComponent } from '@aura/aura/automation/notifications';
 import { ApprovalsPageComponent } from '@aura/aura/governance/approvals';
 import { DailyActionPageComponent } from '@aura/aura/daily-action';
+import { CalendarManagementPageComponent, IntegrationsPageComponent } from '@aura/aura/integrations/calendar';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'today' },
   { path: 'today', component: DailyActionPageComponent },
+  { path: 'integrations', component: IntegrationsPageComponent },
+  { path: 'integrations/calendar', component: CalendarManagementPageComponent },
   { path: 'conversation/:conversationId', component: ConversationPanelComponent },
   { path: 'conversation', component: ConversationPanelComponent },
   { path: 'agents', component: AgentListPageComponent },

@@ -116,6 +116,24 @@ const todayStories = [
   'offline',
   'reconnecting',
   'unauthenticated',
+  'calendar-connected',
+  'calendar-partial',
+  'calendar-stale',
+  'calendar-rate-limited',
+  'calendar-permission-denied',
+  'calendar-offline',
+] as const;
+const calendarStories = [
+  'connected',
+  'loading',
+  'disconnected',
+  'reauthorization-required',
+  'revocation-uncertain',
+  'partial-read',
+  'stale-snapshot',
+  'rate-limited',
+  'empty-selection',
+  'long-titles',
 ] as const;
 const applyStoryTheme = (theme: 'light' | 'dark'): void => {
   document.documentElement.dataset['theme'] = theme;
@@ -168,7 +186,10 @@ for (const story of todayStories) {
       await page.goto(
         `${storybookBaseUrl}/iframe.html?id=aura-today-action-center--${story}&viewMode=story`,
       );
-      await expect(page.locator('.daily-action').first()).toBeVisible();
+      // A full matrix can cold-start Storybook's preview bundle. Keep this
+      // readiness wait bounded, while leaving the state assertions, Axe scan,
+      // and runtime-error checks unchanged.
+      await expect(page.locator('.daily-action').first()).toBeVisible({ timeout: 30_000 });
       await applyAndSettleStoryTheme(page, theme);
       if (story === 'action-center') {
         await expect(
@@ -198,11 +219,50 @@ for (const story of todayStories) {
         await expect(page.getByText(/offline|unavailable/i).first()).toBeVisible();
       } else if (story === 'reconnecting') {
         await expect(page.getByText(/out of date|reconnect/i).first()).toBeVisible();
+      } else if (story === 'calendar-connected') {
+        await expect(page.getByRole('heading', { name: 'Calendar agenda' })).toBeVisible();
+        await expect(page.getByText('Planning day', { exact: true })).toBeVisible();
+        await expect(page.getByText(/America\/New_York.*Europe\/Brussels/)).toBeVisible();
+      } else if (story.startsWith('calendar-')) {
+        await expect(page.getByRole('heading', { name: 'Calendar agenda' })).toBeVisible();
+        await expect(page.getByText(/calendar|offline|permission|rate-limited|snapshot/i).first()).toBeVisible();
       } else {
         await expect(page.getByText(/Sign in to see your private Today view/i)).toBeVisible();
         await expect(page.getByText('All clear for now.', { exact: true })).toHaveCount(0);
       }
       const results = await new AxeBuilder({ page }).include('.daily-action').analyze();
+      expect(results.violations).toEqual([]);
+      assertNoRuntimeErrors();
+    });
+  }
+}
+
+for (const story of calendarStories) {
+  for (const theme of themes) {
+    test(`Calendar Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop', 'Calendar Storybook axe coverage runs once in the desktop project.');
+      const assertNoRuntimeErrors = watchRuntimeErrors(page);
+      await page.goto(`${storybookBaseUrl}/iframe.html?id=aura-calendar-planning--${story}&viewMode=story`);
+      await expect(page.locator('.calendar-page').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      if (story === 'connected') {
+        await expect(page.getByRole('heading', { name: 'Readable calendars' })).toBeVisible();
+        await expect(page.getByText('Planning day', { exact: true })).toBeVisible();
+        await expect(page.getByText('Focus block', { exact: true })).toBeVisible();
+      }
+      if (story === 'partial-read') {
+        await expect(page.locator('.calendar-page .notice')).toContainText(/Some calendars could not be read/i);
+      }
+      if (story === 'stale-snapshot') await expect(page.getByRole('alert')).toBeVisible();
+      if (story === 'empty-selection') {
+        await expect(page.locator('.calendar-page .notice')).toContainText(/Empty selection is allowed/i);
+      }
+      if (story === 'long-titles') {
+        await expect(page.getByText(/deliberately long multi-day planning title/i)).toBeVisible();
+        await page.evaluate(() => { document.documentElement.style.zoom = '2'; });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      }
+      const results = await new AxeBuilder({ page }).include('.calendar-page').analyze();
       expect(results.violations).toEqual([]);
       assertNoRuntimeErrors();
     });

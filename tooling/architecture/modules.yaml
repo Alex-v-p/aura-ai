@@ -2531,6 +2531,13 @@ modules:
   - aura-web.governance-approvals
   - aura-web.interaction-conversations
   - aura-web.api-client
+- id: aura-web.integrations-calendar
+  root: frontend/libs/aura/integrations/calendar
+  kind: frontend-feature
+  public_api: frontend/libs/aura/integrations/calendar/src/index.ts
+  dependencies:
+  - aura-web.api-client
+  - aura-web.shared-ui
 - id: aura-contract.observatory-openapi
   root: contracts/openapi/observatory-v1.yaml
   kind: openapi-contract

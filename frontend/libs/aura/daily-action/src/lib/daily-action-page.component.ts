@@ -17,6 +17,8 @@ import {
   type DailyReminderItem,
   type DailySourceState,
 } from './daily-action-aggregation';
+import { calendarConflictsForEvent, calendarEventIdentity, DAILY_CALENDAR_AGENDA, finalIncludedCalendarDate, type DailyCalendarAgendaStatus, type DailyCalendarConflictProjection, type DailyCalendarEventProjection } from './daily-calendar-agenda';
+export { calendarConflictForEvent, calendarConflictsForEvent, calendarEventIdentity, DAILY_CALENDAR_AGENDA, finalIncludedCalendarDate, invertCalendarConflictRelationship, type DailyCalendarAgendaProjection, type DailyCalendarAgendaStatus, type DailyCalendarConflictMatch, type DailyCalendarConflictProjection, type DailyCalendarEventProjection } from './daily-calendar-agenda';
 export { attentionHasMore, attentionOverflowMessage, buildReminderItems, classifyConversationSourceState, classifyDailySourceState, dailyAuthenticationNotice, dailySourceMessage, isTerminalReminder, limitDailyItems, type DailyAuthenticationNotice, type DailyAuthenticationState, type DailyReminderItem, type DailySourceState } from './daily-action-aggregation';
 
 type DailyConnectionState = 'offline' | 'connecting' | 'reconnecting' | 'live' | 'unavailable' | null;
@@ -39,6 +41,8 @@ export class DailyActionPageComponent {
   readonly notifications = inject(NotificationStore);
   readonly approvals = inject(ApprovalStore);
   readonly conversations = inject(ConversationStore);
+  /** Calendar is an optional public projection; Today must not depend on it for reminders. */
+  readonly calendar = inject(DAILY_CALENDAR_AGENDA);
 
   readonly now = new Date();
   readonly dayEnd = dayEnd(this.now);
@@ -87,11 +91,30 @@ export class DailyActionPageComponent {
   readonly conversationState = computed<DailySourceState>(() => {
     return classifyConversationSourceState(this.authenticationState(), Boolean(this.conversations.libraryError()));
   });
+  readonly calendarStatus = computed<DailyCalendarAgendaStatus>(() => this.calendar?.status() ?? 'disconnected');
+  readonly calendarEvents = computed<ReadonlyArray<DailyCalendarEventProjection>>(() => {
+    const events = this.calendar?.events() ?? [];
+    return [...events].sort((left, right) => {
+      if (left.kind !== right.kind) return left.kind === 'all_day' ? -1 : 1;
+      const leftStart = left.kind === 'all_day' ? left.startDate ?? '' : left.startInstant ?? '';
+      const rightStart = right.kind === 'all_day' ? right.startDate ?? '' : right.startInstant ?? '';
+      return leftStart.localeCompare(rightStart) || left.title.localeCompare(right.title);
+    });
+  });
+  readonly calendarAllDayEvents = computed(() => this.calendarEvents().filter((event) => event.kind === 'all_day'));
+  readonly calendarTimedEvents = computed(() => this.calendarEvents().filter((event) => event.kind === 'timed'));
+  readonly calendarConflicts = computed<ReadonlyArray<DailyCalendarConflictProjection>>(() => this.calendar?.conflicts() ?? []);
+  readonly calendarVisibleDate = computed(() => this.calendar?.visibleDate() ?? this.localDate(this.now));
+  readonly calendarDisplayTimeZone = computed(() => this.calendar?.displayTimeZone() ?? this.browserTimeZone());
+  readonly calendarNotice = computed(() => this.calendar?.notice() ?? null);
 
   constructor() {
     // Reminder reads are scoped to this feature. Shell-owned notification and
-    // approval streams are intentionally not started a second time here.
+    // approval streams are intentionally not started a second time here. The
+    // calendar projection owns an idempotent connection/discovery start at
+    // this same authenticated Today boundary.
     void this.reminders.load();
+    void this.calendar?.start();
   }
 
   retryReminders(): void { void this.reminders.load(); }
@@ -111,4 +134,49 @@ export class DailyActionPageComponent {
   }
   sourceMessage(state: DailySourceState, source: string, errorStatus: number | null = null): string { return dailySourceMessage(state, source, errorStatus); }
   canRetrySource(state: DailySourceState): boolean { return state !== 'auth' && this.authenticationState() === 'authenticated'; }
+  retryCalendar(): void { void this.calendar?.retry(); }
+  calendarStatusMessage(): string {
+    const notice = this.calendarNotice();
+    if (notice) return notice;
+    switch (this.calendarStatus()) {
+      case 'loading': return 'Loading calendar events…';
+      case 'connecting': return 'Connecting your calendar…';
+      case 'reconnecting': return 'Reconnecting your calendar…';
+      case 'reauthorization-required': return 'Calendar authorization needs your attention.';
+      case 'revocation-uncertain': return 'Calendar access is being safely disconnected. Reconnect when Aura confirms it is ready.';
+      case 'disabled': return 'Calendar access is disabled by your administrator.';
+      case 'rate-limited': return 'Calendar reads are temporarily rate-limited.';
+      case 'permission-denied': return 'Calendar permission was denied. Review the connection to continue.';
+      case 'offline': return 'Calendar is unavailable while you are offline.';
+      case 'stale': return 'Showing the last calendar snapshot. Refresh when you are ready.';
+      case 'partial': return 'Some calendar events could not be loaded. The available events are shown.';
+      case 'unavailable': return 'Calendar is temporarily unavailable.';
+      case 'empty': return 'No calendar events are scheduled for this day.';
+      case 'disconnected': return 'Connect a calendar to see your day alongside reminders.';
+      default: return 'Calendar events are ready.';
+    }
+  }
+  calendarNeedsRetry(): boolean { return ['unavailable', 'rate-limited', 'stale', 'offline', 'reconnecting', 'partial'].includes(this.calendarStatus()); }
+  calendarEventTime(event: DailyCalendarEventProjection): string {
+    if (event.kind === 'all_day') return event.spansMultipleDays ? `${this.formatCalendarDate(event.startDate)} – ${this.formatCalendarDate(finalIncludedCalendarDate(event.endDateExclusive ?? ''))}` : 'All day';
+    const start = this.formatCalendarTime(event.startInstant);
+    const end = this.formatCalendarTime(event.endInstant);
+    return end ? `${start} – ${end}` : start;
+  }
+  calendarEventSource(event: DailyCalendarEventProjection): string {
+    if (event.kind === 'all_day') return event.spansMultipleDays ? 'Calendar · all day · multi-day' : 'Calendar · all day';
+    return event.eventTimeZone !== event.displayTimeZone ? `Calendar · ${event.eventTimeZone} → ${event.displayTimeZone}` : 'Calendar · timed';
+  }
+  calendarEventKey(event: DailyCalendarEventProjection): string { return calendarEventIdentity(event.calendarId, event.id); }
+  calendarConflictLabels(event: DailyCalendarEventProjection): ReadonlyArray<string> {
+    return calendarConflictsForEvent(event, this.calendarConflicts()).map((match) => {
+      const other = this.calendarEvents().find((candidate) => candidate.id === match.other.eventId && candidate.calendarId === match.other.calendarId);
+      return `Conflicts with ${other?.title ?? 'another calendar event'} (${this.relationshipLabel(match.relationship)})`;
+    });
+  }
+  private relationshipLabel(relationship: DailyCalendarConflictProjection['relationship']): string { return relationship === 'same_interval' ? 'same time' : relationship.replace('_', ' '); }
+  private formatCalendarTime(value: string | undefined): string { return value ? new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: this.calendarDisplayTimeZone() }).format(new Date(value)) : ''; }
+  private formatCalendarDate(value: string | undefined): string { return value ? new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`)) : 'Unknown date'; }
+  private localDate(date: Date): string { return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date); }
+  private browserTimeZone(): string { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
 }

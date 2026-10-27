@@ -1,0 +1,44 @@
+<main class="calendar-page" aria-labelledby="calendar-status-heading">
+  <a class="back-link" routerLink="/integrations">← Connect</a>
+  <header class="calendar-header">
+    <p class="eyebrow">Aura · Google Calendar</p>
+    <h1 id="calendar-status-heading" tabindex="-1">Calendar connection</h1>
+    <p class="lede">Choose which readable calendars can appear in your private Today agenda. Aura never writes calendar changes.</p>
+  </header>
+
+  @if (store.requestState() === 'loading') { <p class="status" role="status">Loading calendar connection…</p> }
+  @if (store.requestState() === 'refreshing') { <p class="status" role="status">Refreshing your calendar agenda…</p> }
+  @if (store.notice(); as notice) { <p class="notice" role="status">{{ notice }}</p> }
+  @if (store.error(); as error) { <section class="recovery" role="alert" aria-live="assertive"><strong>{{ error.message }}</strong><span>{{ error.recovery === 'reauthorize' ? 'Authorize Aura again to restore read access.' : 'Your other Today sections remain available.' }}</span>@if (error.retryable && error.recovery !== 'wait' && error.recovery !== 'connect') { <button type="button" (click)="retry()">Retry</button> }</section> }
+
+  <section class="connection-panel" aria-labelledby="connection-heading">
+    <div class="section-heading"><div><p class="eyebrow">Connection</p><h2 id="connection-heading">{{ statusLabel(store.connection()?.status ?? null) }}</h2></div><span class="status-dot" [attr.data-status]="store.connection()?.status ?? 'disconnected'" aria-hidden="true"></span></div>
+    @if (store.connection()?.lastError; as lastError) { <p class="connection-error" role="status"><strong>{{ lastError.message }}</strong><span>{{ connectionRecoveryGuidance(lastError.recoveryAction) }}</span></p> }
+    <p class="connection-copy">Calendar reads are {{ store.connection()?.readsEnabled ? 'enabled' : 'disabled' }}. @if (store.connected()) { {{ store.connection()?.selectedCalendarCount }} calendar(s) are selected. } @else if (store.connection()?.status === 'reauthorization_required') { Calendar access needs your attention. } @else if (store.connection()?.status === 'revocation_uncertain') { Access is safely disabled while disconnect status is confirmed. } @else { Connect to show a read-only calendar agenda. }</p>
+    <p class="helper">Available actions: {{ store.connection()?.availableActions?.join(', ') || 'none' }}</p>
+    <div class="actions">
+      @if (store.canConnect() && !store.connected()) { <button class="primary-action" type="button" (click)="connect()" [disabled]="busy()">Connect Google Calendar</button> }
+      @if (store.canComplete()) { <button class="primary-action" type="button" (click)="complete()" [disabled]="busy()">Complete connection</button> }
+      @if (store.canReauthorize()) { <button class="secondary-action" type="button" (click)="reauthorize()" [disabled]="busy()">Reauthorize</button> }
+      @if (store.canDisconnect() && !confirmingDisconnect()) { <button id="disconnect-calendar" class="secondary-action" type="button" (click)="requestDisconnectConfirmation()" [disabled]="busy()">Disconnect</button> }
+      @if (confirmingDisconnect()) { <div class="disconnect-confirmation" role="alert"><strong>Disconnect Calendar?</strong><span>Private calendar content will be cleared from this session.</span><div class="actions"><button id="confirm-disconnect" class="primary-action" type="button" (click)="disconnect()" [disabled]="busy()">Confirm disconnect</button><button id="cancel-disconnect" class="secondary-action" type="button" (click)="cancelDisconnect()" [disabled]="busy()">Cancel</button></div></div> }
+      @if (busy()) { <span class="busy-status" role="status" aria-live="polite">{{ store.requestState() === 'saving' ? 'Saving calendar changes…' : 'Loading calendar…' }}</span> }
+    </div>
+  </section>
+
+  @if (store.connected()) {
+    <section class="selection-panel" aria-labelledby="selection-heading">
+      <div class="section-heading"><div><p class="eyebrow">Explicit selection</p><h2 id="selection-heading">Readable calendars</h2></div><button class="secondary-action" type="button" (click)="store.discoverCalendars()" [disabled]="busy()">Refresh calendars</button></div>
+      <p class="helper">Newly discovered calendars stay off until you select them. Empty selection is allowed.</p>
+      @if (!store.calendars().length) { <p class="empty" role="status">No readable calendars were found.</p> } @else { <div class="calendar-list">@for (calendar of store.calendars(); track calendar.id) { <label class="calendar-row"><input type="checkbox" [checked]="isSelected(calendar)" (change)="toggleCalendar(calendar)" /><span><strong>{{ calendar.displayName }}</strong><small>{{ calendar.timeZone }}</small></span></label> }</div> }
+      <button class="primary-action" type="button" (click)="saveSelection()" [disabled]="busy() || !store.calendarsComplete()">{{ store.calendarsComplete() ? 'Save selection' : 'Continue discovery before saving' }}</button>
+    </section>
+    <section class="agenda-panel" aria-labelledby="agenda-heading">
+      <div class="section-heading"><div><p class="eyebrow">Read-only preview</p><h2 id="agenda-heading">Today’s agenda</h2></div><button id="refresh-agenda" class="secondary-action" type="button" (click)="retryAgenda()" [disabled]="busy()">Refresh agenda</button></div>
+      <p class="helper">{{ store.selectedDate() }} · {{ store.displayTimeZone() }}</p>
+      @if (!store.agenda().events.length) { <p class="empty">No calendar events for this day.</p> } @else { <div class="agenda-list">@for (event of store.agenda().events; track event.id) { <article class="agenda-row"><span class="source-icon" aria-hidden="true">◷</span><div><strong>{{ event.title }}</strong><span>Calendar · {{ event.timeZoneLabel }}</span>@if (event.kind === 'timed') { <small>{{ event.startInstant }} – {{ event.endInstant }}</small> } @else { <small>All day · {{ event.startDate }}</small> }</div></article> }</div> }
+      @if (store.agenda().partial) { <p class="warning" role="status">Some calendars could not be read. Retry to complete this view.</p> }
+      @for (warning of store.agenda().warnings; track warning.calendarId + warning.category) { <p class="warning">A calendar could not be read. {{ warning.recoveryAction.replaceAll('_', ' ') }}.</p> }
+    </section>
+  }
+</main>

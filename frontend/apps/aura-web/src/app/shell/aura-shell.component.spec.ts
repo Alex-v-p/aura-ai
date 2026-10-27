@@ -11,6 +11,14 @@ describe('AuraShellComponent conversation library controls', () => {
     expect(templateSource).not.toContain('routerLink="/conversation" aria-label="Aura home"');
   });
 
+  it('exposes calendar connection under an accessible Connect group', () => {
+    expect(templateSource).toContain('nav-group-connect');
+    expect(templateSource).toContain('>Connect</h2>');
+    expect(templateSource).toContain('routerLink="/integrations"');
+    expect(templateSource).toContain('[routerLinkActiveOptions]="{ exact: false }"');
+    expect(templateSource).toContain('aria-label="Calendar integrations"');
+  });
+
   it('keeps closed mobile navigation out of the accessibility tree and makes the page inert while open', () => {
     expect(templateSource).toContain("[attr.aria-hidden]=\"isMobileViewport() && !mobileOpen ? 'true' : null\"");
     expect(templateSource).toContain("[attr.inert]=\"isMobileViewport() && !mobileOpen ? '' : null\"");
