@@ -1,0 +1,150 @@
+id: AURA-0135
+title: Close the bounded sequential workflow decisions and threat model
+status: integrated
+change_class: documentation
+intent: >
+  Record the owner-approved limits, typed data flow, failure semantics,
+  retention, immutable revision behavior, abuse cases, and rollback posture for
+  the first durable sequential workflow slice so later contract and runtime
+  work can proceed without widening trust or executor boundaries.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/open-decisions.md
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - >-
+      The owner approved the conservative first default on 2026-10-27: at
+      most eight strictly sequential steps, exactly zero or one tools-disabled
+      and memory-disabled agent-run step with a five-minute deadline,
+      wait-until steps no farther than thirty days, and approval pauses
+      expiring after seven days.
+    - The owner approved no automatic semantic retries, skip, or compensation; a definitive safe failure may be explicitly retried with stable idempotency, while an unknown outcome permits reconciliation or cancellation only.
+    - The owner approved manual-only deletion for definitions, immutable revisions, instance history, results, and bounded checkpoints; schedule deletion or definition retirement must not imply instance-history or result deletion.
+    - The owner approved immutable published revisions, edit-by-cloning into a new draft, and exact revision pinning for running instances.
+    - The approved closed catalogue contains only a bounded agent run, an exact owner-approval pause, an owner-private notification, and wait-until; loops, branches, parallelism, expressions, arbitrary templates, providers, calendar writes, Home Assistant, shell or filesystem access, user code, dynamic grants, and recursive workflows remain excluded.
+  contracts: []
+feature_references:
+  - RUN-012
+  - RUN-014
+  - RUN-015
+  - RUN-016
+  - RUN-018
+  - AUT-005
+  - AUT-008
+  - AUT-009
+  - AUT-010
+  - AUT-014
+  - AUT-016
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUI-020
+  - AUI-021
+  - AUI-023
+  - AUI-025
+ownership_zones:
+  - delivery.stage4-workflow-decisions
+  - design.durable-sequential-workflows
+allowed_paths:
+  - work-items/active/AURA-0135.yaml
+  - work-items/archived/AURA-0135.yaml
+  - work-items/handoffs/AURA-0135-*.yaml
+  - work-items/reviews/AURA-0135-*.yaml
+  - work-items/integration/AURA-0135.yaml
+  - docs/design/daily-action-and-workflow-initiative.md
+forbidden_paths:
+  - contracts/**
+  - services/**
+  - frontend/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - tooling/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/open-decisions.md
+  - evaluations/**/baselines/**
+  - .codex/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Workflow definitions, manual inputs, step outputs, approval context, notifications, checkpoints, and results are owner-private and must not enter URLs, ordinary events, telemetry, logs, browser persistence, service-worker caches, screenshots, or Observatory through Aura Web.
+    - Previous-step output and owner input are untrusted evidence and cannot select step kinds, alter transitions or mappings, widen permissions, suppress nested confirmation, enable memory or tools, or become policy.
+    - Scheduler and worker identities carry no owner authority; every admission and resume must revalidate the immutable owner, workspace, revision, and narrowed grants.
+    - At-least-once delivery and ambiguous failures must not duplicate agent runs, approvals, notifications, waits, or terminal settlement.
+    - Cancellation prevents future admission and requests cancellation of active work but never claims to reverse completed effects.
+    - Retained workflow state requires separate explicit deletion scopes and must not expose executor-private or LangGraph state.
+    - Owner-enabled run evidence must use closed serializers, reject secret-bearing or oversized items whole, and remain isolated from ordinary telemetry and Aura Web.
+  data_classes:
+    - owner-private workflow definitions and immutable revisions
+    - owner-private workflow inputs outputs results and checkpoints
+    - owner-private workflow instance and step history
+    - metadata-only workflow lifecycle and bounded budget state
+required_agents:
+  implementation:
+    - delivery_lead
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: false
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The Stage 4 decision gate records a closed four-kind step catalogue and a typed non-expression data flow that cannot change control flow, policy, permissions, tool grants, memory access, or confirmation behavior.
+  - The first default permits no more than eight sequential steps and no more than one five-minute tools-disabled memory-disabled agent run, caps wait horizons at thirty days, expires approvals after seven days, and defines bounded output, checkpoint, and whole-instance resource posture for later contracts.
+  - Definitive failure, ambiguous outcome, idempotent replay, approval rejection or expiry, cancellation, restart, grant revocation, and terminal settlement semantics are explicit and do not offer unsafe retry, skip, automatic compensation, or reversal claims.
+  - Definitions, drafts, immutable revisions, instances, histories, results, and checkpoints have explicit owner-only manual deletion scopes; retiring a definition or deleting a schedule does not imply history or result deletion.
+  - Published revisions are immutable, edits clone a new draft, and admitted instances pin one exact revision for their entire lifetime.
+  - The threat model covers owner isolation, confused deputy behavior, injection through prior results, duplicate delivery, stale approvals, grant revocation, resource exhaustion, private-data leakage, executor-state leakage, cancellation races, and retention/deletion mistakes with testable mitigations.
+  - The document preserves PostgreSQL and outbox authority, public application boundaries, executor independence, Core and Observatory isolation, generated-client direction, and the existing approval and notification ownership rules.
+  - >-
+    The follow-on decomposition remains four ordered Stage 4 checkpoints:
+    decisions and threat model, contracts and deterministic state machine,
+    Core execution, and Aura Web management.
+  - No product code, contract, migration, provider, dependency, deployment, telemetry, baseline, or protected architecture change occurs in this work item.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0135.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0135.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0135.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

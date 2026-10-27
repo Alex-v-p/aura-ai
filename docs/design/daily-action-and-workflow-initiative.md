@@ -514,10 +514,257 @@ If public contracts would expose LangGraph nodes/checkpoints, permit arbitrary
 code or expressions, add an unbounded provider boundary, or require a new
 trust model, return `ADR_REQUIRED`.
 
-### Recommended first slice
+#### Owner-approved first defaults
 
-Support owner-authored, versioned workflows with schedule or manual triggers,
-strictly sequential execution, and a small typed step catalogue:
+The owner closed this gate on 2026-10-27 for the first bounded slice. These
+defaults are design authority for the three follow-on Stage 4 work items; they
+are not contracts or implementation by themselves.
+
+The catalogue is closed to exactly four step kinds. Every object described
+below rejects unknown properties, and every enum rejects unknown values. JSON
+size limits count the UTF-8 bytes of RFC 8785 canonical JSON; text limits count
+the UTF-8 bytes of the normalized string rather than characters or code units.
+
+The value algebra is closed to:
+
+- `bounded_text`: an NFC-normalized JSON string containing valid UTF-8, at
+  most 8 KiB after normalization;
+- `instant`: an offset-aware RFC 3339 JSON string normalized to UTC;
+- `opaque_identifier`: an ASCII JSON string of 1–128 characters matching
+  `^[A-Za-z0-9_-]+$` and carrying no user-authored meaning;
+- `agent_result`: `{ "status": "completed", "output": bounded_text }`;
+- `approval_result`: `{ "decision": "approved" | "rejected" | "expired",
+  "decided_at": instant }`;
+- `notification_receipt`: `{ "notification_id": opaque_identifier,
+  "status": "inbox_available" }`; and
+- `wait_result`: `{ "resumed_at": instant }`.
+
+The four exact step shapes and mapping slots are:
+
+1. `agent_run` is exactly `{ "kind": "agent_run",
+   "agent_revision_id": opaque_identifier, "instructions": bounded_text,
+   "input": selector<bounded_text> }`. On success it returns `agent_result`.
+   It admits at most one Aura run for the entire instance, has a five-minute
+   deadline, exposes zero tools, reads and writes no memory, creates no
+   delegated runs, and cannot be replayed.
+2. `owner_approval` is exactly `{ "kind": "owner_approval" }`; it has no
+   mappable input and returns `approval_result`. Its proposal is system-derived
+   from immutable workflow state as specified below; author text and prior-step
+   output cannot become approval presentation. It expires no later than seven
+   days after creation or the instance deadline, whichever is earlier.
+3. `owner_notification` is exactly `{ "kind": "owner_notification",
+   "content": selector<bounded_text> }` and returns `notification_receipt`.
+   It invokes the Notifications public application API to create one
+   owner-private inbox item and cannot select a provider or external delivery
+   channel.
+4. `wait_until` is exactly `{ "kind": "wait_until", "due_at":
+   selector<instant> }` and returns `wait_result`. The instant may be no more
+   than 30 days after the step begins and no later than the instance deadline.
+
+Instance input is a closed object of at most 16 publish-time-declared
+`bounded_text` or `instant` fields and at most 32 KiB. Each field name matches
+`^[a-z][a-z0-9_]{0,63}$`. Each mappable slot has
+exactly one selector with one of these closed shapes:
+`{ "source": "instance_input", "field": declared_field }` or
+`{ "source": "step_output", "step_ordinal": earlier_ordinal,
+"field": declared_output_field }`. The referenced type must exactly equal the
+slot type. A selector cannot reference the current or a later step. There are
+no expressions, interpolation, templates, literals, coercion, dynamic paths,
+fallbacks, model-selected mappings, or additional mapping slots. Static agent
+instructions are immutable revision configuration, not data-plane values.
+
+A complete published revision contains one through eight steps in a fixed
+order and is at most 64 KiB. Agent instructions are at most 8 KiB. The
+owner-visible workflow name is at most 512 UTF-8 bytes and 160 Unicode scalar
+values. No other free-form static value is permitted. One step is active at a
+time; there are no loops, branches, parallelism, recursion, dynamic dispatch,
+skip edges, or compensation edges. The first implementation slice admits only
+an explicit owner-requested manual start. It has no schedule or other trigger
+configuration.
+
+Core validates every closed object, selector, type edge, resource bound, and
+the complete acyclic mapping graph before publication and again at admission.
+Runtime values cannot select a step kind, change step order or a transition,
+modify instructions, policy, owner or workspace, select an agent revision,
+widen a grant, enable a tool or memory, suppress a confirmation, choose a
+notification channel, or create a nested workflow. Prior-step output is
+delimited untrusted evidence wherever it is presented to the one agent run.
+
+An instance permits one logical execution of each declared step, no more than
+eight step settlements, and a total lifetime of 30 days from admission.
+Persisted private workflow values are bounded to 32 KiB per step record and
+64 KiB across instance input and all step outputs. A checkpoint contains only
+the closed coordinator state needed to resume—revision and instance
+references, current ordinal, bounded statuses, versions, deadlines, and
+idempotency references—and is at most 8 KiB. Its `checkpoint_status` is exactly
+`current` or `settled`. Core keeps at most one `current` checkpoint plus one
+`settled` checkpoint per declared step, for a maximum of nine checkpoints and
+72 KiB per instance. Checkpoints do not duplicate prompts, workflow inputs,
+step outputs, approval detail, or notification content. Publication and
+admission reject an over-limit definition or input; execution fails closed
+before persisting an over-limit output or checkpoint.
+
+The instance state and outcome vocabularies are separate. `instance_status` is
+exactly `queued`, `running`, `waiting_for_time`, `waiting_for_approval`,
+`waiting_for_resolution`, `resolution_required`, `cancel_requested`, or
+`terminal`. Only a `terminal` instance has `terminal_outcome`, whose exact enum
+is `completed`, `canceled`, or `failed`. `step_status` is exactly `pending`,
+`running`, `waiting_for_time`, `waiting_for_approval`, `failed_replayable`,
+`resolution_required`, `completed`, `rejected`, `expired`, `canceled`, or
+`failed`. Each step also carries `effect_outcome`, exactly `not_attempted`,
+`completed`, `definitively_failed`, or `unknown`, and zero or more applicable
+`recovery_capabilities` from the closed set `request_replay`, `settle_failed`,
+`reconcile`, and `cancel`.
+
+The instance representation separately returns a content-free ordered
+`completed_effects` summary of `{ step_ordinal, step_kind }` entries. This lets
+clients present completed effects beside current recovery without treating a
+terminal outcome as a statement that earlier effects were reversed. `partial`
+is derived presentation only when an instance has completed effects but did
+not terminalize as `completed`, or when an unknown effect remains in step
+history. It is never an instance status, terminal outcome, or step outcome.
+
+There are no automatic semantic retries. At-least-once transport redelivery
+re-enters the same command with the same step-execution idempotency identity;
+it is duplicate suppression, not a new execution. A definitive non-replayable
+failure sets the step to `failed` and immediately terminalizes the instance as
+`failed`. A definitive replay-safe failure sets the step to
+`failed_replayable`, the instance to `waiting_for_resolution`, and exposes
+exactly `request_replay`, `settle_failed`, and `cancel`. Before terminal
+settlement the owner may request exactly one replay, using the same revision,
+input, narrowed grants, step-execution idempotency identity, and remaining
+deadline. A second replay request is rejected idempotently. The owner choosing
+`settle_failed`, declining to retry, or reaching the 30-day instance deadline
+terminalizes the instance as `failed`. The replay succeeding continues the
+fixed sequence; the replay failing terminalizes it as `failed`. The
+`agent_run` is never replayable because the instance permits only one agent-run
+admission. No command can reopen a terminal instance.
+
+An ambiguous effect sets the step to `resolution_required` with
+`effect_outcome: unknown`, sets the instance to the durable nonterminal
+`resolution_required` state, exposes only `reconcile` and `cancel`, and blocks
+all later steps. Authoritative reconciliation against the owning application
+may confirm that the effect completed, set the step to `completed`, and
+continue the fixed sequence; or it may establish a definitive failure, set the
+step to `failed`, and terminalize the instance as `failed`. Unknown never
+offers replay. Owner cancellation, or the 30-day instance deadline while still
+unresolved, terminalizes the instance as `canceled` while preserving the
+step's unknown effect in immutable history.
+
+All resolution races use an expected instance version and a PostgreSQL lock.
+The first terminal settlement wins. If reconciliation commits before
+cancellation or deadline settlement, its confirmed result governs and the
+normal sequence may continue. If cancellation or deadline settlement commits
+first, later authoritative evidence may append bounded reconciliation metadata
+to the unknown step history but can never reopen the instance, change its
+`canceled` terminal outcome, or admit another step. A normal cancellation sets
+`cancel_requested`, prevents future admission, and requests cancellation of an
+active Aura run. Confirmed stop settles `canceled`; an ambiguous stop enters
+`resolution_required` and follows the same resolution rules. Cancellation
+never claims to reverse a sent notification, elapsed wait, approval decision,
+generated output, or any completed effect.
+
+Approval rejection or expiry sets the approval step to that exact status with
+`effect_outcome: definitively_failed` and terminalizes the instance as
+`failed`; it never authorizes a later step. Approval presentation is an
+immutable system-derived object containing only: workflow identifier, revision
+identifier, the pinned bounded `workflow_display_name`, exact step ordinal and
+step-execution identifier, `next_step_kind` (`agent_run`, `owner_approval`,
+`owner_notification`, `wait_until`, or `complete`), `consequence`, opaque owner
+and workspace scope identifiers, origin `manual_workflow_instance`, and expiry.
+The permitted `(next_step_kind, consequence, copy)` triples are exactly:
+`(agent_run, continue_to_agent_run, "Approve this step to continue to the agent
+run.")`, `(owner_approval, continue_to_owner_approval, "Approve this step to
+continue to the next approval.")`, `(owner_notification,
+continue_to_owner_notification, "Approve this step to continue to the private
+notification.")`, `(wait_until, continue_to_wait_until, "Approve this step to
+continue to the wait.")`, or `(complete, complete_workflow, "Approve this step
+to complete the workflow.")`. Core selects the one triple from the next fixed
+step; no caller supplies it. The display name is rendered as a separately
+delimited inert label and is never interpolated into consequence copy. No other
+author text, instance input, or prior output enters the presentation. A stale,
+expired, canceled, differently bound, or version-mismatched decision is
+rejected idempotently. Approval authorizes only this workflow transition; any
+nested application confirmation remains mandatory.
+
+Restart reads PostgreSQL truth, revalidates the pinned context and grants, and
+resumes only the same current step; transport or executor state cannot advance
+it. Grant, connection, owner, workspace, or resource revocation fails closed
+before admission or resume and terminalizes as a definitive authorization
+failure unless an already-started operation has an unknown effect, which must
+enter `resolution_required`.
+
+Definitions, drafts, published revisions, instances, instance history,
+results, and checkpoints are retained until an owner makes an explicit,
+scope-specific deletion request. The manual scopes are: one draft; one retired
+definition; one published revision; one terminal instance identity and state;
+the history of one terminal instance; one terminal instance result; or the
+checkpoints of one terminal instance. Deleting any one scope never cascades to
+another. Active instance state and its pinned revision cannot be deleted.
+
+Deleting instance identity/state retains a content-free instance tombstone
+with instance, owner-scope, workflow, revision, and terminal-outcome lineage
+for as long as any history, result, or checkpoint survives. Deleting history,
+result, or checkpoints leaves that tombstone and every other retained scope
+unchanged. Deleting a referenced revision or definition likewise retains the
+content-free identity and lineage required by surviving scopes while removing
+only the selected private content. Tests must exercise every deletion order
+and prove surviving scopes remain authorized, attributable, inspectable, and
+unchanged. Each deletion is owner-authorized, CSRF-protected, idempotent, and
+leaves content-free audit truth. There is no expiry, cascading deletion,
+background purge, or executor-driven retention.
+
+Published revisions are immutable. Editing a published workflow clones its
+configuration into a new draft with fresh identity and optimistic version;
+publishing that draft creates another immutable revision. An admitted instance
+pins one exact workflow revision, agent revision, owner, household, workspace,
+grants, mappings, limits, and deadline for its lifetime. Later edits,
+publication, retirement, or manual-start availability changes do not alter or
+migrate it.
+
+#### Stage 4 threat model
+
+| Abuse or failure case | Required mitigation and testable proof |
+| --- | --- |
+| Cross-owner or cross-workspace access | Bind owner, household, and workspace at admission; authorize every read, command, deletion, and resume against that immutable context. Tests attempt identifier substitution, list leakage, manual admission under another owner, and resume after privilege change. |
+| Worker or executor as a confused deputy | Service identities carry no owner authority. Reconstruct only the pinned narrowed context from PostgreSQL and revalidate it before each step. Tests prove a worker credential alone cannot admit, resume, read private values, approve, notify, or delete. |
+| Injection through instance input or prior results | Validate the closed types and publish-time mappings, delimit values as untrusted evidence, and prohibit values from instructions, transitions, policy, grants, confirmation, memory, notification routing, or nested invocation. Hostile strings and mapping/path substitution tests must change neither control flow nor authority. |
+| Duplicate command, outbox, or worker delivery | Give each manual admission, instance, step execution, approval, notification, and terminal settlement a stable idempotency identity; serialize transitions with PostgreSQL locks or expected versions. Repeated and reordered delivery tests produce one instance, one logical step effect, and one terminal settlement. |
+| Stale, replayed, or misbound approval | Bind an approval to owner, instance, revision, exact step ordinal and execution identity, immutable system-derived presentation, expected version, and expiry. Race tests prove only one current decision wins and that approval cannot authorize a later or changed step, interpolate private output, or bypass a nested confirmation. |
+| Grant, connection, or resource revocation | Revalidate immutable owner context and the pinned narrowed grant subset at admission and every resume. Revocation tests fail closed before the next step and never inherit worker, executor, or replacement-revision authority. |
+| Resource exhaustion or indefinite suspension | Enforce the eight-step, one-active-step, one-agent-run, five-minute run, seven-day approval, 30-day wait and instance, byte, checkpoint, and replay limits above at publication, admission, persistence, and resume. Boundary and over-limit tests reject whole values and reach a durable bounded outcome. |
+| Private-data leakage | Keep inputs, outputs, mappings, instructions, approval context, notification content, checkpoints, and owner identity out of URLs, ordinary events, outbox payloads, SSE, telemetry, logs, browser persistence, service-worker caches, and screenshots. Contract/privacy tests use canary secrets and assert absence at every prohibited sink. |
+| Executor-state or LangGraph leakage | Treat any executor as a replaceable private adapter with no policy authority. Public APIs, events, generated clients, audit, telemetry, and Aura Web expose only Aura instance, step, status, and history terms. Boundary tests reject imports or schemas containing executor nodes, graphs, or checkpoint payloads. |
+| Cancellation race or false reversal claim | Commit cancellation, reconciliation, deadline, and step settlement with expected versions; preserve committed and unknown effects; and block future admission. Race tests cover cancellation before admission, during the agent run, beside approval, and against reconciliation or terminal commit, including late evidence that must not reopen a terminal instance. |
+| Retention or deletion scope confusion | Require an explicit owner-only scope, terminal-state preconditions where applicable, no cascading defaults, and content-free tombstones for retained references. Tests exercise every scope and deletion order, prove surviving history/results/checkpoints retain lineage, prove active state cannot be removed, and prove retrying deletion is idempotent. |
+
+PostgreSQL is the authority for definitions, revisions, manual admissions, instances,
+step state, checkpoints, idempotency, and settlement. The transactional outbox
+publishes identifier-only durable reactions to NATS under at-least-once
+delivery; neither NATS, Valkey, nor an executor owns workflow truth. Step
+handlers invoke public application APIs for Runs, Approvals, and Notifications;
+they never import another domain's adapters or tables. HTTP and worker
+entrypoints use those same workflow application commands. Future browser
+clients consume only generated OpenAPI clients.
+
+The first slice needs no LangGraph integration. If a later implementation uses
+an executor adapter, it receives only bounded Aura commands, has no independent
+owner authority, and reconciles recovery through Aura transitions. Its private
+state is neither a workflow checkpoint contract nor a source of truth.
+
+Ordinary workflow events, audit, logs, metrics, traces, outbox messages, and
+SSE remain metadata-only. Core never reads from or waits for Observatory.
+Owner-enabled full-content evidence, if configured, uses separate closed
+ADR-0017 serializers, rejects prohibited or oversized items whole, exports
+asynchronously on `run-evidence-v1`, and stays inaccessible to Aura Web.
+Observatory never reads Core workflow tables or executor state, and executor
+state never enters ordinary telemetry or governed evidence as an arbitrary
+object dump.
+
+### Approved first slice
+
+Support owner-authored, versioned workflows with owner-requested manual start,
+strictly sequential execution, and the closed typed step catalogue:
 
 - admit one bounded agent run using a pinned agent revision and fixed input
   mapping;
@@ -525,10 +772,17 @@ strictly sequential execution, and a small typed step catalogue:
 - create an owner-private notification from an approved bounded result; and
 - wait until an explicit instant when needed for a later step.
 
-The final catalogue is an owner decision. The first slice excludes loops,
+The owner-approved catalogue above is final for this slice. It excludes loops,
 branches, parallel fan-out, arbitrary templates or expressions, provider calls,
 calendar writes, Home Assistant, shell/filesystem access, user-supplied code,
 dynamic tool grants, and recursive workflow invocation.
+
+Schedules are deliberately deferred. A later owner decision must close cadence,
+timezone, daylight-saving gap and overlap behavior, missed-run policy,
+pause/resume/cancel lifecycle, and schedule deletion semantics before any
+schedule contract, Core scheduler behavior, or Aura Web schedule control is
+authorized. The first contract, Core, and Web slices contain no schedule
+fields, routes, commands, workers, or acceptance promise.
 
 The current approval contract is closed over reminder proposals, and the
 current notification source is reminder-specific until Stage 3 evolves it.
@@ -544,28 +798,36 @@ adapters.
 ### Product outcome
 
 Aura Web can create a draft workflow, review its effective steps and limits,
-publish an immutable revision, manually start or schedule an instance, inspect
-progress and history, decide approval pauses through the canonical approval
-inbox, and cancel active work. Core owns the definition, instance, step,
-checkpoint, and outcome truth independently of any executor backend.
+publish an immutable revision, manually start an instance, inspect progress
+and history, decide approval pauses through the canonical approval inbox,
+cancel active work, and explicitly delete one authorized retention scope at a
+time. Core owns the definition, instance, step, checkpoint, and outcome truth
+independently of any executor backend.
 
-### Work-item decomposition
+### Ordered Stage 4 checkpoints
 
-Use four sequential work items:
+Use four sequential checkpoints. Each checkpoint requires its own validated
+work item, required handoff and reviews, and passing checks before the next one
+begins:
 
 1. **Workflow decisions and threat model:** close the gates above, define abuse
-   cases, bounded resource policy, retention, and executor independence.
+   cases, bounded resource policy, retention, and executor independence. The
+   owner-approved defaults and threat model in this section complete the design
+   input for this checkpoint; repository integration still follows the normal
+   review lifecycle.
 2. **Workflow, approval, and notification contracts plus deterministic state machine:** define immutable
    definitions, instances, typed steps, statuses, commands, history, events,
    idempotency, optimistic concurrency, typed workflow approval/notification
-   unions, migration compatibility, consumer generation, and contract tests.
-3. **Core workflow execution:** implement PostgreSQL state, scheduler/worker
+   unions, manual-admission compatibility, consumer generation, and contract
+   tests. It does not define schedules.
+3. **Core workflow execution:** implement PostgreSQL state, manual/worker
    admission, shared step handlers, approval pause/resume, checkpoints,
    cancellation, recovery, metadata-safe audit/telemetry, and optional private
-   executor adapter. LangGraph is not required for the sequential slice.
+   executor adapter. LangGraph and scheduling are not required or authorized
+   for the sequential slice.
 4. **Aura Web workflow management:** regenerate the client and add definition,
-   review/publish, instance, approval handoff, history, recovery, and cancel
-   experiences.
+   review/publish, manual start, instance, approval handoff, history, recovery,
+   cancel, and scope-specific deletion experiences. It adds no schedule UI.
 
 Expected ownership zones:
 
@@ -588,9 +850,10 @@ Expected ownership zones:
 - Core validates every step and mapping before publication. Step handlers call
   public application use cases and cannot access another domain's tables or
   adapters.
-- The state machine defines queued, running, waiting-for-time,
-  waiting-for-approval, completed, canceled, failed, and unknown outcomes in
-  Aura-owned terms. Executor-specific state remains private.
+- The state machine uses the exact status, terminal-outcome, per-step outcome,
+  effect summary, and recovery-capability vocabularies above. Unknown effects
+  are nonterminal `resolution_required`, never a terminal instance outcome.
+  Executor-specific state remains private.
 - Checkpoint persistence is bounded and references the Aura instance and step.
   PostgreSQL workflow state remains authoritative after a restart.
 - At-least-once delivery cannot duplicate a step. Every mutating handler has a
@@ -603,7 +866,7 @@ Expected ownership zones:
   use case's current authorization and confirmation policy.
 - Every instance and resume binds and revalidates its immutable owner principal,
   household, workspace, source grants, and explicit subset of agent tool and
-  memory grants. Scheduler and worker identities provide no authority, and any
+  memory grants. Worker and executor identities provide no authority, and any
   lost grant fails closed before the next step.
 - Definition inputs and prior-step results are typed, bounded, separately
   delimited untrusted evidence. They cannot select step kinds, alter mappings,
@@ -621,15 +884,18 @@ Expected ownership zones:
 
 - Model-based state-machine tests cover every valid and invalid transition,
   version conflict, duplicate command, approval race, restart, checkpoint,
-  deadline, retry, cancellation, and unknown outcome.
+  deadline, replayable failure, unknown resolution, late reconciliation,
+  cancellation, and terminal non-reopening.
 - Security tests prove owner isolation, grant non-escalation, exact approval
   binding, input bounds, and rejection of unknown step kinds or mappings.
-- Deterministic evaluation measures completion, step latency, retry and
+- Deterministic evaluation measures completion, step latency, replay and
   duplicate-prevention behavior, approval correctness, cancellation latency,
   recovery, and resource-budget enforcement.
-- Full-stack acceptance covers draft through immutable publication, manual and
-  scheduled start, live progress, approval pause/resume, failure recovery,
-  history, and cancellation.
+- Full-stack acceptance covers draft through immutable publication, manual
+  start, live progress, immutable system-derived approval review, pause/resume,
+  replayable-failure choice, unknown reconciliation/cancellation, completed
+  effect history, scope-specific deletion, and cancellation. Schedule creation
+  and firing are explicitly absent from this slice.
 - Authorization tests cover revoked owners, workspaces, sources, tools, memory
   scopes, approval resume, and nested confirmation. Security tests cover
   hostile step output, mapping injection, evidence serialization, and secret
@@ -641,33 +907,63 @@ Use `/workflows`, `/workflows/new`, `/workflows/:id`, and
 `/workflows/:id/instances/:instanceId` under **Automate**. Desktop authoring
 uses a labelled ordered list with explicit add, move up, move down, edit, and
 remove controls; drag may be supplemental but never required. Mobile edits one
-step at a time and returns to the ordered review. Drafts and valid fields
-survive validation, version conflict, reconnect, and provider failure. Publish
-shows the immutable revision, effective step permissions, confirmation points,
-and all budgets before the final action. Running instances are visually
-separate from editable drafts; a running revision cannot be edited, but may be
-cloned into a new draft. Attempted, waiting, completed, partial, canceled,
-failed, and unknown outcomes have explicit recovery paths without unsafe retry.
+step at a time and returns to the ordered review. Selector authoring is a typed
+picker that lists only compatible instance fields and earlier-step output
+fields; it never exposes an expression or free-form path editor. Every add,
+move, remove, and clone revalidates the entire ordered mapping graph. Adding
+moves focus to the new step heading or first invalid field; moving preserves
+focus on that step and announces its new ordinal; removing uses a focused
+confirmation and returns focus to the next step, previous step, or Add control;
+cloning opens the new draft and focuses its heading. Reordering never remaps a
+selector silently: a now-forward or incompatible reference blocks save and
+publish, identifies the source and expected type, and focuses the first invalid
+selector. Version conflict preserves the draft, focuses an error summary, and
+offers reload or clone-to-new-draft without overwriting either revision.
+
+Drafts and valid fields survive validation, version conflict, reconnect, and
+provider failure. Publish shows the immutable revision, effective step
+permissions, confirmation points, and all budgets before the final action.
+Running instances are visually separate from editable drafts; a running
+revision cannot be edited, but may be cloned into a new draft. The instance
+view renders terminal outcome, per-step status/effect outcome, completed-effect
+summary, and currently allowed recovery actions as separate concepts. A
+canceled instance may therefore still show an unknown prior effect. `Partial`
+is only a derived visible qualifier, never a wire status. No unsafe retry is
+offered.
+
+Every manual deletion scope appears beside its own contextual resource, never
+as a bulk or ambiguous “delete workflow data” action. A focused confirmation
+states exactly what private content will be removed, which content-free
+tombstone or lineage remains, which other scopes will survive unchanged, and
+why an active instance or pinned revision cannot be deleted. Cancel returns
+focus to the invoking control; confirmed deletion returns focus to the nearest
+surviving heading or collection action and announces the scoped result. Browser
+acceptance covers all seven scopes, every surviving-scope relationship,
+non-cascade behavior, active-state rejection, stale versions, idempotent repeat,
+keyboard focus return, and sanitized failure recovery.
+
 Keyboard-only, focus return, themes, reduced motion, narrow viewport, and 200%
 reflow coverage are required.
 Meaningful running, awaiting-approval, partial, completed, canceled, failed,
-and unknown transitions are announced through a restrained status/live region
-without moving focus or announcing every internal step update.
+resolution-required, and unknown-effect transitions are announced through a
+restrained status/live region without moving focus or announcing every internal
+step update.
 
 ### Observability
 
 Plan stable components for definition validation, instance admission, each
 closed step kind, checkpoint, approval pause/resume, cancellation, and result
-settlement. Record identifiers, bounded statuses, versions, durations, retry
+settlement. Record identifiers, bounded statuses, versions, durations, replay
 classes, and budget usage only. Never place workflow inputs, outputs, mappings,
 approval summaries, or owner identity in ordinary telemetry or event payloads.
 
 ### Rollout and rollback
 
-Start with manual admission and one controlled owner before enabling schedules.
-Rollback disables new definition publication and instance admission, preserves
-inspection and cancellation, and lets already completed history remain
-truthful. It does not reinterpret or automatically rerun incomplete instances.
+This slice remains manual-only; schedules require the separate owner decision
+defined above and are not a rollout flag. Rollback disables new definition
+publication and instance admission, preserves inspection and cancellation, and
+lets already completed history remain truthful. It does not reinterpret or
+automatically rerun incomplete instances.
 
 ### Minimum roles
 
