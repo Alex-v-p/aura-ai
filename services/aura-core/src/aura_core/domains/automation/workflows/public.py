@@ -133,6 +133,15 @@ class WorkflowDeletionScope(StrEnum):
     INSTANCE_CHECKPOINTS = "instance_checkpoints"
 
 
+class WorkflowEventCursorOutcome(StrEnum):
+    """Closed result for an opaque owner-local lifecycle cursor."""
+
+    OK = "ok"
+    UNKNOWN = "unknown"
+    FOREIGN = "foreign"
+    EXPIRED = "expired"
+
+
 @dataclass(frozen=True, slots=True)
 class WorkflowTraceContext:
     """Explicit request-scoped trace parent for workflow commands and children."""
@@ -302,6 +311,11 @@ class WorkflowRevision:
     status: WorkflowRevisionStatus = WorkflowRevisionStatus.DRAFT
     household_id: str | None = None
     workspace_id: str | None = None
+    revision_number: int = 1
+    published_at: datetime | None = None
+    retired_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     def __post_init__(self) -> None:
         name = normalise_text(self.display_name, max_bytes=MAX_WORKFLOW_NAME_BYTES)
@@ -317,6 +331,8 @@ class WorkflowRevision:
             raise WorkflowValidationError("workflow input fields are not closed")
         if self.version <= 0:
             raise WorkflowValidationError("workflow version must be positive")
+        if self.revision_number <= 0:
+            raise WorkflowValidationError("workflow revision number must be positive")
         agent_count = sum(isinstance(step, AgentRunStep) for step in self.steps)
         if agent_count > 1:
             raise WorkflowValidationError("workflow permits at most one agent run")
@@ -339,7 +355,40 @@ class WorkflowRevision:
             "steps": [step.as_dict() for step in self.steps],
             "version": self.version,
             "status": self.status.value,
+            # The transport contract calls this immutable sequence ``revision``.
+            "revision": self.revision_number,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "retired_at": self.retired_at.isoformat() if self.retired_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "limits": {
+                "max_steps": MAX_STEPS,
+                "max_instance_lifetime_days": MAX_INSTANCE_LIFETIME_DAYS,
+                "max_agent_deadline_seconds": MAX_AGENT_DEADLINE_SECONDS,
+            },
         }
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowCreateDraftCommand:
+    """Semantic draft-create input; server-side IDs are never caller-owned."""
+
+    issuer: str
+    subject: str
+    display_name: str
+    input_fields: tuple[InputField, ...]
+    steps: tuple[WorkflowStep, ...]
+    household_id: str | None = None
+    workspace_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowCreateDraftResult:
+    revision: WorkflowRevision
+    replayed: bool = False
+
+    def as_dict(self) -> dict[str, object]:
+        return {"revision": self.revision.as_dict(), "replayed": self.replayed}
 
 
 def _output_field(step: WorkflowStep) -> str:
@@ -434,8 +483,25 @@ def validate_step_result(
             WorkflowStepStatus.FAILED,
             WorkflowStepStatus.REJECTED,
             WorkflowStepStatus.EXPIRED,
-        } or output is not None:
+        }:
             raise WorkflowTransitionError("failed effects require a terminal failure status")
+        if output is not None:
+            if kind is not WorkflowStepKind.OWNER_APPROVAL or not isinstance(output, Mapping):
+                raise WorkflowValidationError("failed result cannot carry output")
+            raw = cast(Mapping[object, object], output)
+            if set(raw) != {"decision", "decided_at"}:
+                raise WorkflowValidationError("approval failure result algebra is closed")
+            decision = raw.get("decision")
+            expected = "rejected" if status is WorkflowStepStatus.REJECTED else "expired"
+            if decision != expected:
+                raise WorkflowValidationError("approval decision does not match terminal status")
+            timestamp = raw.get("decided_at")
+            if not isinstance(timestamp, (str, datetime)):
+                raise WorkflowValidationError("approval timestamp is invalid")
+            result = {"decision": decision, "decided_at": normalise_instant(timestamp).isoformat()}
+            if len(canonical_json(result)) > MAX_STEP_VALUE_BYTES:
+                raise WorkflowValidationError("step result exceeds 32 KiB")
+            return result
         return None
     if effect_outcome is WorkflowEffectOutcome.NOT_ATTEMPTED:
         raise WorkflowTransitionError("not_attempted cannot settle a step")
@@ -515,6 +581,17 @@ class WorkflowInstance:
     input_values: Mapping[str, str]
     terminal_outcome: WorkflowTerminalOutcome | None = None
     replay_count: int = 0
+    # The admission-time authority facts are pinned to the instance.  They
+    # are intentionally a closed value object: no token, policy document, or
+    # provider detail crosses the workflow boundary.
+    authority: WorkflowAuthoritySnapshot | None = None
+    updated_at: datetime | None = None
+    terminal_at: datetime | None = None
+    completed_effects: tuple[Mapping[str, object], ...] = ()
+    checkpoints: tuple[Mapping[str, object], ...] = ()
+    result: Mapping[str, object] | None = None
+    next_due_at: datetime | None = None
+    trace_context: WorkflowTraceContext | None = None
 
     def __post_init__(self) -> None:
         if self.version <= 0 or self.current_ordinal < 1 or self.current_ordinal > MAX_STEPS:
@@ -525,6 +602,114 @@ class WorkflowInstance:
             raise WorkflowValidationError("instance deadline exceeds 30-day lifetime")
         if (self.status is WorkflowInstanceStatus.TERMINAL) != (self.terminal_outcome is not None):
             raise WorkflowValidationError("terminal outcome must match terminal status")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowInstanceAuthorization:
+    """Owner-scoped lineage proof that survives terminal-state tombstoning."""
+
+    id: UUID
+    workflow_id: UUID
+    revision_id: UUID
+    issuer: str
+    subject: str
+    version: int
+    status: WorkflowInstanceStatus = WorkflowInstanceStatus.TERMINAL
+    terminal_outcome: WorkflowTerminalOutcome | None = None
+    tombstoned: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowDefinition:
+    id: UUID
+    display_name: str
+    status: str = "active"
+    latest_revision_id: UUID | None = None
+    version: int = 1
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    retired_at: datetime | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "id": str(self.id), "display_name": self.display_name, "status": self.status,
+            "latest_revision_id": str(self.latest_revision_id) if self.latest_revision_id else None,
+            "version": self.version,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "retired_at": self.retired_at.isoformat() if self.retired_at else None,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowValidationIssue:
+    code: str
+    path: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {"code": self.code, "path": self.path}
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowValidationResult:
+    valid: bool
+    issues: tuple[WorkflowValidationIssue | str, ...]
+    validated_version: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "valid": self.valid,
+            "issues": [
+                issue.as_dict() if isinstance(issue, WorkflowValidationIssue)
+                else {"code": "invalid_value", "path": "/"}
+                for issue in self.issues
+            ],
+            "validated_version": self.validated_version,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowPage:
+    items: tuple[WorkflowDefinition, ...]
+    next_cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowEventPage:
+    events: tuple[Mapping[str, object], ...]
+    next_cursor: str | None = None
+    cursor_outcome: WorkflowEventCursorOutcome = WorkflowEventCursorOutcome.OK
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowIdempotencyRecord:
+    """Owner-scoped semantic fingerprint and opaque command response."""
+
+    fingerprint: str
+    response: object
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowCancelIntent:
+    """Durable owner-scoped downstream cancellation propagation state."""
+
+    instance_id: UUID
+    execution_id: str
+    propagated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowDeletionReceipt:
+    deleted: bool
+    deleted_at: datetime
+    replayed: bool = False
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "deleted": self.deleted,
+            "deletedAt": self.deleted_at.isoformat(),
+            "replayed": self.replayed,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -552,6 +737,7 @@ def admit_instance(
     instance_id: UUID | None = None,
     now: datetime,
     input_values: Mapping[str, str],
+    authority: WorkflowAuthoritySnapshot | None = None,
 ) -> WorkflowInstance:
     revision = validate_revision(revision)
     if revision.status is not WorkflowRevisionStatus.PUBLISHED:
@@ -580,14 +766,154 @@ def admit_instance(
         current,
         current + timedelta(days=MAX_INSTANCE_LIFETIME_DAYS),
         values,
+        authority=authority,
+        updated_at=current,
     )
 
 
 class WorkflowRepository(Protocol):
+    async def get_idempotent(
+        self, issuer: str, subject: str, idempotency_key: str, *,
+        operation: str = "save_state",
+    ) -> object | None: ...
+
+    async def get_idempotency_record(
+        self, issuer: str, subject: str, idempotency_key: str, *,
+        operation: str = "save_state",
+    ) -> WorkflowIdempotencyRecord | None: ...
+
+    async def get_cancel_intent(
+        self, issuer: str, subject: str, idempotency_key: str
+    ) -> WorkflowCancelIntent | None: ...
+
+    async def record_cancel_intent(
+        self, issuer: str, subject: str, idempotency_key: str, *,
+        instance_id: UUID, execution_id: str,
+    ) -> None: ...
+
+    async def mark_cancel_propagated(
+        self, issuer: str, subject: str, idempotency_key: str
+    ) -> None: ...
+
+    async def get_deletion_replay(
+        self, issuer: str, subject: str, idempotency_key: str, *,
+        workflow_id: UUID | None = None, target_id: UUID | None = None,
+        scope: WorkflowDeletionScope | None = None,
+        expected_version: int | None = None,
+    ) -> WorkflowDeletionReceipt | None: ...
+
+    async def list_definitions(
+        self, issuer: str, subject: str, *, limit: int = 50, cursor: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowPage: ...
+
+    async def get_definition(
+        self, issuer: str, subject: str, workflow_id: UUID,
+        *, trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowDefinition: ...
+
+    async def clone_draft(
+        self, issuer: str, subject: str, workflow_id: UUID, *, revision_id: UUID | None = None,
+        expected_definition_version: int | None = None,
+        idempotency_key: str | None = None, trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowRevision: ...
+
+    async def update_draft(
+        self, revision: WorkflowRevision, *, expected_version: int, issuer: str, subject: str,
+        idempotency_key: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowRevision: ...
+
+    async def validate_draft(
+        self, issuer: str, subject: str, revision_id: UUID, *, expected_version: int,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowValidationResult: ...
+
+    async def list_instances(
+        self, issuer: str, subject: str, workflow_id: UUID, *, limit: int = 50,
+        cursor: str | None = None, trace_context: WorkflowTraceContext | None = None,
+    ) -> tuple[WorkflowInstance, ...]: ...
+
+    async def create_draft(
+        self, revision: WorkflowRevision, *, issuer: str, subject: str,
+        idempotency_key: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowRevision: ...
+
+    async def create_draft_command(
+        self, command: WorkflowCreateDraftCommand, *, idempotency_key: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowCreateDraftResult: ...
+
+    async def publish(
+        self, revision_id: UUID, *, expected_version: int, issuer: str, subject: str,
+        idempotency_key: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowRevision: ...
+
+    async def get_revision(
+        self, issuer: str, subject: str, revision_id: UUID,
+        *, trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowRevision: ...
+
+    async def admit(
+        self, issuer: str, subject: str, revision_id: UUID, *,
+        input_values: Mapping[str, str], now: datetime | None = None,
+        idempotency_key: str | None = None,
+        authority: WorkflowAuthoritySnapshot | None = None,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowInstance: ...
+
+    async def get_state(
+        self, issuer: str, subject: str, instance_id: UUID,
+        *, trace_context: WorkflowTraceContext | None = None,
+    ) -> object: ...
+
+    async def get_state_for_worker(self, instance_id: UUID) -> object: ...
+
+    async def recovery_scan(
+        self, *, limit: int = 100, now: datetime | None = None
+    ) -> tuple[UUID, ...]: ...
+
+    async def save_state(
+        self, state: object, *, expected_version: int, issuer: str, subject: str,
+        idempotency_key: str | None = None,
+        semantic_fingerprint: str | None = None,
+        cancel_intent: WorkflowCancelIntent | None = None,
+        lifecycle_event_kind: str = "transition",
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> object: ...
+
+    async def retire_definition(
+        self, issuer: str, subject: str, workflow_id: UUID, *, expected_version: int,
+        idempotency_key: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> bool: ...
+
+    async def retire_revision(
+        self, issuer: str, subject: str, revision_id: UUID, *, expected_version: int,
+        idempotency_key: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowRevision: ...
+
+    async def events(
+        self, issuer: str, subject: str, *, after: UUID | None = None,
+        limit: int = 100, trace_context: WorkflowTraceContext | None = None,
+    ) -> tuple[Mapping[str, object], ...]: ...
+
+    async def replay_events(
+        self, issuer: str, subject: str, *, after: str | None = None,
+        limit: int = 100, trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowEventPage: ...
+
     async def get_instance(
         self, issuer: str, subject: str, instance_id: UUID,
         *, trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowInstance: ...
+
+    async def authorize_instance_in_workflow(
+        self, issuer: str, subject: str, workflow_id: UUID, instance_id: UUID,
+    ) -> WorkflowInstanceAuthorization: ...
 
     async def delete(
         self,
@@ -595,11 +921,124 @@ class WorkflowRepository(Protocol):
         subject: str,
         target_id: UUID,
         *,
+        workflow_id: UUID | None = None,
         scope: WorkflowDeletionScope,
         expected_version: int,
         idempotency_key: str | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> bool: ...
+
+    async def delete_receipt(
+        self, issuer: str, subject: str, workflow_id: UUID, target_id: UUID, *,
+        scope: WorkflowDeletionScope, expected_version: int,
+        idempotency_key: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
+    ) -> WorkflowDeletionReceipt: ...
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowLifecycleIntent:
+    """Metadata-only lifecycle intent staged with a workflow transaction."""
+
+    event: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowWakeIntent:
+    """Identifier-only continuation intent staged with a workflow transaction."""
+
+    instance_id: UUID
+    reason: str
+    execution_id: str | None = None
+
+
+class WorkflowIntentPort(Protocol):
+    async def stage_lifecycle(
+        self, intent: WorkflowLifecycleIntent, *, transaction: object | None = None
+    ) -> None: ...
+
+    async def stage_wakeup(
+        self, intent: WorkflowWakeIntent, *, transaction: object | None = None
+    ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowAuthoritySnapshot:
+    """Pinned authority facts revalidated before admission and resumption."""
+
+    issuer: str
+    subject: str
+    household_id: str | None = None
+    workspace_id: str | None = None
+    agent_revision_id: str | None = None
+    grants: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.issuer or not self.subject:
+            raise WorkflowValidationError("workflow authority owner is required")
+        if self.agent_revision_id is not None:
+            validate_opaque_identifier(self.agent_revision_id)
+        for grant in self.grants:
+            validate_opaque_identifier(grant)
+        canonical_grants = tuple(sorted(set(self.grants)))
+        object.__setattr__(self, "grants", canonical_grants)
+
+
+class WorkflowAuthorityPort(Protocol):
+    async def derive(
+        self, issuer: str, subject: str, *, revision: WorkflowRevision
+    ) -> WorkflowAuthoritySnapshot: ...
+
+    async def revalidate(
+        self, authority: WorkflowAuthoritySnapshot, *, revision: WorkflowRevision,
+        instance: WorkflowInstance | None, ordinal: int | None,
+    ) -> bool: ...
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowStepExecution:
+    """Immutable, bounded context handed to one step handler."""
+
+    workflow_id: UUID
+    revision_id: UUID
+    instance_id: UUID
+    step_ordinal: int
+    execution_id: str
+    owner: tuple[str, str]
+    input_value: object | None
+    prior_outputs: Mapping[int, object]
+    deadline: datetime
+    trace_context: WorkflowTraceContext | None = None
+    admitted_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        validate_opaque_identifier(self.execution_id)
+        if not 1 <= self.step_ordinal <= MAX_STEPS:
+            raise WorkflowValidationError("workflow step ordinal is out of bounds")
+        if len(canonical_json(dict(self.prior_outputs))) > MAX_TOTAL_OUTPUT_BYTES:
+            raise WorkflowValidationError("workflow execution evidence exceeds its bound")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowStepResult:
+    status: WorkflowStepStatus
+    effect_outcome: WorkflowEffectOutcome
+    output: object | None = None
+    replayable: bool = False
+
+
+class WorkflowStepHandler(Protocol):
+    kind: WorkflowStepKind
+
+    async def execute(self, execution: WorkflowStepExecution) -> WorkflowStepResult: ...
+
+
+class WorkflowLifecycleSink(Protocol):
+    async def publish(self, event: Mapping[str, object]) -> None: ...
+
+
+class WorkflowEvidenceSerializer(Protocol):
+    def serialize(self, **metadata: object) -> Mapping[str, object]: ...
 
 
 __all__ = [
@@ -610,8 +1049,13 @@ __all__ = [
     "WorkflowVersionConflict", "WorkflowIdempotencyConflict", "WorkflowTransitionError",
     "WorkflowStepKind", "WorkflowValueType", "WorkflowRevisionStatus", "WorkflowInstanceStatus",
     "WorkflowTerminalOutcome", "WorkflowStepStatus", "WorkflowEffectOutcome", "RecoveryCapability",
-    "WorkflowDeletionScope", "WorkflowTraceContext", "WorkflowCommand", "canonical_json", "normalise_text", "normalise_instant",
+    "WorkflowDeletionScope", "WorkflowEventCursorOutcome", "WorkflowTraceContext", "WorkflowCommand", "canonical_json", "normalise_text", "normalise_instant",
     "validate_opaque_identifier", "Selector", "InputField", "AgentRunStep", "OwnerApprovalStep",
     "OwnerNotificationStep", "WaitUntilStep", "WorkflowStep", "step_output_type", "WorkflowRevision",
-    "validate_revision", "validate_step_result", "WorkflowInstance", "WorkflowStepState", "admit_instance", "WorkflowRepository",
+    "validate_revision", "validate_step_result", "WorkflowCreateDraftCommand", "WorkflowCreateDraftResult",
+    "WorkflowInstance", "WorkflowInstanceAuthorization", "WorkflowStepState", "WorkflowIdempotencyRecord", "WorkflowCancelIntent", "WorkflowDeletionReceipt", "admit_instance", "WorkflowRepository",
+    "WorkflowAuthoritySnapshot", "WorkflowAuthorityPort", "WorkflowStepExecution", "WorkflowStepResult",
+    "WorkflowLifecycleIntent", "WorkflowWakeIntent", "WorkflowIntentPort",
+    "WorkflowStepHandler", "WorkflowLifecycleSink", "WorkflowEvidenceSerializer",
+    "WorkflowDefinition", "WorkflowValidationIssue", "WorkflowValidationResult", "WorkflowPage", "WorkflowEventPage",
 ]

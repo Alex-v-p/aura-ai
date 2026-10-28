@@ -57,7 +57,7 @@ metric_semantics:
 capture_policy: metadata_only
 cardinality:
   metric_attributes: [status, error_class, provider, dependency, outcome]
-  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, branch_id, regenerated_from_run_id, command_id, correlation_id, causation_id, attempt_count, delivery_count, tool_policy_revision_id]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, branch_id, regenerated_from_run_id, command_id, correlation_id, causation_id, attempt_count, delivery_count, tool_policy_revision_id, workflow_id, workflow_revision_id, workflow_instance_id, workflow_step_execution_id]
   prohibited: [prompt, response, arguments, query, target_query, content, recurrence, timezone, due_at, owner_identity, raw_result, payload, endpoint, token, credential]
 retention:
   process_buffer: bounded

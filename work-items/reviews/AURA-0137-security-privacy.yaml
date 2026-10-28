@@ -1,0 +1,22 @@
+agent: security_privacy_reviewer
+work_item: AURA-0137
+verdict: PASS
+checked:
+  - >-
+    Verified server-derived and pinned owner, workspace, household, agent
+    revision, and narrowed policy authority at admission and every resumption.
+  - >-
+    Verified exact workflow, revision, instance, ordinal, version, and step
+    execution identity for approvals, recovery, cancellation, and deletion.
+  - >-
+    Verified operation-scoped semantic idempotency, atomic cancellation intent
+    persistence, durable non-replay of unknown agent effects, and retryable
+    lineage-bound Run cancellation.
+  - >-
+    Verified all deletion scopes enforce owner and parent lineage for live and
+    tombstoned resources and replay stable content-free receipts.
+  - >-
+    Verified metadata-only owner-filtered SSE, identifier-only wakeups,
+    trace-only identifiers, closed governed evidence, and prohibited-content
+    exclusion. Focused security tests passed 174 with 4 database-gated skips.
+findings: []

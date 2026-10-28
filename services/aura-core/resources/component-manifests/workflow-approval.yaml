@@ -1,0 +1,24 @@
+component:
+  id: aura.automation.workflow_approval
+  version: 1.0.0
+  owner: automation.workflows
+  category: governance
+input:
+  schema: aura-workflow-approval-command-v1
+  replayable: true
+  replay_reason: Approval proposals and decisions are owner-authorized and durable; wakeups carry identifiers only.
+output:
+  schema: aura-workflow-lifecycle-events-v1
+  capture: {content: none, metadata: allowlisted}
+dependencies: [aura.governance.approval_workflow, postgresql, transactional_outbox]
+metrics: [workflow_approval_command_duration_ms]
+metric_semantics:
+  workflow_approval_command_duration_ms: Bounded workflow approval proposal and resume command latency in milliseconds.
+capture_policy: metadata_only
+evaluators: [workflow.authorization.v1]
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, workflow_id, revision_id, instance_id, step_execution_id, approval_id, result_version]
+  prohibited: [content, prompt, response, instructions, mappings, input, output, result, payload, proposal_content, owner_identity, owner_subject, endpoint, url, token, credential, executor_state]
+retention: {process_buffer: bounded, overflow: drop_oldest_and_count, export_failure: retry_three_times_then_drop_and_count}
+export: {sink: structured_container_log, cadence: periodic_and_shutdown, health_counters: [dropped, rejected, export_failures, abandoned_batches]}

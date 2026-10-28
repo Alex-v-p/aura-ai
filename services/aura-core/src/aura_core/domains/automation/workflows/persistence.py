@@ -84,6 +84,7 @@ class WorkflowRevisionRow(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (
         UniqueConstraint("workflow_id", "revision_number", name="uq_workflow_revision_number"),
         UniqueConstraint(
@@ -113,6 +114,8 @@ class WorkflowInstanceRow(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     admitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     input_values: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False)
     replay_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -305,7 +308,9 @@ class WorkflowCommandIdempotencyRow(Base):
 class WorkflowLifecycleEventRow(Base):
     __tablename__ = "workflow_lifecycle_events"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    instance_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # Definition/revision lifecycle events have no instance lineage.  Their
+    # metadata remains owner-scoped and replayable through the same stream.
+    instance_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     principal_issuer: Mapped[str] = mapped_column(String(1024), nullable=False)
     principal_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     ordinal: Mapped[int | None] = mapped_column(Integer)
@@ -316,6 +321,9 @@ class WorkflowLifecycleEventRow(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # Added by 0028 for deterministic owner-local replay.  Nullable keeps the
+    # mapping readable while older local fixtures are upgraded.
+    event_sequence: Mapped[int | None] = mapped_column(Integer)
     __table_args__ = (
         Index(
             "ix_workflow_lifecycle_owner", "principal_issuer", "principal_subject", "occurred_at"

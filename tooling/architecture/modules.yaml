@@ -775,9 +775,73 @@ modules:
   - services/aura-core/src/aura_core/domains/automation/workflows/persistence.py
   - services/aura-core/src/aura_core/domains/automation/workflows/repository.py
   - services/aura-core/src/aura_core/domains/automation/workflows/state.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/evaluation.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/evaluators.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/telemetry.py
   dependencies:
   - aura-core.platform.database.base
   - aura-core.platform.telemetry
+  - aura-core.domains.automation.workflows.application
+  - aura-core.domains.automation.workflows.coordinator
+- id: aura-core.domains.automation.workflows.application
+  root: services/aura-core/src/aura_core/domains/automation/workflows/application.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/automation/workflows/application.py
+  python_modules:
+  - aura_core.domains.automation.workflows.application
+  dependencies:
+  - aura-core.domains.automation.workflows
+  - aura-core.domains.automation.workflows.handlers
+  - aura-core.platform.telemetry
+- id: aura-core.domains.automation.workflows.coordinator
+  root: services/aura-core/src/aura_core/domains/automation/workflows/coordinator.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/automation/workflows/coordinator.py
+  python_modules:
+  - aura_core.domains.automation.workflows.coordinator
+  dependencies:
+  - aura-core.domains.automation.workflows
+  - aura-core.domains.automation.workflows.application
+- id: aura-core.domains.automation.workflows.evidence
+  root: services/aura-core/src/aura_core/domains/automation/workflows/evidence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/automation/workflows/evidence.py
+  python_modules:
+  - aura_core.domains.automation.workflows.evidence
+  dependencies:
+  - aura-core.domains.automation.workflows
+  - aura-core.platform.telemetry
+  - aura-core.domains.execution.runs.public
+- id: aura-core.domains.automation.workflows.handlers
+  root: services/aura-core/src/aura_core/domains/automation/workflows/handlers.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/automation/workflows/handlers.py
+  python_modules:
+  - aura_core.domains.automation.workflows.handlers
+  dependencies:
+  - aura-core.domains.automation.workflows
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.execution.runs.models
+  - aura-core.domains.governance.approvals
+  - aura-core.domains.automation.notifications
+- id: aura-core.bootstrap.workflow-uow
+  root: services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+  python_modules:
+  - aura_core.bootstrap.workflow_uow
+  dependencies:
+  - aura-core.domains.automation.workflows
+  - aura-core.platform.telemetry
+  - aura-core.domains.automation.workflows.application
+  - aura-core.domains.automation.workflows.evidence
+  - aura-core.domains.automation.workflows.handlers
+  - aura-core.domains.execution.runs.models
+  - aura-core.domains.execution.runs.ports
+  - aura-core.domains.execution.runs.public
+  - aura-core.domains.governance.approvals
+  - aura-core.domains.interaction.agents.public
+  - aura-core.platform.outbox
 - id: aura-core.domains.automation.reminders.proposals
   root: services/aura-core/src/aura_core/domains/automation/reminders/proposals.py
   kind: python
@@ -1316,6 +1380,13 @@ modules:
   dependencies:
   - aura-core.domains.execution.runs.events
   - aura-core.runtime.streaming.publisher
+- id: aura-core.domains.execution.runs.models
+  root: services/aura-core/src/aura_core/domains/execution/runs/models.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/runs/models.py
+  python_modules:
+  - aura_core.domains.execution.runs.models
+  dependencies: []
 - id: aura-core.bootstrap.conversation-uow
   root: services/aura-core/src/aura_core/bootstrap/conversation_uow.py
   kind: python
@@ -1623,6 +1694,7 @@ modules:
   dependencies:
   - aura-core.domains.execution.runs.dto
   - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.models
   - aura-core.domains.interaction.conversations.public
 - id: aura-core.domains.execution.runs.public
   root: services/aura-core/src/aura_core/domains/execution/runs/public.py
@@ -1632,6 +1704,7 @@ modules:
   - aura_core.domains.execution.runs.public
   dependencies:
   - aura-core.domains.execution.runs.dto
+  - aura-core.domains.execution.runs.models
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.execution.runs.repository
   - aura-core.domains.execution.runs.service
@@ -1644,6 +1717,7 @@ modules:
   dependencies:
   - aura-core.domains.execution.runs.dto
   - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.models
   - aura-core.domains.execution.runs.persistence
   - aura-core.domains.interaction.conversations.dto
 - id: aura-core.domains.execution.runs.service
@@ -1656,6 +1730,7 @@ modules:
   - aura-core.domains.artifacts.attachments.ports
   - aura-core.domains.execution.runs.dto
   - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.models
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.interaction.conversations.public
   - aura-core.domains.knowledge.documents.ports
@@ -1941,6 +2016,7 @@ modules:
   - aura-core.entrypoints.api.routes.reminders
   - aura-core.entrypoints.api.routes.runs
   - aura-core.entrypoints.api.routes.tools
+  - aura-core.entrypoints.api.routes.workflows
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
   - aura-core.platform.telemetry
@@ -1959,6 +2035,19 @@ modules:
   - aura_core.entrypoints.api.routes.briefings
   dependencies:
   - aura-core.domains.automation.briefings
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+- id: aura-core.entrypoints.api.routes.workflows
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.workflows
+  dependencies:
+  - aura-core.domains.automation.workflows.application
+  - aura-core.domains.automation.workflows
+  - aura-core.bootstrap.workflow-uow
   - aura-core.entrypoints.api.routes.dependencies
   - aura-core.entrypoints.api.state
   - aura-core.platform.auth
@@ -2099,6 +2188,7 @@ modules:
   python_modules:
   - aura_core.entrypoints.api.state
   dependencies:
+  - aura-core.bootstrap.workflow-uow
   - aura-core.bootstrap.briefing-uow
   - aura-core.bootstrap.approval-uow
   - aura-core.bootstrap.attachment-uow
@@ -2112,6 +2202,9 @@ modules:
   - aura-core.bootstrap.reminder_uow
   - aura-core.bootstrap.document-uow
   - aura-core.domains.automation.briefings
+  - aura-core.domains.automation.workflows.application
+  - aura-core.domains.automation.workflows.handlers
+  - aura-core.domains.automation.workflows
   - aura-core.domains.automation.notifications
   - aura-core.domains.automation.reminders
   - aura-core.domains.execution.runs.public
@@ -2222,6 +2315,8 @@ modules:
   - aura_core.entrypoints.worker.app
   dependencies:
   - aura-core.domains.automation.briefings
+  - aura-core.domains.automation.workflows.application
+  - aura-core.bootstrap.workflow-uow
   - aura-core.bootstrap.briefing-uow
   - aura-core.bootstrap.approval-uow
   - aura-core.bootstrap

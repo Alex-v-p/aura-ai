@@ -1,17 +1,190 @@
 """Session-scoped PostgreSQL run repository."""
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aura_core.domains.execution.runs.dto import Run, RunClaimLost, RunError, RunStatus
 from aura_core.domains.execution.runs.events import RunEvent, validate_tool_status
+from aura_core.domains.execution.runs.models import (
+    WorkflowAgentRunOutcome,
+    WorkflowAgentRunRequest,
+    WorkflowAgentRunResult,
+    WorkflowRunLineage,
+)
 from aura_core.domains.execution.runs.persistence import RunEventRow, RunRow
 from aura_core.domains.interaction.conversations.dto import AttachmentSummary, DocumentCitation, now
+
+
+class SqlWorkflowAgentRunRecovery:
+    """Durable Run-owned fence for workflow provider invocation effects.
+
+    A workflow run row is reserved before a provider call.  A row left in
+    ``running`` after a crash is returned as an unknown result on the next
+    reservation, which prevents a second provider invocation.  Completed
+    outputs remain workflow-owned; this recovery port stores only bounded
+    terminal metadata and never copies workflow content into run persistence.
+    """
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+
+    @staticmethod
+    def _query(lineage: WorkflowRunLineage):
+        return select(RunRow).where(
+            RunRow.workflow_id == lineage.workflow_id,
+            RunRow.workflow_revision_id == lineage.workflow_revision_id,
+            RunRow.workflow_instance_id == lineage.workflow_instance_id,
+            RunRow.workflow_step_ordinal == lineage.workflow_step_ordinal,
+            RunRow.workflow_step_execution_id == lineage.workflow_step_execution_id,
+        )
+
+    @staticmethod
+    def _result(
+        request: WorkflowAgentRunRequest,
+        row: RunRow,
+        *,
+        outcome: WorkflowAgentRunOutcome,
+        error_code: str,
+    ) -> WorkflowAgentRunResult:
+        error = row.error or {}
+        trace_id = str(error.get("trace_id") or request.trace_id or row.id.hex)
+        started_at = row.started_at or request.admitted_at
+        finished_at = row.finished_at or datetime.now(UTC)
+        return WorkflowAgentRunResult(
+            lineage=request.lineage,
+            outcome=outcome,
+            output=None,
+            error_code=error_code,
+            trace_id=trace_id,
+            started_at=started_at,
+            finished_at=max(finished_at, started_at),
+        )
+
+    async def reserve_workflow_agent_run(
+        self, request: WorkflowAgentRunRequest, *, started_at: datetime
+    ) -> WorkflowAgentRunResult | None:
+        async with self.sessions() as session, session.begin():
+            row = (
+                await session.execute(self._query(request.lineage).with_for_update())
+            ).scalar_one_or_none()
+            if row is None:
+                existing = await session.get(RunRow, request.lineage.run_id, with_for_update=True)
+                if existing is not None:
+                    raise ValueError("workflow run lineage conflicts with existing run")
+                session.add(
+                    RunRow(
+                        id=request.lineage.run_id,
+                        conversation_id=None,
+                        user_message_id=None,
+                        agent_revision_id=request.agent_revision_id,
+                        model_policy_revision_id=request.model_policy_revision_id,
+                        provider=request.provider,
+                        model_id=request.model_id,
+                        status=RunStatus.RUNNING.value,
+                        created_at=request.admitted_at,
+                        started_at=started_at,
+                        workflow_id=request.lineage.workflow_id,
+                        workflow_revision_id=request.lineage.workflow_revision_id,
+                        workflow_instance_id=request.lineage.workflow_instance_id,
+                        workflow_step_ordinal=request.lineage.workflow_step_ordinal,
+                        workflow_step_execution_id=request.lineage.workflow_step_execution_id,
+                        tool_call_limit=0,
+                        tool_calls_used=0,
+                    )
+                )
+                return None
+            if row.id != request.lineage.run_id:
+                raise ValueError("workflow step execution is bound to another run")
+            if row.status == RunStatus.RUNNING.value:
+                return self._result(
+                    request,
+                    row,
+                    outcome=WorkflowAgentRunOutcome.UNKNOWN,
+                    error_code="WORKFLOW_AGENT_UNKNOWN_OUTCOME",
+                )
+            if row.status == RunStatus.CANCELED.value:
+                return self._result(
+                    request,
+                    row,
+                    outcome=WorkflowAgentRunOutcome.CANCELED,
+                    error_code="WORKFLOW_AGENT_CANCELED",
+                )
+            if row.status == RunStatus.FAILED.value:
+                error_code = str((row.error or {}).get("code") or "WORKFLOW_AGENT_EXECUTION_FAILED")
+                if error_code == "WORKFLOW_AGENT_UNKNOWN_OUTCOME":
+                    return self._result(
+                        request,
+                        row,
+                        outcome=WorkflowAgentRunOutcome.UNKNOWN,
+                        error_code=error_code,
+                    )
+                return self._result(
+                    request,
+                    row,
+                    outcome=WorkflowAgentRunOutcome.FAILED,
+                    error_code=error_code,
+                )
+            # A completed provider effect has no workflow output in Run-owned
+            # storage, so recovery must still require the workflow result
+            # owner to reconcile rather than replaying the provider call.
+            return self._result(
+                request,
+                row,
+                outcome=WorkflowAgentRunOutcome.UNKNOWN,
+                error_code="WORKFLOW_AGENT_UNKNOWN_OUTCOME",
+            )
+
+    async def settle_workflow_agent_run(
+        self, request: WorkflowAgentRunRequest, result: WorkflowAgentRunResult
+    ) -> None:
+        async with self.sessions() as session, session.begin():
+            row = (
+                await session.execute(self._query(request.lineage).with_for_update())
+            ).scalar_one_or_none()
+            if row is None:
+                raise LookupError("workflow run reservation is missing")
+            if row.status != RunStatus.RUNNING.value:
+                return
+            row.status = (
+                RunStatus.COMPLETED.value
+                if result.outcome is WorkflowAgentRunOutcome.COMPLETED
+                else RunStatus.CANCELED.value
+                if result.outcome is WorkflowAgentRunOutcome.CANCELED
+                else RunStatus.FAILED.value
+            )
+            row.finished_at = result.finished_at
+            row.error = (
+                None
+                if result.outcome is WorkflowAgentRunOutcome.COMPLETED
+                else {
+                    "code": result.error_code or "WORKFLOW_AGENT_EXECUTION_FAILED",
+                    "message": "Workflow agent execution did not complete.",
+                    "retryable": result.outcome is WorkflowAgentRunOutcome.UNKNOWN,
+                    "trace_id": result.trace_id,
+                }
+            )
+
+    async def cancel_workflow_agent_run(self, lineage: WorkflowRunLineage) -> bool:
+        async with self.sessions() as session, session.begin():
+            row = (
+                await session.execute(self._query(lineage).with_for_update())
+            ).scalar_one_or_none()
+            if row is None or row.status != RunStatus.RUNNING.value:
+                return False
+            row.status = RunStatus.CANCELED.value
+            row.finished_at = datetime.now(UTC)
+            row.error = {
+                "code": "WORKFLOW_AGENT_CANCELED",
+                "message": "Workflow agent execution was canceled.",
+                "retryable": False,
+                "trace_id": row.id.hex,
+            }
+            return True
 
 
 class SqlRunRepository:

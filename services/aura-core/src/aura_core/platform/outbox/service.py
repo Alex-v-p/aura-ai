@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 RUN_COMMAND_TOPIC = "aura.runs.execute.v1"
 APPROVAL_EVENT_TOPIC = "aura.approvals.events.v1"
 RUN_RESUME_TOPIC = "aura.runs.resume.v1"
+WORKFLOW_WAKE_TOPIC = "aura.workflows.wake.v1"
 ATTACHMENT_EVENT_TOPIC = "aura.artifacts.attachment.events.v1"
 BRIEFING_EVENT_TOPIC = "aura.automation.briefings.events.v1"
 _IDENTIFIER_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,63}$")

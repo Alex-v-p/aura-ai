@@ -32,8 +32,7 @@ metric_semantics:
   workflow_repository_duration_ms: Bounded workflow state persistence latency in milliseconds.
 capture_policy: metadata_only
 evaluators:
-  - workflow_state_transition_correctness
-  - workflow_idempotency_and_race_correctness
+  - workflow.state-machine.v1
 cardinality:
   metric_attributes: [operation, outcome, error_class, dependency, status]
   trace_only:

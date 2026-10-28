@@ -35,6 +35,7 @@ from aura_core.domains.execution.runs.public import (
     ChatCompletionPort,
     RunClaimLost,
     RunCoordinator,
+    SqlWorkflowAgentRunRecovery,
 )
 from aura_core.domains.governance.approvals.public import (
     Approval,
@@ -70,6 +71,7 @@ from aura_core.platform.outbox import (
     BRIEFING_EVENT_SUBJECT,
     BRIEFING_WAKE_SUBJECT,
     RUN_RESUME_TOPIC,
+    WORKFLOW_WAKE_TOPIC,
     OutboxCommand,
     TransactionalOutboxTransport,
 )
@@ -184,7 +186,7 @@ async def run_memory_once(
 
     try:
         command = await consumer.receive()
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         # A malformed generic envelope is a poison delivery.  Terminate it
         # explicitly rather than letting an unbounded retry loop consume the
         # memory worker.
@@ -255,7 +257,7 @@ async def run_resume_once(
 
     try:
         command = await consumer.receive()
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         await consumer.reject(error_class="validation")
         return
     if command is None:
@@ -267,7 +269,7 @@ async def run_resume_once(
         if event_id is None:
             raise ValueError("resume command is missing eventId")
         await handler(UUID(event_id))
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         await consumer.reject(error_class="validation")
         return
     except Exception:
@@ -278,6 +280,87 @@ async def run_resume_once(
         )
         return
     await consumer.ack()
+
+
+async def run_workflow_once(
+    consumer: NatsIdentifierConsumer,
+    handler: Callable[[UUID], Awaitable[None]],
+) -> None:
+    """Process one identifier-only workflow wakeup.
+
+    The consumer envelope may contain only the workflow instance identity. The
+    handler must reload owner-scoped state from Core persistence; no private
+    workflow values or authority are accepted from NATS.
+    """
+
+    try:
+        command = await consumer.receive()
+    except (TypeError, ValueError):
+        await consumer.reject(error_class="validation")
+        return
+    if command is None:
+        return
+    try:
+        if command.topic != WORKFLOW_WAKE_TOPIC:
+            raise ValueError("unexpected workflow wake subject")
+        identifier = command.identifier("instanceId") or command.identifier("aggregateId")
+        if identifier is None:
+            raise ValueError("workflow wake is missing instanceId")
+        await handler(UUID(identifier))
+    except (TypeError, ValueError):
+        await consumer.reject(error_class="validation")
+        return
+    except Exception:
+        delivery_count = int(getattr(consumer, "delivery_count", 1))
+        await consumer.nack(
+            retry_delay=_retry_delay(delivery_count),
+            error_class="delivery",
+        )
+        return
+    await consumer.ack()
+
+
+async def run_workflow_recovery(workflow_service: Any) -> None:
+    """Run the bounded authoritative restart/due-wait recovery scan."""
+
+    while True:
+        try:
+            identifiers = await workflow_service.recovery_scan(limit=100)
+            for instance_id in identifiers:
+                await _execute_workflow_identifier(workflow_service, instance_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Durable state remains authoritative; the next bounded pass
+            # retries without logging workflow content or identifiers.
+            pass
+        await asyncio.sleep(60.0)
+
+
+async def _execute_workflow_identifier(workflow_service: Any, instance_id: UUID) -> None:
+    """Resume a wake using the trace context persisted with the checkpoint."""
+
+    repository = getattr(workflow_service, "repository", None)
+    loader = cast(
+        Callable[[UUID], Awaitable[Any]],
+        getattr(repository, "get_state_for_worker", None),
+    )
+    execute_next = cast(
+        Callable[..., Awaitable[Any]], getattr(workflow_service, "execute_next", None)
+    )
+    if not callable(loader) or not callable(execute_next):
+        raise RuntimeError("workflow continuation ports are not composed")
+    state = await loader(instance_id)
+    persisted = getattr(getattr(state, "instance", None), "trace_context", None)
+    if persisted is None or not getattr(persisted, "trace_id", ""):
+        raise RuntimeError("workflow continuation has no persisted trace context")
+    await execute_next(
+        state.instance.issuer,
+        state.instance.subject,
+        instance_id,
+        authority=state.instance.authority,
+        trace_context=persisted,
+    )
 
 
 def _memory_context(memory_command: MemoryProcessingCommand) -> MemoryTraceContext:
@@ -569,6 +652,21 @@ async def run_resume_loop(
             await asyncio.sleep(0.2)
 
 
+async def run_workflow_loop(
+    consumer: NatsIdentifierConsumer,
+    handler: Callable[[UUID], Awaitable[None]],
+) -> None:
+    """Keep identifier-only workflow wakeups alive until shutdown."""
+
+    while True:
+        try:
+            await run_workflow_once(consumer, handler)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await asyncio.sleep(0.2)
+
+
 async def run_memory_maintenance(processor: object) -> None:
     """Invoke the Core-owned maintenance use case when configured."""
 
@@ -686,6 +784,10 @@ async def _resume_approval(
             outcome="ignored",
             **trace,
         )
+        return
+    if run_id is None:
+        # Workflow-origin approvals are resumed through the workflow lineage
+        # path; a conversation approval without a run cannot be resumed here.
         return
 
     async def execute_recoverable() -> None:
@@ -938,6 +1040,13 @@ async def run_forever(settings: Settings | None = None) -> None:
         durable="aura-core-document-delete-worker",
         component="aura.knowledge.document_deletion",
     )
+    workflow_consumer = NatsIdentifierConsumer(
+        config.nats_url,
+        WORKFLOW_WAKE_TOPIC,
+        metrics=metrics,
+        durable="aura-core-workflow-worker",
+        component="aura.automation.workflow_state",
+    )
     briefing_consumer = NatsBriefingConsumer(config.nats_url, metrics=metrics)
     event_transport = NatsOutbox(
         config.nats_url,
@@ -951,6 +1060,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             ATTACHMENT_EVENT_TOPIC,
             BRIEFING_EVENT_SUBJECT,
             BRIEFING_WAKE_SUBJECT,
+            WORKFLOW_WAKE_TOPIC,
         ),
         metrics=metrics,
     )
@@ -966,7 +1076,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             )
             if callable(getattr(candidate, "process_command", None)):
                 memory_processor = cast(MemoryJobProcessor, candidate)
-    except AttributeError, TypeError:
+    except (AttributeError, TypeError):
         # The composition root remains importable while a deployment is
         # running an older Core module; no memory command is acknowledged in
         # that state.
@@ -980,6 +1090,8 @@ async def run_forever(settings: Settings | None = None) -> None:
     resume_task: asyncio.Task[None] | None = None
     housekeeping_task: asyncio.Task[None] | None = None
     approval_task: asyncio.Task[None] | None = None
+    workflow_task: asyncio.Task[None] | None = None
+    workflow_recovery_task: asyncio.Task[None] | None = None
     await telemetry.start()
     try:
         await consumer.connect()
@@ -987,6 +1099,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         await document_process_consumer.connect()
         await document_delete_consumer.connect()
         await briefing_consumer.connect()
+        await workflow_consumer.connect()
         if memory_processor is not None:
             await memory_consumer.connect()
         await event_transport.connect()
@@ -1023,6 +1136,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             run_document_loop(document_worker, document_delete_consumer)
         )
         document_housekeeping_task = asyncio.create_task(run_document_housekeeping(document_worker))
+        workflow_run_recovery = SqlWorkflowAgentRunRecovery(sessions)
         coordinator = RunCoordinator(
             store,
             PersistentEventPublisher(
@@ -1043,6 +1157,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             attachment_resolver=store,
             thinking_publisher=event_transport,
             run_evidence=run_evidence,
+            workflow_recovery=workflow_run_recovery,
         )
         coordinator.set_briefing_provider(provider)
         briefing_state = BriefingRunStateAdapter(
@@ -1082,11 +1197,24 @@ async def run_forever(settings: Settings | None = None) -> None:
         )
         briefing_recovery_task = asyncio.create_task(run_briefing_recovery(briefing_recovery))
 
+        workflow_service: Any = None
         # Approval/resumption wakeups are identifier-only; the worker always
         # reloads owner-authorized state through the governance public port.
         async def resume_wakeup(event_id: UUID) -> None:
             event = await approval_service_instance.resume_event(event_id)
             if event is None:
+                return
+            if event.origin is not None:
+                resume_workflow = getattr(workflow_service, "resume_workflow_approval", None)
+                if not callable(resume_workflow):
+                    raise RuntimeError("workflow approval resumption is not composed")
+                decision = event.status.value
+                resume = cast(
+                    Callable[[object, str, datetime], Awaitable[object]], resume_workflow
+                )
+                await resume(event.origin, decision, event.occurred_at)
+                return
+            if event.run_id is None:
                 return
             conversation, _ = await store.find_run_any(event.run_id)
             detail = await approval_service_instance.get(
@@ -1117,6 +1245,31 @@ async def run_forever(settings: Settings | None = None) -> None:
                 metrics,
             )
         )
+        from aura_core.bootstrap.workflow_uow import compose_workflow
+
+        workflow_composition = compose_workflow(
+            sessions,
+            metrics=metrics,
+            coordinator=coordinator,
+            provider=cast(Any, provider),
+            approval_service=approval_service_instance,
+            notification_service=notification_service_instance,
+            agents=catalog,
+            agent_service=agent_service,
+            evidence_recorder=run_evidence,
+            admission_enabled=config.workflow_admission_enabled,
+            model_id=config.default_model,
+        )
+        workflow_service = workflow_composition.service
+        workflow_task = asyncio.create_task(
+            run_workflow_loop(
+                workflow_consumer,
+                lambda instance_id: _execute_workflow_identifier(
+                    workflow_service, instance_id
+                ),
+            )
+        )
+        workflow_recovery_task = asyncio.create_task(run_workflow_recovery(workflow_service))
         if memory_processor is not None:
             activity_publisher = coordinator.publisher
 
@@ -1209,6 +1362,12 @@ async def run_forever(settings: Settings | None = None) -> None:
         if memory_task is not None:
             memory_task.cancel()
             await asyncio.gather(memory_task, return_exceptions=True)
+        if workflow_task is not None:
+            workflow_task.cancel()
+            await asyncio.gather(workflow_task, return_exceptions=True)
+        if workflow_recovery_task is not None:
+            workflow_recovery_task.cancel()
+            await asyncio.gather(workflow_recovery_task, return_exceptions=True)
         for task in (
             document_process_task,
             document_delete_task,
@@ -1240,6 +1399,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         await document_process_consumer.close()
         await document_delete_consumer.close()
         await briefing_consumer.close()
+        await workflow_consumer.close()
         await resume_consumer.close()
         await consumer.close()
         await run_evidence.stop()

@@ -1,0 +1,243 @@
+agent: core_worker
+work_item: AURA-0137
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0137_platform
+  worktree: shared
+scope:
+  ownership_zone: services.aura-core.platform-composition
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0028_workflow_execution.py
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/resources/component-manifests/workflow-approval.yaml
+  - services/aura-core/resources/component-manifests/workflow-cancellation.yaml
+  - services/aura-core/resources/component-manifests/workflow-checkpoint.yaml
+  - services/aura-core/resources/component-manifests/workflow-definition.yaml
+  - services/aura-core/resources/component-manifests/workflow-settlement.yaml
+  - services/aura-core/resources/component-manifests/workflow-step-agent-run.yaml
+  - services/aura-core/resources/component-manifests/workflow-step-notification.yaml
+  - services/aura-core/resources/component-manifests/workflow-step-wait-until.yaml
+  - services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/outbox/__init__.py
+  - services/aura-core/src/aura_core/platform/outbox/service.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - tooling/architecture/modules.yaml
+  - services/aura-core/tests/test_workflow_platform_boundaries.py
+contracts:
+  changed: false
+  notes: >-
+    Transport routes align to the concurrently maintained AURA-0137 OpenAPI
+    contract; contract files were not edited in this ownership slice.
+migrations:
+  changed: true
+  notes: >-
+    Added forward migration 0028 for terminal and step execution timestamps,
+    lifecycle replay sequence, and bounded replay indexes.
+observability:
+  components:
+    - aura.automation.workflow_state
+    - aura.automation.workflow_definition
+    - aura.automation.workflow_step.agent_run
+    - aura.automation.workflow_approval
+    - aura.automation.workflow_step.notification
+    - aura.automation.workflow_step.wait_until
+    - aura.automation.workflow_checkpoint
+    - aura.automation.workflow_cancellation
+    - aura.automation.workflow_settlement
+    - aura.execution.run_coordinator
+  metrics_added:
+    - workflow_transition_outcome
+    - workflow_command_outcome
+    - workflow_repository_outcome
+    - workflow_transition_duration_ms
+    - workflow_command_duration_ms
+    - workflow_repository_duration_ms
+    - workflow_definition_validation_duration_ms
+    - workflow_agent_run_step_duration_ms
+    - workflow_approval_command_duration_ms
+    - workflow_notification_step_duration_ms
+    - workflow_wait_command_duration_ms
+    - workflow_wait_lag_ms
+    - workflow_checkpoint_persistence_duration_ms
+    - workflow_cancellation_duration_ms
+    - workflow_settlement_duration_ms
+  capture_policy: metadata_only
+  correction_notes: >-
+    Registered a finite per-component operation vocabulary and explicit span-to-
+    metric mappings for all workflow definition, step, checkpoint, cancellation,
+    settlement, and wait-lag records. Synthetic production-shaped workflow
+    records retain approved metadata with zero telemetry rejections. Workflow
+    telemetry now replaces zero-trace sentinels at the platform boundary and
+    preserves the approved application-validation dependency vocabulary.
+    Replayed SSE records are discriminated by eventType and emit only the
+    properties allowed by their closed OpenAPI variant; step envelopes cannot
+    leak instance-only fields. Revision-retired events retain their required
+    UUID revisionId while definition-retired events retain a null revisionId;
+    terminal and waiting_for_time status dimensions are accepted.
+verification:
+  passed:
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -q services/aura-core/tests/test_workflow_execution_handlers.py
+      services/aura-core/tests/test_workflow_worker.py
+      services/aura-core/tests/test_workflow_api.py
+      services/aura-core/tests/test_migration_0028_workflow_execution.py
+      services/aura-core/tests/test_workflow_execution_integration.py
+      (83 passed, 4 skipped)
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache
+      uv run ruff check services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+      services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py
+      (passed)
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache
+      uv run pyright services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+      services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py
+      (0 errors)
+    - >-
+      Synthetic workflow telemetry exercise across all nine registered
+      components retained 17 measurements with rejected=0.
+    - >-
+      `WorkflowLifecycleBridge.replay` integration exercise delegates the
+      owner-scoped cursor to `WorkflowEventPage`; unknown/foreign outcomes map
+      to 404 semantics and expired outcomes map to 410 semantics.
+    - >-
+      Production API/worker composition binds `SqlWorkflowAgentRunRecovery`
+      into the public Run Coordinator; missing recovery ports fail production
+      workflow composition readiness. Worker continuations reload persisted
+      workflow trace context before invoking the public execution port, so
+      admission-to-continuation correlation is preserved and missing trace
+      context fails closed.
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -q services/aura-core/tests/test_workflow_repository.py
+      services/aura-core/tests/test_workflow_state_machine.py (25 passed)
+    - >-
+      Workflow deletion routes call the parent-aware replayable
+      `WorkflowDeletionReceipt` application seam directly for every scope,
+      pass workflow_id and Idempotency-Key, and map the authoritative persisted
+      deletedAt value into the closed API receipt without live-resource
+      preflight.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run ruff check
+      services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py
+      services/aura-core/src/aura_core/entrypoints/api/state.py
+      services/aura-core/src/aura_core/entrypoints/api/app.py
+      services/aura-core/src/aura_core/entrypoints/worker/app.py
+      services/aura-core/src/aura_core/platform/auth.py
+      services/aura-core/src/aura_core/platform/outbox/service.py
+      services/aura-core/src/aura_core/platform/outbox/__init__.py
+      services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run python tooling/architecture/validate-module-registry.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run python
+      tooling/architecture/validate-import-boundaries.py (passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run python
+      tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0137.yaml (passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run python
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0137.yaml (passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+      services/aura-core/src/aura_core/entrypoints/api/app.py
+      services/aura-core/src/aura_core/entrypoints/api/state.py
+      services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py
+      services/aura-core/src/aura_core/entrypoints/worker/app.py
+      services/aura-core/src/aura_core/platform/auth.py
+      services/aura-core/src/aura_core/platform/telemetry.py (0 errors)
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -q services/aura-core/tests/test_workflow_platform_boundaries.py
+      services/aura-core/tests/test_workflow_api.py
+      services/aura-core/tests/test_workflow_repository.py
+      (46 passed)
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -q services/aura-core/tests/test_workflow_execution_handlers.py
+      services/aura-core/tests/test_workflow_worker.py
+      services/aura-core/tests/test_workflow_execution_integration.py
+      services/aura-core/tests/test_workflow_run_recovery.py
+      services/aura-core/tests/test_migration_0028_workflow_execution.py
+      services/aura-core/tests/test_workflow_api.py
+      services/aura-core/tests/test_workflow_platform_boundaries.py
+      (66 passed, 4 skipped)
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -q -p no:cacheprovider
+      contracts/tests/test_aura0137_workflow_execution_contract.py
+      services/aura-core/tests/system/test_workflow_execution.py
+      (13 passed)
+    - >-
+      Clone composition now forwards expectedDefinitionVersion through the
+      parent-aware application seam into the locked repository transaction;
+      focused API/platform/repository checks passed (48 passed).
+    - >-
+      Required platform-zone Ruff check across API, worker, bootstrap, auth,
+      outbox, telemetry, and boundary tests passed; git diff --check passed.
+    - git diff --check
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0137_workflow_execution_contract.py
+      services/aura-core/tests/system/test_workflow_execution.py (27 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      [AURA-0137 aggregate test list] (362 passed, 20 skipped; one expected
+      legacy assertion still expects same-key create with different server IDs
+      to conflict, while the corrected semantic create command now replays the
+      authoritative result as required by AURA-0137 security review).
+  failed: []
+  not_run:
+    - Full AURA-0137 aggregate checks remain the delivery lead's responsibility.
+decisions:
+  - >-
+    Admission gating is applied only to publish and start/admission; draft
+    creation and read/recovery/retirement/deletion remain available while the
+    feature flag is disabled.
+  - >-
+    Workflow routes translate through the application/repository public seams,
+    require owner sessions and CSRF for mutations, and expose metadata-only
+    persisted SSE replay with Last-Event-ID handling.
+  - >-
+    Worker wakeups use the generic identifier-only outbox envelope and a
+    dedicated versioned wake topic; private workflow values never enter NATS.
+    Admission and every queued continuation stage wake commands transactionally;
+    the worker also performs a bounded authoritative restart/due-wait scan.
+  - >-
+    API and worker use one composition factory. All four handlers, current
+    agent policy authority, evidence, metrics, and provider-bound run lineage
+    are mandatory bindings; durable Run recovery is bound in both production
+    compositions and missing bindings fail readiness.
+  - >-
+    Workflow creation routes exclusively through the public semantic
+    create_draft_command/result port; no transport-generated workflow or
+    revision identifier participates in idempotency fingerprints. Retained
+    instance-scope deletion authorization uses the domain tombstone-aware
+    public lineage port. All deletion scopes now call the parent-aware,
+    replayable deletion-receipt seam directly, allowing retries to reach
+    domain truth after the live target has been removed.
+  - >-
+    The module registry explicitly owns all newly composed workflow modules and
+    the run-coordinator lineage dependency.
+risks:
+  - >-
+    Worker execution uses the public identifier execution and bounded recovery
+    scan methods; no executor-private state is used by this composition slice.
+unresolved:
+  []
