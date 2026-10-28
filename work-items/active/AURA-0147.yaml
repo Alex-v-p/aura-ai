@@ -1,0 +1,175 @@
+id: AURA-0147
+title: Build Aura Web Research Tasks and Artifacts
+status: draft
+change_class: repository_governance
+intent: >
+  Add dedicated Aura Web research, federated Task Center, and generated-artifact
+  experiences with authoritative REST reconciliation, metadata-only live
+  invalidation, safe previews, truthful recovery and deletion, stable
+  conversation activity, and accessible responsive navigation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/governed-research-artifacts-and-tasks.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/components-and-interactions.md
+    - docs/design/foundations.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - work-items/archived/AURA-0141.yaml
+    - work-items/active/AURA-0145.yaml
+    - work-items/active/AURA-0146.yaml
+    - AURA-0147 must not enter implementation until AURA-0141 through AURA-0146 are reviewed and integrated.
+    - Research and Artifacts live under Knowledge; Tasks lives under Activity after Approvals and Notifications; research Advanced settings remain inline on the Research route.
+    - Metadata-only SSE is an invalidation hint and every reconnect gap or mutation settles through an authorized no-store REST snapshot.
+    - Client drafts are memory-only and must never be represented as durable local storage.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - WEB-001
+  - WEB-002
+  - WEB-003
+  - WEB-004
+  - WEB-005
+  - WEB-006
+  - WEB-007
+  - ART-009
+  - ART-010
+ownership_zones:
+  - frontend.aura.knowledge.research
+  - frontend.aura.knowledge.artifacts
+  - frontend.aura.activity.tasks
+  - frontend.aura.interaction.research-activity
+  - frontend.aura-web.routing-navigation
+  - frontend.aura-web.research-task-artifact-acceptance
+  - delivery.aura0147
+allowed_paths:
+  - work-items/active/AURA-0147.yaml
+  - work-items/archived/AURA-0147.yaml
+  - work-items/handoffs/AURA-0147-*.yaml
+  - work-items/reviews/AURA-0147-*.yaml
+  - work-items/integration/AURA-0147.yaml
+  - frontend/tsconfig.base.json
+  - frontend/libs/aura/knowledge/research/**
+  - frontend/libs/aura/knowledge/artifacts/**
+  - frontend/libs/aura/activity/tasks/**
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/app.routes.spec.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.spec.ts
+  - frontend/apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/research-tasks-artifacts.stories.ts
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - package.json
+  - pnpm-lock.yaml
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - Existing generated Aura v1 research artifact task conversation and run transports consumed without hand editing
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Questions seed URLs domain restrictions source URLs excerpts reports artifact bodies titles filenames and citations remain in authorized no-store responses and rendered state only; they never enter URL state browser persistence service-worker caches analytics logs screenshots or telemetry.
+    - Every mutation uses same-origin anti-CSRF idempotency and expected versions where state can race; capability flags control whether cancel retry extend delete cleanup retry or reconcile actions are offered.
+    - Markdown plain text and JSON previews are inert bounded and server-type validated; raw HTML scripts remote embeds unsafe links executable content and arbitrary downloads cannot render.
+    - Logout authorization-generation changes route changes deletion and late responses clear private state and cannot restore another principal or deleted content.
+    - Metadata-only SSE never carries titles questions progress content URLs source identity artifact metadata or owner identity and cannot be treated as authoritative state.
+  data_classes:
+    - owner-private research questions settings sources evidence citations and reports
+    - owner-private generated artifact metadata previews revisions and downloads
+    - owner-private task presentation recovery and lineage metadata
+    - ephemeral memory-only drafts filters and authorized REST snapshots
+required_agents:
+  implementation:
+    - frontend_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura Web exposes /research, /tasks, /tasks/:id, /artifacts, and /artifacts/:id with lazy feature boundaries and no duplicated domain behavior in the application shell or generated transport client.
+  - Knowledge navigation adds Research and Artifacts and Activity adds Tasks after Approvals and Notifications while preserving collapsed rail tablet overlay mobile drawer keyboard focus restoration active-route semantics theme and reduced-motion behavior.
+  - Research creates Quick Auto Deep and Agent-led tasks, shows admitted budgets and durable stages, keeps Advanced settings inline, supports the single bounded extension and cancellation, and distinguishes interactive subscription from detached background execution.
+  - Task Center filters and groups normalized presentation statuses while always showing authoritative source status outcome stage progress capability and recovery information and routes advertised cancel and retry actions through the owning APIs.
+  - Artifact list detail revision history sanitized preview download deletion cleanup retry and reconciliation preserve integrity and deletion truth; Markdown raw HTML and remote embeds remain inert and JSON and plain text never execute.
+  - Conversation transcripts render a stable research activity item that survives reconnect and links to task and report artifact; a terminal cited completion replaces or augments activity without duplicate messages or a second run.
+  - SSE carries metadata-only invalidations; reconnect gaps duplicate invalidations stale responses and mutation races coalesce into bounded authorized REST refresh and never regress a newer resource version.
+  - Loading empty queued running waiting detached partial failed canceled interrupted stale disconnected unauthorized malformed deletion-pending deletion-failed cleanup-unknown and deleted states use text not color alone and provide truthful bounded recovery.
+  - Research drafts and filters remain memory-only, are cleared on logout authorization-generation change successful create and explicit discard, and are not claimed as durable when navigating away or reloading.
+  - Keyboard focus live-region announcements screen-reader names reduced motion high contrast mobile layouts light and dark themes and 200 percent zoom pass component Storybook and real-browser acceptance without horizontal loss of core controls.
+  - Generated-client synchronization lint type unit production build Storybook accessibility and Playwright suites pass; no contract backend Observatory package dependency lock service-worker persistence or protected baseline change occurs.
+  - Every new feature library exposes only its index.ts public API and the Platform Worker registers Research Artifacts and Activity Tasks ownership and dependency direction in tooling/architecture/modules.yaml without adding product logic.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0147.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0147.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0147.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0147.yaml
+  - cd frontend && pnpm exec nx run aura-api-client:check-generated
+  - cd frontend && NX_DAEMON=false pnpm exec nx run-many -t lint test --projects=research,artifacts,tasks,conversations,aura-web
+  - cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production
+  - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook
+  - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/storybook.config.ts
+  - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Implementation remains dependency-blocked until AURA-0145 and AURA-0146 are integrated.

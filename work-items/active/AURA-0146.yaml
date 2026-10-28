@@ -1,0 +1,179 @@
+id: AURA-0146
+title: Integrate conversational research and completion delivery
+status: draft
+change_class: repository_governance
+intent: >
+  Add admission-only web.research@1 conversational behavior, deny-by-default
+  agent policy grants, stable research activity references, client subscription
+  semantics, and idempotent exactly-once completion append plus independent
+  notification delivery without extending run lifetimes.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/governed-research-artifacts-and-tasks.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/specifications/tools-automation-and-integrations.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - docs/adr/0018-governed-web-research-providers.md
+    - work-items/archived/AURA-0141.yaml
+    - work-items/active/AURA-0145.yaml
+    - AURA-0146 must not enter implementation until AURA-0145 is reviewed and integrated.
+    - The tool result is admission-only and settles within the existing thirty-second ceiling; research execution client subscription and completion delivery remain outside the originating run.
+    - Completion append and notification have independent durable delivery records so notification failure never duplicates the transcript append.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+    - contracts/events/knowledge/v1/research-events.schema.json
+feature_references:
+  - RUN-014
+  - RUN-015
+  - RUN-016
+  - RUN-017
+  - AGT-006
+ownership_zones:
+  - services.aura-core.runtime.web-research-tool
+  - services.aura-core.interaction.research-delivery
+  - services.aura-core.agent-research-policy
+  - services.aura-core.conversation-research-references
+  - services.aura-core.research-notification-delivery
+  - evaluation.conversational-research-lifecycle
+  - delivery.aura0146
+allowed_paths:
+  - work-items/active/AURA-0146.yaml
+  - work-items/archived/AURA-0146.yaml
+  - work-items/handoffs/AURA-0146-*.yaml
+  - work-items/reviews/AURA-0146-*.yaml
+  - work-items/integration/AURA-0146.yaml
+  - services/aura-core/migrations/versions/0033_research_completion_delivery.py
+  - services/aura-core/src/aura_core/runtime/tools/public.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/**
+  - services/aura-core/src/aura_core/domains/interaction/research_delivery/**
+  - services/aura-core/src/aura_core/domains/execution/runs/**
+  - services/aura-core/src/aura_core/domains/automation/notifications/**
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/entrypoints/worker/research_delivery.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/research-completion-delivery.yaml
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_notifications.py
+  - services/aura-core/tests/test_notification_*.py
+  - services/aura-core/tests/test_run_*.py
+  - services/aura-core/tests/test_tool_*.py
+  - services/aura-core/tests/test_research_delivery*.py
+  - services/aura-core/tests/test_migration_0033_research_completion_delivery.py
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - frontend/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/research/**
+  - services/aura-core/src/aura_core/domains/artifacts/**
+  - services/aura-core/src/aura_core/domains/execution/tasks/**
+  - services/aura-core/src/aura_core/providers/research/**
+  - services/aura-research-static-fetcher/**
+  - services/aura-research-browser-fetcher/**
+  - deploy/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected:
+    - Existing Aura v1 conversation run research-origin activity task artifact and validated web-citation references
+    - Existing run event ResearchToolAdmissionResultV1 and research lifecycle references
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.research-delivery
+observability:
+  applicable: true
+  affected_components:
+    - aura.interaction.research_completion_delivery@1
+    - aura.runtime.tool_execution@1
+  required_metrics:
+    - research_completion_outcome_count
+    - research_completion_latency_ms
+    - tool_execution_duration_ms
+    - tool_execution_outcomes_total
+  required_evaluators:
+    - research_completion_exactly_once@1
+    - research_tool_lifecycle@1
+    - research_delivery_privacy@1
+    - research_delivery_failure_isolation@1
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - web.research@1 requires the exact research:run grant and remains denied for custom agents until an authorized immutable policy revision enables it.
+    - Admission results contain only opaque task reference mode and admission state; questions queries sources URLs excerpts artifact content and provider diagnostics never enter tool events or telemetry.
+    - Completion append reauthorizes the originating owner and conversation lineage and accepts only coordinator-validated citations and artifact references.
+    - Unknown append outcomes reconcile by unique delivery key before retry; delete-versus-delivery serialization prevents deleted research evidence from reappearing in transcripts.
+    - Notification delivery is independently idempotent and cannot expose private answer source or artifact content in event payloads logs URLs or ordinary telemetry.
+  data_classes:
+    - opaque research task artifact run and conversation lineage references
+    - owner-private compact cited completion answer
+    - content-free durable append and notification delivery records
+    - metadata-only tool and completion observations
+required_agents:
+  implementation:
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - web.research@1 is registered under the exact research:run grant, custom agents remain deny-by-default, and immutable agent and tool-policy revisions preserve historical run truth.
+  - Each authorized tool call admits or identifies exactly one durable research task by idempotency key and returns only taskRef mode and admissionState within the existing thirty-second ceiling.
+  - The originating run settles after admission acknowledgement and never waits for research completion, holds a worker lease open, invokes a second synthesis turn, or creates a second task or assistant writer.
+  - Conversation messages and run snapshots expose additive stable research activity task artifact origin and validated web-citation references while older clients may omit or ignore them.
+  - Auto transitions from interactive to detached client subscription after thirty seconds without inventing a new Core run state; Quick may complete while subscribed and Deep and Agent-led detach by default.
+  - Terminal research delivery appends one compact cited answer task state and report-artifact link to the originating conversation using a durable unique delivery key and reconciles unknown append outcomes before retry.
+  - Notification delivery is independently durable and idempotent, occurs after append settlement, and can retry without duplicating the transcript append or research task.
+  - Completion deletion retry reconnect notification failure worker restart concurrent terminal events and duplicate delivery tests prove exactly-once transcript semantics and truthful recoverable state.
+  - interaction.research_delivery exposes a deliberate public.py application boundary and the Platform Worker registers its allowed public imports and dependency direction in tooling/architecture/modules.yaml without changing product behavior.
+  - aura.interaction.research_completion_delivery@1 implements its exact typed boundary span dependency metric finite-dimension replay privacy and metadata-only capture contract; Observatory outage cannot delay or fail delivery.
+  - No research planning fetching evidence synthesis artifact persistence Task Center projection frontend route contract change provider deployment or protected baseline change occurs.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0146.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0146.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0146.yaml
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0146.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0146.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/runtime/tools/public.py services/aura-core/src/aura_core/domains/interaction services/aura-core/src/aura_core/domains/execution/runs services/aura-core/src/aura_core/domains/automation/notifications services/aura-core/tests/test_research_delivery*.py services/aura-core/tests/test_tool_*.py services/aura-core/tests/test_run_*.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/runtime/tools/public.py services/aura-core/src/aura_core/domains/interaction services/aura-core/src/aura_core/domains/execution/runs services/aura-core/src/aura_core/domains/automation/notifications
+  - AURA_TEST_DATABASE_URL=${AURA_TEST_DATABASE_URL:?isolated PostgreSQL URL required} AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research_delivery*.py services/aura-core/tests/test_tool_*.py services/aura-core/tests/test_run_*.py services/aura-core/tests/test_conversations.py services/aura-core/tests/test_notifications.py services/aura-core/tests/test_migrations.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Implementation remains dependency-blocked until AURA-0145 is integrated.
