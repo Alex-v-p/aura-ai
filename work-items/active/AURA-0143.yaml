@@ -28,6 +28,9 @@ sources_of_truth:
     - Task invalidations contain source kind source identifier and source version only; live and rebuild consumers call the same source-owned public snapshot query under the narrow nondelegable task_projection:read capability.
     - Migration 0030_task_projection descends from AURA-0142 migration 0029_generated_artifacts to preserve the single Core Alembic head; domain work may proceed in parallel but migration validation is ordered.
     - AURA-0143 exclusively owns shared Core database API state router and worker composition for the AURA-0142 and AURA-0143 slices.
+    - ADR-0013's existing Core platform transactional outbox is the sole durable task-source invalidation journal. Each source stages the schema-exact TaskSourceInvalidated v1 envelope through its source-owned lifecycle port and a bootstrap-composed SqlOutboxRepository adapter in the same database transaction as the authoritative mutation. The platform relay publishes only after commit. Execution consumes the dedicated JetStream subject with a durable consumer and acknowledges only after reconciliation. Source repositories never read or write platform outbox persistence or execution tables directly.
+    - Migration 0030_task_projection remains exclusively execution.tasks-owned and contains no source-authority column task_source_invalidations table or source checkpoint table. Migration 0031_memory_reindex_task_version descends from 0030 is knowledge.memory-owned adds and backfills a positive monotonic lifecycle version on memory_embedding_generations and drops it on downgrade. No other source-authority schema change is authorized.
+    - Each source cursor is an opaque source-owned token containing an immutable pass high-water fence and the last emitted immutable created_at and id keyset. Execution persists and returns the token unchanged in task_projection_rebuilds. Source updates cannot alter ordering membership. Existing source created_at and id columns are used so the fence requires no source schema migration.
     - The Core Worker owns source public seams projection persistence routes and handlers; the Test and Evaluation Engineer owns independent consistency race privacy architecture and instrumentation cases; only the Integration Maintainer performs shared composition after both Core handoffs are reviewed.
     - On the shared feature branch domain work may run beside AURA-0142 and AURA-0144 because their writable paths are disjoint, but 0030 migration validation waits for reviewed 0029 and shared composition waits for the AURA-0142 handoff.
   contracts:
@@ -48,6 +51,8 @@ ownership_zones:
   - services.aura-core.task-source-public-adapters
   - services.aura-core.task-projection-api
   - services.aura-core.task-projection-migration
+  - services.aura-core.transactional-outbox-task-invalidation
+  - services.aura-core.memory-reindex-source-version-migration
   - services.aura-core.parallel-slice-composition
   - evaluation.task-projection-consistency
   - delivery.aura0143
@@ -58,18 +63,27 @@ allowed_paths:
   - work-items/reviews/AURA-0143-*.yaml
   - work-items/integration/AURA-0143.yaml
   - services/aura-core/migrations/versions/0030_task_projection.py
+  - services/aura-core/migrations/versions/0031_memory_reindex_task_version.py
   - services/aura-core/src/aura_core/domains/execution/tasks/**
   - services/aura-core/src/aura_core/domains/automation/workflows/**
   - services/aura-core/src/aura_core/domains/automation/briefings/**
   - services/aura-core/src/aura_core/domains/knowledge/documents/**
   - services/aura-core/src/aura_core/domains/knowledge/memory/**
   - services/aura-core/src/aura_core/bootstrap/task_uow.py
+  - services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+  - services/aura-core/src/aura_core/bootstrap/briefing_uow.py
+  - services/aura-core/src/aura_core/bootstrap/document_uow.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
   - services/aura-core/src/aura_core/bootstrap/database.py
   - services/aura-core/src/aura_core/entrypoints/api/routes/tasks.py
   - services/aura-core/src/aura_core/entrypoints/api/app.py
   - services/aura-core/src/aura_core/entrypoints/api/state.py
   - services/aura-core/src/aura_core/entrypoints/worker/tasks.py
   - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/outbox/__init__.py
+  - services/aura-core/src/aura_core/platform/outbox/service.py
+  - services/aura-core/src/aura_core/platform/outbox/repository.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
   - services/aura-core/resources/component-manifests/task-projection.yaml
   - services/aura-core/tests/test_task_projection.py
   - services/aura-core/tests/test_task_projection_sources.py
@@ -80,6 +94,14 @@ allowed_paths:
   - services/aura-core/tests/test_task_projection_architecture.py
   - services/aura-core/tests/test_task_projection_observability.py
   - services/aura-core/tests/test_migration_0030_task_projection.py
+  - services/aura-core/tests/test_migration_0031_memory_reindex_task_version.py
+  - services/aura-core/tests/test_outbox.py
+  - services/aura-core/tests/test_aura0133_outbox.py
+  - services/aura-core/tests/test_aura0101_nats_stream.py
+  - services/aura-core/tests/test_workflows.py
+  - services/aura-core/tests/test_briefings.py
+  - services/aura-core/tests/test_documents.py
+  - services/aura-core/tests/test_memory_persistence.py
 forbidden_paths:
   - AGENTS.md
   - .agents/**
@@ -114,7 +136,7 @@ contracts:
 data:
   migration_required: true
   owning_service: aura-core
-  owning_module: execution.tasks
+  owning_module: execution.tasks and knowledge.memory
 observability:
   applicable: true
   affected_components:
@@ -146,6 +168,7 @@ security_privacy:
 required_agents:
   implementation:
     - core_worker
+    - platform_worker
     - test_evaluation_engineer
   review:
     - general_reviewer
@@ -165,7 +188,10 @@ acceptance_criteria:
   - Migration 0030_task_projection descends exactly from 0029_generated_artifacts, preserves the single Alembic head, adds bounded checks indexes and version uniqueness without cross-domain foreign keys or cascades, and passes ordered upgrade restart duplicate and rollback-posture tests.
   - Workflow instances briefing occurrences document processing and memory reindexing expose the same closed TaskProjectionSnapshotQueryV1 and TaskProjectionSnapshotV1 through their public application APIs under task_projection:read; source-owned implementations may read only their own persistence.
   - Research is a registered source kind but no research row or adapter is fabricated before AURA-0145 supplies its source-owned public snapshot implementation; an unavailable source remains absent or unknown according to the contract.
+  - Every included SQL source transition and its exact TaskSourceInvalidated outbox row commit or roll back atomically through the existing platform transactional outbox. Crash-before-commit crash-after-commit duplicate publish redelivery worker restart and consumer-ack failure tests prove at-least-once recovery. Delivery uses the existing platform outbox and JetStream durable acknowledgement; no task_source_invalidations or task_source_invalidation_checkpoints tables exist.
   - Identifier-and-version-only invalidation consumers call the source snapshot API to resolve owner and metadata, upsert only a strictly newer source version, handle duplicates reorder gaps unavailable snapshots and deletion tombstones idempotently, and never copy private source content into events or the projection.
+  - Each source cursor is an opaque source-owned token containing an immutable pass high-water fence and the last emitted immutable created_at and id keyset. Execution persists and returns the token unchanged in task_projection_rebuilds. Source updates cannot alter ordering membership, and existing source created_at and id columns provide the fence without another source schema migration.
+  - Concrete SQL tests for all four sources cover multi-page restart concurrent insertion concurrent status or version update duplicate page replay and final stale settlement. They prove no pre-fence source ID is omitted or repeated and that live invalidations converge changes occurring after the fence.
   - Backfill and rebuild page every included source through the identical public query used for live reconciliation, persist resumable cursors, tolerate restart and duplicate pages, remove or tombstone stale rows only after a completed source pass, and converge byte-for-byte with live projection for the same snapshots.
   - Task list detail and metadata-only SSE implement the AURA-0141 filters normalized groups authoritative source outcome progress capabilities pagination replay and no-store semantics with owner authorization and REST reconciliation after gaps.
   - Cancel and retry route only through advertised source public commands with owner authorization CSRF idempotency expected source version and unknown-outcome reconciliation; retry creates or identifies source-owned retry truth and never resets a projection row.
@@ -173,7 +199,7 @@ acceptance_criteria:
   - aura.execution.task_projection@1 implements the exact typed boundary task_projection.reconcile span source_snapshot_api and Core PostgreSQL dependencies millisecond units closed dimensions outcomes errors trace-only correlation metadata-only capture deterministic replay and retention rules from the approved design.
   - Architecture tests fail on imports of source persistence repository adapters ORM models or tables from execution.tasks and prove source public APIs do not accept ordinary owner capabilities for projection enumeration.
   - The Integration Maintainer owns the only edits to database.py API app.py API state.py and worker app.py, mounts the already-reviewed AURA-0142 artifacts route/service plus AURA-0143 task route/consumer mechanically, and adds no artifact or task business rules to entrypoints.
-  - No generic workflow engine research coordinator provider service reminder approval calendar event ordinary conversation run frontend Observatory contract generated-client dependency lock deployment protected baseline or source-authority migration occurs.
+  - No generic workflow engine research coordinator provider service reminder approval calendar event ordinary conversation run frontend Observatory contract generated-client dependency lock deployment protected baseline or source-authority migration other than the explicitly authorized knowledge.memory-owned 0031 lifecycle-version migration occurs.
 required_checks:
   - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0143.yaml
   - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0143.yaml
@@ -187,6 +213,7 @@ required_checks:
   - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/domains/execution/tasks services/aura-core/src/aura_core/domains/automation/workflows services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/domains/knowledge/documents services/aura-core/src/aura_core/domains/knowledge/memory services/aura-core/src/aura_core/bootstrap/task_uow.py services/aura-core/src/aura_core/entrypoints/api/routes/tasks.py services/aura-core/src/aura_core/entrypoints/worker/tasks.py services/aura-core/tests/test_task_projection.py services/aura-core/tests/test_task_projection_sources.py services/aura-core/tests/test_task_projection_rebuild.py services/aura-core/tests/test_task_projection_races.py services/aura-core/tests/test_task_projection_api.py services/aura-core/tests/test_task_projection_worker.py services/aura-core/tests/test_task_projection_architecture.py services/aura-core/tests/test_task_projection_observability.py services/aura-core/tests/test_migration_0030_task_projection.py
   - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/execution/tasks services/aura-core/src/aura_core/bootstrap/task_uow.py services/aura-core/src/aura_core/entrypoints/api/routes/tasks.py services/aura-core/src/aura_core/entrypoints/worker/tasks.py services/aura-core/tests/test_task_projection.py services/aura-core/tests/test_task_projection_sources.py services/aura-core/tests/test_task_projection_rebuild.py services/aura-core/tests/test_task_projection_races.py services/aura-core/tests/test_task_projection_api.py services/aura-core/tests/test_task_projection_worker.py services/aura-core/tests/test_task_projection_architecture.py services/aura-core/tests/test_task_projection_observability.py services/aura-core/tests/test_migration_0030_task_projection.py
   - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_task_projection.py services/aura-core/tests/test_task_projection_sources.py services/aura-core/tests/test_task_projection_rebuild.py services/aura-core/tests/test_task_projection_races.py services/aura-core/tests/test_task_projection_api.py services/aura-core/tests/test_task_projection_worker.py services/aura-core/tests/test_task_projection_architecture.py services/aura-core/tests/test_task_projection_observability.py services/aura-core/tests/test_migration_0030_task_projection.py services/aura-core/tests/test_migrations.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_outbox.py services/aura-core/tests/test_aura0133_outbox.py services/aura-core/tests/test_aura0101_nats_stream.py services/aura-core/tests/test_workflows.py services/aura-core/tests/test_briefings.py services/aura-core/tests/test_documents.py services/aura-core/tests/test_memory_persistence.py services/aura-core/tests/test_migration_0031_memory_reindex_task_version.py -q
   - git diff --check
 baseline_changes_allowed: false
 human_approval_required: false
