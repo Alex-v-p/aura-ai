@@ -84,6 +84,13 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.provider.google_calendar": "1.0.0",
     "aura.integration.calendar_retrieval": "1.0.0",
     "aura.automation.calendar_conflict": "1.0.0",
+    "aura.execution.task_projection@1": "1.0.0",
+    "aura.research.search@1": "1.0.0",
+    "aura.research.static_fetch@1": "1.0.0",
+    "aura.research.browser_fetch@1": "1.0.0",
+    "aura.research.extraction@1": "1.0.0",
+    "aura.artifacts.persistence@1": "1.0.0",
+    "aura.artifacts.deletion@1": "1.0.0",
 }
 
 _METRICS: Mapping[str, frozenset[str]] = {
@@ -292,12 +299,8 @@ _METRICS: Mapping[str, frozenset[str]] = {
     "aura.automation.workflow_definition": frozenset(
         {"workflow_definition_validation_duration_ms"}
     ),
-    "aura.automation.workflow_step.agent_run": frozenset(
-        {"workflow_agent_run_step_duration_ms"}
-    ),
-    "aura.automation.workflow_approval": frozenset(
-        {"workflow_approval_command_duration_ms"}
-    ),
+    "aura.automation.workflow_step.agent_run": frozenset({"workflow_agent_run_step_duration_ms"}),
+    "aura.automation.workflow_approval": frozenset({"workflow_approval_command_duration_ms"}),
     "aura.automation.workflow_step.notification": frozenset(
         {"workflow_notification_step_duration_ms"}
     ),
@@ -310,12 +313,8 @@ _METRICS: Mapping[str, frozenset[str]] = {
     "aura.automation.workflow_checkpoint": frozenset(
         {"workflow_checkpoint_persistence_duration_ms"}
     ),
-    "aura.automation.workflow_cancellation": frozenset(
-        {"workflow_cancellation_duration_ms"}
-    ),
-    "aura.automation.workflow_settlement": frozenset(
-        {"workflow_settlement_duration_ms"}
-    ),
+    "aura.automation.workflow_cancellation": frozenset({"workflow_cancellation_duration_ms"}),
+    "aura.automation.workflow_settlement": frozenset({"workflow_settlement_duration_ms"}),
     "aura.automation.briefing_scheduler": frozenset(
         {
             "briefing_schedule_lag_ms",
@@ -566,6 +565,53 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "calendar_conflict_evaluation_outcome",
         }
     ),
+    "aura.execution.task_projection@1": frozenset(
+        {
+            "task_projection_outcome_count",
+            "task_projection_reconcile_latency_ms",
+            "task_projection_lag_ms",
+        }
+    ),
+    "aura.research.search@1": frozenset(
+        {
+            "research_search_outcome_count",
+            "research_search_latency_ms",
+            "research_search_candidate_count",
+        }
+    ),
+    "aura.research.static_fetch@1": frozenset(
+        {
+            "research_static_fetch_outcome_count",
+            "research_static_fetch_latency_ms",
+            "research_static_fetch_limit_rejection_count",
+        }
+    ),
+    "aura.research.browser_fetch@1": frozenset(
+        {
+            "research_browser_fetch_outcome_count",
+            "research_browser_fetch_latency_ms",
+            "research_browser_fetch_limit_rejection_count",
+        }
+    ),
+    "aura.research.extraction@1": frozenset(
+        {
+            "research_extraction_outcome_count",
+            "research_extraction_latency_ms",
+            "research_extraction_rejected_count",
+        }
+    ),
+    "aura.artifacts.persistence@1": frozenset(
+        {
+            "artifact_write_outcome_count",
+            "artifact_write_latency_ms",
+        }
+    ),
+    "aura.artifacts.deletion@1": frozenset(
+        {
+            "artifact_deletion_outcome_count",
+            "artifact_deletion_latency_ms",
+        }
+    ),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -792,6 +838,13 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.automation.calendar_conflict": frozenset(
         {"calendar.conflicts.query", "calendar.conflicts.evaluate"}
     ),
+    "aura.execution.task_projection@1": frozenset({"task_projection.reconcile"}),
+    "aura.research.search@1": frozenset({"research.search"}),
+    "aura.research.static_fetch@1": frozenset({"research.fetch_static"}),
+    "aura.research.browser_fetch@1": frozenset({"research.fetch_browser"}),
+    "aura.research.extraction@1": frozenset({"research.extract"}),
+    "aura.artifacts.persistence@1": frozenset({"artifact.revision_write"}),
+    "aura.artifacts.deletion@1": frozenset({"artifact.delete"}),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -836,6 +889,13 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.provider.google_calendar": "google_calendar_provider_request_duration_ms",
     "aura.integration.calendar_retrieval": "calendar_retrieval_duration_ms",
     "aura.automation.calendar_conflict": "calendar_conflict_evaluation_duration_ms",
+    "aura.execution.task_projection@1": "task_projection_reconcile_latency_ms",
+    "aura.research.search@1": "research_search_latency_ms",
+    "aura.research.static_fetch@1": "research_static_fetch_latency_ms",
+    "aura.research.browser_fetch@1": "research_browser_fetch_latency_ms",
+    "aura.research.extraction@1": "research_extraction_latency_ms",
+    "aura.artifacts.persistence@1": "artifact_write_latency_ms",
+    "aura.artifacts.deletion@1": "artifact_deletion_latency_ms",
 }
 
 _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
@@ -914,19 +974,20 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
     ("aura.automation.workflow_state", "workflow.command"): "workflow_command_duration_ms",
     ("aura.automation.workflow_state", "workflow.repository"): "workflow_repository_duration_ms",
     (
-        "aura.automation.workflow_definition", "validate"
+        "aura.automation.workflow_definition",
+        "validate",
     ): "workflow_definition_validation_duration_ms",
-    (
-        "aura.automation.workflow_step.agent_run", "execute"
-    ): "workflow_agent_run_step_duration_ms",
+    ("aura.automation.workflow_step.agent_run", "execute"): "workflow_agent_run_step_duration_ms",
     ("aura.automation.workflow_approval", "execute"): "workflow_approval_command_duration_ms",
     (
-        "aura.automation.workflow_step.notification", "execute"
+        "aura.automation.workflow_step.notification",
+        "execute",
     ): "workflow_notification_step_duration_ms",
     ("aura.automation.workflow_step.wait_until", "execute"): "workflow_wait_command_duration_ms",
     ("aura.automation.workflow_step.wait_until", "resume"): "workflow_wait_lag_ms",
     (
-        "aura.automation.workflow_checkpoint", "persist"
+        "aura.automation.workflow_checkpoint",
+        "persist",
     ): "workflow_checkpoint_persistence_duration_ms",
     ("aura.automation.workflow_cancellation", "cancel"): "workflow_cancellation_duration_ms",
     ("aura.automation.workflow_settlement", "settle"): "workflow_settlement_duration_ms",
@@ -988,12 +1049,8 @@ _DIMENSION_KEYS = frozenset(
     }
 )
 
-_WORKFLOW_OPERATIONS = frozenset(
-    {"workflow.transition", "workflow.command", "workflow.repository"}
-)
-_WORKFLOW_DEPENDENCIES = frozenset(
-    {"application_validation", "postgresql", "transactional_outbox"}
-)
+_WORKFLOW_OPERATIONS = frozenset({"workflow.transition", "workflow.command", "workflow.repository"})
+_WORKFLOW_DEPENDENCIES = frozenset({"application_validation", "postgresql", "transactional_outbox"})
 _WORKFLOW_ERROR_CLASSES = frozenset(
     {
         "authorization",
@@ -1089,6 +1146,8 @@ def classify_calendar_terminal(
     if outcome == "error":
         return "error", normalized_error or "internal"
     return "error", normalized_error or "internal"
+
+
 _TRACE_ATTRIBUTE_KEYS = frozenset(
     {
         "aggregate_id",
@@ -1263,6 +1322,23 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "application_validation",
             "application_unknown",
             "model_provider",
+            "source_snapshot_api",
+            "core_postgresql",
+            "model_gateway",
+            "searxng_port",
+            "static_fetcher_port",
+            "browser_fetcher_port",
+            "static_fetcher_cancel_port",
+            "browser_fetcher_cancel_port",
+            "url_policy",
+            "content_policy",
+            "evidence_repository",
+            "citation_validator",
+            "garage_port",
+            "artifacts_public_api",
+            "conversation_public_api",
+            "notification_public_api",
+            "none",
         }
     ),
     "archive_state": frozenset({"active", "archived", "all", "unknown"}),
@@ -1318,6 +1394,26 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "unknown",
             "stream_error",
             "invalid_cursor",
+            "validation_failed",
+            "authorization_denied",
+            "budget_exhausted",
+            "prompt_injection_detected",
+            "citation_invalid",
+            "storage_unavailable",
+            "deletion_failed",
+            "cleanup_unknown",
+            "snapshot_unavailable",
+            "version_gap",
+            "delivery_failed",
+            "queue_unavailable",
+            "cancel_dispatch_failed",
+            "settlement_unknown",
+            "provider_disabled",
+            "destination_blocked",
+            "redirect_blocked",
+            "type_rejected",
+            "size_exceeded",
+            "resource_exhausted",
         }
     ),
     "outcome": frozenset(
@@ -1373,6 +1469,10 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "delivered",
             "out_of_order",
             "over_budget",
+            "success",
+            "stale",
+            "failure",
+            "gap",
             "no_subscriber",
             "queue_full",
             "malformed_envelope",
@@ -1392,13 +1492,25 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "executing",
             "resolved",
             "clarification",
-            "failure",
             "validation",
             "verified",
             "ready",
             "storage_unavailable",
             "fenced",
             "recovered",
+            "source_absent",
+        }
+    ),
+    "provider": frozenset(
+        {
+            "searxng",
+            "static_fetcher",
+            "browser_fetcher",
+            "ollama",
+            "postgresql",
+            "garage",
+            "nats",
+            "none",
         }
     ),
     "operation": frozenset(
@@ -1412,6 +1524,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "fire",
             "complete",
             "acknowledge",
+            "reconcile",
+            "rebuild",
             "scan",
             "serialize",
             "queue_offer",
@@ -1423,6 +1537,23 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "execute",
             "persist",
             "settle",
+            "research.search",
+            "research.fetch_static",
+            "research.fetch_browser",
+            "research.extract",
+            "research.queue_claim",
+            "research.cancel_settlement",
+            "admission",
+            "claim",
+            "persistence",
+            "replay",
+            "settlement",
+            "reconciliation",
+            "validation",
+            "research.budget_settle",
+            "research.browser_fallback",
+            "artifact.revision_write",
+            "artifact.delete",
         }
     ),
     "status": frozenset(
@@ -1451,6 +1582,10 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "executing",
             "waiting_for_time",
             "terminal",
+            "live",
+            "ready",
+            "degraded",
+            "not_ready",
         }
     ),
     "token_estimator": frozenset({"chars_div_4_ceil"}),
@@ -1489,6 +1624,10 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "budget",
             "embedding_unavailable",
             "identity_mismatch",
+            "provider_disabled",
+            "provider_unavailable",
+            "draining",
+            "reconciling",
         }
     ),
     "connection_health": frozenset({"connected", "disconnected", "degraded", "unavailable"}),
@@ -2350,6 +2489,11 @@ class MetadataMetrics:
     @property
     def exporter(self) -> TelemetryExporter | None:
         return self._exporter
+
+    @property
+    def measurements(self) -> tuple[Measurement, ...]:
+        """Read-only snapshot for bounded component contract tests."""
+        return tuple(self._measurements)
 
     def increment(
         self,

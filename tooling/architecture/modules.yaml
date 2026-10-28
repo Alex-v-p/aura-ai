@@ -712,6 +712,9 @@ modules:
   python_modules:
   - aura_core.domains.knowledge.documents.public
   dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.source-adapter
+  - aura-core.domains.knowledge.documents.task-cursor
   - aura-core.domains.knowledge.documents.chunking
   - aura-core.domains.knowledge.documents.parser
   - aura-core.domains.knowledge.documents.ports
@@ -723,6 +726,7 @@ modules:
   python_modules:
   - aura_core.domains.knowledge.documents.repository
   dependencies:
+  - aura-core.domains.knowledge.documents.task-cursor
   - aura-core.domains.knowledge.documents.persistence
   - aura-core.domains.knowledge.documents.ports
   - aura-core.domains.knowledge.documents.public
@@ -752,6 +756,8 @@ modules:
   python_modules:
   - aura_core.domains.automation.briefings
   dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.source-adapter
   - aura-core.platform.outbox
   - aura-core.domains.governance.identity.public
   - aura-core.platform.database.base
@@ -779,6 +785,9 @@ modules:
   - services/aura-core/src/aura_core/domains/automation/workflows/evaluators.py
   - services/aura-core/src/aura_core/domains/automation/workflows/telemetry.py
   dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.source-adapter
+  - aura-core.domains.automation.workflows.task-cursor
   - aura-core.platform.database.base
   - aura-core.platform.telemetry
   - aura-core.domains.automation.workflows.application
@@ -831,6 +840,7 @@ modules:
   python_modules:
   - aura_core.bootstrap.workflow_uow
   dependencies:
+  - aura-core.domains.execution.tasks.transport
   - aura-core.domains.automation.workflows
   - aura-core.platform.telemetry
   - aura-core.domains.automation.workflows.application
@@ -1451,6 +1461,7 @@ modules:
   python_modules:
   - aura_core.bootstrap.briefing_uow
   dependencies:
+  - aura-core.domains.execution.tasks.transport
   - aura-core.domains.automation.briefings
   - aura-core.platform.outbox
   - aura-core.platform.telemetry
@@ -1494,6 +1505,7 @@ modules:
   python_modules:
   - aura_core.bootstrap.memory_uow
   dependencies:
+  - aura-core.domains.execution.tasks.transport
   - aura-core.domains.knowledge.memory
   - aura-core.domains.knowledge.memory.persistence
   - aura-core.domains.knowledge.memory.public
@@ -1516,6 +1528,7 @@ modules:
   python_modules:
   - aura_core.bootstrap.document_uow
   dependencies:
+  - aura-core.domains.execution.tasks.transport
   - aura-core.domains.knowledge.documents.public
   - aura-core.domains.knowledge.documents.persistence
   - aura-core.domains.knowledge.documents.repository
@@ -1608,11 +1621,14 @@ modules:
   python_modules:
   - aura_core.domains.knowledge.memory.public
   dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.source-adapter
   - aura-core.domains.knowledge.memory.contracts
   - aura-core.domains.knowledge.memory.embedding
   - aura-core.domains.knowledge.memory.ports
   - aura-core.domains.knowledge.memory.processing
   - aura-core.domains.knowledge.memory.store
+  - aura-core.domains.knowledge.memory.task-cursor
   - aura-core.domains.knowledge.memory.model-service
   - aura-core.domains.knowledge.memory.repository-ports
   - aura-core.runtime.models.ports
@@ -1635,6 +1651,7 @@ modules:
   dependencies:
   - aura-core.domains.knowledge.memory.persistence
   - aura-core.domains.knowledge.memory.public
+  - aura-core.domains.knowledge.memory.task-cursor
 - id: aura-core.domains.knowledge.memory.repository-ports
   root: services/aura-core/src/aura_core/domains/knowledge/memory/repository_ports.py
   kind: python
@@ -1662,6 +1679,7 @@ modules:
   dependencies:
   - aura-core.domains.knowledge.memory.contracts
   - aura-core.domains.knowledge.memory.repository-ports
+  - aura-core.domains.knowledge.memory.task-cursor
 - id: aura-core.domains.execution.runs.dto
   root: services/aura-core/src/aura_core/domains/execution/runs/dto.py
   kind: python
@@ -1998,6 +2016,8 @@ modules:
   python_modules:
   - aura_core.entrypoints.api.app
   dependencies:
+  - aura-core.entrypoints.api.routes.artifacts
+  - aura-core.entrypoints.api.routes.tasks
   - aura-core.entrypoints.api.errors
   - aura-core.entrypoints.api.routes
   - aura-core.entrypoints.api.routes.agents
@@ -2188,6 +2208,12 @@ modules:
   python_modules:
   - aura_core.entrypoints.api.state
   dependencies:
+  - aura-core.bootstrap.artifact-uow
+  - aura-core.bootstrap.task-uow
+  - aura-core.domains.automation.briefings
+  - aura-core.domains.automation.workflows
+  - aura-core.domains.knowledge.documents.public
+  - aura-core.domains.knowledge.memory.public
   - aura-core.bootstrap.workflow-uow
   - aura-core.bootstrap.briefing-uow
   - aura-core.bootstrap.approval-uow
@@ -2314,6 +2340,14 @@ modules:
   python_modules:
   - aura_core.entrypoints.worker.app
   dependencies:
+  - aura-core.bootstrap.task-uow
+  - aura-core.domains.automation.briefings
+  - aura-core.domains.automation.workflows
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.transport
+  - aura-core.domains.knowledge.documents.public
+  - aura-core.domains.knowledge.memory.public
+  - aura-core.entrypoints.worker.tasks
   - aura-core.domains.automation.briefings
   - aura-core.domains.automation.workflows.application
   - aura-core.bootstrap.workflow-uow
@@ -2882,3 +2916,305 @@ modules:
   dependencies:
   - aura-observatory.operations
   - aura-observatory.ports
+
+# AURA-0142 generated artifacts and AURA-0143 Task Center integration roots.
+- id: aura-core.domains.artifacts.generated
+  root: services/aura-core/src/aura_core/domains/artifacts/generated
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/artifacts/generated/public.py
+  python_modules:
+  - aura_core.domains.artifacts.generated
+  source_files:
+  - services/aura-core/src/aura_core/domains/artifacts/generated/__init__.py
+  dependencies:
+  - aura-core.domains.artifacts.generated.evaluation
+  - aura-core.domains.artifacts.generated.persistence
+  - aura-core.domains.artifacts.generated.ports
+  - aura-core.domains.artifacts.generated.public
+  - aura-core.domains.artifacts.generated.repository
+- id: aura-core.domains.artifacts.generated.evaluation
+  root: services/aura-core/src/aura_core/domains/artifacts/generated/evaluation.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/generated/evaluation.py
+  python_modules:
+  - aura_core.domains.artifacts.generated.evaluation
+  dependencies: []
+- id: aura-core.domains.artifacts.generated.persistence
+  root: services/aura-core/src/aura_core/domains/artifacts/generated/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/generated/persistence.py
+  python_modules:
+  - aura_core.domains.artifacts.generated.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.artifacts.generated.ports
+  root: services/aura-core/src/aura_core/domains/artifacts/generated/ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/generated/ports.py
+  python_modules:
+  - aura_core.domains.artifacts.generated.ports
+  dependencies: []
+- id: aura-core.domains.artifacts.generated.public
+  root: services/aura-core/src/aura_core/domains/artifacts/generated/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/generated/public.py
+  python_modules:
+  - aura_core.domains.artifacts.generated.public
+  dependencies:
+  - aura-core.domains.artifacts.generated.ports
+  - aura-core.domains.artifacts.generated.repository
+  - aura-core.platform.outbox
+  - aura-core.platform.telemetry
+- id: aura-core.domains.artifacts.generated.repository
+  root: services/aura-core/src/aura_core/domains/artifacts/generated/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/artifacts/generated/repository.py
+  python_modules:
+  - aura_core.domains.artifacts.generated.repository
+  dependencies:
+  - aura-core.domains.artifacts.generated.persistence
+  - aura-core.domains.artifacts.generated.ports
+  - aura-core.domains.artifacts.generated.public
+  - aura-core.platform.database.base
+  - aura-core.platform.outbox
+  - aura-core.platform.outbox.repository
+  - aura-core.platform.outbox.service
+- id: aura-core.domains.execution.tasks
+  root: services/aura-core/src/aura_core/domains/execution/tasks
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/execution/tasks/service.py
+  python_modules:
+  - aura_core.domains.execution.tasks
+  source_files:
+  - services/aura-core/src/aura_core/domains/execution/tasks/__init__.py
+  dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.ports
+  - aura-core.domains.execution.tasks.repository
+  - aura-core.domains.execution.tasks.service
+  - aura-core.domains.execution.tasks.source-adapter
+  - aura-core.domains.execution.tasks.sql-repository
+  - aura-core.domains.execution.tasks.transport
+- id: aura-core.domains.execution.tasks.contracts
+  root: services/aura-core/src/aura_core/domains/execution/tasks/contracts.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/tasks/contracts.py
+  python_modules:
+  - aura_core.domains.execution.tasks.contracts
+  dependencies: []
+- id: aura-core.domains.execution.tasks.ports
+  root: services/aura-core/src/aura_core/domains/execution/tasks/ports.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/tasks/ports.py
+  python_modules:
+  - aura_core.domains.execution.tasks.ports
+  dependencies:
+  - aura-core.domains.execution.tasks.contracts
+- id: aura-core.domains.execution.tasks.repository
+  root: services/aura-core/src/aura_core/domains/execution/tasks/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/tasks/repository.py
+  python_modules:
+  - aura_core.domains.execution.tasks.repository
+  dependencies:
+  - aura-core.domains.execution.tasks.contracts
+- id: aura-core.domains.execution.tasks.service
+  root: services/aura-core/src/aura_core/domains/execution/tasks/service.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/tasks/service.py
+  python_modules:
+  - aura_core.domains.execution.tasks.service
+  dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.ports
+  - aura-core.domains.execution.tasks.repository
+  - aura-core.platform.telemetry
+- id: aura-core.domains.execution.tasks.source-adapter
+  root: services/aura-core/src/aura_core/domains/execution/tasks/source_adapter.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/tasks/source_adapter.py
+  python_modules:
+  - aura_core.domains.execution.tasks.source_adapter
+  dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.ports
+- id: aura-core.domains.execution.tasks.sql-repository
+  root: services/aura-core/src/aura_core/domains/execution/tasks/sql_repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/tasks/sql_repository.py
+  python_modules:
+  - aura_core.domains.execution.tasks.sql_repository
+  dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.repository
+  - aura-core.domains.execution.tasks.service
+  - aura-core.platform.database.base
+- id: aura-core.domains.execution.tasks.transport
+  root: services/aura-core/src/aura_core/domains/execution/tasks/transport.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/execution/tasks/transport.py
+  python_modules:
+  - aura_core.domains.execution.tasks.transport
+  dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.platform.outbox
+- id: aura-core.domains.knowledge.memory.task-cursor
+  root: services/aura-core/src/aura_core/domains/knowledge/memory/task_cursor.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/memory/task_cursor.py
+  python_modules:
+  - aura_core.domains.knowledge.memory.task_cursor
+  dependencies: []
+- id: aura-core.domains.automation.workflows.task-cursor
+  root: services/aura-core/src/aura_core/domains/automation/workflows/task_cursor.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/automation/workflows/task_cursor.py
+  python_modules:
+  - aura_core.domains.automation.workflows.task_cursor
+  dependencies: []
+- id: aura-core.domains.knowledge.documents.task-cursor
+  root: services/aura-core/src/aura_core/domains/knowledge/documents/task_cursor.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/documents/task_cursor.py
+  python_modules:
+  - aura_core.domains.knowledge.documents.task_cursor
+  dependencies: []
+- id: aura-core.bootstrap.artifact-uow
+  root: services/aura-core/src/aura_core/bootstrap/artifact_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/artifact_uow.py
+  python_modules:
+  - aura_core.bootstrap.artifact_uow
+  dependencies:
+  - aura-core.domains.artifacts.generated.public
+  - aura-core.domains.artifacts.generated.repository
+  - aura-core.providers.object-storage.generated-artifacts
+- id: aura-core.bootstrap.task-uow
+  root: services/aura-core/src/aura_core/bootstrap/task_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/task_uow.py
+  python_modules:
+  - aura_core.bootstrap.task_uow
+  dependencies:
+  - aura-core.domains.execution.tasks.repository
+  - aura-core.domains.execution.tasks.service
+  - aura-core.domains.execution.tasks.sql-repository
+- id: aura-core.entrypoints.api.routes.artifacts
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/artifacts.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/artifacts.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.artifacts
+  dependencies:
+  - aura-core.domains.artifacts.generated.public
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.entrypoints.api.state
+  - aura-core.platform.auth
+- id: aura-core.entrypoints.api.routes.tasks
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/tasks.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/tasks.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.tasks
+  dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.service
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.platform.auth
+- id: aura-core.entrypoints.worker.tasks
+  root: services/aura-core/src/aura_core/entrypoints/worker/tasks.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/worker/tasks.py
+  python_modules:
+  - aura_core.entrypoints.worker.tasks
+  dependencies:
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.service
+- id: aura-core.platform.research-provider-settings
+  root: services/aura-core/src/aura_core/platform/research_provider_settings.py
+  kind: platform
+  public_api: services/aura-core/src/aura_core/platform/research_provider_settings.py
+  python_modules:
+  - aura_core.platform.research_provider_settings
+  dependencies: []
+- id: aura-core.bootstrap.research-providers
+  root: services/aura-core/src/aura_core/bootstrap/research_providers.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/research_providers.py
+  python_modules:
+  - aura_core.bootstrap.research_providers
+  dependencies:
+  - aura-core.platform.research-provider-settings
+  - aura-core.providers.research.client
+  - aura-core.providers.research.signing
+- id: aura-core.providers.object-storage.generated-artifacts
+  root: services/aura-core/src/aura_core/providers/object_storage/generated_artifacts.py
+  kind: provider
+  public_api: services/aura-core/src/aura_core/providers/object_storage/generated_artifacts.py
+  python_modules:
+  - aura_core.providers.object_storage.generated_artifacts
+  dependencies:
+  - aura-core.domains.artifacts.generated.ports
+  - aura-core.providers.object-storage.garage
+- id: aura-core.providers.research
+  root: services/aura-core/src/aura_core/providers/research
+  kind: package
+  public_api: services/aura-core/src/aura_core/providers/research/client.py
+  python_modules:
+  - aura_core.providers.research
+  source_files:
+  - services/aura-core/src/aura_core/providers/research/__init__.py
+  dependencies:
+  - aura-core.providers.research.client
+  - aura-core.providers.research.contracts
+  - aura-core.providers.research.evaluation
+  - aura-core.providers.research.signing
+- id: aura-core.providers.research.contracts
+  root: services/aura-core/src/aura_core/providers/research/contracts.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/providers/research/contracts.py
+  python_modules:
+  - aura_core.providers.research.contracts
+  dependencies: []
+- id: aura-core.providers.research.signing
+  root: services/aura-core/src/aura_core/providers/research/signing.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/providers/research/signing.py
+  python_modules:
+  - aura_core.providers.research.signing
+  dependencies:
+  - aura-core.providers.research.contracts
+- id: aura-core.providers.research.client
+  root: services/aura-core/src/aura_core/providers/research/client.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/providers/research/client.py
+  python_modules:
+  - aura_core.providers.research.client
+  dependencies:
+  - aura-core.providers.research.contracts
+  - aura-core.providers.research.signing
+- id: aura-core.providers.research.evaluation
+  root: services/aura-core/src/aura_core/providers/research/evaluation.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/providers/research/evaluation.py
+  python_modules:
+  - aura_core.providers.research.evaluation
+  dependencies:
+  - aura-core.providers.research.contracts
+  - aura-core.providers.research.client
+  - aura-core.providers.research.signing
+  - aura-core.platform.telemetry
+- id: aura-research-static-fetcher.service
+  root: services/aura-research-static-fetcher
+  kind: service
+  public_api: services/aura-research-static-fetcher/src/aura_research_static_fetcher/app.py
+  python_modules: []
+  source_files: []
+  dependencies: []
+- id: aura-research-browser-fetcher.service
+  root: services/aura-research-browser-fetcher
+  kind: service
+  public_api: services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/app.py
+  python_modules: []
+  source_files: []
+  dependencies: []

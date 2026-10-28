@@ -1,0 +1,16 @@
+services:
+  aura-research-fixtures:
+    image: python:3.14-alpine@sha256:1acc95d63ef1c8cc902e9a10a8ae080e1377325771d2819beb48156e1b3b9673
+    command: [python, -m, http.server, "8081", --directory, /fixtures]
+    volumes:
+      - type: bind
+        source: ./deploy/compose/e2e/research-fixtures
+        target: /fixtures
+        read_only: true
+    networks: [aura-research-fixtures]
+    expose: [8081]
+    profiles: [research-providers-e2e]
+
+networks:
+  aura-research-fixtures:
+    internal: true

@@ -44,6 +44,8 @@ venv = ".venv"
 executionEnvironments = [
   { root = "services/aura-core", extraPaths = ["services/aura-core/src"] },
   { root = "services/aura-observatory", extraPaths = ["services/aura-observatory/src"] },
+  { root = "services/aura-research-static-fetcher", extraPaths = ["services/aura-research-static-fetcher/src"] },
+  { root = "services/aura-research-browser-fetcher", extraPaths = ["services/aura-research-browser-fetcher/src"] },
 ]
 
 [tool.ruff]

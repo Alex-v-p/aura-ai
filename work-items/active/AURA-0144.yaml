@@ -24,7 +24,7 @@ sources_of_truth:
     - docs/adr/0018-governed-web-research-providers.md
     - work-items/archived/AURA-0140.yaml
     - work-items/archived/AURA-0141.yaml
-    - ADR-0018 explicitly authorizes three separate provider deployables; this item closes the remaining provider-internal versioned transport contract gap and does not require another ADR.
+    - ADR-0018 authorizes exactly three provider deployables; adding an enforcing egress infrastructure deployable still requires an accepted ADR amendment or explicit owner decision.
     - Research provider deployment is an opt-in Compose overlay; search static fetch and browser fetch remain independently disabled and unreachable from Aura Web by default.
     - AURA-0144 owns tooling/architecture/modules.yaml after AURA-0142 and AURA-0143 module names stabilize, avoiding parallel registry edits.
     - The Contract Steward owns provider schemas and conformance fixtures; the Core Worker owns inward clients and settings seams; the Platform Worker owns isolated services dependency locks deployment policy and final registry reconciliation; the Test and Evaluation Engineer owns independent hostile-network sandbox privacy limit and instrumentation suites.
@@ -75,6 +75,7 @@ allowed_paths:
   - deploy/compose/e2e/research-fixtures/**
   - deploy/docker/research-static-fetcher.Dockerfile
   - deploy/docker/research-browser-fetcher.Dockerfile
+  - deploy/docker/research-searxng.Dockerfile
   - deploy/research/**
   - deploy/tests/test_aura0144_research_provider_topology.py
   - deploy/tests/test_aura0144_research_provider_security.py
@@ -212,4 +213,11 @@ required_checks:
   - git diff --check
 baseline_changes_allowed: false
 human_approval_required: true
-open_decisions: []
+open_decisions:
+  - >-
+    Owner must authorize the enforcing controlled-DNS and public-TCP-443 egress
+    dataplane and its machine-verifiable attestation model before providers can
+    be enabled.
+  - >-
+    Deployment owner must name the container registry and signing or provenance
+    mechanism for the three final custom provider images before enablement.

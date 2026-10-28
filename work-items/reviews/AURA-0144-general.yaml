@@ -1,0 +1,68 @@
+agent: general_reviewer
+work_item: AURA-0144
+verdict: PASS
+checked:
+  - >-
+    Re-read the active work item, ADR-0018, current Contract, Core, Platform,
+    Test/Evaluation, and integration handoffs, and traced every prior General
+    finding through the integrated contract, clients, folded SearXNG adapter,
+    static and browser providers, deployment overlay, module registry,
+    dependency locks, and tests.
+  - >-
+    Verified all prior repository findings are closed: stock SearXNG is
+    loopback-bound behind the signed folded adapter; signed request and
+    correlated response controls cover search, health, limits, fetch, and
+    applicable cancellation; inadequate extraction remains typed; runtime stop
+    reaches tracked work; DNS-pinned connections preserve original-host TLS
+    verification; browser response and redirect state is per-fetch and streams
+    under wire and decoded-byte ceilings; signed request limits and strict MIME
+    checks reach providers; dependencies are hash locked; and all provider
+    capabilities remain disabled by default.
+  - >-
+    Re-ran the exact required AURA-0144 pytest command after the final
+    trace/exporter/evaluator corrections: all 132 tests passed. Re-ran the required Ruff and
+    Pyright commands with zero findings. Module-registry, import-boundary,
+    service-isolation, repository-shape, observability, dependency-lock,
+    Compose-render, architecture unittest, and diff checks passed; baseline
+    protection skipped because no protected baseline changed.
+  - >-
+    Traced the final observability corrections through real execution paths.
+    Core emits canonical W3C traceparent headers per call; static and browser
+    providers admit only canonical nonzero contexts and pass them into the
+    actual extraction boundary. Metrics remain correlation-free while
+    extraction spans alone carry new span IDs and admitted parent lineage.
+    Both providers use bounded nonblocking metadata-observation-v2 sinks with
+    finite queues, oldest-drop accounting, exactly three exporter attempts,
+    export-failure/rejection/abandoned-batch counters, continuous draining,
+    and shutdown drain hooks. Export failures cannot fail provider work.
+  - >-
+    Verified evaluator evidence is no longer caller-controlled pass/fail state.
+    Versioned typed evidence enforces bounded counts and cross-field
+    invariants; the executable fixture runner derives evidence from destination
+    observations, execution-state deltas, provider outcomes, and serialized
+    metadata. All positive fixtures pass deterministically and all four hostile
+    regressions fail with score zero while replay output remains content-free.
+  - >-
+    Verified the final readiness correction directly. Production providers now
+    require AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH, reject the bundled
+    egress_probe.py by name, execute the operator-supplied attestation with a
+    bounded timeout, and accept readiness only when it emits the exact
+    aura.research.egress.attested.v1 marker. The bundled probe is explicitly
+    diagnostic-only and has no verification/attestation mode or marker. Core
+    ASGI journeys use an isolated temporary test-only attestation stub, so
+    passing tests cannot be mistaken for production egress proof.
+  - >-
+    Changed-path validation still reports already integrated AURA-0142 and
+    AURA-0143 files outside AURA-0144 scope on the shared initiative branch.
+    Those paths are covered by their own integration records and are not an
+    AURA-0144 implementation finding; the AURA-0144-owned paths, module roots,
+    dependency rules, and repository shape validate successfully.
+  - >-
+    Distinguished repository acceptance from deployment enablement. The
+    Platform handoff correctly retains ADR_REQUIRED for selection and
+    authorization of the external controlled-DNS/public-443 enforcement
+    dataplane. Final provider image output-digest/provenance attestation also
+    remains a deployment-owner gate. Neither is implemented or falsely claimed
+    by the repository, and providers must remain disabled until both gates are
+    satisfied.
+findings: []

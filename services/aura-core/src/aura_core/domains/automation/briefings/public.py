@@ -996,12 +996,17 @@ class BriefingTaskProjectionApplication:
         )
         if callable(bind):
             bind(capability)
-        repository = getattr(self.application, "repository", None)
-        bind_repository = getattr(
-            repository, f"_{type(repository).__name__}__bind_capability", None
-        )
-        if callable(bind_repository):
-            bind_repository(capability)
+        else:
+            # BriefingApplicationService owns the repository binding when it
+            # exposes its composition-only capability seam.  Bind a raw
+            # repository only for the legacy facade path; doing both would
+            # attempt to admit the same source twice during Core composition.
+            repository = getattr(self.application, "repository", None)
+            bind_repository = getattr(
+                repository, f"_{type(repository).__name__}__bind_capability", None
+            )
+            if callable(bind_repository):
+                bind_repository(capability)
 
     def __validate_capability(self, capability: object) -> None:
         if self.__capability is None or capability is not self.__capability:

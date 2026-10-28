@@ -21,7 +21,11 @@ def task_projection_repository(
 
 
 def task_projection_service(
-    sessions: Any = None, *, testing: bool = False, sources: tuple[Any, ...] = ()
+    sessions: Any = None,
+    *,
+    testing: bool = False,
+    sources: tuple[Any, ...] = (),
+    metrics: Any = None,
 ) -> TaskProjectionService:
     # The capability is deliberately minted inside the Core composition
     # closure. It is never exported, serialized, or accepted from a caller.
@@ -33,6 +37,7 @@ def task_projection_service(
     return TaskProjectionService(
         task_projection_repository(sessions, testing=testing),
         sources,
+        metrics=metrics,
         capability=capability,
     )
 

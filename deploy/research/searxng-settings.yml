@@ -1,0 +1,23 @@
+# SearXNG is an optional candidate-search adapter.  It receives no Aura
+# credentials and is only reachable over the private provider network.
+general:
+  instance_name: aura-research-search
+  enable_metrics: false
+server:
+  # Stock SearXNG is an in-container backend only. The signed adapter is the
+  # sole listener exposed on the provider network (port 8080).
+  bind_address: 127.0.0.1
+  port: 8081
+  # SearXNG resolves this from the operator-provided environment at runtime.
+  secret_key: !!ENV ${SEARXNG_SECRET_KEY}
+  image_proxy: false
+  http_protocol_version: "1.1"
+search:
+  safe_search: 2
+  autocomplete: ""
+  formats: [json]
+  max_page: 1
+  suspend_on_error: true
+  ban_time_on_fail: 60
+ui:
+  static_use_hash: true

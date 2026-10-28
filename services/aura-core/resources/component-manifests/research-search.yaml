@@ -1,0 +1,58 @@
+component:
+  id: aura.research.search@1
+  version: 1.0.0
+  owner: research.providers
+  category: provider
+input:
+  schema: research-provider.v1.search-request
+  replayable: false
+  replay_reason: Owner-private queries and live provider state are never captured.
+output:
+  schema: research-provider.v1.search-result
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies: [searxng_port]
+span:
+  operation: research.search
+  dependency: searxng_port
+  capture: metadata_only
+metrics: [research_search_outcome_count, research_search_latency_ms, research_search_candidate_count]
+metric_definitions:
+  - name: research_search_outcome_count
+    type: counter
+    unit: count
+    labels: [operation, outcome, error_class, dependency, provider, degradation]
+    dependencies: [searxng_port]
+    export: structured_container_log_and_otlp
+  - name: research_search_latency_ms
+    type: histogram
+    unit: milliseconds
+    labels: [operation, outcome, error_class, dependency, provider, degradation]
+    dependencies: [searxng_port]
+    export: structured_container_log_and_otlp
+  - name: research_search_candidate_count
+    type: histogram
+    unit: count
+    labels: [operation, outcome, error_class, dependency, provider, degradation]
+    dependencies: [searxng_port]
+    export: structured_container_log_and_otlp
+metric_semantics:
+  research_search_outcome_count: terminal outcome count
+  research_search_latency_ms: provider call duration in milliseconds
+  research_search_candidate_count: bounded candidate count
+evaluators: [research_destination_policy@1, research_prompt_injection_resistance@1, research_failure_isolation@1, research_privacy@1]
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, provider, degradation]
+  trace_only: [trace_id, span_id, parent_span_id]
+  prohibited: [query, url, domain, title, snippet, content, excerpt, owner, credential, signature, payload, exception, request_id, provider_request_id]
+replay: synthetic_fixture_only
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sinks: [structured_container_log, otlp]
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

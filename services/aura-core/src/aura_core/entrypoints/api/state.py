@@ -9,6 +9,7 @@ from uuid import UUID
 
 from aura_core.bootstrap import calendar_uow, memory_uow, workflow_uow
 from aura_core.bootstrap.approval_uow import approval_repository, approval_service
+from aura_core.bootstrap.artifact_uow import artifact_service
 from aura_core.bootstrap.attachment_uow import attachment_service
 from aura_core.bootstrap.briefing_uow import briefing_repository, briefing_service
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
@@ -16,6 +17,7 @@ from aura_core.bootstrap.document_uow import SqlDocumentCommandSink, document_se
 from aura_core.bootstrap.health import ReadinessService
 from aura_core.bootstrap.notification_uow import notification_repository, notification_service
 from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
+from aura_core.bootstrap.task_uow import task_projection_service
 from aura_core.bootstrap.workflow_uow import (
     AdmissionGatedWorkflowApplication,
     WorkflowLifecycleBridge,
@@ -29,6 +31,7 @@ from aura_core.domains.automation.briefings.execution import (
 from aura_core.domains.automation.briefings.public import (
     BriefingApplicationService,
     BriefingRepository,
+    BriefingTaskSourceAdapter,
 )
 from aura_core.domains.automation.notifications.public import (
     NOTIFICATION_COMPONENT,
@@ -43,6 +46,7 @@ from aura_core.domains.automation.reminders.public import (
 )
 from aura_core.domains.automation.workflows.public import (
     WorkflowRepository,
+    WorkflowTaskSourceAdapter,
 )
 from aura_core.domains.execution.runs.public import RunCoordinator, SqlWorkflowAgentRunRecovery
 from aura_core.domains.governance.approvals.public import (
@@ -71,9 +75,12 @@ from aura_core.domains.interaction.personas.public import (
     PersonaPreviewResult,
     PersonaPreviewTrace,
 )
-from aura_core.domains.knowledge.documents.public import DocumentService
+from aura_core.domains.knowledge.documents.public import DocumentService, DocumentTaskSourceAdapter
 from aura_core.domains.knowledge.memory import public as memory_public
-from aura_core.domains.knowledge.memory.public import MemoryRepository
+from aura_core.domains.knowledge.memory.public import (
+    MemoryReindexTaskSourceAdapter,
+    MemoryRepository,
+)
 from aura_core.platform.auth import (
     MemoryLoginStateBackend,
     MemorySessionBackend,
@@ -292,6 +299,8 @@ class AppState:
         self.calendar_service: Any
         self.memory_worker: object | None = None
         self.document_service: DocumentService
+        self.artifact_service: Any
+        self.task_projection_service: Any
         self.attachment_service: Any
         self.memory_model_service: memory_public.MemoryModelApplicationService
         self.nats: NatsOutbox | None = None
@@ -610,6 +619,24 @@ class AppState:
             self.workflow_lifecycle = cast(WorkflowLifecycleBridge, None)
             self.workflow_service = cast(AdmissionGatedWorkflowApplication, None)
         probes["workflow"] = StaticProbe(workflow_ready, workflow_detail)
+        self.artifact_service = artifact_service(
+            self.sessions_factory,
+            settings=self.settings,
+            metrics=self.metrics,
+            testing=self.testing,
+        )
+        task_sources = (
+            WorkflowTaskSourceAdapter(self.workflow_service),
+            BriefingTaskSourceAdapter(self.briefing_service),
+            DocumentTaskSourceAdapter(self.document_service),
+            MemoryReindexTaskSourceAdapter(self.memory_repository),
+        )
+        self.task_projection_service = task_projection_service(
+            self.sessions_factory,
+            testing=self.testing,
+            metrics=self.metrics,
+            sources=task_sources,
+        )
         self.readiness = ReadinessService(probes)
         # Schedule deletion uses the briefing-owned typed cancellation seam.
         # The adapter requests cancellation through the public coordinator

@@ -1,0 +1,66 @@
+agent: security_privacy_reviewer
+work_item: AURA-0144
+verdict: BLOCK
+checked:
+  - >-
+    Evaluator evidence and scoring are private and the public runner derives
+    deterministic results through real Core provider transports, the committed
+    hostile extraction fixture, and emitted MetadataMetrics observations.
+  - >-
+    Signed request expiry, replay, bounded replay capacity, audiences, methods,
+    limits, cancellation, runtime controls, destination validation, DNS and
+    redirect revalidation, TLS hostname verification, MIME, decompression,
+    byte, text, deadline, and concurrency limits were rechecked.
+  - >-
+    Browser request state, ephemeral contexts, download denial, cancellation,
+    secret-file handling, private errors, and content-free telemetry remain
+    isolated and bounded.
+  - >-
+    Production readiness rejects the bundled diagnostic probe, requires a
+    separate operator attestation executable and exact marker, and otherwise
+    fails closed.
+  - The exact required AURA-0144 aggregate suite passed 132 tests.
+findings:
+  - severity: critical
+    rule: >-
+      ADR-0018 requires an enforced controlled-DNS, public-HTTPS/443-only
+      provider boundary denying protected Aura, private, metadata, reserved,
+      alternate-DNS, non-443, and lateral provider traffic.
+    summary: The enforcing provider egress dataplane is not yet authorized or deployed.
+    evidence:
+      files:
+        - deploy/compose/research-providers.yaml
+        - deploy/research/egress-policy.yaml
+        - deploy/research/egress_probe.py
+        - work-items/handoffs/AURA-0144-platform.yaml
+      symbols:
+        - aura-research-public-egress
+        - AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH
+    impact: >-
+      Provider enablement without that boundary would leave network containment
+      dependent on application enforcement.
+    required_correction: >-
+      Accept the owner egress decision, deploy the selected enforcing dataplane
+      and its attestation, and pass the required negative and positive probes.
+  - severity: high
+    rule: >-
+      Final custom provider images require reviewed immutable digests and
+      reproducible provenance attestations before enablement.
+    summary: Final custom provider image provenance is unavailable.
+    evidence:
+      files:
+        - deploy/compose/research-providers.yaml
+        - deploy/docker/research-searxng.Dockerfile
+        - deploy/docker/research-static-fetcher.Dockerfile
+        - deploy/docker/research-browser-fetcher.Dockerfile
+        - work-items/handoffs/AURA-0144-platform.yaml
+      symbols:
+        - aura/research-searxng
+        - aura/research-static-fetcher
+        - aura/research-browser-fetcher
+    impact: >-
+      Deployment cannot verify that enabled images contain the reviewed source
+      and locked dependencies.
+    required_correction: >-
+      Build, scan, sign or attest, and verify all three final images in the
+      deployment-owner registry, then pin the resulting manifest digests.

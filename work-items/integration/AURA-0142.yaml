@@ -1,0 +1,56 @@
+agent: integration_maintainer
+work_item: AURA-0142
+status: blocked
+integrated_commits:
+  - 7d7e0e3
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0142-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0142-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0142-security.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0142-observability.yaml
+conflicts_resolved:
+  - >-
+    Mounted the reviewed artifact service and routes through the existing Core
+    AppState and FastAPI composition roots. No artifact business behavior was
+    added or changed.
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      Reviewed AURA-0142 commit 7d7e0e3 and all four recorded PASS verdicts;
+      no unresolved slice finding remains.
+    - >-
+      Testing AppState composition creates GeneratedArtifactService and
+      exposes every reviewed artifact route through OpenAPI.
+    - >-
+      Targeted Core route/composition import and runtime checks passed.
+    - >-
+      pyright and ruff passed for the integration composition paths.
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - git diff --check
+  failed:
+    - >-
+      Branch-wide changed-path and contract validation cannot be scoped to
+      AURA-0142 while concurrent AURA-0144 provider changes are uncommitted;
+      the validator correctly reports those paths as outside AURA-0142.
+    - >-
+      Final aggregate acceptance is held with AURA-0144's unresolved external
+      egress-enforcement and image-provenance deployment gates.
+repository_clean: false
+changed_paths_valid: false
+remaining_risks:
+  - >-
+    Integration composition is uncommitted in the shared worktree and must be
+    included only in a reviewed integration checkpoint after AURA-0144 is
+    resolved or explicitly returned to its owner.

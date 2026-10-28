@@ -1,0 +1,77 @@
+agent: integration_maintainer
+work_item: AURA-0144
+status: blocked
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0144-general.yaml
+  - reviewer: architecture_guardian
+    status: ADR_REQUIRED
+    verdict: work-items/reviews/AURA-0144-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: BLOCK
+    verdict: work-items/reviews/AURA-0144-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0144-observability.yaml
+conflicts_resolved:
+  - >-
+    Reconciled the reviewed evaluator module's imports by declaring its Core
+    telemetry, research-client, and research-signing dependencies in
+    tooling/architecture/modules.yaml. This is registry metadata only; no
+    evaluator or provider behavior was changed.
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      python3 tooling/architecture/validate-module-registry.py reports valid
+      module roots and dependency rules after evaluator dependency
+      reconciliation.
+    - >-
+      python3 -m unittest tooling.architecture.tests.test_common
+      tooling.architecture.tests.test_modules -v: 27 passed.
+    - >-
+      Exact required AURA-0144 aggregate passed: 132 provider contract,
+      Core-client/settings/observability, static/browser, topology, security,
+      and limits tests.
+    - >-
+      Relevant Core research-provider subset passed: 29 tests.
+    - git diff --check
+  failed:
+    - >-
+      Full services/aura-core pytest run reproduced 14 failures among 1806
+      passed and 122 skipped. The failures are outside the AURA-0144 provider
+      slice: three calendar telemetry assertions, two SQL evidence tests
+      requiring AURA_TEST_DEPENDENCIES_ISOLATED=1, five concurrent
+      memory/task-composition or telemetry assertions, and four persona
+      preview telemetry assertions. No provider or registry test failed.
+    - >-
+      validate-changed-paths for AURA-0144 reports concurrent AURA-0142 and
+      AURA-0143 composition paths and integration reports outside this item's
+      allowed paths; the shared worktree is intentionally not clean.
+    - >-
+      Architecture review is ADR_REQUIRED for the owner-controlled
+      controlled-DNS/public-443 egress enforcement decision.
+    - >-
+      Security/Privacy review is BLOCK for the same unenforced egress boundary
+      and for unavailable final provider image provenance attestations.
+    - >-
+      Platform handoff retains ADR_REQUIRED for operator-controlled public
+      egress enforcement and a deployment-owner blocker for final provider
+      image provenance/signature attestation.
+repository_clean: false
+changed_paths_valid: false
+remaining_risks:
+  - >-
+    The registry correction is uncommitted in the shared worktree and must be
+    included in a reviewed integration checkpoint; no commit or push was
+    performed by this maintainer.
+  - >-
+    Existing full-Core failures must be resolved or dispositioned by their
+    owning slices before branch-wide acceptance; this maintainer did not alter
+    unrelated behavior.
+  - >-
+    Provider enablement remains blocked until the required reviews, accepted
+    egress-enforcement ADR/operator attestation, and final image provenance
+    are available.

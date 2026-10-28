@@ -11,6 +11,7 @@ from aura_core.entrypoints.api.errors import install_error_handlers
 from aura_core.entrypoints.api.routes import (
     agents,
     approvals,
+    artifacts,
     attachments,
     auth,
     briefings,
@@ -24,6 +25,7 @@ from aura_core.entrypoints.api.routes import (
     personas,
     reminders,
     runs,
+    tasks,
     tools,
     workflows,
 )
@@ -185,8 +187,10 @@ def create_app(settings: Settings | None = None, *, testing: bool = False) -> Fa
     app.include_router(notifications.router)
     app.include_router(documents.router)
     app.include_router(attachments.router)
+    app.include_router(artifacts.router)
     app.include_router(calendar.router)
     app.include_router(workflows.router)
+    app.include_router(tasks.router)
     app.include_router(health.router)
     return app
 

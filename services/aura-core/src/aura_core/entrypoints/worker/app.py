@@ -14,6 +14,7 @@ from typing import Any, Protocol, cast
 from uuid import UUID, uuid4, uuid5
 
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
+from aura_core.bootstrap.task_uow import task_projection_service
 from aura_core.domains.automation.briefings.application import (
     BriefingExecutionApplication,
     BriefingRunStateAdapter,
@@ -23,12 +24,14 @@ from aura_core.domains.automation.briefings.execution import (
     PublicBriefingRunRepository,
     RunCoordinatorBriefingAdapter,
 )
+from aura_core.domains.automation.briefings.public import BriefingTaskSourceAdapter
 from aura_core.domains.automation.briefings.recovery import BriefingRecovery
 from aura_core.domains.automation.briefings.worker import (
     BriefingWorker,
     BriefingWorkerApplication,
 )
 from aura_core.domains.automation.briefings.worker import run_once as run_briefing_once_impl
+from aura_core.domains.automation.workflows.public import WorkflowTaskSourceAdapter
 from aura_core.domains.execution.runs.events import RunEvent
 from aura_core.domains.execution.runs.ports import RunEventPort
 from aura_core.domains.execution.runs.public import (
@@ -37,6 +40,8 @@ from aura_core.domains.execution.runs.public import (
     RunCoordinator,
     SqlWorkflowAgentRunRecovery,
 )
+from aura_core.domains.execution.tasks.contracts import TASK_SOURCE_INVALIDATED_TOPIC
+from aura_core.domains.execution.tasks.transport import NatsTaskSourceInvalidationConsumer
 from aura_core.domains.governance.approvals.public import (
     Approval,
     ApprovalApplicationService,
@@ -48,11 +53,13 @@ from aura_core.domains.interaction.personas.public import (
     PersonaCatalog,
     PersonaConfigurationService,
 )
+from aura_core.domains.knowledge.documents.public import DocumentTaskSourceAdapter
 from aura_core.domains.knowledge.memory.public import (
     MEMORY_ID_NAMESPACE,
     MEMORY_PROCESSING_SCHEMA_VERSION,
     MEMORY_PROCESSING_TOPIC,
     MemoryProcessingCommand,
+    MemoryReindexTaskSourceAdapter,
     MemoryValidationError,
     memory_activity_id,
 )
@@ -63,6 +70,7 @@ from aura_core.entrypoints.worker.documents import (
 from aura_core.entrypoints.worker.documents import (
     run_document_once as _run_document_once,
 )
+from aura_core.entrypoints.worker.tasks import TaskProjectionWorker
 from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
 from aura_core.platform.outbox import (
@@ -145,6 +153,21 @@ async def run_briefing_recovery(recovery: BriefingRecovery) -> None:
         except asyncio.CancelledError:
             raise
         except Exception:
+            pass
+        await asyncio.sleep(60.0)
+
+
+async def run_task_projection_recovery(worker: TaskProjectionWorker) -> None:
+    """Reconcile bounded Task Center gaps after restart and source outages."""
+
+    while True:
+        try:
+            await worker.process_reconciliation(limit=100)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # The projection remains a rebuildable read model; the next bounded
+            # pass retries without owning source state or logging its content.
             pass
         await asyncio.sleep(60.0)
 
@@ -1047,6 +1070,10 @@ async def run_forever(settings: Settings | None = None) -> None:
         durable="aura-core-workflow-worker",
         component="aura.automation.workflow_state",
     )
+    task_projection_consumer = NatsTaskSourceInvalidationConsumer(
+        config.nats_url,
+        subject=TASK_SOURCE_INVALIDATED_TOPIC,
+    )
     briefing_consumer = NatsBriefingConsumer(config.nats_url, metrics=metrics)
     event_transport = NatsOutbox(
         config.nats_url,
@@ -1061,6 +1088,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             BRIEFING_EVENT_SUBJECT,
             BRIEFING_WAKE_SUBJECT,
             WORKFLOW_WAKE_TOPIC,
+            TASK_SOURCE_INVALIDATED_TOPIC,
         ),
         metrics=metrics,
     )
@@ -1092,6 +1120,9 @@ async def run_forever(settings: Settings | None = None) -> None:
     approval_task: asyncio.Task[None] | None = None
     workflow_task: asyncio.Task[None] | None = None
     workflow_recovery_task: asyncio.Task[None] | None = None
+    task_projection_task: asyncio.Task[None] | None = None
+    task_projection_recovery_task: asyncio.Task[None] | None = None
+    task_projection_stop = asyncio.Event()
     await telemetry.start()
     try:
         await consumer.connect()
@@ -1100,6 +1131,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         await document_delete_consumer.connect()
         await briefing_consumer.connect()
         await workflow_consumer.connect()
+        await task_projection_consumer.connect()
         if memory_processor is not None:
             await memory_consumer.connect()
         await event_transport.connect()
@@ -1261,6 +1293,33 @@ async def run_forever(settings: Settings | None = None) -> None:
             model_id=config.default_model,
         )
         workflow_service = workflow_composition.service
+        # Task Center is a Core-owned projection over source public APIs.  The
+        # worker composes only adapters and the durable projection transport;
+        # source repositories remain authoritative and are never queried by
+        # execution.tasks directly.
+        task_memory_repository = memory_uow.memory_repository(
+            sessions,
+            metrics=metrics,
+        )
+        task_worker = TaskProjectionWorker(
+            task_projection_service(
+                sessions,
+                metrics=metrics,
+                sources=(
+                    WorkflowTaskSourceAdapter(workflow_service),
+                    BriefingTaskSourceAdapter(briefing_service_instance),
+                    DocumentTaskSourceAdapter(document_worker.service),
+                    MemoryReindexTaskSourceAdapter(task_memory_repository),
+                ),
+            ),
+            source_transport=task_projection_consumer,
+        )
+        task_projection_task = asyncio.create_task(
+            task_worker.consume_source_invalidations(task_projection_stop)
+        )
+        task_projection_recovery_task = asyncio.create_task(
+            run_task_projection_recovery(task_worker)
+        )
         workflow_task = asyncio.create_task(
             run_workflow_loop(
                 workflow_consumer,
@@ -1368,6 +1427,13 @@ async def run_forever(settings: Settings | None = None) -> None:
         if workflow_recovery_task is not None:
             workflow_recovery_task.cancel()
             await asyncio.gather(workflow_recovery_task, return_exceptions=True)
+        task_projection_stop.set()
+        if task_projection_task is not None:
+            task_projection_task.cancel()
+            await asyncio.gather(task_projection_task, return_exceptions=True)
+        if task_projection_recovery_task is not None:
+            task_projection_recovery_task.cancel()
+            await asyncio.gather(task_projection_recovery_task, return_exceptions=True)
         for task in (
             document_process_task,
             document_delete_task,
@@ -1400,6 +1466,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         await document_delete_consumer.close()
         await briefing_consumer.close()
         await workflow_consumer.close()
+        await task_projection_consumer.close()
         await resume_consumer.close()
         await consumer.close()
         await run_evidence.stop()

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -373,6 +374,30 @@ class InstrumentedMemoryRepository:
             Callable[..., Awaitable[object]], getattr(self._inner, "complete_reindex_command")
         )
         await method(issuer, subject, generation_id, idempotency_key, fingerprint)
+
+    async def get_reindex_task(self, generation_id: UUID) -> MemoryEmbeddingGeneration | None:
+        """Expose the memory-owned reindex projection lookup to Task Center."""
+
+        method = getattr(self._inner, "get_reindex_task", None)
+        if not callable(method):
+            return None
+        result = method(generation_id)
+        if inspect.isawaitable(result):
+            result = await result
+        return cast(MemoryEmbeddingGeneration | None, result)
+
+    async def list_reindex_tasks(
+        self, *, cursor: str | None = None, limit: int = 100
+    ) -> tuple[MemoryEmbeddingGeneration, ...]:
+        """Expose the memory-owned reindex keyset page to Task Center."""
+
+        method = getattr(self._inner, "list_reindex_tasks", None)
+        if not callable(method):
+            return ()
+        result = method(cursor=cursor, limit=limit)
+        if inspect.isawaitable(result):
+            result = await result
+        return tuple(cast(tuple[MemoryEmbeddingGeneration, ...], result))
 
     @staticmethod
     def _error_class(exc: Exception) -> str:

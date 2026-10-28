@@ -1,0 +1,62 @@
+agent: integration_maintainer
+work_item: AURA-0143
+status: blocked
+integrated_commits:
+  - b303911
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0143-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0143-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0143-security.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0143-observability.yaml
+conflicts_resolved:
+  - >-
+    Mounted the reviewed task route, four source-owned public adapters, and
+    durable invalidation consumer/recovery loop through existing Core
+    composition roots. Corrected the mechanical briefing capability double
+    bind encountered during real composition; no source or projection rules
+    were changed.
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      Reviewed AURA-0143 commit b303911 and all four recorded PASS verdicts;
+      no unresolved worker-slice finding remains.
+    - >-
+      Task Center focused suite passed 66 tests with 3 environment-gated
+      skips.
+    - >-
+      Testing AppState composition creates four source adapters, mounts task
+      routes, and exposes the task API through OpenAPI.
+    - >-
+      Worker task transport and recovery seams import and compose successfully.
+    - >-
+      pyright and ruff passed for the integration composition paths.
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0143.yaml
+    - git diff --check
+  failed:
+    - >-
+      Branch-wide changed-path and contract validation cannot be scoped to
+      AURA-0143 while concurrent AURA-0144 provider changes are uncommitted;
+      the validator correctly reports those paths as outside AURA-0143.
+    - >-
+      Final aggregate acceptance is held with AURA-0144's unresolved external
+      egress-enforcement and image-provenance deployment gates.
+repository_clean: false
+changed_paths_valid: false
+remaining_risks:
+  - >-
+    Integration composition is uncommitted in the shared worktree and must be
+    included only in a reviewed integration checkpoint after AURA-0144 is
+    resolved or explicitly returned to its owner.

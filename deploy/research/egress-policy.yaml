@@ -1,0 +1,19 @@
+schemaVersion: aura.research.egress.v1
+networkName: aura-research-egress
+mode: operator-provisioned
+dns:
+  mode: controlled
+  requireAllAnswersPublic: true
+  revalidateBeforeConnect: true
+  revalidateRedirects: true
+  denyPrivateLoopbackLinkLocalMetadataReserved: true
+destinations:
+  schemes: [https]
+  ports: [443]
+  allowUserinfo: false
+  allowFragments: false
+  maxRedirects: 5
+probe:
+  command: python /run/provider/egress_probe.py --url https://example.org/
+  requireTlsHostnameVerification: true
+  requireValidatedAddressPinning: true

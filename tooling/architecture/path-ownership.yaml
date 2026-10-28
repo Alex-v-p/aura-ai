@@ -68,6 +68,12 @@ ownership:
   - pattern: deploy/**
     roles: [platform_worker]
     architectural_owner: deployment
+  - pattern: services/aura-research-static-fetcher/**
+    roles: [platform_worker, test_evaluation_engineer]
+    architectural_owner: research-providers
+  - pattern: services/aura-research-browser-fetcher/**
+    roles: [platform_worker, test_evaluation_engineer]
+    architectural_owner: research-providers
   - pattern: infra/**
     roles: [platform_worker]
     architectural_owner: infrastructure
