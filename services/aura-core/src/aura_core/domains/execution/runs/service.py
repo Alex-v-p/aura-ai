@@ -14,7 +14,7 @@ import secrets
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from time import monotonic, perf_counter
 from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -27,6 +27,12 @@ from aura_core.domains.execution.runs.dto import (
     RunStatus,
 )
 from aura_core.domains.execution.runs.events import RunEvent, new_event
+from aura_core.domains.execution.runs.models import (
+    WorkflowAgentRunOutcome,
+    WorkflowAgentRunRequest,
+    WorkflowAgentRunResult,
+    WorkflowRunLineage,
+)
 from aura_core.domains.execution.runs.ports import (
     TITLE_RESPONSE_MAX_BYTES,
     TITLE_RESPONSE_MAX_CHARS,
@@ -42,6 +48,8 @@ from aura_core.domains.execution.runs.ports import (
     RunEvidencePort,
     RunRepository,
     TitleInferencePort,
+    WorkflowAgentRunExecutionPort,
+    WorkflowAgentRunRecoveryPort,
 )
 from aura_core.domains.interaction.conversations.public import (
     AttachmentSummary,
@@ -88,6 +96,43 @@ from aura_core.runtime.tools import (
 _RUN_EVIDENCE_ATTACHMENT_MAX_BYTES = 1_048_576
 
 
+def workflow_agent_execution_deadline(
+    started_at: datetime, requested_deadline: datetime
+) -> datetime:
+    """Return the bounded provider deadline for one admitted agent step.
+
+    Workflow instance deadlines can span days, but a provider invocation is
+    independently capped from the coordinator's truthful start timestamp.
+    Keeping this calculation explicit also makes the safety boundary
+    deterministic to test without waiting for a real five-minute timeout.
+    """
+
+    return min(
+        requested_deadline,
+        started_at + timedelta(seconds=WorkflowAgentRunRequest.MAX_SECONDS),
+    )
+
+
+def _workflow_agent_telemetry_error_class(
+    outcome: str, error_code: str | None
+) -> str | None:
+    """Map workflow provider failures into the closed telemetry vocabulary."""
+
+    if outcome in {"ok", "canceled"}:
+        return None
+    if outcome == "timeout":
+        return "timeout"
+    if error_code is None:
+        return "execution"
+    error_classes: dict[str, str] = {
+        "WORKFLOW_AGENT_OUTPUT_BUDGET_EXCEEDED": "budget",
+        "WORKFLOW_AGENT_TOOLS_DISABLED": "capability",
+        "WORKFLOW_AGENT_PROVIDER_PROTOCOL": "provider_protocol",
+        "WORKFLOW_AGENT_EXECUTION_FAILED": "provider",
+    }
+    return error_classes.get(error_code, "execution")
+
+
 class RunExecutionFailure(RuntimeError):
     """Content-free classification for a failed execution boundary."""
 
@@ -132,6 +177,7 @@ class RunCoordinator:
         run_evidence: RunEvidencePort | None = None,
         briefing_provider: ChatCompletionPort | None = None,
         briefing_cancellation: Callable[[object], Awaitable[None]] | None = None,
+        workflow_recovery: WorkflowAgentRunRecoveryPort | None = None,
     ) -> None:
         self.store = store
         self.publisher = publisher
@@ -163,6 +209,7 @@ class RunCoordinator:
         # is an in-flight, coordinator-owned signal and durable settlement is
         # performed by the briefing repository owner.
         self.briefing_cancellation = briefing_cancellation
+        self.workflow_recovery = workflow_recovery
         self._briefing_cancellations: dict[UUID, asyncio.Event] = {}
         self._thinking_offsets: dict[UUID, int] = {}
         self._thinking_offset_expiry: dict[UUID, float] = {}
@@ -177,6 +224,14 @@ class RunCoordinator:
         # only to validate model citation markers before metadata-only
         # citations are persisted; excerpts never cross this boundary.
         self._document_evidence: dict[UUID, dict[UUID, dict[str, object]]] = {}
+        # Workflow agent runs are admitted and settled by the workflow
+        # application.  These bounded process-local maps only suppress
+        # duplicate provider calls while a worker is alive; PostgreSQL remains
+        # the source of truth for the workflow step and recovery outcome.
+        self._workflow_agent_tasks: dict[UUID, asyncio.Task[WorkflowAgentRunResult]] = {}
+        self._workflow_agent_results: OrderedDict[UUID, WorkflowAgentRunResult] = OrderedDict()
+        self._workflow_agent_cancellations: dict[UUID, asyncio.Event] = {}
+        self._workflow_agent_lineages: dict[UUID, WorkflowRunLineage] = {}
         configure_prompt_metrics = getattr(self.store, "set_prompt_metrics", None)
         if callable(configure_prompt_metrics):
             configure_prompt_metrics(self.metrics)
@@ -429,6 +484,349 @@ class RunCoordinator:
         except Exception:
             self._error(run, "queue")
             raise
+
+    async def execute_workflow_agent_run(
+        self, request: WorkflowAgentRunRequest, provider: ChatCompletionPort
+    ) -> WorkflowAgentRunResult:
+        """Execute one bounded workflow agent step for composition adapters.
+
+        Workflow persistence owns admission, checkpoints, and step settlement;
+        this method deliberately does not call the conversation repository.
+        The process-local task/result cache only protects a live worker from
+        duplicate provider calls.  Re-delivery after a restart is reconciled
+        by the workflow step's stable execution identity and its owning state
+        machine.  Workflow composition must call the public
+        :class:`RunCoordinatorWorkflowAdapter`; this provider-bearing method
+        is exposed only through the narrow execution port above.
+        """
+
+        run_id = request.lineage.run_id
+        cached = self._workflow_agent_results.get(run_id)
+        if cached is not None:
+            if cached.lineage != request.lineage:
+                raise RunExecutionFailure("workflow run lineage conflict")
+            self._workflow_agent_results.move_to_end(run_id)
+            return cached
+        active_lineage = self._workflow_agent_lineages.get(run_id)
+        if active_lineage is not None and active_lineage != request.lineage:
+            raise RunExecutionFailure("workflow run lineage conflict")
+        task = self._workflow_agent_tasks.get(run_id)
+        if task is None:
+            self._workflow_agent_lineages[run_id] = request.lineage
+            self._workflow_agent_cancellations[run_id] = asyncio.Event()
+            task = asyncio.create_task(self._execute_workflow_agent_run(request, provider))
+            self._workflow_agent_tasks[run_id] = task
+
+            def retain(completed: asyncio.Task[WorkflowAgentRunResult]) -> None:
+                if self._workflow_agent_tasks.get(run_id) is completed:
+                    self._workflow_agent_tasks.pop(run_id, None)
+                self._workflow_agent_cancellations.pop(run_id, None)
+                self._workflow_agent_lineages.pop(run_id, None)
+                try:
+                    result = completed.result()
+                except Exception:
+                    return
+                self._workflow_agent_results[run_id] = result
+                self._workflow_agent_results.move_to_end(run_id)
+                while len(self._workflow_agent_results) > 1024:
+                    self._workflow_agent_results.popitem(last=False)
+
+            task.add_done_callback(retain)
+        return await asyncio.shield(task)
+
+    async def cancel_workflow_agent_run(self, lineage: WorkflowRunLineage) -> bool:
+        """Request cancellation of a live workflow provider invocation.
+
+        A false result means no matching invocation is live.  It is safe for a
+        durable workflow cancellation command to call this repeatedly; the
+        workflow repository remains responsible for committing the terminal
+        step/instance outcome and for preserving any unknown effect.
+        """
+
+        active_lineage = self._workflow_agent_lineages.get(lineage.run_id)
+        if active_lineage is not None and active_lineage != lineage:
+            return False
+        durable = False
+        if self.workflow_recovery is not None:
+            durable = await self.workflow_recovery.cancel_workflow_agent_run(lineage)
+        cancellation = self._workflow_agent_cancellations.get(lineage.run_id)
+        if cancellation is not None and (active_lineage == lineage or durable):
+            cancellation.set()
+        return durable or (active_lineage == lineage and cancellation is not None)
+
+    async def _execute_workflow_agent_run(self, request: WorkflowAgentRunRequest, provider: ChatCompletionPort) -> WorkflowAgentRunResult:
+        recovery = self.workflow_recovery
+        if recovery is None:
+            raise RunExecutionFailure("workflow recovery is not composition-bound")
+        started_at = datetime.now(UTC)
+        recovered = await recovery.reserve_workflow_agent_run(request, started_at=started_at)
+        if recovered is not None:
+            return recovered
+        return await self._execute_workflow_agent_run_provider(request, provider, started_at)
+
+    async def _execute_workflow_agent_run_provider(
+        self,
+        request: WorkflowAgentRunRequest,
+        provider: ChatCompletionPort,
+        started_at: datetime,
+    ) -> WorkflowAgentRunResult:
+        recovery = self.workflow_recovery
+        if recovery is None:
+            raise RunExecutionFailure("workflow recovery is not composition-bound")
+        run = Run(
+            conversation_id=None,
+            user_message_id=None,
+            agent_revision_id=request.agent_revision_id,
+            model_policy_revision_id=request.model_policy_revision_id,
+            provider=request.provider,
+            model_id=request.model_id,
+            id=request.lineage.run_id,
+            status=RunStatus.RUNNING,
+            created_at=request.admitted_at,
+            started_at=started_at,
+            workflow_id=request.lineage.workflow_id,
+            workflow_revision_id=request.lineage.workflow_revision_id,
+            workflow_instance_id=request.lineage.workflow_instance_id,
+            workflow_step_ordinal=request.lineage.workflow_step_ordinal,
+            workflow_step_execution_id=request.lineage.workflow_step_execution_id,
+            # Workflow agent steps are intentionally tools-disabled and
+            # memory-disabled.  These explicit zeroes make that policy visible
+            # to any adapter without exposing workflow content.
+            tool_call_limit=0,
+            tool_calls_used=0,
+            memory_policy_revision_id=None,
+        )
+        cancellation = self._workflow_agent_cancellations.setdefault(run.id, asyncio.Event())
+        workflow_started_at = run.started_at
+        if workflow_started_at is None:
+            raise RunExecutionFailure("workflow run start timestamp is unavailable")
+        started = perf_counter()
+        execution_deadline = workflow_agent_execution_deadline(
+            started_at, request.deadline
+        )
+        trace_id = request.trace_id or run.id.hex
+        coordinator_span_id = secrets.token_hex(8)
+        outcome = "error"
+        result = WorkflowAgentRunResult(
+            lineage=request.lineage,
+            outcome=WorkflowAgentRunOutcome.FAILED,
+            output=None,
+            error_code="WORKFLOW_AGENT_EXECUTION_FAILED",
+            trace_id=trace_id,
+            started_at=workflow_started_at,
+            finished_at=workflow_started_at,
+        )
+        try:
+            if cancellation.is_set():
+                raise asyncio.CancelledError
+            self._record_workflow_agent_evidence(
+                run,
+                evidence_kind="automation_input",
+                content=request.input_text,
+                sequence_hint=100,
+            )
+            messages = [
+                ChatMessage("developer", request.instructions),
+                ChatMessage("user", request.input_text),
+            ]
+            output: list[str] = []
+            output_bytes = 0
+            stream = aiter(self._stream_chat(provider, request.model_id, messages))
+            while True:
+                remaining = (execution_deadline - datetime.now(UTC)).total_seconds()
+                if remaining <= 0:
+                    raise TimeoutError("workflow agent deadline exceeded")
+                next_chunk = asyncio.ensure_future(anext(stream))
+                cancel_wait = asyncio.create_task(cancellation.wait())
+                done, _ = await asyncio.wait(
+                    (next_chunk, cancel_wait),
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    next_chunk.cancel()
+                    await asyncio.gather(next_chunk, return_exceptions=True)
+                    cancel_wait.cancel()
+                    await asyncio.gather(cancel_wait, return_exceptions=True)
+                    raise TimeoutError("workflow agent deadline exceeded")
+                if cancel_wait in done and cancellation.is_set():
+                    next_chunk.cancel()
+                    await asyncio.gather(next_chunk, return_exceptions=True)
+                    raise asyncio.CancelledError
+                cancel_wait.cancel()
+                await asyncio.gather(cancel_wait, return_exceptions=True)
+                try:
+                    event = next_chunk.result()
+                except StopAsyncIteration:
+                    break
+                if isinstance(event, ModelThinkingDelta):
+                    # Hidden reasoning is never part of workflow results or
+                    # evidence.  Providers may expose it, but this seam does
+                    # not forward or persist it.
+                    continue
+                if isinstance(event, ModelStreamCompleted):
+                    break
+                if isinstance(event, ModelToolCall):
+                    raise RunExecutionFailure("workflow tools are disabled")
+                if isinstance(event, ModelTextDelta):
+                    chunk = event.text
+                elif isinstance(event, str):
+                    chunk = event
+                else:
+                    raise RunExecutionFailure("workflow provider protocol")
+                output_bytes += len(chunk.encode("utf-8"))
+                if output_bytes > 8 * 1024:
+                    raise RunExecutionFailure("workflow agent output budget exceeded")
+                output.append(chunk)
+            value = "".join(output)
+            run.status = RunStatus.COMPLETED
+            run.finished_at = datetime.now(UTC)
+            result = WorkflowAgentRunResult(
+                lineage=request.lineage,
+                outcome=WorkflowAgentRunOutcome.COMPLETED,
+                output=value,
+                error_code=None,
+                trace_id=trace_id,
+                started_at=workflow_started_at,
+                finished_at=run.finished_at,
+            )
+            outcome = "ok"
+        except asyncio.CancelledError:
+            run.status = RunStatus.CANCELED
+            run.finished_at = datetime.now(UTC)
+            result = WorkflowAgentRunResult(
+                lineage=request.lineage,
+                outcome=WorkflowAgentRunOutcome.CANCELED,
+                output=None,
+                error_code="WORKFLOW_AGENT_CANCELED",
+                trace_id=trace_id,
+                started_at=workflow_started_at,
+                finished_at=run.finished_at,
+            )
+            outcome = "canceled"
+        except TimeoutError:
+            run.status = RunStatus.FAILED
+            run.finished_at = datetime.now(UTC)
+            result = WorkflowAgentRunResult(
+                lineage=request.lineage,
+                outcome=WorkflowAgentRunOutcome.FAILED,
+                output=None,
+                error_code="WORKFLOW_AGENT_TIMEOUT",
+                trace_id=trace_id,
+                started_at=workflow_started_at,
+                finished_at=run.finished_at,
+            )
+            outcome = "timeout"
+        except Exception as exc:
+            run.status = RunStatus.FAILED
+            run.finished_at = datetime.now(UTC)
+            error_code = (
+                "WORKFLOW_AGENT_OUTPUT_BUDGET_EXCEEDED"
+                if isinstance(exc, RunExecutionFailure)
+                and "output budget" in str(exc)
+                else "WORKFLOW_AGENT_TOOLS_DISABLED"
+                if isinstance(exc, RunExecutionFailure)
+                and "tools are disabled" in str(exc)
+                else "WORKFLOW_AGENT_PROVIDER_PROTOCOL"
+                if isinstance(exc, RunExecutionFailure)
+                and "provider protocol" in str(exc)
+                else "WORKFLOW_AGENT_EXECUTION_FAILED"
+            )
+            result = WorkflowAgentRunResult(
+                lineage=request.lineage,
+                outcome=WorkflowAgentRunOutcome.FAILED,
+                output=None,
+                error_code=error_code,
+                trace_id=trace_id,
+                started_at=workflow_started_at,
+                finished_at=run.finished_at,
+            )
+            outcome = "error"
+        finally:
+            try:
+                telemetry_error_class = _workflow_agent_telemetry_error_class(
+                    outcome, result.error_code
+                )
+                metric_attributes = {
+                    "operation": "execute",
+                    "outcome": outcome,
+                }
+                if telemetry_error_class is not None:
+                    metric_attributes["error_class"] = telemetry_error_class
+                self.metrics.observe(
+                    "aura.automation.workflow_step.agent_run",
+                    "workflow_agent_run_step_duration_ms",
+                    (perf_counter() - started) * 1000,
+                    trace_id=trace_id,
+                    run_id=str(run.id),
+                    **metric_attributes,
+                    **self._workflow_metadata(run),
+                )
+                self.metrics.record_span(
+                    "aura.execution.run_coordinator",
+                    "run.execute",
+                    (perf_counter() - started) * 1000,
+                    trace_id=trace_id,
+                    span_id=coordinator_span_id,
+                    parent_span_id=request.parent_span_id,
+                    dependency="model_provider",
+                    outcome=outcome,
+                    error_class=telemetry_error_class,
+                    run_id=str(run.id),
+                    **self._workflow_metadata(run),
+                )
+            except Exception:
+                # Telemetry is non-blocking and cannot change the workflow
+                # result or cause a second provider invocation.
+                pass
+        try:
+            await recovery.settle_workflow_agent_run(request, result)
+        except Exception:
+            result = WorkflowAgentRunResult(
+                lineage=request.lineage,
+                outcome=WorkflowAgentRunOutcome.UNKNOWN,
+                output=None,
+                error_code="WORKFLOW_AGENT_UNKNOWN_OUTCOME",
+                trace_id=result.trace_id,
+                started_at=result.started_at,
+                finished_at=datetime.now(UTC),
+            )
+        self._record_workflow_agent_evidence(
+            run,
+            evidence_kind="automation_output",
+            content=(result.output if result.output is not None else result.error_code or outcome),
+            sequence_hint=201,
+        )
+        return result
+
+    def _record_workflow_agent_evidence(
+        self, run: Run, *, evidence_kind: str, content: str, sequence_hint: int
+    ) -> None:
+        """Record only the closed automation evidence variant.
+
+        The existing recorder decides whether full-content capture is enabled
+        and rejects secrets/oversized values.  With capture disabled this is a
+        no-op, preserving metadata-only ordinary telemetry.
+        """
+
+        if not self._evidence_enabled():
+            return
+        payload = {
+            "kind": evidence_kind,
+            "content": {
+                "name": "workflow.agent_run",
+                "content": content,
+            },
+        }
+        self._record_evidence(
+            run,
+            step_category="automation",
+            evidence_kind=evidence_kind,
+            media_classification="structured",
+            media_type="application/json",
+            payload=payload if self._evidence_enabled() else None,
+            sequence_hint=sequence_hint,
+        )
 
     def set_briefing_provider(self, provider: ChatCompletionPort) -> None:
         """Attach the composition-owned provider for scheduled briefings."""
@@ -755,6 +1153,7 @@ class RunCoordinator:
             conversation_id=str(run.conversation_id),
         )
         return result
+
 
     @staticmethod
     def _stream_chat(
@@ -3971,11 +4370,9 @@ class RunCoordinator:
             raise RunExecutionFailure("delivery") from exc
 
     def _metadata(self, run: Run) -> dict[str, str]:
-        metadata = {
-            "trace_id": run.id.hex,
-            "run_id": str(run.id),
-            "conversation_id": str(run.conversation_id),
-        }
+        metadata = {"trace_id": run.id.hex, "run_id": str(run.id)}
+        if run.conversation_id is not None:
+            metadata["conversation_id"] = str(run.conversation_id)
         if run.branch_id is not None:
             metadata["branch_id"] = str(run.branch_id)
         if run.regenerated_from_run_id is not None:
@@ -3987,6 +4384,20 @@ class RunCoordinator:
             metadata["approval_id"] = str(run.approval_id)
         if run.pending_tool_call_id is not None:
             metadata["tool_call_id"] = str(run.pending_tool_call_id)
+        return metadata
+
+    def _workflow_metadata(self, run: Run) -> dict[str, str]:
+        """Return workflow identifiers as trace-only metadata."""
+
+        metadata: dict[str, str] = {}
+        if run.workflow_id is not None:
+            metadata["workflow_id"] = str(run.workflow_id)
+        if run.workflow_revision_id is not None:
+            metadata["revision_id"] = str(run.workflow_revision_id)
+        if run.workflow_instance_id is not None:
+            metadata["instance_id"] = str(run.workflow_instance_id)
+        if run.workflow_step_execution_id is not None:
+            metadata["step_execution_id"] = str(run.workflow_step_execution_id)
         return metadata
 
     def _error(self, run: Run, error_class: str) -> None:
@@ -4050,6 +4461,53 @@ class RunCoordinator:
             status=run.status.value,
             **self._metadata(run),
         )
+
+
+class RunCoordinatorWorkflowAdapter:
+    """Provider-bound workflow port assembled by an application entrypoint.
+
+    The workflow domain receives this narrow object through
+    ``WorkflowAgentRunCoordinatorPort``.  It cannot access the provider or
+    executor internals, while composition retains responsibility for choosing
+    the already-authorized provider, model, and policy revision.  The request
+    still carries those pinned identities so a mismatched adapter fails closed
+    before a provider call.
+    """
+
+    def __init__(
+        self,
+        coordinator: WorkflowAgentRunExecutionPort,
+        provider: ChatCompletionPort,
+        *,
+        provider_name: str,
+        model_id: str,
+        model_policy_revision_id: UUID,
+    ) -> None:
+        if not provider_name:
+            raise ValueError("workflow provider name is required")
+        if not model_id:
+            raise ValueError("workflow model identifier is required")
+        if type(model_policy_revision_id) is not UUID:
+            raise ValueError("workflow model policy revision identifier is required")
+        self._coordinator = coordinator
+        self._provider = provider
+        self._provider_name = provider_name
+        self._model_id = model_id
+        self._model_policy_revision_id = model_policy_revision_id
+
+    async def execute_workflow_agent_run(
+        self, request: WorkflowAgentRunRequest
+    ) -> WorkflowAgentRunResult:
+        if request.provider != self._provider_name:
+            raise RunExecutionFailure("workflow provider binding conflict")
+        if request.model_id != self._model_id:
+            raise RunExecutionFailure("workflow model binding conflict")
+        if request.model_policy_revision_id != self._model_policy_revision_id:
+            raise RunExecutionFailure("workflow model policy binding conflict")
+        return await self._coordinator.execute_workflow_agent_run(request, self._provider)
+
+    async def cancel_workflow_agent_run(self, lineage: WorkflowRunLineage) -> bool:
+        return await self._coordinator.cancel_workflow_agent_run(lineage)
 
 
 def message_payload(message: Message) -> dict[str, object]:

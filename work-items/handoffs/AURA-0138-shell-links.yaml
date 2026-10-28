@@ -1,0 +1,86 @@
+agent: frontend_worker
+work_item: AURA-0138
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0138_shell_links
+  worktree: shared
+scope:
+  ownership_zone: frontend.aura-web.workflow-routing-navigation, frontend.aura-web.approval-workflow-deep-link, frontend.aura-web.notification-workflow-deep-link
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/app.routes.spec.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web/src/main.spec.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-page.component.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-page.component.html
+  - frontend/libs/aura/automation/notifications/src/lib/notifications-page.component.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notifications-page.component.html
+  - work-items/handoffs/AURA-0138-shell-links.yaml
+contracts:
+  changed: false
+  notes: >-
+    The shell consumes the already-generated workflow client through the public
+    workflow feature entrypoint. No contract or generated transport file was
+    edited.
+migrations:
+  changed: false
+  notes: The Aura Web shell and presentation surfaces own no persistence.
+observability:
+  components: []
+  metrics_added: []
+  capture_policy: metadata_only
+  notes: >-
+    Links contain only opaque workflow and instance path segments. No workflow
+    content, mappings, inputs, outputs, or results are introduced into URLs,
+    telemetry, logs, or browser persistence.
+verification:
+  passed:
+    - cd frontend && pnpm exec nx run aura-web:test (15 passed)
+    - cd frontend && pnpm exec nx run aura-approvals:test (17 passed)
+    - cd frontend && pnpm exec nx run aura-notifications:test (22 passed)
+    - cd frontend && pnpm exec tsc --noEmit -p libs/aura/automation/workflows/tsconfig.lib.json
+    - cd frontend && pnpm exec nx run aura-workflows:test (11 passed)
+    - cd frontend && pnpm exec nx run aura-workflows:lint
+    - cd frontend && pnpm exec nx run aura-web:lint
+    - cd frontend && pnpm exec nx run aura-approvals:lint
+    - cd frontend && pnpm exec nx run aura-notifications:lint
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated
+    - cd frontend && pnpm exec nx run aura-web:build:production
+    - >-
+      cd frontend && AURA_WEB_E2E_WORKERS=1 AURA_WEB_E2E_APP_PORT=4310
+      AURA_WEB_E2E_STORYBOOK_PORT=6310 pnpm exec playwright test
+      apps/aura-web-e2e/src/workflows.spec.ts --project=mobile --grep
+      "authors all four step kinds" (1 passed)
+    - >-
+      Aggregate AURA-0138 evidence in work-items/integration/AURA-0138.yaml
+      confirms the architecture, generated-sync, boundary, frontend build,
+      Storybook, and browser checks pass on the current final tree; the prior
+      mobile authoring failure was superseded by the isolated passing rerun.
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Used four lazy loadComponent routes targeting the workflow library's public
+    WorkflowStudioPageComponent export. The route with an instance suffix is
+    ordered before the opaque workflow-id route.
+  - >-
+    Kept workflow state reset registration compatible with lazy loading by
+    resolving WorkflowStore through a dynamic import only at session-reset
+    time. This avoids a static shell dependency that Nx correctly rejects as a
+    static import of a lazy-loaded library.
+  - >-
+    Added approval and notification links using generated lineage fields only;
+    these surfaces do not import the workflow feature library and retain their
+    existing reminder/conversation behavior.
+  - >-
+    Used semantic anchors with RouterLink and existing focus-return behavior so
+    deep links remain keyboard-operable and do not expose workflow content.
+risks: []
+unresolved: []

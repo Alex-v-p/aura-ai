@@ -46,6 +46,7 @@ export class ApprovalsPageComponent {
   isWorkflow(approval: ApprovalSummary | ApprovalDetail): boolean { return 'origin' in approval && approval.origin === 'manual_workflow_instance'; }
   originLabel(approval: ApprovalSummary | ApprovalDetail): string { return approvalOriginLabel(approval); }
   workflowProposal(approval: ApprovalDetail): WorkflowApprovalProposal | null { return workflowApprovalProposal(approval); }
+  workflowRoute(approval: ApprovalSummary | ApprovalDetail): ReadonlyArray<string> { return 'workflowId' in approval && 'workflowInstanceId' in approval ? ['/workflows', approval.workflowId, 'instances', approval.workflowInstanceId] : ['/workflows']; }
   reminderProposal(approval: ApprovalDetail): ReminderProposalDetail | ReminderCommandProposalDetail | null { return isWorkflowApprovalDetail(approval) ? null : approval.proposal; }
   isReminderProposal(proposal: ApprovalProposal): proposal is ReminderProposalDetail | ReminderCommandProposalDetail { return !('workflowDisplayName' in proposal); }
   isCommandProposal(proposal: ApprovalProposal): proposal is ReminderCommandProposalDetail { return isReminderCommandProposal(proposal); }

@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/observatory-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 183a9f0380a262a9dbb116e970e63189f9051a98ac6a88434830fa9b721580b8
+// Contract SHA-256: ceb458514db340ac9563099f2e632c9c7bfca19614b2131bcf4ae1a98e99c9aa
 
 export type Uuid = string;
 
@@ -453,7 +453,7 @@ export type AnalyticsFocus = "all" | "model" | "queue" | "retrieval" | "tool" | 
 
 export type AnalyticsUnit = "count" | "milliseconds" | "bytes" | "ratio" | "score";
 
-export type AnalyticsMetricName = "operation_duration_ms" | "run_duration_ms" | "queue_wait_ms" | "errors" | "retries" | "backlog" | "backlog_depth" | "inference_duration_ms" | "time_to_first_token_ms" | "output_tokens" | "provider_errors" | "model_routing_duration_ms" | "structured_inference_duration_ms" | "tool_selection_duration_ms" | "tool_selection_outcome" | "tool_policy_evaluation_duration_ms" | "tool_policy_decision" | "tool_argument_validation_outcome" | "tool_execution_duration_ms" | "tool_execution_outcome" | "tool_timeout_count" | "memory_extraction_duration_ms" | "memory_candidate_decision" | "memory_reviewable_candidate_count" | "memory_operation_duration_ms" | "memory_operation_outcome" | "memory_retrieval_duration_ms" | "memory_lexical_search_duration_ms" | "memory_vector_search_duration_ms" | "memory_rerank_duration_ms" | "memory_processing_errors" | "memory_retry_count" | "memory_reindex_backlog" | "document_retrieval_duration_ms" | "document_retrieval_outcome" | "document_retrieval_candidate_count" | "reminder_scheduler_scan_duration_ms" | "reminder_due_lag_ms" | "reminder_series_due_lag_ms" | "reminder_fired_count" | "reminder_failure_count" | "notification_failure_count" | "notification_acknowledgement_outcome" | "evaluation_runner_nats_recovery_count";
+export type AnalyticsMetricName = "operation_duration_ms" | "run_duration_ms" | "queue_wait_ms" | "errors" | "retries" | "backlog" | "backlog_depth" | "inference_duration_ms" | "time_to_first_token_ms" | "output_tokens" | "provider_errors" | "model_routing_duration_ms" | "structured_inference_duration_ms" | "tool_selection_duration_ms" | "tool_selection_outcome" | "tool_policy_evaluation_duration_ms" | "tool_policy_decision" | "tool_argument_validation_outcome" | "tool_execution_duration_ms" | "tool_execution_outcome" | "tool_timeout_count" | "memory_extraction_duration_ms" | "memory_candidate_decision" | "memory_reviewable_candidate_count" | "memory_operation_duration_ms" | "memory_operation_outcome" | "memory_retrieval_duration_ms" | "memory_lexical_search_duration_ms" | "memory_vector_search_duration_ms" | "memory_rerank_duration_ms" | "memory_processing_errors" | "memory_retry_count" | "memory_reindex_backlog" | "document_retrieval_duration_ms" | "document_retrieval_outcome" | "document_retrieval_candidate_count" | "reminder_scheduler_scan_duration_ms" | "reminder_due_lag_ms" | "reminder_series_due_lag_ms" | "reminder_fired_count" | "reminder_failure_count" | "notification_failure_count" | "notification_acknowledgement_outcome" | "evaluation_runner_nats_recovery_count" | "workflow_transition_outcome" | "workflow_command_outcome" | "workflow_repository_outcome" | "workflow_transition_duration_ms" | "workflow_command_duration_ms" | "workflow_repository_duration_ms" | "workflow_definition_validation_duration_ms" | "workflow_agent_run_step_duration_ms" | "workflow_approval_command_duration_ms" | "workflow_notification_step_duration_ms" | "workflow_wait_command_duration_ms" | "workflow_wait_lag_ms" | "workflow_checkpoint_persistence_duration_ms" | "workflow_cancellation_duration_ms" | "workflow_settlement_duration_ms";
 
 export type AnalyticsAggregation = "average" | "sum" | "minimum" | "maximum" | "p50" | "p90" | "p95" | "p99" | "rate" | "count";
 
@@ -492,6 +492,48 @@ export type AnalyticsEffectiveQuery = { readonly "metric": AnalyticsMetricName; 
 export type AnalyticsScan = { readonly "scannedRows": number; readonly "scanLimit": 1000000; readonly "executionMs": number; readonly "executionLimitMs": 5000; };
 
 export type OperationalAnalyticsSnapshot = { readonly "snapshotAt": UtcInstant; readonly "query": AnalyticsEffectiveQuery; readonly "percentileMethod": AnalyticsPercentileMethod; readonly "series": ReadonlyArray<AnalyticsSeries>; readonly "breakdowns": ReadonlyArray<AnalyticsBreakdown>; readonly "freshness": AnalyticsFreshness; readonly "partial": boolean; readonly "partialReasons": ReadonlyArray<AnalyticsPartialReason>; readonly "unavailableSignals": ReadonlyArray<AnalyticsUnavailableSignal>; readonly "scan": AnalyticsScan; readonly "capturePolicy": "metadata_only"; };
+
+export type WorkflowMetricName = "workflow_transition_outcome" | "workflow_command_outcome" | "workflow_repository_outcome" | "workflow_transition_duration_ms" | "workflow_command_duration_ms" | "workflow_repository_duration_ms" | "workflow_definition_validation_duration_ms" | "workflow_agent_run_step_duration_ms" | "workflow_approval_command_duration_ms" | "workflow_notification_step_duration_ms" | "workflow_wait_command_duration_ms" | "workflow_wait_lag_ms" | "workflow_checkpoint_persistence_duration_ms" | "workflow_cancellation_duration_ms" | "workflow_settlement_duration_ms";
+
+export type WorkflowOutcomeMetricName = "workflow_transition_outcome" | "workflow_command_outcome" | "workflow_repository_outcome";
+
+export type WorkflowLifecycleOperation = "workflow.transition" | "workflow.command" | "workflow.repository";
+
+export type WorkflowLatencyMetricName = "workflow_transition_duration_ms" | "workflow_command_duration_ms" | "workflow_repository_duration_ms" | "workflow_definition_validation_duration_ms" | "workflow_agent_run_step_duration_ms" | "workflow_approval_command_duration_ms" | "workflow_notification_step_duration_ms" | "workflow_wait_command_duration_ms" | "workflow_wait_lag_ms" | "workflow_checkpoint_persistence_duration_ms" | "workflow_cancellation_duration_ms" | "workflow_settlement_duration_ms";
+
+export type WorkflowMonitoringWindow = { readonly "from": UtcInstant; readonly "to": UtcInstant; readonly "bucket": AnalyticsBucket; readonly "bucketSeconds": number; };
+
+export type WorkflowLifecycleCount = { readonly "metric": WorkflowOutcomeMetricName; readonly "operation": WorkflowLifecycleOperation; readonly "outcome": WorkflowOutcome; readonly "count": NonNegativeCount; readonly "partial": boolean; };
+
+export type WorkflowLatencySummary = { readonly "metric": WorkflowLatencyMetricName; readonly "unit": "milliseconds"; readonly "summary": AnalyticsSeriesSummary; readonly "availability": AnalyticsAvailability; readonly "partial": boolean; };
+
+export type WorkflowOutcomeSeries = { readonly "metric": WorkflowOutcomeMetricName; readonly "unit": "count"; readonly "summary": AnalyticsSeriesSummary; readonly "points": ReadonlyArray<AnalyticsPoint>; readonly "availability": AnalyticsAvailability; readonly "partial": boolean; };
+
+export type WorkflowLatencySeries = { readonly "metric": WorkflowLatencyMetricName; readonly "unit": "milliseconds"; readonly "summary": AnalyticsSeriesSummary; readonly "points": ReadonlyArray<AnalyticsPoint>; readonly "availability": AnalyticsAvailability; readonly "partial": boolean; };
+
+export type WorkflowMonitoringSeries = WorkflowOutcomeSeries | WorkflowLatencySeries;
+
+export type WorkflowComponent = "aura.automation.workflow_state" | "aura.automation.workflow_definition" | "aura.automation.workflow_step.agent_run" | "aura.automation.workflow_approval" | "aura.automation.workflow_step.notification" | "aura.automation.workflow_step.wait_until" | "aura.automation.workflow_checkpoint" | "aura.automation.workflow_cancellation" | "aura.automation.workflow_settlement";
+
+export type WorkflowFailureOperation = "workflow.transition" | "workflow.command" | "workflow.repository" | "execute" | "validate" | "resume" | "persist" | "cancel" | "settle";
+
+export type WorkflowCorrelationOperation = "execute";
+
+export type WorkflowOutcome = "succeeded" | "failed" | "cancelled" | "unknown";
+
+export type WorkflowErrorClass = "unknown" | "authorization" | "database" | "database_programming" | "idempotency" | "internal" | "not_found" | "persistence" | "serialization" | "execution" | "budget" | "capability" | "provider_protocol" | "provider" | "timeout" | "validation" | "conflict";
+
+export type WorkflowFailureBreakdown = { readonly "component": WorkflowComponent; readonly "operation": WorkflowFailureOperation; readonly "outcome": "failed"; readonly "errorClass": WorkflowErrorClass; readonly "count": NonNegativeCount; readonly "partial": boolean; };
+
+export type WorkflowRunTraceReference = { readonly "metric": "workflow_agent_run_step_duration_ms"; readonly "runId": Uuid; readonly "traceId": TraceId; readonly "observedAt": UtcInstant; readonly "component": "aura.automation.workflow_step.agent_run"; readonly "operation": WorkflowCorrelationOperation; readonly "outcome": WorkflowOutcome; readonly "errorClass": WorkflowErrorClass | null; };
+
+export type WorkflowMonitoringPartialReason = "scan_limit" | "execution_limit" | "storage_limit" | "series_limit" | "point_limit" | "correlation_limit" | "late_data" | "retention_boundary";
+
+export type WorkflowMonitoringUnavailableSignal = "lifecycle_counts" | "latency_summaries" | "time_series" | "failure_breakdowns" | "run_trace_correlation";
+
+export type WorkflowMonitoringLimits = { readonly "defaultWindowHours": 24; readonly "maximumWindowDays": 31; readonly "maximumScannedRows": 1000000; readonly "scannedRows": number; readonly "maximumSeries": 12; readonly "returnedSeries": number; readonly "maximumPointsPerSeries": 200; readonly "returnedPoints": number; readonly "maximumFailureBreakdowns": 50; readonly "returnedFailureBreakdowns": number; readonly "maximumRecentCorrelations": 25; readonly "returnedRecentCorrelations": number; readonly "executionLimitMs": 5000; readonly "executionMs": number; readonly "truncatedByExecutionLimit": boolean; readonly "truncatedByStorageLimit": boolean; };
+
+export type WorkflowMonitoringSnapshot = { readonly "snapshotAt": UtcInstant; readonly "window": WorkflowMonitoringWindow; readonly "lifecycleCounts": ReadonlyArray<WorkflowLifecycleCount>; readonly "latencySummaries": ReadonlyArray<WorkflowLatencySummary>; readonly "series": ReadonlyArray<WorkflowMonitoringSeries>; readonly "failureBreakdowns": ReadonlyArray<WorkflowFailureBreakdown>; readonly "recentCorrelations": ReadonlyArray<WorkflowRunTraceReference>; readonly "freshness": AnalyticsFreshness; readonly "partial": boolean; readonly "partialReasons": ReadonlyArray<WorkflowMonitoringPartialReason>; readonly "unavailableSignals": ReadonlyArray<WorkflowMonitoringUnavailableSignal>; readonly "limits": WorkflowMonitoringLimits; readonly "capturePolicy": "metadata_only"; };
 
 export type RunComparisonRequest = { readonly "leftRunId": Uuid; readonly "rightRunId": Uuid; };
 
@@ -675,6 +717,7 @@ export interface ObservatoryApiOperations {
   readonly getComponentHealth: { readonly response: ComponentHealth; readonly body: never; readonly path: { readonly "component_id": ComponentId; }; readonly query: { readonly "component_version"?: SafeLabel; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; readonly "point_limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly listAnalyticsMetrics: { readonly response: AnalyticsMetricCatalogue; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "focus"?: AnalyticsFocus; }; readonly headers: Readonly<Record<string, never>>; };
   readonly queryOperationalAnalytics: { readonly response: OperationalAnalyticsSnapshot; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "metric": AnalyticsMetricName; readonly "unit": AnalyticsUnit; readonly "aggregation"?: AnalyticsAggregation; readonly "focus"?: AnalyticsFocus; readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; readonly "bucket"?: AnalyticsBucket; readonly "group_by"?: AnalyticsGroupBy; readonly "component"?: ComponentId; readonly "component_version"?: SafeLabel; readonly "operation"?: OperationName; readonly "deployment"?: SafeLabel; readonly "environment"?: EnvironmentName; readonly "host"?: SafeLabel; readonly "service_role"?: ServiceRole; readonly "provider"?: DimensionValue; readonly "outcome"?: Outcome; readonly "error_class"?: DimensionValue; readonly "status"?: DimensionValue; readonly "retrieval_stage"?: DimensionValue; readonly "series_limit"?: number; readonly "point_limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getWorkflowMonitoring: { readonly response: WorkflowMonitoringSnapshot; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "from"?: UtcInstant; readonly "to"?: UtcInstant; readonly "bucket"?: AnalyticsBucket; readonly "series_limit"?: number; readonly "point_limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly compareRuns: { readonly response: RunComparison; readonly body: RunComparisonRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listEvaluationDatasets: { readonly response: EvaluationDatasetPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "cursor"?: Cursor; readonly "page_size"?: number; readonly "state"?: EvaluationDefinitionState; }; readonly headers: Readonly<Record<string, never>>; };
   readonly createEvaluationDataset: { readonly response: EvaluationDataset; readonly body: CreateEvaluationDatasetRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-Observatory-CSRF": string; readonly "Idempotency-Key": string; }; };
@@ -789,6 +832,7 @@ export const OBSERVATORY_API_OPERATIONS = {
   getComponentHealth: { method: 'GET', pathTemplate: '/api/v1/components/{component_id}/health', requestMode: 'none', responseMode: 'json' },
   listAnalyticsMetrics: { method: 'GET', pathTemplate: '/api/v1/analytics/metrics', requestMode: 'none', responseMode: 'json' },
   queryOperationalAnalytics: { method: 'GET', pathTemplate: '/api/v1/analytics/query', requestMode: 'none', responseMode: 'json' },
+  getWorkflowMonitoring: { method: 'GET', pathTemplate: '/api/v1/automation/workflows/monitoring', requestMode: 'none', responseMode: 'json' },
   compareRuns: { method: 'POST', pathTemplate: '/api/v1/run-comparisons/query', requestMode: 'json', responseMode: 'json' },
   listEvaluationDatasets: { method: 'GET', pathTemplate: '/api/v1/evaluation/datasets', requestMode: 'none', responseMode: 'json' },
   createEvaluationDataset: { method: 'POST', pathTemplate: '/api/v1/evaluation/datasets', requestMode: 'json', responseMode: 'json' },

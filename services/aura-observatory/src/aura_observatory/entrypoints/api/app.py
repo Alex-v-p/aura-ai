@@ -308,6 +308,7 @@ def create_app(
                 or request.url.path.startswith("/api/v1/components")
                 or request.url.path.startswith("/api/v1/deployments")
                 or request.url.path.startswith("/api/v1/analytics")
+                or request.url.path == "/api/v1/automation/workflows/monitoring"
                 or request.url.path == "/api/v1/run-comparisons/query"
                 or request.url.path == "/api/v1/events"
                 or request.url.path.startswith("/api/v1/retention")
@@ -694,6 +695,34 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="invalid analytics query") from exc
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/v1/automation/workflows/monitoring")
+    async def workflow_monitoring(
+        request: Request,
+        from_time: str | None = Query(default=None, alias="from"),
+        to_time: str | None = Query(default=None, alias="to"),
+        bucket: str = "auto",
+        series_limit: str | None = Query(default=None, alias="series_limit"),
+        point_limit: str | None = Query(default=None, alias="point_limit"),
+    ) -> JSONResponse:
+        await owner_session(request)
+        try:
+            if bucket != "auto" and bucket not in ANALYTICS_BUCKETS:
+                raise ValueError("invalid workflow monitoring bucket")
+            result = await app.state.query.workflow_monitoring(
+                from_time=_parse_utc_z(from_time),
+                to_time=_parse_utc_z(to_time),
+                bucket=bucket,
+                series_limit=_parse_bounded_int(
+                    series_limit, default=12, minimum=1, maximum=12
+                ),
+                point_limit=_parse_bounded_int(
+                    point_limit, default=200, minimum=1, maximum=200
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="invalid workflow monitoring query") from exc
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/v1/health/history")

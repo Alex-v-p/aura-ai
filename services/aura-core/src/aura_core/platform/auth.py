@@ -140,6 +140,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AURA_DOCUMENT_EMBEDDING_DIMENSION"),
     )
     context_token_budget: int = Field(default=8192, gt=0)
+    # Manual workflow publication and admission are deliberately opt-in.  A
+    # disabled flag does not affect owner reads, recovery, cancellation,
+    # retirement, deletion, or instances that were already admitted.
+    workflow_admission_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("AURA_WORKFLOW_ADMISSION_ENABLED"),
+    )
     ollama_run_timeout_seconds: float = 300.0
     # Inventory reads use provider metadata and should fail quickly without
     # inheriting the much longer inference deadline. Selecting a memory model

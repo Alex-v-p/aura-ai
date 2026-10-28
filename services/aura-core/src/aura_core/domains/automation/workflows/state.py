@@ -78,6 +78,23 @@ def _emit_transition(
         trace_id=trace_id,
         **trace,
     )
+    metrics.observe(
+        "aura.automation.workflow_state",
+        "workflow_transition_duration_ms",
+        duration,
+        trace_id=trace_id,
+        operation="workflow.transition",
+        outcome=outcome,
+        dependency="workflow",
+        status=(
+            state.instance.status.value
+            if state.instance.status.value in {
+                "canceled", "cancel_requested", "completed", "failed", "queued", "running",
+                "pending", "rejected", "expired",
+            }
+            else "unknown"
+        ),
+    )
     metrics.record_span(
         "aura.automation.workflow_state",
         "workflow.transition",
@@ -85,7 +102,7 @@ def _emit_transition(
         trace_id=trace_id,
         span_id=span_id,
         parent_span_id=parent_span_id,
-        dependency="application_validation",
+        dependency="workflow",
         outcome=outcome,
         error_class=error_class,
         **trace,
@@ -122,7 +139,9 @@ def _instrument_transition(operation: str) -> Callable[[Callable[..., Any]], Cal
             )
             return receipt
 
-        return wrapped
+        # The decorator intentionally widens the public call surface with
+        # trace/metrics keyword-only instrumentation arguments.
+        return cast(Any, wrapped)
 
     return decorator
 
@@ -143,6 +162,37 @@ class WorkflowState:
     @property
     def current(self) -> WorkflowStepState:
         return self.steps[self.instance.current_ordinal - 1]
+
+    def as_dict(self) -> dict[str, object]:
+        """Closed metadata/result projection for transport composition."""
+        instance = self.instance
+        completed = tuple(
+            {
+                "stepOrdinal": step.ordinal,
+                "stepExecutionId": step.execution_id,
+                "effectOutcome": step.effect_outcome.value,
+            }
+            for step in self.steps if step.status is WorkflowStepStatus.COMPLETED
+        )
+        result = self.current.output if instance.status is WorkflowInstanceStatus.TERMINAL else None
+        return {
+            "id": str(instance.id), "workflow_id": str(instance.workflow_id),
+            "revision_id": str(instance.revision_id), "input": dict(instance.input_values),
+            "status": instance.status.value,
+            "terminal_outcome": instance.terminal_outcome.value
+            if instance.terminal_outcome else None,
+            "current_step_ordinal": instance.current_ordinal,
+            "steps": [
+                {"ordinal": step.ordinal, "kind": step.kind.value,
+                 "status": step.status.value, "effect_outcome": step.effect_outcome.value,
+                 "execution_id": step.execution_id, "version": step.version}
+                for step in self.steps
+            ],
+            "completed_effects": list(completed), "checkpoints": [], "result": result,
+            "version": instance.version, "admitted_at": instance.admitted_at,
+            "deadline_at": instance.deadline, "updated_at": instance.updated_at,
+            "terminal_at": instance.terminal_at,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,7 +268,12 @@ def settle_step(
         raise WorkflowTransitionError("step execution identity is not current")
     if instance.status is WorkflowInstanceStatus.TERMINAL:
         return TransitionReceipt(state, False, True)
-    if step.status not in (WorkflowStepStatus.RUNNING, WorkflowStepStatus.RESOLUTION_REQUIRED):
+    if step.status not in (
+        WorkflowStepStatus.RUNNING,
+        WorkflowStepStatus.RESOLUTION_REQUIRED,
+        WorkflowStepStatus.WAITING_FOR_APPROVAL,
+        WorkflowStepStatus.WAITING_FOR_TIME,
+    ):
         raise WorkflowTransitionError("step is not executing")
     result = validate_step_result(step.kind, status, effect_outcome, output)
     _validate_state_budget(state, result, step.ordinal)
@@ -307,6 +362,38 @@ def settle_step(
     return TransitionReceipt(_replace(state, updated_instance, updated), True)
 
 
+def pause_step(
+    state: WorkflowState,
+    *,
+    execution_id: str,
+    expected_version: int,
+    status: WorkflowStepStatus,
+) -> TransitionReceipt:
+    """Persist a durable external wait without pretending an effect settled."""
+
+    if status not in (WorkflowStepStatus.WAITING_FOR_APPROVAL, WorkflowStepStatus.WAITING_FOR_TIME):
+        raise WorkflowTransitionError("workflow pause status is closed")
+    instance, step = state.instance, state.current
+    if instance.version != expected_version:
+        raise WorkflowTransitionError("stale workflow instance version")
+    if step.execution_id != execution_id or step.status is not WorkflowStepStatus.RUNNING:
+        raise WorkflowTransitionError("step execution identity is not current")
+    instance_status = (
+        WorkflowInstanceStatus.WAITING_FOR_APPROVAL
+        if status is WorkflowStepStatus.WAITING_FOR_APPROVAL
+        else WorkflowInstanceStatus.WAITING_FOR_TIME
+    )
+    updated_step = replace(
+        step,
+        status=status,
+        effect_outcome=WorkflowEffectOutcome.NOT_ATTEMPTED,
+        version=step.version + 1,
+        recovery_capabilities=(RecoveryCapability.CANCEL,),
+    )
+    updated_instance = replace(instance, status=instance_status, version=instance.version + 1)
+    return TransitionReceipt(_replace(state, updated_instance, updated_step), True)
+
+
 def request_replay(
     state: WorkflowState, *, expected_version: int, now: datetime | None = None
 ) -> TransitionReceipt:
@@ -359,6 +446,7 @@ def reconcile(
     expected_version: int,
     confirmed: bool,
     output: object | None = None,
+    execution_id: str | None = None,
     now: datetime | None = None,
 ) -> TransitionReceipt:
     if state.instance.version != expected_version:
@@ -366,10 +454,15 @@ def reconcile(
     step = state.current
     if step.status is not WorkflowStepStatus.RESOLUTION_REQUIRED:
         raise WorkflowTransitionError("current step is not unresolved")
+    if step.execution_id is None or (
+        execution_id is not None and execution_id != step.execution_id
+    ):
+        raise WorkflowTransitionError("step execution identity is not current")
+    resolved_execution_id = step.execution_id
     if confirmed:
         return settle_step(
             state,
-            execution_id=step.execution_id or "reconciled",
+            execution_id=resolved_execution_id,
             expected_version=expected_version,
             status=WorkflowStepStatus.COMPLETED,
             effect_outcome=WorkflowEffectOutcome.COMPLETED,
@@ -378,7 +471,7 @@ def reconcile(
         )
     return settle_step(
         state,
-        execution_id=step.execution_id or "reconciled",
+        execution_id=resolved_execution_id,
         expected_version=expected_version,
         status=WorkflowStepStatus.FAILED,
         effect_outcome=WorkflowEffectOutcome.DEFINITIVELY_FAILED,

@@ -10,6 +10,11 @@ from uuid import UUID
 
 from aura_core.domains.execution.runs.dto import Run, RunClaim, RunError, RunStatus
 from aura_core.domains.execution.runs.events import RunEvent
+from aura_core.domains.execution.runs.models import (
+    WorkflowAgentRunRequest,
+    WorkflowAgentRunResult,
+    WorkflowRunLineage,
+)
 
 TITLE_RESPONSE_MAX_CHARS = 4096
 TITLE_RESPONSE_MAX_BYTES = 16_384
@@ -120,6 +125,61 @@ class RunEvidencePort(Protocol):
     def record(self, item: RunEvidenceItem) -> bool: ...
 
     def allocate_sequence(self, run_id: UUID) -> int: ...
+
+
+class WorkflowAgentRunCoordinatorPort(Protocol):
+    """Public coordinator seam owned by the execution domain.
+
+    Workflow application code owns admission, durable step state, and
+    settlement.  The coordinator only owns the bounded provider invocation and
+    returns a closed result; it never receives workflow persistence objects.
+
+    Workflow composition receives a provider-bound adapter implementing this
+    protocol.  The workflow domain therefore depends only on this public
+    request/result contract and never imports a provider adapter.
+    """
+
+    async def execute_workflow_agent_run(
+        self, request: WorkflowAgentRunRequest
+    ) -> WorkflowAgentRunResult: ...
+
+    async def cancel_workflow_agent_run(self, lineage: WorkflowRunLineage) -> bool: ...
+
+
+class WorkflowAgentRunExecutionPort(Protocol):
+    """Provider-bearing execution port used only by composition adapters.
+
+    This port is intentionally distinct from the workflow-facing coordinator
+    port above.  Entrypoints may bind the provider here, while workflow code
+    receives only the one-argument ``WorkflowAgentRunCoordinatorPort``.
+    """
+
+    async def execute_workflow_agent_run(
+        self, request: WorkflowAgentRunRequest, provider: ChatCompletionPort
+    ) -> WorkflowAgentRunResult: ...
+
+    async def cancel_workflow_agent_run(self, lineage: WorkflowRunLineage) -> bool: ...
+
+
+class WorkflowAgentRunRecoveryPort(Protocol):
+    """Durable admission/settlement fence for workflow provider effects.
+
+    Implementations atomically reserve a step-execution lineage before the
+    provider call.  A prior terminal result is replayed; a prior reservation
+    without a terminal result returns ``UNKNOWN`` so a restarted worker never
+    invokes the provider a second time.  Storage and transaction ownership
+    remain with composition, not the workflow domain.
+    """
+
+    async def reserve_workflow_agent_run(
+        self, request: WorkflowAgentRunRequest, *, started_at: datetime
+    ) -> WorkflowAgentRunResult | None: ...
+
+    async def settle_workflow_agent_run(
+        self, request: WorkflowAgentRunRequest, result: WorkflowAgentRunResult
+    ) -> None: ...
+
+    async def cancel_workflow_agent_run(self, lineage: WorkflowRunLineage) -> bool: ...
 
 
 class RunRepository(Protocol):

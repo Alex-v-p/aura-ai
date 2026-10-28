@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, cast
 from uuid import UUID
 
-from aura_core.bootstrap import calendar_uow, memory_uow
+from aura_core.bootstrap import calendar_uow, memory_uow, workflow_uow
 from aura_core.bootstrap.approval_uow import approval_repository, approval_service
 from aura_core.bootstrap.attachment_uow import attachment_service
 from aura_core.bootstrap.briefing_uow import briefing_repository, briefing_service
@@ -16,6 +16,10 @@ from aura_core.bootstrap.document_uow import SqlDocumentCommandSink, document_se
 from aura_core.bootstrap.health import ReadinessService
 from aura_core.bootstrap.notification_uow import notification_repository, notification_service
 from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
+from aura_core.bootstrap.workflow_uow import (
+    AdmissionGatedWorkflowApplication,
+    WorkflowLifecycleBridge,
+)
 from aura_core.domains.automation.briefings.application import BriefingRunStateAdapter
 from aura_core.domains.automation.briefings.execution import (
     BriefingRunCancellationAdapter,
@@ -37,7 +41,10 @@ from aura_core.domains.automation.reminders.public import (
     ReminderApplicationService,
     ReminderRepository,
 )
-from aura_core.domains.execution.runs.public import RunCoordinator
+from aura_core.domains.automation.workflows.public import (
+    WorkflowRepository,
+)
+from aura_core.domains.execution.runs.public import RunCoordinator, SqlWorkflowAgentRunRecovery
 from aura_core.domains.governance.approvals.public import (
     ApprovalApplicationService,
     ApprovalRepository,
@@ -81,6 +88,7 @@ from aura_core.platform.outbox import (
     APPROVAL_EVENT_TOPIC,
     ATTACHMENT_EVENT_TOPIC,
     RUN_RESUME_TOPIC,
+    WORKFLOW_WAKE_TOPIC,
     InMemoryOutbox,
     OutboxCommand,
     TransactionalOutboxTransport,
@@ -278,6 +286,9 @@ class AppState:
         self.briefing_service: BriefingApplicationService
         self.approval_repository: ApprovalRepository
         self.approval_service: ApprovalApplicationService
+        self.workflow_repository: WorkflowRepository
+        self.workflow_service: AdmissionGatedWorkflowApplication
+        self.workflow_lifecycle: WorkflowLifecycleBridge
         self.calendar_service: Any
         self.memory_worker: object | None = None
         self.document_service: DocumentService
@@ -413,6 +424,7 @@ class AppState:
                     RUN_RESUME_TOPIC,
                     "aura.knowledge.documents.events.v1",
                     ATTACHMENT_EVENT_TOPIC,
+                    WORKFLOW_WAKE_TOPIC,
                 ),
                 metrics=self.metrics,
             )
@@ -546,8 +558,12 @@ class AppState:
             ),
             self.store,
         )
-        self.readiness = ReadinessService(probes)
         thinking_publisher = self.publisher if self.testing else self.nats
+        workflow_run_recovery = (
+            SqlWorkflowAgentRunRecovery(self.sessions_factory)
+            if self.sessions_factory is not None
+            else None
+        )
         self.coordinator = RunCoordinator(
             self.store,
             self.publisher,
@@ -564,7 +580,37 @@ class AppState:
             attachment_resolver=self.store,
             thinking_publisher=thinking_publisher,
             run_evidence=self.run_evidence,
+            workflow_recovery=workflow_run_recovery,
         )
+        workflow_ready = True
+        workflow_detail: str | None = None
+        try:
+            workflow = workflow_uow.compose_workflow(
+                self.sessions_factory,
+                testing=self.testing,
+                metrics=self.metrics,
+                coordinator=self.coordinator,
+                provider=cast(Any, self.provider),
+                approval_service=self.approval_service,
+                notification_service=self.notification_service,
+                agents=self.agents,
+                agent_service=self.agent_service,
+                evidence_recorder=self.run_evidence,
+                admission_enabled=self.settings.workflow_admission_enabled,
+                model_id=self.settings.default_model,
+            )
+            self.workflow_repository = workflow.repository
+            self.workflow_lifecycle = workflow.lifecycle
+            self.workflow_service = workflow.service
+        except workflow_uow.WorkflowCompositionError as exc:
+            workflow_ready = False
+            workflow_detail = str(exc)
+            self.startup_errors["workflow"] = str(exc)
+            self.workflow_repository = cast(WorkflowRepository, None)
+            self.workflow_lifecycle = cast(WorkflowLifecycleBridge, None)
+            self.workflow_service = cast(AdmissionGatedWorkflowApplication, None)
+        probes["workflow"] = StaticProbe(workflow_ready, workflow_detail)
+        self.readiness = ReadinessService(probes)
         # Schedule deletion uses the briefing-owned typed cancellation seam.
         # The adapter requests cancellation through the public coordinator
         # boundary and delegates durable settlement to the briefing state

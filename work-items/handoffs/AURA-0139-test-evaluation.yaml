@@ -1,0 +1,94 @@
+agent: test_evaluation_engineer
+work_item: AURA-0139
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0139_tests
+  worktree: shared
+scope:
+  ownership_zone: evaluation.aura0139-observatory-monitoring
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0139_backend.py
+  - contracts/tests/test_aura0139_workflow_monitoring_contract.py
+  - frontend/libs/observatory/src/lib/features/workflows/workflow-monitoring-contracts.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-workflows.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-workflows-storybook.spec.ts
+  - work-items/handoffs/AURA-0139-test-evaluation.yaml
+contracts:
+  changed: false
+  notes: Tests consume the existing closed monitoring DTO and generated gateway operation; no contract or generated file was changed.
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+  metrics_added: []
+  capture_policy: metadata_only
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-observatory/tests/test_aura0139_backend.py
+      contracts/tests/test_aura0139_workflow_monitoring_contract.py -q: 22 passed.
+    - >-
+      Scoped Ruff on the AURA-0139 backend and contract tests: all checks passed.
+    - >-
+      uv run pyright services/aura-observatory/tests/test_aura0139_backend.py: 0 errors.
+    - >-
+      NX_DAEMON=false pnpm exec nx run observatory:test --skip-nx-cache: 90 tests passed.
+    - >-
+      Standard-config Playwright workflow acceptance: 30 passed across desktop 1440px,
+      tablet 768px, and mobile 390px. Coverage includes healthy/filter, partial/stale,
+      true empty/unavailable truthfulness, malformed/privacy, expired-session, keyboard,
+      bounded SSE coalescing with delayed genuine observations, run/trace navigation
+      with zero page errors, reduced motion, 200/400% zoom, responsive layout, and Axe.
+    - >-
+      Keyboard workflow navigation rerun across desktop/tablet/mobile: 3 passed.
+    - >-
+      Storybook workflow stories were included in the story index and
+      NX_DAEMON=false pnpm exec nx run storybook:build-storybook --skip-nx-cache passed.
+    - >-
+      Storybook runtime acceptance using apps/observatory-web-e2e/storybook.config.ts:
+      7 passed, including healthy, partial/stale, loading, empty, unavailable, dark,
+      reduced-motion, forced-colors, responsive, and Axe checks.
+    - >-
+      Strict parser adversarial cases, monotonic self-query feedback settling, stale
+      and unavailable state copy, UTC normalization, P95/fallback wait-lag copy, and
+      exact dotted operation/error dimensions are covered by the 90 frontend unit tests
+      and targeted backend/contract tests and passed.
+    - >-
+      Full Observatory backend/contract suite: 1650 passed and 44 skipped; unrelated
+      concurrent baseline failures are recorded below.
+  failed:
+    - >-
+      Full suite has eight unrelated failures: AURA-0080 SSE catch-up, AURA-0080
+      migration idempotence, two AURA-0087 script-shape checks, one AURA-0128 contract
+      baseline comparison, and three AURA-0132 contract baseline/union comparisons.
+  not_run:
+    - >-
+      Full-stack workflow monitoring environment was not available; the browser
+      fixture suite provides isolated Core-unavailable and malformed/auth cases.
+decisions:
+  - >-
+    Added backend adversarial coverage for all 15 allowlisted measurements, UTC
+    half-open buckets and units, freshness/partial/late/sparse/limit metadata,
+    deterministic 25-item correlation caps, and metadata-injection rejection.
+  - >-
+    Added frontend closed-catalog tests for all 15 metrics and unit separation.
+  - >-
+    Added deterministic browser fixtures and acceptance tests without using browser
+    persistence or workflow content, including response privacy rejection and existing
+    run/trace drill-down navigation.
+  - >-
+    Kept the test work within assigned evaluation paths; no product code, contract,
+    migration, threshold, or golden baseline was changed.
+risks:
+  - >-
+    Full-stack workflow monitoring remains environment-gated; isolated browser fixtures
+    cover Core-unavailable, malformed, and auth-reset behavior.
+unresolved:
+  []

@@ -1214,6 +1214,23 @@
         "responses": { "201": { "description": "Workflow definition and first editable draft created", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDraft" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } }
       }
     },
+    "/api/v1/workflows/stream": {
+      "get": {
+        "operationId": "streamWorkflowEvents", "tags": ["Workflows"],
+        "parameters": [
+          { "name": "Last-Event-ID", "in": "header", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Last fully processed owner-authorized persisted workflow lifecycle event. Replay resumes strictly after this event." }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped persisted metadata-only workflow lifecycle replay followed by live events and heartbeats", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } }, "X-Accel-Buffering": { "required": true, "schema": { "type": "string", "const": "no" } } }, "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/WorkflowStreamEvent" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "description": "Last-Event-ID is not an owner-authorized persisted workflow lifecycle event", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "410": { "description": "Requested owner-authorized event cursor is no longer available; reconcile from workflow resources before reconnecting", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/api/v1/workflows/{workflow_id}": {
       "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }],
       "get": { "operationId": "getWorkflow", "tags": ["Workflows"], "responses": { "200": { "description": "Owner-scoped workflow definition", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDefinition" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } }
@@ -1233,16 +1250,24 @@
     },
     "/api/v1/workflows/{workflow_id}/drafts/{draft_id}/publish": {
       "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowDraftId" }],
-      "post": { "operationId": "publishWorkflowDraft", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowVersionCommand" } } } }, "responses": { "201": { "description": "Immutable validated workflow revision published", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowRevision" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } } }
+      "post": { "operationId": "publishWorkflowDraft", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowVersionCommand" } } } }, "responses": { "201": { "description": "Immutable validated workflow revision published", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowRevision" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }, "503": { "description": "Workflow publication is disabled by deployment policy", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } } } }
     },
     "/api/v1/workflows/{workflow_id}/revisions/{revision_id}": {
       "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowRevisionId" }],
       "get": { "operationId": "getWorkflowRevision", "tags": ["Workflows"], "responses": { "200": { "description": "Owner-private immutable workflow revision", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowRevision" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } }
     },
+    "/api/v1/workflows/{workflow_id}/retire": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }],
+      "post": { "operationId": "retireWorkflowDefinition", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowVersionCommand" } } } }, "responses": { "200": { "description": "Workflow definition retired without altering pinned immutable revisions or admitted instances", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDefinition" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/revisions/{revision_id}/retire": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowRevisionId" }],
+      "post": { "operationId": "retireWorkflowRevision", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowVersionCommand" } } } }, "responses": { "200": { "description": "Published workflow revision retired without changing its immutable definition or admitted instances", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowRevision" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
     "/api/v1/workflows/{workflow_id}/instances": {
       "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }],
       "get": { "operationId": "listWorkflowInstances", "tags": ["Workflows"], "responses": { "200": { "description": "Owner-scoped workflow instance summaries", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowInstancePage" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } },
-      "post": { "operationId": "startWorkflowInstance", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StartWorkflowInstanceRequest" } } } }, "responses": { "202": { "description": "Manual workflow instance durably admitted", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowInstance" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } } }
+      "post": { "operationId": "startWorkflowInstance", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StartWorkflowInstanceRequest" } } } }, "responses": { "202": { "description": "Manual workflow instance durably admitted", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowInstance" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }, "503": { "description": "Workflow instance admission is disabled by deployment policy", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } } } }
     },
     "/api/v1/workflows/{workflow_id}/instances/{instance_id}": {
       "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowInstanceId" }],
@@ -3723,9 +3748,10 @@
       },
       "WorkflowRevision": {
         "type": "object", "additionalProperties": false, "description": "Immutable published revision, limited to 65536 bytes as RFC 8785 canonical JSON and pinned unchanged for every admitted instance.",
-        "required": ["id", "workflowId", "revision", "displayName", "inputFields", "steps", "limits", "publishedAt"],
-        "properties": { "id": { "type": "string", "format": "uuid" }, "workflowId": { "type": "string", "format": "uuid" }, "revision": { "type": "integer", "minimum": 1 }, "displayName": { "type": "string", "minLength": 1, "maxLength": 160 }, "inputFields": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowInputFieldDefinition" } }, "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowStep" } }, "limits": { "$ref": "#/components/schemas/WorkflowLimits" }, "publishedAt": { "type": "string", "format": "date-time" } }
+        "required": ["id", "workflowId", "revision", "displayName", "inputFields", "steps", "limits", "status", "version", "publishedAt", "retiredAt"],
+        "properties": { "id": { "type": "string", "format": "uuid" }, "workflowId": { "type": "string", "format": "uuid" }, "revision": { "type": "integer", "minimum": 1 }, "displayName": { "type": "string", "minLength": 1, "maxLength": 160 }, "inputFields": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowInputFieldDefinition" } }, "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowStep" } }, "limits": { "$ref": "#/components/schemas/WorkflowLimits" }, "status": { "$ref": "#/components/schemas/WorkflowRevisionStatus" }, "version": { "type": "integer", "minimum": 1 }, "publishedAt": { "type": "string", "format": "date-time" }, "retiredAt": { "type": ["string", "null"], "format": "date-time" } }
       },
+      "WorkflowRevisionStatus": { "type": "string", "enum": ["published", "retired"] },
       "CreateWorkflowDraftRequest": { "type": "object", "additionalProperties": false, "required": ["displayName", "inputFields", "steps"], "properties": { "displayName": { "type": "string", "minLength": 1, "maxLength": 160 }, "inputFields": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowInputFieldDefinition" } }, "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowStep" } } } },
       "UpdateWorkflowDraftRequest": { "type": "object", "additionalProperties": false, "required": ["displayName", "inputFields", "steps", "expectedVersion"], "properties": { "displayName": { "type": "string", "minLength": 1, "maxLength": 160 }, "inputFields": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowInputFieldDefinition" } }, "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowStep" } }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
       "CloneWorkflowDraftRequest": { "type": "object", "additionalProperties": false, "required": ["revisionId", "expectedDefinitionVersion"], "properties": { "revisionId": { "type": "string", "format": "uuid" }, "expectedDefinitionVersion": { "type": "integer", "minimum": 1 } } },
@@ -3758,7 +3784,11 @@
       "WorkflowStepKind": { "type": "string", "enum": ["agent_run", "owner_approval", "owner_notification", "wait_until"] },
       "WorkflowStepState": {
         "type": "object", "additionalProperties": false, "description": "Content-bounded exact step state; any private output is available only in this owner-authorized no-store snapshot.",
-        "required": ["ordinal", "kind", "stepExecutionId", "status", "effectOutcome", "recoveryCapabilities", "replayUsed", "result", "startedAt", "settledAt"],
+        "required": ["ordinal", "kind", "status", "effectOutcome", "recoveryCapabilities", "replayUsed", "result", "startedAt", "settledAt"],
+        "oneOf": [
+          { "required": ["status"], "properties": { "status": { "type": "string", "const": "pending" } } },
+          { "required": ["status", "stepExecutionId"], "properties": { "status": { "type": "string", "enum": ["running", "waiting_for_time", "waiting_for_approval", "failed_replayable", "resolution_required", "completed", "rejected", "expired", "canceled", "failed"] }, "stepExecutionId": { "type": "string", "format": "uuid" } } }
+        ],
         "properties": { "ordinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "kind": { "$ref": "#/components/schemas/WorkflowStepKind" }, "stepExecutionId": { "type": "string", "format": "uuid" }, "status": { "$ref": "#/components/schemas/WorkflowStepStatus" }, "effectOutcome": { "$ref": "#/components/schemas/WorkflowEffectOutcome" }, "recoveryCapabilities": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowRecoveryCapability" } }, "replayUsed": { "type": "boolean" }, "result": { "oneOf": [{ "$ref": "#/components/schemas/WorkflowStepResult" }, { "type": "null" }] }, "startedAt": { "type": ["string", "null"], "format": "date-time" }, "settledAt": { "type": ["string", "null"], "format": "date-time" } }
       },
       "WorkflowCompletedEffect": { "type": "object", "additionalProperties": false, "required": ["stepOrdinal", "stepKind"], "properties": { "stepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "stepKind": { "$ref": "#/components/schemas/WorkflowStepKind" } } },
@@ -3782,6 +3812,46 @@
       "DeleteWorkflowInstanceResultRequest": { "type": "object", "additionalProperties": false, "required": ["scope", "expectedVersion"], "properties": { "scope": { "type": "string", "const": "terminal_instance_result" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
       "DeleteWorkflowInstanceCheckpointsRequest": { "type": "object", "additionalProperties": false, "required": ["scope", "expectedVersion"], "properties": { "scope": { "type": "string", "const": "terminal_instance_checkpoints" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
       "WorkflowDeletionReceipt": { "type": "object", "additionalProperties": false, "required": ["scope", "deleted", "tombstoneRetained", "deletedAt"], "properties": { "scope": { "$ref": "#/components/schemas/WorkflowDeletionScope" }, "deleted": { "type": "boolean" }, "tombstoneRetained": { "type": "boolean" }, "deletedAt": { "type": "string", "format": "date-time" } } },
+      "WorkflowStreamEvent": {
+        "description": "Metadata-only workflow lifecycle stream envelope sourced from persisted owner-scoped lifecycle events. Workflow names, definitions, inputs, outputs, instructions, mappings, approval presentation, notification content, owner identity, credentials, executor state, prompts, responses and hidden reasoning are prohibited.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/WorkflowDefinitionLifecycleEvent" },
+          { "$ref": "#/components/schemas/WorkflowInstanceLifecycleEvent" },
+          { "$ref": "#/components/schemas/WorkflowStepLifecycleEvent" },
+          { "$ref": "#/components/schemas/WorkflowRetentionLifecycleEvent" },
+          { "$ref": "#/components/schemas/WorkflowHeartbeatEvent" }
+        ],
+        "discriminator": { "propertyName": "eventType" }
+      },
+      "WorkflowDefinitionLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "workflowId", "revisionId", "version", "occurredAt"],
+        "oneOf": [
+          { "required": ["eventType", "revisionId"], "properties": { "eventType": { "type": "string", "enum": ["workflow.revision.published", "workflow.revision.retired"] }, "revisionId": { "type": "string", "format": "uuid" } } },
+          { "required": ["eventType", "revisionId"], "properties": { "eventType": { "type": "string", "const": "workflow.definition.retired" }, "revisionId": { "type": "null" } } }
+        ],
+        "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "type": "string", "format": "uuid" }, "eventType": { "type": "string", "enum": ["workflow.revision.published", "workflow.revision.retired", "workflow.definition.retired"] }, "workflowId": { "type": "string", "format": "uuid" }, "revisionId": { "type": ["string", "null"], "format": "uuid" }, "version": { "type": "integer", "minimum": 1 }, "occurredAt": { "type": "string", "format": "date-time" } }
+      },
+      "WorkflowInstanceLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "workflowId", "revisionId", "instanceId", "instanceStatus", "terminalOutcome", "currentStepOrdinal", "version", "occurredAt"],
+        "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "type": "string", "format": "uuid" }, "eventType": { "type": "string", "enum": ["workflow.instance.admitted", "workflow.instance.status_changed", "workflow.instance.terminal"] }, "workflowId": { "type": "string", "format": "uuid" }, "revisionId": { "type": "string", "format": "uuid" }, "instanceId": { "type": "string", "format": "uuid" }, "instanceStatus": { "$ref": "#/components/schemas/WorkflowInstanceStatus" }, "terminalOutcome": { "oneOf": [{ "$ref": "#/components/schemas/WorkflowTerminalOutcome" }, { "type": "null" }] }, "currentStepOrdinal": { "type": ["integer", "null"], "minimum": 1, "maximum": 8 }, "version": { "type": "integer", "minimum": 1 }, "occurredAt": { "type": "string", "format": "date-time" } }
+      },
+      "WorkflowStepLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "workflowId", "revisionId", "instanceId", "stepExecutionId", "stepOrdinal", "stepKind", "stepStatus", "effectOutcome", "recoveryCapabilities", "instanceVersion", "occurredAt"],
+        "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "type": "string", "format": "uuid" }, "eventType": { "type": "string", "enum": ["workflow.step.status_changed", "workflow.step.reconciled"] }, "workflowId": { "type": "string", "format": "uuid" }, "revisionId": { "type": "string", "format": "uuid" }, "instanceId": { "type": "string", "format": "uuid" }, "stepExecutionId": { "type": "string", "format": "uuid" }, "stepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "stepKind": { "$ref": "#/components/schemas/WorkflowStepKind" }, "stepStatus": { "$ref": "#/components/schemas/WorkflowStepStatus" }, "effectOutcome": { "$ref": "#/components/schemas/WorkflowEffectOutcome" }, "recoveryCapabilities": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowRecoveryCapability" } }, "instanceVersion": { "type": "integer", "minimum": 1 }, "occurredAt": { "type": "string", "format": "date-time" } }
+      },
+      "WorkflowRetentionLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "workflowId", "revisionId", "instanceId", "deletionScope", "tombstoneRetained", "version", "occurredAt"],
+        "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "type": "string", "format": "uuid" }, "eventType": { "type": "string", "const": "workflow.retention.deleted" }, "workflowId": { "type": "string", "format": "uuid" }, "revisionId": { "type": ["string", "null"], "format": "uuid" }, "instanceId": { "type": ["string", "null"], "format": "uuid" }, "deletionScope": { "$ref": "#/components/schemas/WorkflowDeletionScope" }, "tombstoneRetained": { "type": "boolean" }, "version": { "type": "integer", "minimum": 1 }, "occurredAt": { "type": "string", "format": "date-time" } }
+      },
+      "WorkflowHeartbeatEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventType", "occurredAt"],
+        "properties": { "schemaVersion": { "type": "integer", "const": 1 }, "eventType": { "type": "string", "const": "heartbeat" }, "occurredAt": { "type": "string", "format": "date-time" } }
+      },
       "BriefingScheduleStatus": { "type": "string", "enum": ["active", "paused", "deleted"] },
       "BriefingOccurrenceStatus": { "type": "string", "enum": ["scheduled", "admitted", "running", "completed", "partial", "failed", "canceled", "skipped", "unknown"] },
       "BriefingResultStatus": { "type": "string", "enum": ["completed", "partial", "failed", "canceled", "unknown", "deleted"] },

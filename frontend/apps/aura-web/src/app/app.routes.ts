@@ -38,6 +38,13 @@ export const routes: Routes = [
   { path: 'briefings/new', component: BriefingsPageComponent },
   { path: 'briefings/:id/occurrences/:occurrenceId', component: BriefingsPageComponent },
   { path: 'briefings/:id', component: BriefingsPageComponent },
+  // Workflow Studio owns its feature implementation and is lazy-loaded from
+  // the application shell. Keep the static `new` route ahead of the id route
+  // so the opaque route segment cannot be mistaken for a workflow id.
+  { path: 'workflows', loadComponent: () => import('@aura/aura/automation/workflows').then(({ WorkflowStudioPageComponent }) => WorkflowStudioPageComponent) },
+  { path: 'workflows/new', loadComponent: () => import('@aura/aura/automation/workflows').then(({ WorkflowStudioPageComponent }) => WorkflowStudioPageComponent) },
+  { path: 'workflows/:id/instances/:instanceId', loadComponent: () => import('@aura/aura/automation/workflows').then(({ WorkflowStudioPageComponent }) => WorkflowStudioPageComponent) },
+  { path: 'workflows/:id', loadComponent: () => import('@aura/aura/automation/workflows').then(({ WorkflowStudioPageComponent }) => WorkflowStudioPageComponent) },
   { path: 'notifications', component: NotificationsPageComponent },
   { path: 'notifications/:id', component: NotificationsPageComponent },
   { path: 'approvals', component: ApprovalsPageComponent },

@@ -194,3 +194,27 @@ def test_transition_telemetry_is_bounded_and_trace_only() -> None:
     assert spans[0].parent_span_id == "1234567890abcdef"
     assert all(item.trace_id and set(item.trace_id) != {"0"} for item in spans)
     assert dict(spans[0].dimensions)["dependency"] == "application_validation"
+
+
+def test_transition_errors_emit_nonzero_trace_spans_with_bounded_error_class() -> None:
+    metrics = MetadataMetrics()
+    rev = revision(OwnerApprovalStep())
+    state = new_state(rev, admit_instance(rev, now=NOW, input_values={"prompt": "error"}))
+    with pytest.raises(WorkflowTransitionError):
+        cast(Any, start_step)(
+            state,
+            execution_id="approval-error",
+            expected_version=0,
+            now=NOW,
+            metrics=metrics,
+            trace_id="abcdef0123456789abcdef0123456789",
+            parent_span_id="abcdef0123456789",
+        )
+    spans = [item for item in metrics.snapshot() if item.kind == "span"]
+    assert spans
+    dimensions = dict(spans[-1].dimensions)
+    assert dimensions["outcome"] == "error"
+    assert dimensions["error_class"] == "conflict"
+    assert spans[-1].trace_id == "abcdef0123456789abcdef0123456789"
+    assert spans[-1].span_id and set(spans[-1].span_id) != {"0"}
+    assert metrics.stats().rejected == 0

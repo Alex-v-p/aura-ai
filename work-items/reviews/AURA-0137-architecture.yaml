@@ -1,0 +1,24 @@
+agent: architecture_guardian
+work_item: AURA-0137
+verdict: PASS
+checked:
+  - >-
+    Verified cancellation persists terminal workflow state, the operation-scoped
+    command receipt, and the unpropagated Run cancellation intent atomically;
+    rollback and retry coverage passes for SQL and memory adapters.
+  - >-
+    Verified memory and SQL repositories enforce the same immutable revision,
+    parent-workflow, deletion-lineage, idempotency, due-time, and lifecycle rules.
+  - >-
+    Verified migration 0028, closed lifecycle variants, public Run, Approval, and
+    Notification seams, thin entrypoints, module ownership, identifier-only
+    outbox direction, and persisted replay pagination.
+  - >-
+    Confirmed no scheduler, LangGraph, provider-adapter, frontend product, or
+    Observatory implementation dependency was introduced.
+  - >-
+    Architecture, contract, generated-sync, import, service-isolation, frontend,
+    module-registry, repository-shape, observability, Ruff, Pyright, generated
+    client, lint, and diff checks passed; expanded tests passed 391 with 20
+    environment-gated skips.
+findings: []

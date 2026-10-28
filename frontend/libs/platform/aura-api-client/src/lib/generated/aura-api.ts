@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 2c1744b9ace139e09583873e4a23a96bf83e2755577a5c68ea88ae937775eab6
+// Contract SHA-256: 5af61a7dfce333d7284febba13ed3b7f73e2b142410caf5f626d84d5fea5f2c7
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -428,7 +428,9 @@ export type WorkflowDefinitionPage = { readonly "items": ReadonlyArray<WorkflowD
 
 export type WorkflowDraft = { readonly "id": string; readonly "workflowId": string; readonly "displayName": string; readonly "inputFields": ReadonlyArray<WorkflowInputFieldDefinition>; readonly "steps": ReadonlyArray<WorkflowStep>; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type WorkflowRevision = { readonly "id": string; readonly "workflowId": string; readonly "revision": number; readonly "displayName": string; readonly "inputFields": ReadonlyArray<WorkflowInputFieldDefinition>; readonly "steps": ReadonlyArray<WorkflowStep>; readonly "limits": WorkflowLimits; readonly "publishedAt": string; };
+export type WorkflowRevision = { readonly "id": string; readonly "workflowId": string; readonly "revision": number; readonly "displayName": string; readonly "inputFields": ReadonlyArray<WorkflowInputFieldDefinition>; readonly "steps": ReadonlyArray<WorkflowStep>; readonly "limits": WorkflowLimits; readonly "status": WorkflowRevisionStatus; readonly "version": number; readonly "publishedAt": string; readonly "retiredAt": string | null; };
+
+export type WorkflowRevisionStatus = "published" | "retired";
 
 export type CreateWorkflowDraftRequest = { readonly "displayName": string; readonly "inputFields": ReadonlyArray<WorkflowInputFieldDefinition>; readonly "steps": ReadonlyArray<WorkflowStep>; };
 
@@ -474,7 +476,7 @@ export type WorkflowRecoveryCapability = "request_replay" | "settle_failed" | "r
 
 export type WorkflowStepKind = "agent_run" | "owner_approval" | "owner_notification" | "wait_until";
 
-export type WorkflowStepState = { readonly "ordinal": number; readonly "kind": WorkflowStepKind; readonly "stepExecutionId": string; readonly "status": WorkflowStepStatus; readonly "effectOutcome": WorkflowEffectOutcome; readonly "recoveryCapabilities": ReadonlyArray<WorkflowRecoveryCapability>; readonly "replayUsed": boolean; readonly "result": WorkflowStepResult | null; readonly "startedAt": string | null; readonly "settledAt": string | null; };
+export type WorkflowStepState = { readonly "ordinal": number; readonly "kind": WorkflowStepKind; readonly "stepExecutionId"?: string; readonly "status": WorkflowStepStatus; readonly "effectOutcome": WorkflowEffectOutcome; readonly "recoveryCapabilities": ReadonlyArray<WorkflowRecoveryCapability>; readonly "replayUsed": boolean; readonly "result": WorkflowStepResult | null; readonly "startedAt": string | null; readonly "settledAt": string | null; };
 
 export type WorkflowCompletedEffect = { readonly "stepOrdinal": number; readonly "stepKind": WorkflowStepKind; };
 
@@ -509,6 +511,18 @@ export type DeleteWorkflowInstanceResultRequest = { readonly "scope": "terminal_
 export type DeleteWorkflowInstanceCheckpointsRequest = { readonly "scope": "terminal_instance_checkpoints"; readonly "expectedVersion": number; };
 
 export type WorkflowDeletionReceipt = { readonly "scope": WorkflowDeletionScope; readonly "deleted": boolean; readonly "tombstoneRetained": boolean; readonly "deletedAt": string; };
+
+export type WorkflowStreamEvent = WorkflowDefinitionLifecycleEvent | WorkflowInstanceLifecycleEvent | WorkflowStepLifecycleEvent | WorkflowRetentionLifecycleEvent | WorkflowHeartbeatEvent;
+
+export type WorkflowDefinitionLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "workflow.revision.published" | "workflow.revision.retired" | "workflow.definition.retired"; readonly "workflowId": string; readonly "revisionId": string | null; readonly "version": number; readonly "occurredAt": string; };
+
+export type WorkflowInstanceLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "workflow.instance.admitted" | "workflow.instance.status_changed" | "workflow.instance.terminal"; readonly "workflowId": string; readonly "revisionId": string; readonly "instanceId": string; readonly "instanceStatus": WorkflowInstanceStatus; readonly "terminalOutcome": WorkflowTerminalOutcome | null; readonly "currentStepOrdinal": number | null; readonly "version": number; readonly "occurredAt": string; };
+
+export type WorkflowStepLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "workflow.step.status_changed" | "workflow.step.reconciled"; readonly "workflowId": string; readonly "revisionId": string; readonly "instanceId": string; readonly "stepExecutionId": string; readonly "stepOrdinal": number; readonly "stepKind": WorkflowStepKind; readonly "stepStatus": WorkflowStepStatus; readonly "effectOutcome": WorkflowEffectOutcome; readonly "recoveryCapabilities": ReadonlyArray<WorkflowRecoveryCapability>; readonly "instanceVersion": number; readonly "occurredAt": string; };
+
+export type WorkflowRetentionLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "workflow.retention.deleted"; readonly "workflowId": string; readonly "revisionId": string | null; readonly "instanceId": string | null; readonly "deletionScope": WorkflowDeletionScope; readonly "tombstoneRetained": boolean; readonly "version": number; readonly "occurredAt": string; };
+
+export type WorkflowHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
 
 export type BriefingScheduleStatus = "active" | "paused" | "deleted";
 
@@ -766,6 +780,7 @@ export interface AuraApiOperations {
   readonly streamNotificationEvents: { readonly response: NotificationStreamEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly listWorkflows: { readonly response: WorkflowDefinitionPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly createWorkflowDraft: { readonly response: WorkflowDraft; readonly body: CreateWorkflowDraftRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly streamWorkflowEvents: { readonly response: WorkflowStreamEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
   readonly getWorkflow: { readonly response: WorkflowDefinition; readonly body: never; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly cloneWorkflowDraft: { readonly response: WorkflowDraft; readonly body: CloneWorkflowDraftRequest; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getWorkflowDraft: { readonly response: WorkflowDraft; readonly body: never; readonly path: { readonly "workflow_id": string; readonly "draft_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
@@ -773,6 +788,8 @@ export interface AuraApiOperations {
   readonly validateWorkflowDraft: { readonly response: WorkflowValidationResult; readonly body: WorkflowVersionCommand; readonly path: { readonly "workflow_id": string; readonly "draft_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly publishWorkflowDraft: { readonly response: WorkflowRevision; readonly body: WorkflowVersionCommand; readonly path: { readonly "workflow_id": string; readonly "draft_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getWorkflowRevision: { readonly response: WorkflowRevision; readonly body: never; readonly path: { readonly "workflow_id": string; readonly "revision_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly retireWorkflowDefinition: { readonly response: WorkflowDefinition; readonly body: WorkflowVersionCommand; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly retireWorkflowRevision: { readonly response: WorkflowRevision; readonly body: WorkflowVersionCommand; readonly path: { readonly "workflow_id": string; readonly "revision_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly listWorkflowInstances: { readonly response: WorkflowInstancePage; readonly body: never; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly startWorkflowInstance: { readonly response: WorkflowInstance; readonly body: StartWorkflowInstanceRequest; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getWorkflowInstance: { readonly response: WorkflowInstance; readonly body: never; readonly path: { readonly "workflow_id": string; readonly "instance_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
@@ -922,6 +939,7 @@ export const AURA_API_OPERATIONS = {
   streamNotificationEvents: { method: 'GET', pathTemplate: '/api/v1/notifications/stream', requestMode: 'none', responseMode: 'event-stream' },
   listWorkflows: { method: 'GET', pathTemplate: '/api/v1/workflows', requestMode: 'none', responseMode: 'json' },
   createWorkflowDraft: { method: 'POST', pathTemplate: '/api/v1/workflows', requestMode: 'json', responseMode: 'json' },
+  streamWorkflowEvents: { method: 'GET', pathTemplate: '/api/v1/workflows/stream', requestMode: 'none', responseMode: 'event-stream' },
   getWorkflow: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}', requestMode: 'none', responseMode: 'json' },
   cloneWorkflowDraft: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts', requestMode: 'json', responseMode: 'json' },
   getWorkflowDraft: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts/{draft_id}', requestMode: 'none', responseMode: 'json' },
@@ -929,6 +947,8 @@ export const AURA_API_OPERATIONS = {
   validateWorkflowDraft: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts/{draft_id}/validate', requestMode: 'json', responseMode: 'json' },
   publishWorkflowDraft: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts/{draft_id}/publish', requestMode: 'json', responseMode: 'json' },
   getWorkflowRevision: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}/revisions/{revision_id}', requestMode: 'none', responseMode: 'json' },
+  retireWorkflowDefinition: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/retire', requestMode: 'json', responseMode: 'json' },
+  retireWorkflowRevision: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/revisions/{revision_id}/retire', requestMode: 'json', responseMode: 'json' },
   listWorkflowInstances: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}/instances', requestMode: 'none', responseMode: 'json' },
   startWorkflowInstance: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/instances', requestMode: 'json', responseMode: 'json' },
   getWorkflowInstance: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}/instances/{instance_id}', requestMode: 'none', responseMode: 'json' },

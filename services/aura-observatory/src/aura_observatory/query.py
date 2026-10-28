@@ -11,7 +11,7 @@ import logging
 import math
 import re
 from collections import Counter, defaultdict
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -108,7 +108,44 @@ ANALYTICS_METRICS = (
     "notification_failure_count",
     "notification_acknowledgement_outcome",
     "evaluation_runner_nats_recovery_count",
+    # AURA-0139: the workflow catalogue is deliberately closed.  Scheduler
+    # measurements are not included in this release.
+    "workflow_transition_outcome",
+    "workflow_command_outcome",
+    "workflow_repository_outcome",
+    "workflow_transition_duration_ms",
+    "workflow_command_duration_ms",
+    "workflow_repository_duration_ms",
+    "workflow_definition_validation_duration_ms",
+    "workflow_agent_run_step_duration_ms",
+    "workflow_approval_command_duration_ms",
+    "workflow_notification_step_duration_ms",
+    "workflow_wait_command_duration_ms",
+    "workflow_wait_lag_ms",
+    "workflow_checkpoint_persistence_duration_ms",
+    "workflow_cancellation_duration_ms",
+    "workflow_settlement_duration_ms",
 )
+WORKFLOW_OUTCOME_METRICS = (
+    "workflow_transition_outcome",
+    "workflow_command_outcome",
+    "workflow_repository_outcome",
+)
+WORKFLOW_LATENCY_METRICS = (
+    "workflow_transition_duration_ms",
+    "workflow_command_duration_ms",
+    "workflow_repository_duration_ms",
+    "workflow_definition_validation_duration_ms",
+    "workflow_agent_run_step_duration_ms",
+    "workflow_approval_command_duration_ms",
+    "workflow_notification_step_duration_ms",
+    "workflow_wait_command_duration_ms",
+    "workflow_wait_lag_ms",
+    "workflow_checkpoint_persistence_duration_ms",
+    "workflow_cancellation_duration_ms",
+    "workflow_settlement_duration_ms",
+)
+WORKFLOW_METRICS = WORKFLOW_OUTCOME_METRICS + WORKFLOW_LATENCY_METRICS
 ANALYTICS_UNITS = frozenset({"count", "milliseconds", "bytes", "ratio", "score"})
 ANALYTICS_FOCUSES = ("all", "model", "queue", "retrieval", "tool", "memory", "automation")
 ANALYTICS_AGGREGATIONS = (
@@ -176,12 +213,179 @@ _ANALYTICS_COMPONENT_RE = re.compile(r"^aura\.[a-z][a-z0-9_.-]{0,90}$")
 _ANALYTICS_OPERATION_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,95}$")
 _ANALYTICS_ENVIRONMENT_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 
+# Workflow telemetry dimensions are emitted by a closed Core catalogue.  Keep
+# the same finite vocabulary at the Observatory projection boundary instead of
+# treating a syntax-valid tenant value as an operational dimension.
+WORKFLOW_COMPONENTS = frozenset(
+    {
+        "aura.automation.workflow_state",
+        "aura.automation.workflow_definition",
+        "aura.automation.workflow_step.agent_run",
+        "aura.automation.workflow_approval",
+        "aura.automation.workflow_step.notification",
+        "aura.automation.workflow_step.wait_until",
+        "aura.automation.workflow_checkpoint",
+        "aura.automation.workflow_cancellation",
+        "aura.automation.workflow_settlement",
+    }
+)
+WORKFLOW_OPERATIONS = frozenset(
+    {
+        # These are the three operation dimensions emitted by the Core
+        # workflow telemetry registry.  Keep the dotted names intact: a
+        # synthetic catch-all such as ``run`` would silently discard the
+        # authoritative lifecycle rows at the Observatory boundary.
+        "workflow.transition",
+        "workflow.command",
+        "workflow.repository",
+        # Step and workflow lifecycle components use their own bounded local
+        # operation labels in addition to the three shared workflow spans.
+        "execute",
+        "validate",
+        "persist",
+        "cancel",
+        "settle",
+        "resume",
+    }
+)
+WORKFLOW_LIFECYCLE_OPERATIONS = frozenset(
+    {
+        "workflow.transition",
+        "workflow.command",
+        "workflow.repository",
+    }
+)
+# Agent-run drill-down references have a separate contract vocabulary from
+# aggregate lifecycle/failure rows.  Core emits these exact dimensions for
+# the step-duration measurement; do not broaden them to the failure operation
+# set above.
+WORKFLOW_CORRELATION_COMPONENT = "aura.automation.workflow_step.agent_run"
+WORKFLOW_CORRELATION_OPERATION = "execute"
+
+# The telemetry-v2 envelope is intentionally generic, so a syntactically
+# valid workflow row can still be semantically cross-paired.  Keep the
+# approved fifteen measurements bound to the one component and local
+# operation(s) that emit them; Observatory must discard invalid pairings
+# before any aggregate or failure/correlation output is built.
+WORKFLOW_MEASUREMENT_BINDINGS: dict[str, tuple[str, frozenset[str]]] = {
+    "workflow_transition_outcome": (
+        "aura.automation.workflow_state",
+        frozenset({"workflow.transition"}),
+    ),
+    "workflow_command_outcome": (
+        "aura.automation.workflow_state",
+        frozenset({"workflow.command"}),
+    ),
+    "workflow_repository_outcome": (
+        "aura.automation.workflow_state",
+        frozenset({"workflow.repository"}),
+    ),
+    "workflow_transition_duration_ms": (
+        "aura.automation.workflow_state",
+        frozenset({"workflow.transition"}),
+    ),
+    "workflow_command_duration_ms": (
+        "aura.automation.workflow_state",
+        frozenset({"workflow.command"}),
+    ),
+    "workflow_repository_duration_ms": (
+        "aura.automation.workflow_state",
+        frozenset({"workflow.repository"}),
+    ),
+    "workflow_definition_validation_duration_ms": (
+        "aura.automation.workflow_definition",
+        frozenset({"validate"}),
+    ),
+    "workflow_agent_run_step_duration_ms": (
+        WORKFLOW_CORRELATION_COMPONENT,
+        frozenset({WORKFLOW_CORRELATION_OPERATION}),
+    ),
+    "workflow_approval_command_duration_ms": (
+        "aura.automation.workflow_approval",
+        frozenset({"execute"}),
+    ),
+    "workflow_notification_step_duration_ms": (
+        "aura.automation.workflow_step.notification",
+        frozenset({"execute"}),
+    ),
+    "workflow_wait_command_duration_ms": (
+        "aura.automation.workflow_step.wait_until",
+        frozenset({"execute", "resume"}),
+    ),
+    "workflow_wait_lag_ms": (
+        "aura.automation.workflow_step.wait_until",
+        frozenset({"resume"}),
+    ),
+    "workflow_checkpoint_persistence_duration_ms": (
+        "aura.automation.workflow_checkpoint",
+        frozenset({"persist"}),
+    ),
+    "workflow_cancellation_duration_ms": (
+        "aura.automation.workflow_cancellation",
+        frozenset({"cancel"}),
+    ),
+    "workflow_settlement_duration_ms": (
+        "aura.automation.workflow_settlement",
+        frozenset({"settle"}),
+    ),
+}
+
+
+def _workflow_measurement_is_bound(metric: str, component: str, operation: str) -> bool:
+    binding = WORKFLOW_MEASUREMENT_BINDINGS.get(metric)
+    return binding is not None and binding[0] == component and operation in binding[1]
+# ``unknown`` is an explicit privacy-preserving bucket, never a pass-through
+# for unrecognised exception text or caller-controlled attributes.
+WORKFLOW_ERROR_CLASSES = frozenset(
+    {
+        "unknown",
+        "authorization",
+        "database",
+        "database_programming",
+        "idempotency",
+        "internal",
+        "not_found",
+        "persistence",
+        "serialization",
+        "execution",
+        "budget",
+        "capability",
+        "provider_protocol",
+        "provider",
+        "timeout",
+        "validation",
+        "conflict",
+    }
+)
+
+
+def is_workflow_monitoring_self_event(event: Mapping[str, object]) -> bool:
+    """Identify only the query's own persisted invalidation projection.
+
+    The operation marker is closed metadata emitted by the Observatory query
+    adapter.  Filtering this pair here prevents a slow monitoring query from
+    repeatedly invalidating itself, while preserving all Core observations
+    and unrelated Observatory telemetry.
+    """
+
+    if event.get("type") != "observation.changed":
+        return False
+    data = event.get("data")
+    data_mapping = cast(Mapping[str, object], data) if isinstance(data, Mapping) else None
+    return (
+        data_mapping is not None
+        and data_mapping.get("componentId") == "aura.observatory.query_api"
+        and data_mapping.get("operation") == "workflow_monitoring"
+    )
+
 
 def _analytics_unit(metric: str) -> str:
     return "milliseconds" if metric.endswith("_ms") else "count"
 
 
 def _analytics_focus(metric: str) -> tuple[str, ...]:
+    if metric in WORKFLOW_METRICS:
+        return ("automation", "all")
     if metric.startswith(
         ("inference_", "model_", "structured_", "provider_", "output_", "time_to_")
     ):
@@ -2121,6 +2325,56 @@ class ObservatoryQueryService:
             return await self.query_port.operational_analytics_query(normalized)
         return await self._reference_analytics_port.operational_analytics_query(normalized)
 
+    @_query_resource("workflow_monitoring")
+    async def workflow_monitoring(
+        self,
+        *,
+        from_time: datetime | None = None,
+        to_time: datetime | None = None,
+        bucket: str = "auto",
+        series_limit: int = ANALYTICS_MAX_SERIES,
+        point_limit: int = ANALYTICS_MAX_POINTS,
+    ) -> dict[str, object]:
+        """Return an aggregate workflow snapshot from Observatory telemetry only."""
+
+        if not 1 <= series_limit <= ANALYTICS_MAX_SERIES:
+            raise ValueError("workflow series limit is outside the allowed bound")
+        if not 1 <= point_limit <= ANALYTICS_MAX_POINTS:
+            raise ValueError("workflow point limit is outside the allowed bound")
+        lower, upper = bounded_analytics_window(from_time, to_time)
+        selected_bucket, bucket_seconds = choose_analytics_bucket(bucket, lower, upper)
+        if self.query_port is not None:
+            return await self.query_port.workflow_monitoring_query(
+                lower,
+                upper,
+                bucket=selected_bucket,
+                bucket_seconds=bucket_seconds,
+                series_limit=series_limit,
+                point_limit=point_limit,
+            )
+        observations = await self.store.list_observations(limit=ANALYTICS_MAX_SCANNED_ROWS + 1)
+        result = build_workflow_monitoring_snapshot(
+            observations[: ANALYTICS_MAX_SCANNED_ROWS],
+            lower=lower,
+            upper=upper,
+            bucket=selected_bucket,
+            bucket_seconds=bucket_seconds,
+            series_limit=series_limit,
+            point_limit=point_limit,
+            scanned_rows=len(observations),
+            truncated_by_storage_limit=len(observations) > ANALYTICS_MAX_SCANNED_ROWS,
+        )
+        latest = result.get("freshness")
+        latest_map = cast(Mapping[str, object], latest) if isinstance(latest, Mapping) else None
+        latest_at = _workflow_timestamp(
+            latest_map.get("latestObservedAt") if latest_map is not None else None
+        )
+        try:
+            await self.health_port.record_query_freshness(latest_at)
+        except Exception:
+            pass
+        return result
+
     def _record_query_metrics(self, resource: str, started: float, outcome: str) -> None:
         metric_resource = _QUERY_METRIC_RESOURCE_ALIASES.get(resource, resource)
         self.metrics.record(
@@ -2239,6 +2493,8 @@ class ObservatoryQueryService:
             )
             async for event in narrow.events_after_query(last_event_id, snapshot_sequence):
                 replayed = bool(event.pop("_persisted_replay", False))
+                if is_workflow_monitoring_self_event(event):
+                    continue
                 event_type = str(event.get("type", "heartbeat"))
                 if replayed and event_type in {"observation.changed", "health.changed"}:
                     self.metrics.record(
@@ -2295,6 +2551,20 @@ class ObservatoryQueryService:
                 self.metrics.record(
                     "observatory_sse_replay_count", labels={"event_type": "observation.changed"}
                 )
+                projection_event = {
+                    "id": item.observation_id,
+                    "type": "observation.changed",
+                    "data": {
+                        "observationId": item.observation_id,
+                        "runId": item.correlation.run_id if item.correlation else None,
+                        "traceId": item.trace.trace_id if item.trace else None,
+                        "componentId": item.component.id,
+                        "operation": item.operation,
+                    },
+                    "_persisted_replay": True,
+                }
+                if is_workflow_monitoring_self_event(projection_event):
+                    continue
                 yield {
                     "id": item.observation_id,
                     "type": "observation.changed",
@@ -2772,6 +3042,458 @@ def _reference_analytics_snapshot(
             "scanLimit": ANALYTICS_MAX_SCANNED_ROWS,
             "executionMs": 0.0,
             "executionLimitMs": ANALYTICS_EXECUTION_LIMIT_MS,
+        },
+        "capturePolicy": "metadata_only",
+    }
+
+
+def _workflow_row_value(row: MetadataObservation | Mapping[str, object], key: str) -> object:
+    """Read only the closed metadata fields used by workflow monitoring.
+
+    The production adapter passes a deliberately narrow ClickHouse projection;
+    the reference adapter passes ``MetadataObservation`` instances.  Keeping
+    this normalizer here makes it impossible for the aggregate projection to
+    accidentally depend on workflow content or arbitrary attributes.
+    """
+
+    if isinstance(row, MetadataObservation):
+        if key == "observed_at":
+            return row.observed_at
+        if key == "observation_id":
+            return row.observation_id
+        if key == "component_id":
+            return row.component.id
+        if key == "operation":
+            return row.operation
+        if key == "measurement_name":
+            return row.measurement.name
+        if key == "measurement_value":
+            return row.measurement.value
+        if key == "measurement_unit":
+            return canonical_measurement_unit(row.measurement.name, row.measurement.unit)
+        if key == "dimensions":
+            return row.dimensions
+        if key == "run_id":
+            return row.correlation.run_id if row.correlation else ""
+        if key == "trace_id":
+            return row.trace.trace_id if row.trace else ""
+        return None
+    return row.get(key)
+
+
+def _workflow_timestamp(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
+
+def _workflow_outcome(row: MetadataObservation | Mapping[str, object]) -> str:
+    dimensions_value = _workflow_row_value(row, "dimensions")
+    dimensions: Mapping[str, object] = {}
+    if isinstance(dimensions_value, Mapping):
+        dimensions = cast(Mapping[str, object], dimensions_value)
+    value = "unknown"
+    candidate = dimensions.get("outcome") or dimensions.get("status")
+    if isinstance(candidate, str):
+        value = candidate.casefold()
+    return {
+        "success": "succeeded",
+        "completed": "succeeded",
+        "ok": "succeeded",
+        "error": "failed",
+        "canceled": "cancelled",
+    }.get(value, value if value in {"succeeded", "failed", "cancelled"} else "unknown")
+
+
+def _workflow_dimension(row: MetadataObservation | Mapping[str, object], name: str) -> str:
+    value = _workflow_row_value(row, name)
+    return value if isinstance(value, str) else ""
+
+
+def _workflow_summary(values: Sequence[float], window_seconds: int) -> dict[str, object]:
+    finite = sorted(value for value in values if math.isfinite(value) and value >= 0)
+    if not finite:
+        return {
+            "sampleCount": 0,
+            "minimum": None,
+            "maximum": None,
+            "average": None,
+            "p50": None,
+            "p90": None,
+            "p95": None,
+            "p99": None,
+            "ratePerInterval": None,
+            "rateIntervalSeconds": None,
+        }
+    return {
+        "sampleCount": len(finite),
+        "minimum": finite[0],
+        "maximum": finite[-1],
+        "average": sum(finite) / len(finite),
+        "p50": _analytics_percentile(finite, 0.50),
+        "p90": _analytics_percentile(finite, 0.90),
+        "p95": _analytics_percentile(finite, 0.95),
+        "p99": _analytics_percentile(finite, 0.99),
+        # Rate is not one of the workflow catalogue aggregations.  Keep the
+        # contract fields explicitly null rather than exposing an inferred
+        # rate from a measurement that was only requested as a count/latency.
+        "ratePerInterval": None,
+        "rateIntervalSeconds": None,
+    }
+
+
+def _workflow_count_summary(values: Sequence[float]) -> dict[str, object]:
+    """Summarise outcome counters without inventing a rate measurement."""
+
+    finite = sorted(value for value in values if math.isfinite(value) and value >= 0)
+    if not finite:
+        return _workflow_summary((), 1)
+    return {
+        "sampleCount": int(sum(finite)),
+        "minimum": finite[0],
+        "maximum": finite[-1],
+        "average": sum(finite) / len(finite),
+        "p50": _analytics_percentile(finite, 0.50),
+        "p90": _analytics_percentile(finite, 0.90),
+        "p95": _analytics_percentile(finite, 0.95),
+        "p99": _analytics_percentile(finite, 0.99),
+        "ratePerInterval": None,
+        "rateIntervalSeconds": None,
+    }
+
+
+def build_workflow_monitoring_snapshot(
+    rows: Sequence[MetadataObservation | Mapping[str, object]],
+    *,
+    lower: datetime,
+    upper: datetime,
+    bucket: str,
+    bucket_seconds: int,
+    series_limit: int = ANALYTICS_MAX_SERIES,
+    point_limit: int = ANALYTICS_MAX_POINTS,
+    scanned_rows: int | None = None,
+    truncated_by_storage_limit: bool = False,
+    truncated_by_execution_limit: bool = False,
+    execution_ms: float = 0.0,
+    retention_boundary: bool = False,
+) -> dict[str, object]:
+    """Aggregate closed workflow measurements without retaining row identity.
+
+    ``rows`` is expected to be ordered by the Observatory ingest sequence for
+    late-data detection.  Only the fifteen allowlisted measurements and the
+    finite metadata dimensions represented in the public response are read.
+    """
+
+    lower = lower.astimezone(UTC)
+    upper = upper.astimezone(UTC)
+    selected: list[tuple[MetadataObservation | Mapping[str, object], datetime]] = []
+    previous_at: datetime | None = None
+    late_data = False
+    for row in rows:
+        observed = _workflow_timestamp(_workflow_row_value(row, "observed_at"))
+        if observed is None:
+            continue
+        if previous_at is not None and observed < previous_at:
+            late_data = True
+        previous_at = observed
+        metric = _workflow_row_value(row, "measurement_name")
+        if not isinstance(metric, str) or metric not in WORKFLOW_METRICS:
+            continue
+        if not lower <= observed < upper:
+            continue
+        unit = _workflow_row_value(row, "measurement_unit")
+        expected = "count" if metric in WORKFLOW_OUTCOME_METRICS else "milliseconds"
+        if unit != expected:
+            continue
+        value = _workflow_row_value(row, "measurement_value")
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(float(value))
+        ):
+            continue
+        value_number = float(value)
+        if metric in WORKFLOW_METRICS and value_number < 0:
+            continue
+        if metric in WORKFLOW_OUTCOME_METRICS and not value_number.is_integer():
+            continue
+        if not _workflow_measurement_is_bound(
+            metric,
+            _workflow_dimension(row, "component_id"),
+            _workflow_dimension(row, "operation"),
+        ):
+            continue
+        selected.append((row, observed))
+
+    lifecycle_groups: Counter[tuple[str, str, str]] = Counter()
+    latency_values: dict[str, list[float]] = {metric: [] for metric in WORKFLOW_LATENCY_METRICS}
+    point_values: dict[str, dict[datetime, list[float]]] = {
+        metric: defaultdict(list) for metric in WORKFLOW_LATENCY_METRICS
+    }
+    outcome_values: dict[str, list[float]] = {metric: [] for metric in WORKFLOW_OUTCOME_METRICS}
+    outcome_point_values: dict[str, dict[datetime, list[float]]] = {
+        metric: defaultdict(list) for metric in WORKFLOW_OUTCOME_METRICS
+    }
+    failures: Counter[tuple[str, str, str, str]] = Counter()
+    correlations: list[dict[str, object]] = []
+    for row, observed in selected:
+        metric = str(_workflow_row_value(row, "measurement_name"))
+        operation = _workflow_dimension(row, "operation")
+        component = _workflow_dimension(row, "component_id")
+        if not _workflow_measurement_is_bound(metric, component, operation):
+            continue
+        outcome = _workflow_outcome(row)
+        dimensions_value = _workflow_row_value(row, "dimensions")
+        dimensions: Mapping[str, object] = {}
+        if isinstance(dimensions_value, Mapping):
+            dimensions = cast(Mapping[str, object], dimensions_value)
+        if metric in WORKFLOW_OUTCOME_METRICS:
+            if operation in WORKFLOW_LIFECYCLE_OPERATIONS:
+                count = float(cast(int | float, _workflow_row_value(row, "measurement_value")))
+                lifecycle_groups[(metric, operation, outcome)] += int(count)
+                outcome_values[metric].append(count)
+                epoch = int(observed.timestamp())
+                point_at = datetime.fromtimestamp((epoch // bucket_seconds) * bucket_seconds, UTC)
+                outcome_point_values[metric][point_at].append(count)
+        else:
+            value = float(cast(int | float, _workflow_row_value(row, "measurement_value")))
+            latency_values[metric].append(value)
+            epoch = int(observed.timestamp())
+            point_at = datetime.fromtimestamp((epoch // bucket_seconds) * bucket_seconds, UTC)
+            point_values[metric][point_at].append(value)
+        if outcome == "failed":
+            error_class_value = dimensions.get("errorClass", "unknown")
+            error_class = (
+                error_class_value if isinstance(error_class_value, str) else "unknown"
+            )
+            if error_class not in WORKFLOW_ERROR_CLASSES:
+                error_class = "unknown"
+            if component in WORKFLOW_COMPONENTS and operation in WORKFLOW_OPERATIONS:
+                failures[(component, operation, outcome, error_class)] += 1
+        if metric == "workflow_agent_run_step_duration_ms":
+            run_id = _workflow_dimension(row, "run_id")
+            trace_id = _workflow_dimension(row, "trace_id")
+            if (
+                _UUID_RE.fullmatch(run_id)
+                and re.fullmatch(r"[0-9a-f]{32}", trace_id)
+                and component == WORKFLOW_CORRELATION_COMPONENT
+                and operation == WORKFLOW_CORRELATION_OPERATION
+            ):
+                correlation_error = dimensions.get("errorClass")
+                correlation_error = (
+                    correlation_error
+                    if isinstance(correlation_error, str)
+                    and correlation_error in WORKFLOW_ERROR_CLASSES
+                    else None
+                )
+                correlations.append(
+                    {
+                        "metric": metric,
+                        "runId": run_id,
+                        "traceId": trace_id,
+                        "observedAt": _iso(observed),
+                        "component": _workflow_dimension(row, "component_id"),
+                        "operation": WORKFLOW_CORRELATION_OPERATION,
+                        "outcome": outcome,
+                        "errorClass": correlation_error,
+                    }
+                )
+
+    window_seconds = max(1, int((upper - lower).total_seconds()))
+    partial_reasons: list[str] = []
+    if truncated_by_storage_limit:
+        partial_reasons.append("storage_limit")
+    if truncated_by_execution_limit:
+        partial_reasons.append("execution_limit")
+    if late_data:
+        partial_reasons.append("late_data")
+    if retention_boundary:
+        partial_reasons.append("retention_boundary")
+    latency_summaries: list[dict[str, object]] = []
+    series: list[dict[str, object]] = []
+    for metric in WORKFLOW_LATENCY_METRICS:
+        values = latency_values[metric]
+        if not values and not selected:
+            continue
+        partial = bool(partial_reasons)
+        latency_summaries.append(
+            {
+                "metric": metric,
+                "unit": "milliseconds",
+                "summary": _workflow_summary(values, window_seconds),
+                "availability": "available" if values else "no_data",
+                "partial": partial,
+            }
+        )
+        if not values:
+            continue
+        buckets = point_values[metric]
+        points: list[dict[str, object]] = []
+        point_limited = len(buckets) > point_limit
+        if point_limited:
+            partial_reasons.append("point_limit")
+        for point_at in sorted(buckets)[:point_limit]:
+            point_values_for_bucket = buckets[point_at]
+            points.append(
+                {
+                    "startAt": _iso(point_at),
+                    "endAt": _iso(min(point_at + timedelta(seconds=bucket_seconds), upper)),
+                    "value": sum(point_values_for_bucket) / len(point_values_for_bucket),
+                    "sampleCount": len(point_values_for_bucket),
+                    "availability": "available",
+                    "partial": bool(partial or point_limited),
+                }
+            )
+        series.append(
+            {
+                "metric": metric,
+                "unit": "milliseconds",
+                "summary": _workflow_summary(values, window_seconds),
+                "points": points,
+                "availability": "available" if values else "no_data",
+                "partial": bool(partial or point_limited),
+            }
+        )
+
+    # Outcome counters are first-class time series.  They receive deterministic
+    # priority so the default 12-series cap never hides all lifecycle signals;
+    # remaining latency series are then selected in catalogue order.
+    outcome_series: list[dict[str, object]] = []
+    for metric in WORKFLOW_OUTCOME_METRICS:
+        values = outcome_values[metric]
+        if not values:
+            continue
+        buckets = outcome_point_values[metric]
+        point_limited = len(buckets) > point_limit
+        if point_limited:
+            partial_reasons.append("point_limit")
+        points = [
+            {
+                "startAt": _iso(point_at),
+                "endAt": _iso(min(point_at + timedelta(seconds=bucket_seconds), upper)),
+                "value": sum(buckets[point_at]),
+                "sampleCount": int(sum(buckets[point_at])),
+                "availability": "available",
+                "partial": bool(point_limited or partial_reasons),
+            }
+            for point_at in sorted(buckets)[:point_limit]
+        ]
+        outcome_series.append(
+            {
+                "metric": metric,
+                "unit": "count",
+                "summary": _workflow_count_summary(values),
+                "points": points,
+                "availability": "available",
+                "partial": bool(point_limited or partial_reasons),
+            }
+        )
+    series = outcome_series + series
+    if len(series) > series_limit:
+        partial_reasons.append("series_limit")
+        series = series[:series_limit]
+    lifecycle_counts = [
+        {
+            "metric": metric,
+            "operation": operation,
+            "outcome": outcome,
+            "count": count,
+            "partial": bool(partial_reasons),
+        }
+        for (metric, operation, outcome), count in sorted(lifecycle_groups.items())
+    ][:ANALYTICS_MAX_BREAKDOWNS]
+    if len(lifecycle_groups) > ANALYTICS_MAX_BREAKDOWNS:
+        partial_reasons.append("series_limit")
+    failure_breakdowns = [
+        {
+            "component": component,
+            "operation": operation,
+            "outcome": outcome,
+            "errorClass": error_class,
+            "count": count,
+            "partial": bool(partial_reasons),
+        }
+        for (component, operation, outcome, error_class), count in sorted(failures.items())
+    ][:ANALYTICS_MAX_BREAKDOWNS]
+    if len(failures) > ANALYTICS_MAX_BREAKDOWNS:
+        partial_reasons.append("series_limit")
+    correlations.sort(
+        key=lambda item: (
+            str(item["observedAt"]),
+            str(item["runId"]),
+            str(item["traceId"]),
+        ),
+        reverse=True,
+    )
+    if len(correlations) > 25:
+        partial_reasons.append("correlation_limit")
+    correlations = correlations[:25]
+    latest = max((observed for _row, observed in selected), default=None)
+    unavailable: list[str] = []
+    if not lifecycle_groups:
+        unavailable.append("lifecycle_counts")
+    if not any(latency_values.values()) and not any(outcome_values.values()):
+        unavailable.extend(("latency_summaries", "time_series"))
+    elif not series:
+        unavailable.append("time_series")
+    if not failures:
+        unavailable.append("failure_breakdowns")
+    if not correlations:
+        unavailable.append("run_trace_correlation")
+    partial_result = bool(partial_reasons)
+    for item in latency_summaries:
+        item["partial"] = partial_result
+    for item in series:
+        item["partial"] = bool(item["partial"] or partial_result)
+        for point in cast(list[dict[str, object]], item["points"]):
+            point["partial"] = bool(point["partial"] or partial_result)
+    for item in lifecycle_counts:
+        item["partial"] = partial_result
+    for item in failure_breakdowns:
+        item["partial"] = partial_result
+    return {
+        "snapshotAt": _iso(datetime.now(UTC)),
+        "window": {
+            "from": _iso(lower),
+            "to": _iso(upper),
+            "bucket": bucket,
+            "bucketSeconds": bucket_seconds,
+        },
+        "lifecycleCounts": lifecycle_counts,
+        "latencySummaries": latency_summaries,
+        "series": series,
+        "failureBreakdowns": failure_breakdowns,
+        "recentCorrelations": correlations,
+        "freshness": analytics_freshness(latest),
+        "partial": partial_result,
+        "partialReasons": sorted(set(partial_reasons)),
+        "unavailableSignals": sorted(set(unavailable)),
+        "limits": {
+            "defaultWindowHours": 24,
+            "maximumWindowDays": 31,
+            "maximumScannedRows": ANALYTICS_MAX_SCANNED_ROWS,
+            "scannedRows": min(
+                ANALYTICS_MAX_SCANNED_ROWS,
+                scanned_rows if scanned_rows is not None else len(rows),
+            ),
+            "maximumSeries": ANALYTICS_MAX_SERIES,
+            "returnedSeries": len(series),
+            "maximumPointsPerSeries": ANALYTICS_MAX_POINTS,
+            "returnedPoints": sum(len(cast(list[object], item["points"])) for item in series),
+            "maximumFailureBreakdowns": ANALYTICS_MAX_BREAKDOWNS,
+            "returnedFailureBreakdowns": len(failure_breakdowns),
+            "maximumRecentCorrelations": 25,
+            "returnedRecentCorrelations": len(correlations),
+            "executionLimitMs": ANALYTICS_EXECUTION_LIMIT_MS,
+            "executionMs": min(ANALYTICS_EXECUTION_LIMIT_MS, max(0.0, execution_ms)),
+            "truncatedByExecutionLimit": truncated_by_execution_limit,
+            "truncatedByStorageLimit": truncated_by_storage_limit,
         },
         "capturePolicy": "metadata_only",
     }

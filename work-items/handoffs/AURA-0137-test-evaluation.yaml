@@ -1,0 +1,129 @@
+agent: test_evaluation_engineer
+work_item: AURA-0137
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: shared
+scope:
+  ownership_zone: evaluation.durable-workflows
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_workflow_execution_handlers.py
+  - services/aura-core/tests/test_workflow_api.py
+  - services/aura-core/tests/test_workflow_worker.py
+  - services/aura-core/tests/test_workflow_execution_integration.py
+  - services/aura-core/tests/test_workflow_repository.py
+  - services/aura-core/tests/test_workflow_run_recovery.py
+  - services/aura-core/tests/test_migration_0028_workflow_execution.py
+  - services/aura-core/tests/system/test_workflow_execution.py
+  - services/aura-core/tests/test_workflow_state_machine.py
+  - services/aura-core/tests/test_workflow_platform_boundaries.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.automation.workflow_definition
+    - aura.automation.workflow_step.agent_run
+    - aura.automation.workflow_approval
+    - aura.automation.workflow_step.notification
+    - aura.automation.workflow_step.wait_until
+    - aura.automation.workflow_checkpoint
+    - aura.automation.workflow_cancellation
+    - aura.automation.workflow_settlement
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0137.yaml (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0137.yaml (validated 58 changed paths)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0137.yaml (passed)
+    - python3 tooling/architecture/validate-generated-sync.py (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - python3 tooling/architecture/validate-frontend-boundaries.py (passed)
+    - python3 tooling/architecture/validate-module-registry.py (passed)
+    - python3 tooling/architecture/validate-repository-shape.py (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0137.yaml (passed)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0137.yaml (skipped; no protected baseline changes)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/workflows services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py services/aura-core/tests/test_workflow_execution_handlers.py services/aura-core/tests/test_workflow_api.py services/aura-core/tests/test_workflow_worker.py services/aura-core/tests/test_workflow_execution_integration.py services/aura-core/tests/test_workflow_repository.py services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/system/test_workflow_execution.py (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/workflows services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py services/aura-core/tests/test_workflow_execution_handlers.py services/aura-core/tests/test_workflow_api.py services/aura-core/tests/test_workflow_worker.py services/aura-core/tests/test_workflow_execution_integration.py services/aura-core/tests/test_workflow_repository.py services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/system/test_workflow_execution.py (0 errors, 0 warnings, 0 informations)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0137_workflow_execution_contract.py
+      services/aura-core/tests/test_workflow_state_machine.py
+      services/aura-core/tests/test_workflow_repository.py
+      services/aura-core/tests/test_workflow_contract_state_evaluation.py
+      services/aura-core/tests/test_workflow_execution_handlers.py
+      services/aura-core/tests/test_workflow_execution_integration.py
+      services/aura-core/tests/test_workflow_run_recovery.py
+      services/aura-core/tests/test_workflow_api.py services/aura-core/tests/test_workflow_worker.py
+      services/aura-core/tests/test_migration_0028_workflow_execution.py services/aura-core/tests/test_migrations.py
+      services/aura-core/tests/test_run_events.py services/aura-core/tests/test_run_evidence.py
+      services/aura-core/tests/test_settings.py services/aura-core/tests/test_telemetry.py
+      services/aura-core/tests/test_approvals.py services/aura-core/tests/test_approval_stream.py
+      services/aura-core/tests/test_notifications.py services/aura-core/tests/test_notification_api.py
+      services/aura-core/tests/system/test_workflow_execution.py -q
+      (387 passed, 20 skipped)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_workflow_run_recovery.py -q (1 passed, 4 skipped; four database-backed cases skipped because AURA_0137_DATABASE_URL is not configured)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_workflow_platform_boundaries.py
+      services/aura-core/tests/test_migration_0028_workflow_execution.py
+      services/aura-core/tests/test_workflow_run_recovery.py::test_cancellation_claim_wins_before_provider_side_effect
+      services/aura-core/tests/test_workflow_repository.py::test_missing_deletion_is_a_stable_false_receipt_and_replays_after_no_target
+      services/aura-core/tests/test_workflow_repository.py::test_clone_requires_definition_version_and_preserves_immutable_source
+      services/aura-core/tests/test_workflow_execution_integration.py::test_workflow_evaluators_cover_component_specific_race_and_replay_cases
+      services/aura-core/tests/test_workflow_execution_integration.py::test_sql_clone_locks_definition_and_uses_immutable_revision_source -q
+      (12 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0137_workflow_execution_contract.py
+      services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py
+      services/aura-core/tests/test_workflow_contract_state_evaluation.py services/aura-core/tests/test_workflow_execution_handlers.py
+      services/aura-core/tests/test_workflow_execution_integration.py services/aura-core/tests/test_workflow_platform_boundaries.py
+      services/aura-core/tests/test_workflow_api.py services/aura-core/tests/test_workflow_worker.py
+      services/aura-core/tests/test_workflow_run_recovery.py services/aura-core/tests/test_migration_0028_workflow_execution.py
+      services/aura-core/tests/test_migrations.py services/aura-core/tests/test_run_events.py services/aura-core/tests/test_run_evidence.py
+      services/aura-core/tests/test_settings.py services/aura-core/tests/test_telemetry.py services/aura-core/tests/test_approvals.py
+      services/aura-core/tests/test_approval_stream.py services/aura-core/tests/test_notifications.py
+      services/aura-core/tests/test_notification_api.py services/aura-core/tests/system/test_workflow_execution.py -q
+      (391 passed, 20 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run ruff check
+      services/aura-core/tests/test_workflow_repository.py
+      services/aura-core/tests/test_workflow_execution_integration.py
+      services/aura-core/tests/test_workflow_run_recovery.py
+      services/aura-core/tests/test_migration_0028_workflow_execution.py
+      services/aura-core/tests/test_workflow_platform_boundaries.py (passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/tests/test_workflow_repository.py
+      services/aura-core/tests/test_workflow_execution_integration.py
+      services/aura-core/tests/test_workflow_run_recovery.py
+      services/aura-core/tests/test_migration_0028_workflow_execution.py
+      services/aura-core/tests/test_workflow_platform_boundaries.py (0 errors, 0 warnings, 0 informations)
+    - cd frontend && pnpm exec nx run aura-api-client:generate (passed)
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated (passed)
+    - cd frontend && pnpm exec nx run aura-api-client:lint (passed)
+    - git diff --check (passed)
+  failed: []
+  not_run: []
+decisions:
+  - Added contract tests for persisted workflow SSE replay, retirement, closed schemas, CSRF/idempotency, and disabled admission flag.
+  - Added deterministic state/evaluation tests covering all four step kinds, closed result algebra, replay/unknown/cancel/deadline behavior, duplicate admission, metadata-only checkpoints, manifests, and metrics.
+  - Added worker transport tests covering identifier-only success, poison rejection, retryable timeout, and cancellation propagation.
+  - Completed the correction pass after Core composition landed; tests now exercise worker continuation, evaluator registry, component emission sites, DTO lineage, SQL boundaries, SSE replay, and all focused compatibility suites.
+  - Added semantic create replay with regenerated server IDs, SQL due filtering before LIMIT, approval commit-before-ack redelivery, wait-lag and error-span telemetry, lifecycle contract coverage, and case-driven evaluator replay.
+  - Re-ran final verification after domain corrections; semantic cancel/recovery conflicts and closed lifecycle envelopes now pass.
+  - Added executable coverage for stable false deletion receipts, immutable clone version fencing, cancellation claims before provider effects, persisted due-wait filtering, revision retirement nullability, closed SSE/telemetry envelopes, and component-specific evaluator race/replay determinism.
+  - Revalidated public evaluator results against actual `passed`/`outcome` values, exact evaluator manifest IDs, SQL live-parent retirement fencing, cancellation intent durability after downstream failure, aggregate lifecycle replay, terminal deletion SSE scope, provider-failure trace correlation, and stable clone timestamps.
+  - Added final atomicity and lineage assertions: SQL cancellation-intent insertion is attempted within one rollback-capable transaction, in-memory idempotency records are operation-scoped across create/save commands, retries reuse the exact workflow lineage, and memory cloning rejects a revision from another parent definition.
+risks:
+  - The exact focused command uses the current system test path and passes under the repository's configured pytest import behavior.
+  - Durable SQL Run recovery has one deterministic in-memory-independent check passing; four database-backed restart/replay cases are environment-skipped because AURA_0137_DATABASE_URL is not configured.
+unresolved: []

@@ -71,6 +71,14 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.automation.briefing_delivery": "1.0.0",
     "aura.governance.approval_workflow": "1.2.0",
     "aura.automation.workflow_state": "1.0.0",
+    "aura.automation.workflow_definition": "1.0.0",
+    "aura.automation.workflow_step.agent_run": "1.0.0",
+    "aura.automation.workflow_approval": "1.0.0",
+    "aura.automation.workflow_step.notification": "1.0.0",
+    "aura.automation.workflow_step.wait_until": "1.0.0",
+    "aura.automation.workflow_checkpoint": "1.0.0",
+    "aura.automation.workflow_cancellation": "1.0.0",
+    "aura.automation.workflow_settlement": "1.0.0",
     "aura.evaluation.runner": "1.0.0",
     "aura.integration.calendar_connection": "1.0.0",
     "aura.provider.google_calendar": "1.0.0",
@@ -280,6 +288,33 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "workflow_command_duration_ms",
             "workflow_repository_duration_ms",
         }
+    ),
+    "aura.automation.workflow_definition": frozenset(
+        {"workflow_definition_validation_duration_ms"}
+    ),
+    "aura.automation.workflow_step.agent_run": frozenset(
+        {"workflow_agent_run_step_duration_ms"}
+    ),
+    "aura.automation.workflow_approval": frozenset(
+        {"workflow_approval_command_duration_ms"}
+    ),
+    "aura.automation.workflow_step.notification": frozenset(
+        {"workflow_notification_step_duration_ms"}
+    ),
+    "aura.automation.workflow_step.wait_until": frozenset(
+        {
+            "workflow_wait_command_duration_ms",
+            "workflow_wait_lag_ms",
+        }
+    ),
+    "aura.automation.workflow_checkpoint": frozenset(
+        {"workflow_checkpoint_persistence_duration_ms"}
+    ),
+    "aura.automation.workflow_cancellation": frozenset(
+        {"workflow_cancellation_duration_ms"}
+    ),
+    "aura.automation.workflow_settlement": frozenset(
+        {"workflow_settlement_duration_ms"}
     ),
     "aura.automation.briefing_scheduler": frozenset(
         {
@@ -651,6 +686,17 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.automation.workflow_state": frozenset(
         {"workflow.transition", "workflow.command", "workflow.repository"}
     ),
+    # Workflow application instrumentation uses one closed operation set per
+    # component.  These are intentionally finite: a workflow definition or
+    # step can never turn user content into a span name.
+    "aura.automation.workflow_definition": frozenset({"validate"}),
+    "aura.automation.workflow_step.agent_run": frozenset({"execute"}),
+    "aura.automation.workflow_approval": frozenset({"execute"}),
+    "aura.automation.workflow_step.notification": frozenset({"execute"}),
+    "aura.automation.workflow_step.wait_until": frozenset({"execute", "resume"}),
+    "aura.automation.workflow_checkpoint": frozenset({"persist"}),
+    "aura.automation.workflow_cancellation": frozenset({"cancel"}),
+    "aura.automation.workflow_settlement": frozenset({"settle"}),
     "aura.automation.briefing_scheduler": frozenset(
         {"briefing.schedule.scan", "briefing.schedule.claim"}
     ),
@@ -868,6 +914,23 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
     ("aura.automation.workflow_state", "workflow.command"): "workflow_command_duration_ms",
     ("aura.automation.workflow_state", "workflow.repository"): "workflow_repository_duration_ms",
     (
+        "aura.automation.workflow_definition", "validate"
+    ): "workflow_definition_validation_duration_ms",
+    (
+        "aura.automation.workflow_step.agent_run", "execute"
+    ): "workflow_agent_run_step_duration_ms",
+    ("aura.automation.workflow_approval", "execute"): "workflow_approval_command_duration_ms",
+    (
+        "aura.automation.workflow_step.notification", "execute"
+    ): "workflow_notification_step_duration_ms",
+    ("aura.automation.workflow_step.wait_until", "execute"): "workflow_wait_command_duration_ms",
+    ("aura.automation.workflow_step.wait_until", "resume"): "workflow_wait_lag_ms",
+    (
+        "aura.automation.workflow_checkpoint", "persist"
+    ): "workflow_checkpoint_persistence_duration_ms",
+    ("aura.automation.workflow_cancellation", "cancel"): "workflow_cancellation_duration_ms",
+    ("aura.automation.workflow_settlement", "settle"): "workflow_settlement_duration_ms",
+    (
         "aura.automation.briefing_scheduler",
         "briefing.schedule.scan",
     ): "briefing_schedule_claim_duration_ms",
@@ -961,6 +1024,24 @@ _WORKFLOW_OUTCOMES = frozenset(
         "ok",
         "replayed",
         "unknown",
+    }
+)
+
+# Workflow application instrumentation must never fall back to the all-zero
+# trace used by pure transition tests.  Production composition may omit an
+# explicit parent for a read or a legacy adapter, so the telemetry boundary
+# supplies an opaque request trace while retaining the same finite dimensions.
+_WORKFLOW_TELEMETRY_COMPONENTS = frozenset(
+    {
+        "aura.automation.workflow_state",
+        "aura.automation.workflow_definition",
+        "aura.automation.workflow_step.agent_run",
+        "aura.automation.workflow_approval",
+        "aura.automation.workflow_step.notification",
+        "aura.automation.workflow_step.wait_until",
+        "aura.automation.workflow_checkpoint",
+        "aura.automation.workflow_cancellation",
+        "aura.automation.workflow_settlement",
     }
 )
 
@@ -1338,6 +1419,10 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "workflow.transition",
             "workflow.command",
             "workflow.repository",
+            "validate",
+            "execute",
+            "persist",
+            "settle",
         }
     ),
     "status": frozenset(
@@ -1364,6 +1449,8 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "awaiting_confirmation",
             "waiting_for_confirmation",
             "executing",
+            "waiting_for_time",
+            "terminal",
         }
     ),
     "token_estimator": frozenset({"chars_div_4_ceil"}),
@@ -2331,6 +2418,12 @@ class MetadataMetrics:
         link_span_ids: Sequence[str] = (),
         **trace_attributes: str,
     ) -> None:
+        trace_id = cast(str, _ensure_workflow_trace_id(component, trace_id))
+        if component in _WORKFLOW_TELEMETRY_COMPONENTS and dependency == "workflow":
+            # Older public workflow ports use the generic dependency label;
+            # keep the closed telemetry vocabulary and historical lineage
+            # contract stable at this boundary.
+            dependency = "application_validation"
         memory_context = current_memory_trace_context()
         if memory_context is not None and component in {
             "aura.knowledge.memory_extraction",
@@ -2443,6 +2536,12 @@ class MetadataMetrics:
         conversation_id: str | None,
         attributes: Mapping[str, str],
     ) -> None:
+        trace_id = _ensure_workflow_trace_id(component, trace_id)
+        if (
+            component in _WORKFLOW_TELEMETRY_COMPONENTS
+            and attributes.get("dependency") == "workflow"
+        ):
+            attributes = {**attributes, "dependency": "application_validation"}
         memory_context = current_memory_trace_context()
         if memory_context is not None and component in {
             "aura.knowledge.memory_extraction",
@@ -2680,6 +2779,22 @@ def _looks_like_uuid(value: str) -> bool:
 
 def _valid_trace_id(value: str) -> bool:
     return len(value) == 32 and all(character in "0123456789abcdef" for character in value)
+
+
+def _ensure_workflow_trace_id(component: str, trace_id: str | None) -> str | None:
+    """Return a non-zero trace id for workflow records.
+
+    Transition helpers intentionally use an all-zero sentinel when called in
+    isolation.  That sentinel is useful for deterministic unit tests but is
+    not a valid production lineage.  Normalize it only for workflow records;
+    all other telemetry retains its existing optional trace semantics.
+    """
+
+    if component not in _WORKFLOW_TELEMETRY_COMPONENTS:
+        return trace_id
+    if trace_id is None or not _valid_trace_id(trace_id) or set(trace_id) == {"0"}:
+        return secrets.token_hex(16)
+    return trace_id
 
 
 def _valid_span_id(value: str) -> bool:

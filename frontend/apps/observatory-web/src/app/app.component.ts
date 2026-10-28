@@ -10,6 +10,8 @@ import {
   ObservatoryComparisonComponent,
   ObservatoryComponentsComponent,
   ObservatoryOperationsWorkspaceComponent,
+  WorkflowMonitoringComponent,
+  WorkflowMonitoringStore,
   ObservatoryOverviewComponent,
   ObservatoryRetentionComponent,
   ObservatoryRunsComponent,
@@ -25,7 +27,7 @@ import {
   type ObservatoryIconName,
 } from '@aura/observatory';
 
-type ObservatoryDestination = 'overview' | 'runs' | 'trace' | 'comparison' | 'components' | 'analytics' | 'operations' | 'retention' | 'evaluation' | 'experiments';
+type ObservatoryDestination = 'overview' | 'runs' | 'trace' | 'comparison' | 'components' | 'analytics' | 'workflows' | 'operations' | 'retention' | 'evaluation' | 'experiments';
 
 interface ObservatoryNavItem {
   readonly id: ObservatoryDestination;
@@ -54,6 +56,7 @@ interface ObservatoryNavGroup {
     EvaluationWorkspaceComponent,
     ExperimentWorkspaceComponent,
     ObservatoryOperationsWorkspaceComponent,
+    WorkflowMonitoringComponent,
     ObservatoryStatusBadgeComponent,
     ObservatoryIconComponent,
   ],
@@ -63,6 +66,7 @@ interface ObservatoryNavGroup {
     EvaluationWorkspaceStore,
     ExperimentWorkspaceStore,
     OperationsWorkspaceStore,
+    WorkflowMonitoringStore,
     { provide: OBSERVATORY_GATEWAY, useExisting: FetchObservatoryTransport },
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -124,6 +128,7 @@ interface ObservatoryNavGroup {
               @case ('comparison') { <observatory-comparison /> }
               @case ('components') { <observatory-components /> }
               @case ('analytics') { <observatory-analytics /> }
+              @case ('workflows') { <observatory-workflow-monitoring (correlationSelected)="openWorkflowCorrelation($event)" /> }
               @case ('operations') { <observatory-operations-workspace /> }
               @case ('retention') { <observatory-retention /> }
               @case ('evaluation') { <observatory-evaluation-workspace /> }
@@ -157,6 +162,7 @@ export class AppComponent {
       { id: 'runs', label: 'Runs', description: 'Recent execution', icon: 'runs' },
       { id: 'trace', label: 'Trace', description: 'Inspect a run', icon: 'trace' },
       { id: 'components', label: 'Components', description: 'Catalogue & topology', icon: 'components' },
+      { id: 'workflows', label: 'Workflows', description: 'Workflow health', icon: 'operations' },
     ] },
     { id: 'analyze', label: 'Analyze', items: [
       { id: 'analytics', label: 'Analytics', description: 'Operational signals', icon: 'analytics' },
@@ -221,6 +227,11 @@ export class AppComponent {
   }
 
   openTraceFromRun(): void {
+    this.openDestination('trace');
+  }
+
+  openWorkflowCorrelation(reference: { readonly runId: string; readonly traceId: string }): void {
+    void this.store.openRun(reference.runId);
     this.openDestination('trace');
   }
 
@@ -291,6 +302,7 @@ export class AppComponent {
       trace: '#trace-title',
       components: '#components-title',
       analytics: '#analytics-title',
+      workflows: '#workflow-monitoring-title',
       comparison: '#comparison-title',
       evaluation: '#evaluation-title',
       experiments: '#experiment-title',

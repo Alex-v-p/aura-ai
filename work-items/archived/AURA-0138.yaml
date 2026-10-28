@@ -1,0 +1,196 @@
+id: AURA-0138
+title: Build the Aura Web Workflow Studio
+status: integrated
+change_class: repository_governance
+intent: >
+  Add an accessible, responsive Aura Web studio for authoring, publishing,
+  starting, monitoring, recovering, canceling, retiring, and explicitly deleting
+  bounded manual workflows while preserving REST authority, metadata-only live
+  invalidation, immutable revision semantics, and browser privacy boundaries.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/design/sidebar-and-management-surfaces.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/specifications/clients-and-voice.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - work-items/archived/AURA-0137.yaml
+    - The studio consumes the generated Aura v1 client and does not alter Core contracts, persistence, execution, lifecycle events, or admission policy.
+    - Unsaved workflow definitions and mappings remain Angular in-memory state only and are excluded from URLs, browser persistence, service-worker caches, telemetry, logs, screenshots, and SSE.
+    - Metadata-only SSE invalidates local projections and always reconciles through authoritative bounded REST reads; stale usable state remains visible through reconnects and unknown outcomes.
+    - Approval and notification deep links contain only opaque workflow and instance identifiers and do not introduce feature-library dependency cycles.
+    - This work item adds no schedule, branch, loop, parallel, arbitrary-expression, executor, or Observatory behavior.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/automation/v1/workflow-events.schema.json
+feature_references:
+  - AUI-020
+  - AUI-023
+  - AUT-005
+  - AUT-008
+  - AUT-009
+  - AUT-010
+  - AUT-014
+  - AUT-016
+  - AUT-017
+  - AUT-018
+  - AUT-019
+ownership_zones:
+  - frontend.aura-web.workflow-studio
+  - frontend.aura-web.workflow-routing-navigation
+  - frontend.aura-web.workflow-live-reconciliation
+  - frontend.aura-web.approval-workflow-deep-link
+  - frontend.aura-web.notification-workflow-deep-link
+  - frontend.storybook.workflow-studio
+  - frontend.e2e.workflow-studio
+  - repository.frontend-module-registry
+  - delivery.aura0138
+allowed_paths:
+  - work-items/active/AURA-0138.yaml
+  - work-items/archived/AURA-0138.yaml
+  - work-items/handoffs/AURA-0138-*.yaml
+  - work-items/reviews/AURA-0138-*.yaml
+  - work-items/integration/AURA-0138.yaml
+  - frontend/libs/aura/automation/workflows/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/app.routes.spec.ts
+  - frontend/apps/aura-web/src/app/shell/**
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web/src/main.spec.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approval-models.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-page.component.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-page.component.html
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-page.component.spec.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notification-models.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notifications-page.component.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notifications-page.component.html
+  - frontend/libs/aura/automation/notifications/src/lib/notifications-page.component.spec.ts
+  - frontend/apps/storybook/src/workflow-studio.stories.ts
+  - frontend/apps/storybook/src/approval-inbox.stories.ts
+  - frontend/apps/storybook/src/notification-centre.stories.ts
+  - frontend/apps/aura-web-e2e/src/workflows.spec.ts
+  - frontend/apps/aura-web-e2e/src/approvals.spec.ts
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/**
+  - frontend/libs/platform/aura-api-client/src/lib/generated/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - frontend/libs/aura/today/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Workflow definitions mappings inputs outputs results approval presentation and notification content remain in memory only and never enter URL query fragments browser persistence service-worker caches telemetry logs SSE screenshots or diagnostics.
+    - Mutations use the generated same-origin API with credentials CSRF optimistic versions and stable Idempotency-Key retention across unknown outcomes; no bearer token or handwritten transport DTO is introduced.
+    - Metadata-only SSE is never treated as workflow truth and cannot contain owner identity or workflow content; every invalidation is followed by an owner-authorized REST read.
+    - Session reset disconnects streams and clears all workflow draft instance result history and recovery state from memory.
+    - Seven deletion scopes remain explicit non-cascading independently confirmed and accurately represented before destructive submission.
+    - Approval and notification links use only contract-provided opaque lineage and never fabricate or expose workflow content.
+  data_classes:
+    - owner-private in-memory workflow definitions mappings inputs outputs results checkpoints and history
+    - owner-private approval and notification presentation
+    - metadata-only opaque workflow revision instance step and lifecycle identifiers
+required_agents:
+  implementation:
+    - frontend_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 7
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura Web exposes /workflows, /workflows/new, /workflows/:id, and /workflows/:id/instances/:instanceId plus an Automate to Workflows navigation entry without changing other product boundaries.
+  - The authoring experience supports one through eight ordered typed steps for agent run approval notification and wait-until only; add move clone remove and mapping changes revalidate immediately and preserve invalid drafts in memory.
+  - Validation and immutable publication present precise field and step errors; feature-disabled publish or start is a controlled unavailable state that leaves drafts and existing workflow management usable.
+  - Manual start uses bounded typed instance inputs and stable idempotency; unknown mutation outcomes retain the command key and reconcile by REST before offering a safe retry.
+  - Definition revision and instance views show authoritative lifecycle progress step history effect outcome checkpoints recovery capability and terminal result without conflating workflow status with effect certainty.
+  - Exact approval handoff cancellation replay settlement reconciliation retirement and seven deletion scopes are owner-confirmed version-aware and preserve usable stale state during failures.
+  - Metadata-only workflow SSE supports persisted Last-Event-ID reconnect bounded invalidation and unknown or expired cursor recovery; it never replaces authoritative REST state or carries workflow content.
+  - Compatible workflow approval and notification surfaces expose opaque workflow-instance deep links without importing workflow implementation code or changing Today and daily-action behavior.
+  - Workflow state streams and unsaved content are cleared on session reset and never enter URL state localStorage sessionStorage IndexedDB service-worker caches telemetry logs or Storybook snapshots.
+  - Loading empty unavailable stale reconnect validation conflict unknown-outcome permission not-found terminal and partial-recovery states remain actionable and truthful.
+  - Keyboard-only operation visible focus semantic headings status announcements focus management contrast reduced motion 200-percent zoom and mobile tablet desktop layouts meet existing Aura Web accessibility conventions.
+  - No schedule branch loop parallel arbitrary expression executor framework Core change Observatory dependency or per-instance cross-service projection is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0138.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0138.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0138.yaml
+  - cd frontend && pnpm exec nx run aura-workflows:test
+  - cd frontend && pnpm exec nx run aura-workflows:lint
+  - cd frontend && pnpm exec nx run aura-web:test
+  - cd frontend && pnpm exec nx run aura-web:lint
+  - cd frontend && pnpm exec nx run aura-approvals:test
+  - cd frontend && pnpm exec nx run aura-approvals:lint
+  - cd frontend && pnpm exec nx run aura-notifications:test
+  - cd frontend && pnpm exec nx run aura-notifications:lint
+  - cd frontend && pnpm exec nx run aura-web:build:production
+  - cd frontend && pnpm exec nx run storybook:build
+  - cd frontend && pnpm exec nx run aura-api-client:check-generated
+  - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/workflows.spec.ts apps/aura-web-e2e/src/approvals.spec.ts apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

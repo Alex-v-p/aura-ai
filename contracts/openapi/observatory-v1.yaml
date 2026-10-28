@@ -359,6 +359,28 @@
         }
       }
     },
+    "/api/v1/automation/workflows/monitoring": {
+      "get": {
+        "operationId": "getWorkflowMonitoring",
+        "tags": ["Analytics"],
+        "description": "Return one bounded, owner-authorized aggregate workflow-monitoring snapshot derived exclusively from Observatory-owned metadata telemetry. Omitted from/to select the 24 hours ending at snapshot time; an explicit UTC window may not exceed 31 days. The response never lists workflow definitions, revisions, instances, steps, lifecycle events, content, owner identity, arbitrary attributes, or Core state.",
+        "parameters": [
+          { "name": "from", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } },
+          { "name": "to", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UtcInstant" } },
+          { "name": "bucket", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/AnalyticsBucket" } },
+          { "name": "series_limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 12, "default": 12 } },
+          { "name": "point_limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 200 } }
+        ],
+        "responses": {
+          "200": { "description": "Bounded metadata-only workflow monitoring snapshot. Cache-Control is no-store because authenticated monitoring data remains memory-only.", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowMonitoringSnapshot" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
     "/api/v1/run-comparisons/query": {
       "post": {
         "operationId": "compareRuns",
@@ -1289,9 +1311,10 @@
           "tool_selection_duration_ms", "tool_selection_outcome", "tool_policy_evaluation_duration_ms", "tool_policy_decision", "tool_argument_validation_outcome", "tool_execution_duration_ms", "tool_execution_outcome", "tool_timeout_count",
           "memory_extraction_duration_ms", "memory_candidate_decision", "memory_reviewable_candidate_count", "memory_operation_duration_ms", "memory_operation_outcome", "memory_retrieval_duration_ms", "memory_lexical_search_duration_ms", "memory_vector_search_duration_ms", "memory_rerank_duration_ms", "memory_processing_errors", "memory_retry_count", "memory_reindex_backlog",
           "document_retrieval_duration_ms", "document_retrieval_outcome", "document_retrieval_candidate_count",
-          "reminder_scheduler_scan_duration_ms", "reminder_due_lag_ms", "reminder_series_due_lag_ms", "reminder_fired_count", "reminder_failure_count", "notification_failure_count", "notification_acknowledgement_outcome", "evaluation_runner_nats_recovery_count"
+          "reminder_scheduler_scan_duration_ms", "reminder_due_lag_ms", "reminder_series_due_lag_ms", "reminder_fired_count", "reminder_failure_count", "notification_failure_count", "notification_acknowledgement_outcome", "evaluation_runner_nats_recovery_count",
+          "workflow_transition_outcome", "workflow_command_outcome", "workflow_repository_outcome", "workflow_transition_duration_ms", "workflow_command_duration_ms", "workflow_repository_duration_ms", "workflow_definition_validation_duration_ms", "workflow_agent_run_step_duration_ms", "workflow_approval_command_duration_ms", "workflow_notification_step_duration_ms", "workflow_wait_command_duration_ms", "workflow_wait_lag_ms", "workflow_checkpoint_persistence_duration_ms", "workflow_cancellation_duration_ms", "workflow_settlement_duration_ms"
         ],
-        "description": "Finite operational analytics allowlist. It is intentionally narrower than the telemetry contract's syntactic measurement-name pattern."
+        "description": "Finite operational analytics allowlist. The fifteen workflow measurements belong to the existing automation focus; scheduler measurements are excluded. It is intentionally narrower than the telemetry contract's syntactic measurement-name pattern."
       },
       "AnalyticsAggregation": { "type": "string", "enum": ["average", "sum", "minimum", "maximum", "p50", "p90", "p95", "p99", "rate", "count"], "default": "average" },
       "AnalyticsBucket": { "type": "string", "enum": ["auto", "one_minute", "five_minutes", "fifteen_minutes", "one_hour", "six_hours", "one_day"], "default": "auto", "description": "auto deterministically chooses the smallest bucket producing no more than 200 points for the effective UTC window." },
@@ -1456,6 +1479,150 @@
           "partialReasons": { "type": "array", "maxItems": 6, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsPartialReason" } },
           "unavailableSignals": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "$ref": "#/components/schemas/AnalyticsUnavailableSignal" } },
           "scan": { "$ref": "#/components/schemas/AnalyticsScan" },
+          "capturePolicy": { "type": "string", "const": "metadata_only" }
+        }
+      },
+      "WorkflowMetricName": {
+        "type": "string",
+        "enum": ["workflow_transition_outcome", "workflow_command_outcome", "workflow_repository_outcome", "workflow_transition_duration_ms", "workflow_command_duration_ms", "workflow_repository_duration_ms", "workflow_definition_validation_duration_ms", "workflow_agent_run_step_duration_ms", "workflow_approval_command_duration_ms", "workflow_notification_step_duration_ms", "workflow_wait_command_duration_ms", "workflow_wait_lag_ms", "workflow_checkpoint_persistence_duration_ms", "workflow_cancellation_duration_ms", "workflow_settlement_duration_ms"],
+        "description": "Exactly the fifteen metadata-only AURA-0137 workflow measurements. Scheduler measurements are outside this release."
+      },
+      "WorkflowOutcomeMetricName": { "type": "string", "enum": ["workflow_transition_outcome", "workflow_command_outcome", "workflow_repository_outcome"] },
+      "WorkflowLifecycleOperation": { "type": "string", "enum": ["workflow.transition", "workflow.command", "workflow.repository"] },
+      "WorkflowLatencyMetricName": { "type": "string", "enum": ["workflow_transition_duration_ms", "workflow_command_duration_ms", "workflow_repository_duration_ms", "workflow_definition_validation_duration_ms", "workflow_agent_run_step_duration_ms", "workflow_approval_command_duration_ms", "workflow_notification_step_duration_ms", "workflow_wait_command_duration_ms", "workflow_wait_lag_ms", "workflow_checkpoint_persistence_duration_ms", "workflow_cancellation_duration_ms", "workflow_settlement_duration_ms"] },
+      "WorkflowMonitoringWindow": {
+        "type": "object", "additionalProperties": false,
+        "required": ["from", "to", "bucket", "bucketSeconds"],
+        "properties": {
+          "from": { "$ref": "#/components/schemas/UtcInstant" },
+          "to": { "$ref": "#/components/schemas/UtcInstant" },
+          "bucket": { "$ref": "#/components/schemas/AnalyticsBucket" },
+          "bucketSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 }
+        }
+      },
+      "WorkflowLifecycleCount": {
+        "type": "object", "additionalProperties": false,
+        "required": ["metric", "operation", "outcome", "count", "partial"],
+        "properties": {
+          "metric": { "$ref": "#/components/schemas/WorkflowOutcomeMetricName" },
+          "operation": { "$ref": "#/components/schemas/WorkflowLifecycleOperation" },
+          "outcome": { "$ref": "#/components/schemas/WorkflowOutcome" },
+          "count": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "WorkflowLatencySummary": {
+        "type": "object", "additionalProperties": false,
+        "required": ["metric", "unit", "summary", "availability", "partial"],
+        "properties": {
+          "metric": { "$ref": "#/components/schemas/WorkflowLatencyMetricName" },
+          "unit": { "type": "string", "const": "milliseconds" },
+          "summary": { "$ref": "#/components/schemas/AnalyticsSeriesSummary" },
+          "availability": { "$ref": "#/components/schemas/AnalyticsAvailability" },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "WorkflowOutcomeSeries": {
+        "type": "object", "additionalProperties": false,
+        "required": ["metric", "unit", "summary", "points", "availability", "partial"],
+        "properties": {
+          "metric": { "$ref": "#/components/schemas/WorkflowOutcomeMetricName" },
+          "unit": { "type": "string", "const": "count" },
+          "summary": { "$ref": "#/components/schemas/AnalyticsSeriesSummary" },
+          "points": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/AnalyticsPoint" } },
+          "availability": { "$ref": "#/components/schemas/AnalyticsAvailability" },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "WorkflowLatencySeries": {
+        "type": "object", "additionalProperties": false,
+        "required": ["metric", "unit", "summary", "points", "availability", "partial"],
+        "properties": {
+          "metric": { "$ref": "#/components/schemas/WorkflowLatencyMetricName" },
+          "unit": { "type": "string", "const": "milliseconds" },
+          "summary": { "$ref": "#/components/schemas/AnalyticsSeriesSummary" },
+          "points": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/AnalyticsPoint" } },
+          "availability": { "$ref": "#/components/schemas/AnalyticsAvailability" },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "WorkflowMonitoringSeries": { "oneOf": [{ "$ref": "#/components/schemas/WorkflowOutcomeSeries" }, { "$ref": "#/components/schemas/WorkflowLatencySeries" }] },
+      "WorkflowComponent": {
+        "type": "string",
+        "enum": ["aura.automation.workflow_state", "aura.automation.workflow_definition", "aura.automation.workflow_step.agent_run", "aura.automation.workflow_approval", "aura.automation.workflow_step.notification", "aura.automation.workflow_step.wait_until", "aura.automation.workflow_checkpoint", "aura.automation.workflow_cancellation", "aura.automation.workflow_settlement"]
+      },
+      "WorkflowFailureOperation": { "type": "string", "enum": ["workflow.transition", "workflow.command", "workflow.repository", "execute", "validate", "resume", "persist", "cancel", "settle"] },
+      "WorkflowCorrelationOperation": { "type": "string", "const": "execute" },
+      "WorkflowOutcome": { "type": "string", "enum": ["succeeded", "failed", "cancelled", "unknown"] },
+      "WorkflowErrorClass": { "type": "string", "enum": ["unknown", "authorization", "database", "database_programming", "idempotency", "internal", "not_found", "persistence", "serialization", "execution", "budget", "capability", "provider_protocol", "provider", "timeout", "validation", "conflict"] },
+      "WorkflowFailureBreakdown": {
+        "type": "object", "additionalProperties": false,
+        "required": ["component", "operation", "outcome", "errorClass", "count", "partial"],
+        "properties": {
+          "component": { "$ref": "#/components/schemas/WorkflowComponent" },
+          "operation": { "$ref": "#/components/schemas/WorkflowFailureOperation" },
+          "outcome": { "type": "string", "const": "failed" },
+          "errorClass": { "$ref": "#/components/schemas/WorkflowErrorClass" },
+          "count": { "$ref": "#/components/schemas/NonNegativeCount" },
+          "partial": { "type": "boolean" }
+        }
+      },
+      "WorkflowRunTraceReference": {
+        "type": "object", "additionalProperties": false,
+        "description": "One existing opaque run/trace correlation from a workflow agent-run observation. Workflow, revision, instance, step, and event identifiers are deliberately unrepresentable.",
+        "required": ["metric", "runId", "traceId", "observedAt", "component", "operation", "outcome", "errorClass"],
+        "properties": {
+          "metric": { "type": "string", "const": "workflow_agent_run_step_duration_ms" },
+          "runId": { "$ref": "#/components/schemas/Uuid" },
+          "traceId": { "$ref": "#/components/schemas/TraceId" },
+          "observedAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "component": { "type": "string", "const": "aura.automation.workflow_step.agent_run" },
+          "operation": { "$ref": "#/components/schemas/WorkflowCorrelationOperation" },
+          "outcome": { "$ref": "#/components/schemas/WorkflowOutcome" },
+          "errorClass": { "oneOf": [{ "$ref": "#/components/schemas/WorkflowErrorClass" }, { "type": "null" }] }
+        }
+      },
+      "WorkflowMonitoringPartialReason": { "type": "string", "enum": ["scan_limit", "execution_limit", "storage_limit", "series_limit", "point_limit", "correlation_limit", "late_data", "retention_boundary"] },
+      "WorkflowMonitoringUnavailableSignal": { "type": "string", "enum": ["lifecycle_counts", "latency_summaries", "time_series", "failure_breakdowns", "run_trace_correlation"] },
+      "WorkflowMonitoringLimits": {
+        "type": "object", "additionalProperties": false,
+        "required": ["defaultWindowHours", "maximumWindowDays", "maximumScannedRows", "scannedRows", "maximumSeries", "returnedSeries", "maximumPointsPerSeries", "returnedPoints", "maximumFailureBreakdowns", "returnedFailureBreakdowns", "maximumRecentCorrelations", "returnedRecentCorrelations", "executionLimitMs", "executionMs", "truncatedByExecutionLimit", "truncatedByStorageLimit"],
+        "properties": {
+          "defaultWindowHours": { "type": "integer", "const": 24 },
+          "maximumWindowDays": { "type": "integer", "const": 31 },
+          "maximumScannedRows": { "type": "integer", "const": 1000000 },
+          "scannedRows": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "maximumSeries": { "type": "integer", "const": 12 },
+          "returnedSeries": { "type": "integer", "minimum": 0, "maximum": 12 },
+          "maximumPointsPerSeries": { "type": "integer", "const": 200 },
+          "returnedPoints": { "type": "integer", "minimum": 0, "maximum": 2400 },
+          "maximumFailureBreakdowns": { "type": "integer", "const": 50 },
+          "returnedFailureBreakdowns": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "maximumRecentCorrelations": { "type": "integer", "const": 25 },
+          "returnedRecentCorrelations": { "type": "integer", "minimum": 0, "maximum": 25 },
+          "executionLimitMs": { "type": "integer", "const": 5000 },
+          "executionMs": { "type": "number", "minimum": 0, "maximum": 5000 },
+          "truncatedByExecutionLimit": { "type": "boolean" },
+          "truncatedByStorageLimit": { "type": "boolean" }
+        }
+      },
+      "WorkflowMonitoringSnapshot": {
+        "type": "object", "additionalProperties": false,
+        "description": "Closed metadata-only aggregate workflow health snapshot. It cannot represent workflow content, mappings, inputs, outputs, checkpoints, results, approval or notification presentation, owner identity, exception text, arbitrary attributes, or workflow, revision, instance, step, and lifecycle-event identifiers.",
+        "required": ["snapshotAt", "window", "lifecycleCounts", "latencySummaries", "series", "failureBreakdowns", "recentCorrelations", "freshness", "partial", "partialReasons", "unavailableSignals", "limits", "capturePolicy"],
+        "properties": {
+          "snapshotAt": { "$ref": "#/components/schemas/UtcInstant" },
+          "window": { "$ref": "#/components/schemas/WorkflowMonitoringWindow" },
+          "lifecycleCounts": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/WorkflowLifecycleCount" } },
+          "latencySummaries": { "type": "array", "maxItems": 12, "items": { "$ref": "#/components/schemas/WorkflowLatencySummary" } },
+          "series": { "type": "array", "maxItems": 12, "items": { "$ref": "#/components/schemas/WorkflowMonitoringSeries" } },
+          "failureBreakdowns": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/WorkflowFailureBreakdown" } },
+          "recentCorrelations": { "type": "array", "maxItems": 25, "description": "Deterministically ordered newest first by observedAt, then runId and traceId.", "items": { "$ref": "#/components/schemas/WorkflowRunTraceReference" } },
+          "freshness": { "$ref": "#/components/schemas/AnalyticsFreshness" },
+          "partial": { "type": "boolean" },
+          "partialReasons": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowMonitoringPartialReason" } },
+          "unavailableSignals": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowMonitoringUnavailableSignal" } },
+          "limits": { "$ref": "#/components/schemas/WorkflowMonitoringLimits" },
           "capturePolicy": { "type": "string", "const": "metadata_only" }
         }
       },

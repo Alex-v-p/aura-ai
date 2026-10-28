@@ -1,0 +1,149 @@
+agent: contract_steward
+work_item: AURA-0139
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0139_contract
+  worktree: shared
+scope:
+  ownership_zone: contracts.observatory-v1.workflow-monitoring
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_aura0139_workflow_monitoring_contract.py
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - work-items/handoffs/AURA-0139-contract.yaml
+contracts:
+  changed: true
+  id: observatory-v1
+  version: 1.0.0
+  compatibility: backward_compatible
+  producers:
+    - aura-observatory query API
+  consumers:
+    - generated Observatory TypeScript API client
+    - Observatory Web workflow monitoring feature
+  rollout: >-
+    Additive producer-first rollout. Deploy the Observatory endpoint before or
+    with the generated-client consumer; existing operations and the contract
+    version remain unchanged, and older consumers ignore the added path, metric
+    enum values, schemas, and operation descriptor.
+  generated_outputs:
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  notes: >-
+    Adds the owner-authorized no-store GET
+    /api/v1/automation/workflows/monitoring operation and exactly fifteen
+    workflow analytics measurement values. The response is a closed,
+    metadata-only aggregate snapshot with count/millisecond-discriminated
+    series, closed production component/operation/outcome/error-class failure
+    vocabularies, and at most 25 existing opaque agent-run run/trace
+    correlations. It cannot represent workflow, revision, instance,
+    step, lifecycle-event, owner, content, arbitrary-attribute, or exception
+    identifiers/data. No Core, telemetry, event, evaluation, or run-evidence
+    contract changed.
+migrations:
+  changed: false
+  notes: The additive HTTP contract and generated client require no persistence migration.
+observability:
+  components:
+    - aura.observatory.query_api
+  metrics_added:
+    - workflow_transition_outcome
+    - workflow_command_outcome
+    - workflow_repository_outcome
+    - workflow_transition_duration_ms
+    - workflow_command_duration_ms
+    - workflow_repository_duration_ms
+    - workflow_definition_validation_duration_ms
+    - workflow_agent_run_step_duration_ms
+    - workflow_approval_command_duration_ms
+    - workflow_notification_step_duration_ms
+    - workflow_wait_command_duration_ms
+    - workflow_wait_lag_ms
+    - workflow_checkpoint_persistence_duration_ms
+    - workflow_cancellation_duration_ms
+    - workflow_settlement_duration_ms
+  capture_policy: metadata_only
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0139.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0139.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0139.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0139.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check contracts/tests/test_aura0139_workflow_monitoring_contract.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0139_workflow_monitoring_contract.py
+      contracts/tests/test_observatory_v1.py
+      contracts/tests/test_observatory_v1_compatibility.py -q (23 passed)
+    - cd frontend && pnpm exec nx run observatory-api-client:generate
+    - cd frontend && pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:lint
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:test (9 passed)
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      validate-observability currently reports the five AURA-0139 evaluators
+      absent because the service component-manifest implementation belongs to
+      the Observatory worker and had not yet landed when this contract zone
+      completed.
+    - >-
+      Full contracts/tests produced 95 passes and four unrelated failures in
+      AURA-0128/AURA-0132 baseline comparisons against origin/dev. Those tests
+      compare pre-existing Aura v1 workflow/notification changes outside this
+      contract ownership zone; the focused Observatory suites pass.
+    - >-
+      Service, Observatory frontend, Storybook, browser, and full-stack checks
+      remain assigned to their owning workers and integration after concurrent
+      zones converge.
+decisions:
+  - >-
+    Preserved observatory-v1 at version 1.0.0 because the new GET operation,
+    schemas, operation descriptor, and analytics enum values are additive and
+    all existing paths and schemas remain unchanged.
+  - >-
+    Used the established 24-hour default, 31-day UTC maximum, 12-series,
+    200-points-per-series, 50-breakdown, 1,000,000-row, and 5,000-millisecond
+    limits, adding only the separately approved cap of 25 recent correlations.
+  - >-
+    Discriminated outcome series as count and latency series as milliseconds so
+    generated consumers cannot combine incompatible units. The twelve latency
+    summaries remain distinct by their closed metric name.
+  - >-
+    Restricted run/trace references to the workflow agent-run measurement and
+    existing opaque run and trace identifier formats, with the exact
+    aura.automation.workflow_step.agent_run component and execute operation.
+    Other missing correlation is represented only by the closed
+    run_trace_correlation unavailable signal.
+  - >-
+    Added workflow-specific component, failure-operation, correlation-operation,
+    outcome, and production error-class types at the public contract boundary.
+    Generic Observatory ComponentId, OperationName, Outcome, and DimensionValue
+    schemas remain unchanged for backward compatibility and unrelated APIs.
+    Lifecycle outcome counts accept only workflow.transition, workflow.command,
+    and workflow.repository. Failure rows additionally admit the finite execute,
+    validate, resume, persist, cancel, and settle operations, while correlations remain
+    restricted to agent-run plus execute. Error classes include only the
+    stabilized seventeen production buckets, including timeout, validation,
+    and conflict.
+  - >-
+    Kept workflow business behavior out of schemas and generated code. The
+    contract describes transport bounds, metadata vocabulary, and privacy
+    exclusions; query aggregation and ordering remain service-owned behavior.
+risks:
+  - >-
+    Adding values to AnalyticsMetricName is additive for the OpenAPI contract,
+    but handwritten exhaustive consumers must accept unknown future catalogue
+    values. The generated TypeScript union is synchronized in this change.
+unresolved: []

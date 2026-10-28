@@ -22,9 +22,25 @@
     "WorkflowDefinitionLifecycleEvent": {
       "type": "object", "additionalProperties": false,
       "required": ["schemaVersion", "eventId", "eventType", "workflowId", "revisionId", "version", "occurredAt"],
+      "oneOf": [
+        {
+          "required": ["eventType", "revisionId"],
+          "properties": {
+            "eventType": { "type": "string", "enum": ["workflow.revision.published", "workflow.revision.retired"] },
+            "revisionId": { "$ref": "#/$defs/Uuid" }
+          }
+        },
+        {
+          "required": ["eventType", "revisionId"],
+          "properties": {
+            "eventType": { "const": "workflow.definition.retired" },
+            "revisionId": { "type": "null" }
+          }
+        }
+      ],
       "properties": {
         "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" },
-        "eventType": { "type": "string", "enum": ["workflow.revision.published", "workflow.definition.retired"] },
+        "eventType": { "type": "string", "enum": ["workflow.revision.published", "workflow.revision.retired", "workflow.definition.retired"] },
         "workflowId": { "$ref": "#/$defs/Uuid" }, "revisionId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
         "version": { "type": "integer", "minimum": 1 }, "occurredAt": { "$ref": "#/$defs/Timestamp" }
       }
