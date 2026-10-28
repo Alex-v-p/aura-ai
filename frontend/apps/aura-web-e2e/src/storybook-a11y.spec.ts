@@ -92,6 +92,7 @@ const notificationStories = [
   'empty',
   'recovery',
   'mobile',
+  'workflow',
 ] as const;
 const approvalStories = [
   'pending',
@@ -107,6 +108,7 @@ const approvalStories = [
   'unavailable-stream',
   'recovery',
   'mobile',
+  'workflow-detail',
 ] as const;
 const todayStories = [
   'action-center',

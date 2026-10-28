@@ -1,4 +1,4 @@
-"""Acceptance checks for the calendar contract retained in aura-v1.21.0."""
+"""Acceptance checks for the calendar contract retained in aura-v1.22.0."""
 
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def _git_baseline() -> dict[str, Any] | None:
 
 def test_calendar_contract_is_v119_additive_and_operations_are_unique() -> None:
     contract = _contract()
-    assert contract["info"]["version"] == "1.21.0"
+    assert contract["info"]["version"] == "1.22.0"
     assert set(contract["paths"]) >= CALENDAR_PATHS
     assert {"name": "Calendar"} in contract["tags"]
 
@@ -132,9 +132,14 @@ def test_calendar_contract_is_v119_additive_and_operations_are_unique() -> None:
             current_components = cast(dict[str, Any], contract["components"])[component_group]
             for name, component in cast(dict[str, Any], baseline_components).items():
                 if component_group == "schemas" and name in {
+                    "Approval",
+                    "ApprovalDetail",
+                    "ApprovalEvent",
                     "Notification",
                     "NotificationStreamEvent",
                     "NotificationLifecycleEvent",
+                    "Run",
+                    "RunEventBase",
                 }:
                     continue
                 assert current_components[name] == component, f"{component_group}/{name}"

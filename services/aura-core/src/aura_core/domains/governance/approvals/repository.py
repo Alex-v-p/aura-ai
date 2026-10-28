@@ -8,8 +8,8 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import cast
 from uuid import UUID, uuid4
@@ -39,6 +39,10 @@ from aura_core.domains.governance.approvals.public import (
     ApprovalStatus,
     ApprovalTransitionError,
     ApprovalVersionConflict,
+    CreateWorkflowApproval,
+    WorkflowApprovalOrigin,
+    WorkflowApprovalProposal,
+    as_payload,
     decode_cursor,
     encode_cursor,
 )
@@ -46,6 +50,7 @@ from aura_core.domains.governance.audit.public import SqlAuditRepository
 from aura_core.domains.governance.identity.public import SqlIdentityRepository
 from aura_core.platform.outbox import (
     SqlOutboxRepository,
+    make_aggregate_command,
     make_approval_event_command,
     make_approval_resume_command,
 )
@@ -104,13 +109,30 @@ def _approval(row: ApprovalRow | dict[str, object]) -> Approval:
         return value(name).astimezone(UTC)  # type: ignore[union-attr]
 
     decided = value("decided_at")
+    origin_kind = row.get("origin") if isinstance(row, dict) else getattr(row, "origin", None)
+    def optional_value(name: str) -> object:
+        return row.get(name) if isinstance(row, dict) else getattr(row, name, None)
+    origin = None
+    if origin_kind == "manual_workflow_instance":
+        required = ("workflow_id", "workflow_revision_id", "workflow_instance_id", "workflow_step_ordinal", "workflow_step_execution_id")
+        if any(optional_value(name) is None for name in required):
+            raise ValueError("workflow approval origin is incomplete")
+        origin = WorkflowApprovalOrigin(
+            "manual_workflow_instance", UUID(str(optional_value("workflow_id"))),
+            UUID(str(optional_value("workflow_revision_id"))), UUID(str(optional_value("workflow_instance_id"))),
+            int(str(optional_value("workflow_step_ordinal"))), UUID(str(optional_value("workflow_step_execution_id"))),
+        )
+    run_id = value("run_id")
+    conversation_id = value("conversation_id")
+    tool_call_id = value("tool_call_id")
     return Approval(
         UUID(str(value("id"))), str(value("principal_issuer")), str(value("principal_subject")),
-        UUID(str(value("proposal_id"))), UUID(str(value("run_id"))), UUID(str(value("conversation_id"))),
-        UUID(str(value("tool_call_id"))), str(value("tool_id")), int(str(value("tool_version"))),
+        UUID(str(value("proposal_id"))), UUID(str(run_id)) if run_id is not None else None,
+        UUID(str(conversation_id)) if conversation_id is not None else None,
+        UUID(str(tool_call_id)) if tool_call_id is not None else None, str(value("tool_id")), int(str(value("tool_version"))),
         ApprovalStatus(str(value("status"))), ApprovalExecutionStatus(str(value("execution_status"))),
         int(str(value("version"))), stamp("created_at"), stamp("updated_at"), stamp("expires_at"),
-        decided.astimezone(UTC) if isinstance(decided, datetime) else None,
+        decided.astimezone(UTC) if isinstance(decided, datetime) else None, origin,
     )
 
 
@@ -119,17 +141,61 @@ def _event(row: ApprovalEventRow | dict[str, object]) -> ApprovalReplayEvent:
         return row[name] if isinstance(row, dict) else getattr(row, name)
 
     occurred = value("occurred_at")
+    origin = None
+    def optional_value(name: str) -> object:
+        return row.get(name) if isinstance(row, dict) else getattr(row, name, None)
+    if optional_value("origin") == "manual_workflow_instance":
+        origin = WorkflowApprovalOrigin(
+            "manual_workflow_instance", UUID(str(optional_value("workflow_id"))),
+            UUID(str(optional_value("workflow_revision_id"))), UUID(str(optional_value("workflow_instance_id"))),
+            int(str(optional_value("workflow_step_ordinal"))), UUID(str(optional_value("workflow_step_execution_id"))),
+        )
+    run_id = value("run_id")
+    conversation_id = value("conversation_id")
     return ApprovalReplayEvent(
         UUID(str(value("id"))), UUID(str(value("approval_id"))), UUID(str(value("proposal_id"))),
-        UUID(str(value("run_id"))), UUID(str(value("conversation_id"))), str(value("tool_id")),
+        UUID(str(run_id)) if run_id is not None else None,
+        UUID(str(conversation_id)) if conversation_id is not None else None, str(value("tool_id")),
         int(str(value("tool_version"))), ApprovalStatus(str(value("status"))),
         ApprovalExecutionStatus(str(value("execution_status"))), int(str(value("version"))),
-        occurred.astimezone(UTC),  # type: ignore[union-attr]
+        occurred.astimezone(UTC), origin,  # type: ignore[union-attr]
     )
 
 
 def _fingerprint(operation: str, approval_id: UUID, expected_version: int) -> str:
     return hashlib.sha256(json.dumps({"operation": operation, "approvalId": str(approval_id), "expectedVersion": expected_version}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _workflow_fingerprint(command: CreateWorkflowApproval) -> str:
+    payload = {
+        "workflowId": str(command.workflow_id),
+        "workflowRevisionId": str(command.workflow_revision_id),
+        "workflowInstanceId": str(command.workflow_instance_id),
+        "workflowStepOrdinal": command.workflow_step_ordinal,
+        "workflowStepExecutionId": str(command.workflow_step_execution_id),
+        "workflowDisplayName": command.workflow_display_name,
+        "nextStepKind": command.next_step_kind,
+        "consequence": command.consequence,
+        "consequenceCopy": command.consequence_copy,
+        "ownerScopeId": command.owner_scope_id,
+        "workspaceScopeId": command.workspace_scope_id,
+        "expiresAt": command.expires_at.isoformat(),
+        "instanceDeadline": command.instance_deadline.isoformat()
+        if command.instance_deadline is not None
+        else None,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _validate_workflow_timing(command: CreateWorkflowApproval, created: datetime) -> None:
+    if command.expires_at <= created:
+        raise ValueError("workflow approval expiry must be in the future")
+    if command.expires_at > created + timedelta(days=7):
+        raise ValueError("workflow approval expiry cannot exceed seven days")
+    if command.instance_deadline is None or command.expires_at > command.instance_deadline:
+        raise ValueError("workflow approval expiry exceeds the instance deadline")
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +215,7 @@ class MemoryApprovalRepository:
         self.execution_port = execution_port
         self._items: dict[UUID, Approval] = {}
         self._proposals: dict[UUID, ReminderProposal] = {}
+        self._workflow_proposals: dict[UUID, WorkflowApprovalProposal] = {}
         self._events: list[ApprovalReplayEvent] = []
         self._idempotency: dict[tuple[str, str, str], tuple[str, Approval]] = {}
         self._cancellation_idempotency: dict[tuple[str, str, str], tuple[str, ApprovalCancellation]] = {}
@@ -174,6 +241,52 @@ class MemoryApprovalRepository:
                     await cast(Awaitable[object], waiter(run_id, attempt_id, approval.id, tool_call_id, transaction=None))
             if self.metrics is not None:
                 self.metrics.increment(APPROVAL_COMPONENT, "approval_creation_outcome", outcome="ok")
+            return ApprovalDetail(approval, proposal)
+
+    async def create_workflow_pending(self, command: CreateWorkflowApproval) -> ApprovalDetail:
+        issuer, subject = _owner(command.issuer, command.subject)
+        created = self._time()
+        _validate_workflow_timing(command, created)
+        origin = WorkflowApprovalOrigin(
+            "manual_workflow_instance", command.workflow_id, command.workflow_revision_id,
+            command.workflow_instance_id, command.workflow_step_ordinal,
+            command.workflow_step_execution_id,
+        )
+        async with self._lock:
+            fingerprint = _workflow_fingerprint(command)
+            existing = self._idempotency.get((issuer, subject, command.idempotency_key))
+            if existing is not None:
+                if existing[0] != fingerprint:
+                    raise ApprovalIdempotencyConflict("approval idempotency key was already used")
+                existing_proposal = self._workflow_proposals.get(existing[1].proposal_id)
+                if existing_proposal is None:
+                    raise ApprovalNotFound("workflow approval proposal not found")
+                return ApprovalDetail(existing[1], existing_proposal)
+            approval_id = uuid4()
+            proposal = WorkflowApprovalProposal(
+                approval_id, command.workflow_id, command.workflow_revision_id,
+                command.workflow_instance_id, command.workflow_step_ordinal,
+                command.workflow_step_execution_id, command.workflow_display_name,
+                command.next_step_kind,
+                command.consequence, command.consequence_copy, command.owner_scope_id,
+                command.workspace_scope_id, command.expires_at.astimezone(UTC),
+            )
+            approval = Approval(
+                approval_id, issuer, subject, approval_id, None, None, None,
+                "workflow.owner_approval", 1, ApprovalStatus.PENDING,
+                ApprovalExecutionStatus.NOT_STARTED, 1, created, created,
+                proposal.expires_at, None, origin,
+            )
+            self._items[approval.id] = approval
+            self._workflow_proposals[proposal.id] = proposal
+            self._idempotency[(issuer, subject, command.idempotency_key)] = (fingerprint, approval)
+            self._events.append(ApprovalReplayEvent(
+                uuid4(), approval.id, proposal.id, None, None, approval.tool_id,
+                approval.tool_version, approval.status, approval.execution_status,
+                approval.version, created, origin,
+            ))
+            self._wake.set()
+            self._wake = asyncio.Event()
             return ApprovalDetail(approval, proposal)
 
     async def create_command_pending(
@@ -218,7 +331,7 @@ class MemoryApprovalRepository:
             return ApprovalDetail(approval, proposal)
 
     def _append_event(self, item: Approval, occurred_at: datetime) -> None:
-        self._events.append(ApprovalReplayEvent(uuid4(), item.id, item.proposal_id, item.run_id, item.conversation_id, item.tool_id, item.tool_version, item.status, item.execution_status, item.version, occurred_at))
+        self._events.append(ApprovalReplayEvent(uuid4(), item.id, item.proposal_id, item.run_id, item.conversation_id, item.tool_id, item.tool_version, item.status, item.execution_status, item.version, occurred_at, item.origin))
         self._wake.set()
         self._wake = asyncio.Event()
 
@@ -244,7 +357,11 @@ class MemoryApprovalRepository:
             item = self._items.get(approval_id)
             if item is None or (item.issuer, item.subject) != (issuer, subject):
                 raise ApprovalNotFound("approval not found")
-            if item.tool_id == "reminder.create":
+            if item.origin is not None:
+                proposal = self._workflow_proposals.get(item.proposal_id)
+                if proposal is None:
+                    raise ApprovalNotFound("workflow approval proposal not found")
+            elif item.tool_id == "reminder.create":
                 proposal = self._proposals.get(item.proposal_id) or await self.proposals.get(issuer, subject, item.proposal_id)
             else:
                 proposal = await self.proposals.get_command(issuer, subject, item.proposal_id)
@@ -264,7 +381,7 @@ class MemoryApprovalRepository:
                 return existing[1], True
             now = self._time()
             if item.status is ApprovalStatus.PENDING and now >= item.expires_at:
-                expired = Approval(item.id, item.issuer, item.subject, item.proposal_id, item.run_id, item.conversation_id, item.tool_call_id, item.tool_id, item.tool_version, ApprovalStatus.EXPIRED, ApprovalExecutionStatus.DENIED, item.version + 1, item.created_at, now, item.expires_at, now)
+                expired = replace(item, status=ApprovalStatus.EXPIRED, execution_status=ApprovalExecutionStatus.DENIED, version=item.version + 1, updated_at=now, decided_at=now)
                 self._items[item.id] = expired
                 self._append_event(expired, now)
                 item = expired
@@ -272,7 +389,7 @@ class MemoryApprovalRepository:
                 raise ApprovalVersionConflict("approval version does not match")
             if item.status is not ApprovalStatus.PENDING or decision not in {ApprovalStatus.APPROVED, ApprovalStatus.REJECTED}:
                 raise ApprovalTransitionError("approval lifecycle transition is not allowed")
-            updated = Approval(item.id, item.issuer, item.subject, item.proposal_id, item.run_id, item.conversation_id, item.tool_call_id, item.tool_id, item.tool_version, decision, ApprovalExecutionStatus.QUEUED if decision is ApprovalStatus.APPROVED else ApprovalExecutionStatus.DENIED, item.version + 1, item.created_at, now, item.expires_at, now)
+            updated = replace(item, status=decision, execution_status=ApprovalExecutionStatus.QUEUED if decision is ApprovalStatus.APPROVED else ApprovalExecutionStatus.DENIED, version=item.version + 1, updated_at=now, decided_at=now)
             self._items[item.id] = updated
             self._idempotency[(issuer, subject, idempotency_key)] = (fingerprint, updated)
             self._append_event(updated, now)
@@ -332,7 +449,7 @@ class MemoryApprovalRepository:
             if item.version != expected_version or item.status is not ApprovalStatus.PENDING:
                 raise ApprovalVersionConflict("approval version does not match")
             now = self._time()
-            updated = Approval(item.id, item.issuer, item.subject, item.proposal_id, item.run_id, item.conversation_id, item.tool_call_id, item.tool_id, item.tool_version, ApprovalStatus.CANCELED, ApprovalExecutionStatus.DENIED, item.version + 1, item.created_at, now, item.expires_at, now)
+            updated = replace(item, status=ApprovalStatus.CANCELED, execution_status=ApprovalExecutionStatus.DENIED, version=item.version + 1, updated_at=now, decided_at=now)
             self._items[item.id] = updated
             self._idempotency[(issuer, subject, idempotency_key)] = (fingerprint, updated)
             self._append_event(updated, now)
@@ -385,7 +502,7 @@ class MemoryApprovalRepository:
                 raise ApprovalTransitionError("approval run cancellation is unavailable")
             run = await cast(Awaitable[object], canceler(run_id, approval_id, transaction=None))
             now = self._time()
-            updated = Approval(item.id, item.issuer, item.subject, item.proposal_id, item.run_id, item.conversation_id, item.tool_call_id, item.tool_id, item.tool_version, ApprovalStatus.CANCELED, ApprovalExecutionStatus.DENIED, item.version + 1, item.created_at, now, item.expires_at, now)
+            updated = replace(item, status=ApprovalStatus.CANCELED, execution_status=ApprovalExecutionStatus.DENIED, version=item.version + 1, updated_at=now, decided_at=now)
             self._items[approval_id] = updated
             result = ApprovalCancellation(updated, run)
             self._cancellation_idempotency[(issuer, subject, idempotency_key)] = (fingerprint, result)
@@ -434,7 +551,7 @@ class MemoryApprovalRepository:
                     break
                 if item.status is not ApprovalStatus.PENDING or item.expires_at > current:
                     continue
-                updated = Approval(item.id, item.issuer, item.subject, item.proposal_id, item.run_id, item.conversation_id, item.tool_call_id, item.tool_id, item.tool_version, ApprovalStatus.EXPIRED, ApprovalExecutionStatus.DENIED, item.version + 1, item.created_at, current, item.expires_at, current)
+                updated = replace(item, status=ApprovalStatus.EXPIRED, execution_status=ApprovalExecutionStatus.DENIED, version=item.version + 1, updated_at=current, decided_at=current)
                 self._items[item.id] = updated
                 self._append_event(updated, current)
                 expired.append(updated)
@@ -503,7 +620,7 @@ class MemoryApprovalRepository:
             if status not in allowed.get(item.execution_status, set()):
                 raise ApprovalTransitionError("approval execution transition is not allowed")
             now = self._time()
-            updated = Approval(item.id, item.issuer, item.subject, item.proposal_id, item.run_id, item.conversation_id, item.tool_call_id, item.tool_id, item.tool_version, item.status, status, item.version + 1, item.created_at, now, item.expires_at, item.decided_at)
+            updated = replace(item, execution_status=status, version=item.version + 1, updated_at=now)
             self._items[approval_id] = updated
             self._append_event(updated, now)
             return updated
@@ -559,6 +676,76 @@ class SqlApprovalRepository:
             self.metrics.increment(APPROVAL_COMPONENT, "approval_creation_outcome", outcome="ok")
         _span(self.metrics, "approval.create", started, outcome="ok", approval_id=result.approval.id)
         return result
+
+    async def create_workflow_pending(self, command: CreateWorkflowApproval) -> ApprovalDetail:
+        issuer, subject = _owner(command.issuer, command.subject)
+        started = monotonic()
+        created = self._time()
+        _validate_workflow_timing(command, created)
+        origin = WorkflowApprovalOrigin(
+            "manual_workflow_instance", command.workflow_id, command.workflow_revision_id,
+            command.workflow_instance_id, command.workflow_step_ordinal,
+            command.workflow_step_execution_id,
+        )
+        proposal = WorkflowApprovalProposal(
+            uuid4(), command.workflow_id, command.workflow_revision_id,
+            command.workflow_instance_id, command.workflow_step_ordinal,
+            command.workflow_step_execution_id, command.workflow_display_name,
+            command.next_step_kind,
+            command.consequence, command.consequence_copy, command.owner_scope_id,
+            command.workspace_scope_id, command.expires_at.astimezone(UTC),
+        )
+        item = Approval(
+            uuid4(), issuer, subject, proposal.id, None, None, None,
+            "workflow.owner_approval", 1, ApprovalStatus.PENDING,
+            ApprovalExecutionStatus.NOT_STARTED, 1, created, created,
+            proposal.expires_at, None, origin,
+        )
+        fingerprint = _workflow_fingerprint(command)
+        async with self.sessions() as session, session.begin():
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                {"key": f"aura.workflow-approval:{issuer}:{subject}:{command.idempotency_key}"},
+            )
+            existing = await session.get(ApprovalIdempotencyRow, (issuer, subject, command.idempotency_key))
+            if existing is not None:
+                if existing.fingerprint != fingerprint:
+                    raise ApprovalIdempotencyConflict("approval idempotency key was already used")
+                row = await session.get(ApprovalRow, existing.approval_id)
+                if row is None:
+                    raise ApprovalNotFound("approval not found")
+                return ApprovalDetail(_approval(row), WorkflowApprovalProposal(
+                    UUID(str(row.id)), UUID(str(row.workflow_id)), UUID(str(row.workflow_revision_id)),
+                    UUID(str(row.workflow_instance_id)), int(str(row.workflow_step_ordinal)),
+                    UUID(str(row.workflow_step_execution_id)), str(row.workflow_display_name),
+                    str(row.next_step_kind),
+                    str(row.consequence), str(row.consequence_copy), str(row.owner_scope_id),
+                    str(row.workspace_scope_id), row.expires_at.astimezone(UTC),
+                ))
+            session.add(ApprovalRow(
+                id=item.id, principal_issuer=issuer, principal_subject=subject,
+                proposal_id=proposal.id, run_id=None, conversation_id=None, tool_call_id=None,
+                tool_id=item.tool_id, tool_version=item.tool_version, status=item.status.value,
+                execution_status=item.execution_status.value, version=item.version,
+                created_at=created, updated_at=created, expires_at=proposal.expires_at,
+                origin=origin.kind, workflow_id=origin.workflow_id,
+                workflow_revision_id=origin.workflow_revision_id,
+                workflow_instance_id=origin.workflow_instance_id,
+                workflow_step_ordinal=origin.workflow_step_ordinal,
+                workflow_step_execution_id=origin.workflow_step_execution_id,
+                workflow_display_name=proposal.workflow_display_name,
+                next_step_kind=proposal.next_step_kind, consequence=proposal.consequence,
+                consequence_copy=proposal.consequence_copy, owner_scope_id=proposal.owner_scope_id,
+                workspace_scope_id=proposal.workspace_scope_id,
+            ))
+            await self._stage(session, item, created)
+            session.add(ApprovalIdempotencyRow(
+                principal_issuer=issuer, principal_subject=subject,
+                idempotency_key=command.idempotency_key, fingerprint=fingerprint,
+                approval_id=item.id, response=as_payload(item), created_at=created,
+            ))
+        _span(self.metrics, "approval.create", started, outcome="ok", approval_id=item.id)
+        return ApprovalDetail(item, proposal)
 
     async def create_command_pending(
         self, issuer: str, subject: str, *, operation: str, tool_id: str,
@@ -631,19 +818,32 @@ class SqlApprovalRepository:
     async def _stage(self, session: AsyncSession, item: Approval, now: datetime, *, resume: bool = False) -> None:
         await self._lock_owner_stream(session, item.issuer, item.subject)
         event_id = uuid4()
-        session.add(ApprovalEventRow(id=event_id, principal_issuer=item.issuer, principal_subject=item.subject, approval_id=item.id, proposal_id=item.proposal_id, run_id=item.run_id, conversation_id=item.conversation_id, tool_id=item.tool_id, tool_version=item.tool_version, status=item.status.value, execution_status=item.execution_status.value, version=item.version, occurred_at=now))
-        command = make_approval_event_command(
-            item.id,
-            event_id=event_id,
-            status=item.status.value,
-            version=item.version,
-            run_id=item.run_id,
-            conversation_id=item.conversation_id,
-            event_type=f"approval.{item.status.value}",
-            command_id=event_id,
-        )
+        session.add(ApprovalEventRow(id=event_id, principal_issuer=item.issuer, principal_subject=item.subject, approval_id=item.id, proposal_id=item.proposal_id, run_id=item.run_id, conversation_id=item.conversation_id, tool_id=item.tool_id, tool_version=item.tool_version, status=item.status.value, execution_status=item.execution_status.value, version=item.version, occurred_at=now, origin=item.origin.kind if item.origin else None, workflow_id=item.origin.workflow_id if item.origin else None, workflow_revision_id=item.origin.workflow_revision_id if item.origin else None, workflow_instance_id=item.origin.workflow_instance_id if item.origin else None, workflow_step_ordinal=item.origin.workflow_step_ordinal if item.origin else None, workflow_step_execution_id=item.origin.workflow_step_execution_id if item.origin else None))
+        if item.origin is not None:
+            command = make_aggregate_command(
+                "aura.approvals.events.v1", event_id, "governance.approval", item.id,
+                identifiers=(("approvalId", item.id), ("eventId", event_id),
+                             ("eventType", f"approval.{item.status.value}"),
+                             ("status", item.status.value), ("version", item.version),
+                             ("origin", item.origin.kind),
+                             ("workflowId", item.origin.workflow_id),
+                             ("workflowRevisionId", item.origin.workflow_revision_id),
+                             ("workflowInstanceId", item.origin.workflow_instance_id),
+                             ("workflowStepOrdinal", item.origin.workflow_step_ordinal),
+                             ("workflowStepExecutionId", item.origin.workflow_step_execution_id)),
+            )
+        else:
+            if item.run_id is None or item.conversation_id is None:
+                raise ApprovalTransitionError("legacy approval lineage is incomplete")
+            command = make_approval_event_command(
+                item.id, event_id=event_id, status=item.status.value,
+                version=item.version, run_id=item.run_id, conversation_id=item.conversation_id,
+                event_type=f"approval.{item.status.value}", command_id=event_id,
+            )
         await self._outbox.stage_command(session, command=command)
-        if resume:
+        if resume and item.origin is None:
+            if item.run_id is None or item.conversation_id is None:
+                raise ApprovalTransitionError("legacy approval lineage is incomplete")
             await self._outbox.stage_command(
                 session,
                 command=make_approval_resume_command(
@@ -679,7 +879,16 @@ class SqlApprovalRepository:
             row = (await session.execute(select(ApprovalRow).where(ApprovalRow.id == approval_id, ApprovalRow.principal_issuer == issuer, ApprovalRow.principal_subject == subject))).scalar_one_or_none()
             if row is None:
                 raise ApprovalNotFound("approval not found")
-            if row.tool_id == "reminder.create":
+            if row.origin == "manual_workflow_instance":
+                proposal = WorkflowApprovalProposal(
+                    UUID(str(row.id)), UUID(str(row.workflow_id)), UUID(str(row.workflow_revision_id)),
+                    UUID(str(row.workflow_instance_id)), int(str(row.workflow_step_ordinal)),
+                    UUID(str(row.workflow_step_execution_id)), str(row.workflow_display_name),
+                    str(row.next_step_kind),
+                    str(row.consequence), str(row.consequence_copy), str(row.owner_scope_id),
+                    str(row.workspace_scope_id), row.expires_at.astimezone(UTC),
+                )
+            elif row.tool_id == "reminder.create":
                 proposal = await self.proposals.get(issuer, subject, row.proposal_id)
             else:
                 proposal = await self.proposals.get_command(issuer, subject, row.proposal_id)
@@ -705,7 +914,7 @@ class SqlApprovalRepository:
             row = (await session.execute(select(ApprovalRow).where(ApprovalRow.id == approval_id, ApprovalRow.principal_issuer == issuer, ApprovalRow.principal_subject == subject).with_for_update())).scalar_one_or_none()
             if row is None:
                 raise ApprovalNotFound("approval not found")
-            if self.execution_port is not None:
+            if row.origin is None and self.execution_port is not None:
                 locker = getattr(self.execution_port, "lock_waiting_run", None)
                 if callable(locker):
                     await cast(Awaitable[object], locker(row.run_id, row.id, transaction=session))
@@ -717,7 +926,7 @@ class SqlApprovalRepository:
                 row.updated_at = row.decided_at = now
                 expired_item = _approval(row)
                 await self._stage(session, expired_item, now, resume=True)
-                if self.execution_port is not None:
+                if row.origin is None and self.execution_port is not None:
                     resumer = getattr(self.execution_port, "resume_waiting_run", None)
                     if callable(resumer):
                         await cast(Awaitable[object], resumer(row.run_id, row.id, approved=False, transaction=session))
@@ -738,7 +947,7 @@ class SqlApprovalRepository:
                 row.updated_at = row.decided_at = now
                 result = _approval(row)
                 await self._stage(session, result, now, resume=True)
-                if decision is not ApprovalStatus.CANCELED and self.execution_port is not None:
+                if row.origin is None and decision is not ApprovalStatus.CANCELED and self.execution_port is not None:
                     resumer = getattr(self.execution_port, "resume_waiting_run", None)
                     if callable(resumer):
                         await cast(Awaitable[object], resumer(row.run_id, row.id, approved=decision is ApprovalStatus.APPROVED, transaction=session))
@@ -864,7 +1073,7 @@ class SqlApprovalRepository:
                     await self._lock_owner_stream(session, issuer, subject)
                 expired: list[Approval] = []
                 for row in rows:
-                    if self.execution_port is not None:
+                    if row.origin is None and self.execution_port is not None:
                         locker = getattr(self.execution_port, "lock_waiting_run", None)
                         if callable(locker):
                             await cast(Awaitable[object], locker(row.run_id, row.id, transaction=session))
@@ -874,7 +1083,7 @@ class SqlApprovalRepository:
                     row.updated_at = row.decided_at = current
                     item = _approval(row)
                     await self._stage(session, item, current, resume=True)
-                    if self.execution_port is not None:
+                    if row.origin is None and self.execution_port is not None:
                         resumer = getattr(self.execution_port, "resume_waiting_run", None)
                         if callable(resumer):
                             await cast(Awaitable[object], resumer(row.run_id, row.id, approved=False, transaction=session))

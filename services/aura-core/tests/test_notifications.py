@@ -9,17 +9,19 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from aura_core.domains.automation.notifications.public import (
     BriefingNotificationSource,
     CreateBriefingNotification,
+    CreateWorkflowNotification,
     DueDeliveryResult,
     NotificationApplicationService,
     NotificationIdempotencyConflict,
     NotificationNotFound,
     NotificationView,
+    WorkflowNotificationSource,
     as_payload,
 )
 from aura_core.domains.automation.notifications.repository import (
@@ -36,6 +38,34 @@ from aura_core.domains.automation.reminders.repository import (
 ROOT = Path(__file__).parents[1]
 PUBLIC = ROOT / "src/aura_core/domains/automation/notifications/public.py"
 PERSISTENCE = ROOT / "src/aura_core/domains/automation/notifications/persistence.py"
+
+
+def test_workflow_notification_result_identity_is_uuid_end_to_end() -> None:
+    result_id = uuid4()
+    command = CreateWorkflowNotification(
+        issuer="https://aura.example",
+        subject="owner",
+        workflow_id=uuid4(),
+        workflow_revision_id=uuid4(),
+        workflow_instance_id=uuid4(),
+        workflow_step_ordinal=1,
+        workflow_step_execution_id=uuid4(),
+        workflow_result_id=result_id,
+        idempotency_key="workflow-result-uuid",
+    )
+    source = WorkflowNotificationSource(
+        "workflow",
+        command.workflow_id,
+        command.workflow_revision_id,
+        command.workflow_instance_id,
+        command.workflow_step_ordinal,
+        command.workflow_step_execution_id,
+        command.workflow_result_id,
+    )
+
+    assert isinstance(command.workflow_result_id, UUID)
+    assert source.workflow_result_id == result_id
+    assert source.payload()["workflowResultId"] == str(result_id)
 
 
 def test_sql_notification_advisory_lock_key_is_deterministic_unambiguous_and_nul_free() -> None:
@@ -228,6 +258,56 @@ async def test_briefing_notification_command_is_source_neutral_idempotent_and_co
     events = await repository.replay("issuer", "briefing-owner")
     assert len(events) == 1
     assert "reminderId" not in events[0].payload()
+    assert not {"content", "prompt", "response"} & set(events[0].payload())
+
+
+@pytest.mark.asyncio
+async def test_workflow_notification_is_owner_scoped_idempotent_and_content_free() -> None:
+    repository = MemoryNotificationRepository()
+    result_id = uuid4()
+    command = CreateWorkflowNotification(
+        "issuer",
+        "workflow-owner",
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        3,
+        uuid4(),
+        result_id,
+        "workflow-key",
+    )
+    first = await repository.create_workflow_notification(command)
+    retry = await repository.create_workflow_notification(command)
+    duplicate_result = await repository.create_workflow_notification(
+        CreateWorkflowNotification(
+            command.issuer,
+            command.subject,
+            command.workflow_id,
+            command.workflow_revision_id,
+            command.workflow_instance_id,
+            command.workflow_step_ordinal,
+            command.workflow_step_execution_id,
+            command.workflow_result_id,
+            "workflow-duplicate-key",
+        )
+    )
+    acknowledged = await repository.acknowledge(
+        "issuer",
+        "workflow-owner",
+        first.id,
+        expected_version=1,
+        idempotency_key="workflow-ack",
+    )
+    with pytest.raises(NotificationNotFound):
+        await repository.get("issuer", "foreign-owner", first.id)
+    events = await repository.replay("issuer", "workflow-owner")
+    assert first.id == retry.id == duplicate_result.id == acknowledged.id
+    assert isinstance(first.source, WorkflowNotificationSource)
+    assert first.source.workflow_result_id == result_id
+    assert len(events) == 2
+    assert all(event.source == first.source for event in events)
+    assert await repository.cursor_is_authorized("issuer", "workflow-owner", events[0].id)
+    assert not await repository.cursor_is_authorized("issuer", "foreign-owner", events[0].id)
     assert not {"content", "prompt", "response"} & set(events[0].payload())
 
 

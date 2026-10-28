@@ -1,6 +1,6 @@
 component:
   id: aura.governance.approval_workflow
-  version: 1.1.0
+  version: 1.2.0
   owner: governance.approvals
   category: governance
 input:

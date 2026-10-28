@@ -37,9 +37,14 @@ MUTATIONS = {
     ("/api/v1/briefing-results/{result_id}/deletions", "post"),
 }
 EVOLVED_COMPONENTS = {
+    "Approval",
+    "ApprovalDetail",
+    "ApprovalEvent",
     "Notification",
     "NotificationStreamEvent",
     "NotificationLifecycleEvent",
+    "Run",
+    "RunEventBase",
 }
 UUIDS = {
     "event": "10000000-0000-4000-8000-000000000001",
@@ -77,10 +82,10 @@ def _refs(operation: dict[str, Any]) -> set[str]:
     }
 
 
-def test_openapi_v121_is_additive_except_for_authorized_notification_union() -> None:
+def test_openapi_remains_additive_except_for_authorized_typed_unions() -> None:
     contract = _openapi()
     assert contract["openapi"] == "3.1.0"
-    assert contract["info"]["version"] == "1.21.0"
+    assert contract["info"]["version"] == "1.22.0"
     assert BRIEFING_PATHS <= set(contract["paths"])
     assert {"Notifications", "Briefings"} <= {tag["name"] for tag in contract["tags"]}
 
@@ -278,10 +283,11 @@ def test_mutations_are_owner_protected_and_private_reads_are_no_store() -> None:
 def test_notification_union_preserves_legacy_shape_and_closes_briefing_source() -> None:
     schemas = _openapi()["components"]["schemas"]
     union = schemas["Notification"]
-    assert union["oneOf"] == [
+    assert union["oneOf"][:2] == [
         {"$ref": "#/components/schemas/ReminderNotification"},
         {"$ref": "#/components/schemas/BriefingNotification"},
     ]
+    assert union["oneOf"][2] == {"$ref": "#/components/schemas/WorkflowNotification"}
     reminder = schemas["ReminderNotification"]
     assert reminder["additionalProperties"] is False
     assert "reminderId" in reminder["required"]

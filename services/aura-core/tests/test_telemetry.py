@@ -149,6 +149,110 @@ def test_notification_delivery_metrics_are_registered_and_content_free() -> None
     assert metrics.stats().rejected == 0
 
 
+def test_workflow_state_metrics_are_registered_bounded_and_metadata_only() -> None:
+    metrics = MetadataMetrics()
+    workflow_id, revision_id, instance_id, step_execution_id = (uuid4() for _ in range(4))
+    identifiers = {
+        "workflow_id": str(workflow_id),
+        "revision_id": str(revision_id),
+        "instance_id": str(instance_id),
+        "step_execution_id": str(step_execution_id),
+        "expected_version": "1",
+        "result_version": "2",
+    }
+    metric_operations = {
+        "workflow_transition_outcome": "workflow.transition",
+        "workflow_command_outcome": "workflow.command",
+        "workflow_repository_outcome": "workflow.repository",
+        "workflow_transition_duration_ms": "workflow.transition",
+        "workflow_command_duration_ms": "workflow.command",
+        "workflow_repository_duration_ms": "workflow.repository",
+    }
+    for metric, operation in metric_operations.items():
+        attributes = {
+            "operation": operation,
+            "dependency": "postgresql",
+            "outcome": "completed",
+            "error_class": "conflict",
+            "status": "running",
+            **identifiers,
+        }
+        if metric.endswith("duration_ms"):
+            metrics.observe("aura.automation.workflow_state", metric, 1.0, **attributes)
+        else:
+            metrics.increment("aura.automation.workflow_state", metric, **attributes)
+
+    retained = metrics.snapshot()
+    assert {item.metric for item in retained} == set(metric_operations)
+    assert all(item.component_id == "aura.automation.workflow_state" for item in retained)
+    assert all(item.component_version == "1.0.0" for item in retained)
+    assert all(
+        dict(item.dimensions)["operation"] in metric_operations.values() for item in retained
+    )
+    assert all(dict(item.trace_attributes)["workflow_id"] == str(workflow_id) for item in retained)
+    assert all("content" not in repr(item).lower() for item in retained)
+    assert metrics.stats().rejected == 0
+
+    metrics.increment(
+        "aura.automation.workflow_state",
+        "workflow_command_outcome",
+        operation="workflow.unknown",
+        dependency="postgresql",
+        outcome="completed",
+    )
+    metrics.increment(
+        "aura.automation.workflow_state",
+        "workflow_command_outcome",
+        operation="workflow.command",
+        dependency="nats_jetstream",
+        outcome="completed",
+    )
+    metrics.increment(
+        "aura.automation.workflow_state",
+        "workflow_command_outcome",
+        operation="workflow.command",
+        dependency="postgresql",
+        outcome="completed",
+        content="private workflow value",
+    )
+    assert metrics.stats().rejected == 3
+
+
+def test_workflow_state_spans_use_component_local_latency_and_trace_only_lineage() -> None:
+    metrics = MetadataMetrics()
+    workflow_id, revision_id, instance_id, step_execution_id = (uuid4() for _ in range(4))
+    trace_id, span_id = uuid4().hex, new_span_id()
+    metrics.record_span(
+        "aura.automation.workflow_state",
+        "workflow.repository",
+        2.5,
+        trace_id=trace_id,
+        span_id=span_id,
+        parent_span_id=None,
+        dependency="postgresql",
+        outcome="ok",
+        error_class="persistence",
+        workflow_id=str(workflow_id),
+        revision_id=str(revision_id),
+        instance_id=str(instance_id),
+        step_execution_id=str(step_execution_id),
+        expected_version="1",
+        result_version="2",
+    )
+    span = metrics.snapshot()[0]
+    assert span.metric == "workflow_repository_duration_ms"
+    assert span.value == 2.5
+    assert dict(span.dimensions) == {
+        "dependency": "postgresql",
+        "error_class": "persistence",
+        "operation": "workflow.repository",
+        "outcome": "ok",
+    }
+    assert dict(span.trace_attributes)["workflow_id"] == str(workflow_id)
+    assert dict(span.trace_attributes)["expected_version"] == "1"
+    assert metrics.stats().rejected == 0
+
+
 def test_recurring_reminder_metrics_are_registered_and_reject_private_dimensions() -> None:
     metrics = MetadataMetrics()
     required = (

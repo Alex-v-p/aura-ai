@@ -9,8 +9,10 @@ const now = '2026-10-10T09:00:00.000Z';
 const pending: ApprovalSummary = { id: 'approval-pending', proposalId: 'proposal-pending', runId: 'run-pending', conversationId: 'conversation-pending', toolCallId: 'call-pending', toolId: 'reminder.create', toolVersion: 1, status: 'pending', executionStatus: 'not_started', version: 1, createdAt: now, updatedAt: now, expiresAt: '2026-10-10T10:00:00.000Z', decidedAt: null };
 const approved: ApprovalSummary = { ...pending, id: 'approval-approved', proposalId: 'proposal-approved', runId: 'run-approved', conversationId: 'conversation-approved', status: 'approved', executionStatus: 'completed', version: 2, decidedAt: '2026-10-10T09:05:00.000Z' };
 const rejected: ApprovalSummary = { ...pending, id: 'approval-rejected', proposalId: 'proposal-rejected', runId: 'run-rejected', conversationId: 'conversation-rejected', status: 'rejected', executionStatus: 'denied', version: 2, decidedAt: '2026-10-10T09:06:00.000Z' };
+const workflowPending: ApprovalSummary = { id: 'approval-workflow', proposalId: 'proposal-workflow', origin: 'manual_workflow_instance', runId: null, conversationId: null, toolCallId: null, toolId: 'workflow.owner_approval', toolVersion: 1, workflowId: 'workflow-story', workflowRevisionId: 'revision-story', workflowInstanceId: 'instance-story', workflowStepOrdinal: 2, workflowStepExecutionId: 'execution-story', status: 'pending', executionStatus: 'not_started', version: 1, expiresAt: '2026-10-10T10:00:00.000Z', createdAt: now, updatedAt: now, decidedAt: null };
 const detail: ApprovalDetail = { ...pending, proposal: { id: 'proposal-pending', content: 'Create a reminder to bring the library books back.', dueAt: '2026-10-11T16:30:00.000Z' } };
 const approvedDetail: ApprovalDetail = { ...approved, proposal: { id: 'proposal-approved', content: 'Create the dentist reminder.', dueAt: '2026-10-12T09:00:00.000Z' } };
+const workflowDetail: ApprovalDetail = { ...workflowPending, proposal: { workflowId: 'workflow-story', workflowRevisionId: 'revision-story', workflowInstanceId: 'instance-story', workflowDisplayName: 'Morning plan', stepOrdinal: 2, stepExecutionId: 'execution-story', nextStepKind: 'owner_notification', consequence: 'continue_to_owner_notification', consequenceCopy: 'Approve this step to continue to the private notification.', ownerScopeId: 'owner-scope', workspaceScopeId: 'workspace-scope', origin: 'manual_workflow_instance', expiresAt: workflowPending.expiresAt } };
 
 type FixtureOptions = {
   readonly items?: ReadonlyArray<ApprovalSummary>;
@@ -78,7 +80,7 @@ function fixtureStore(options: FixtureOptions = {}): ApprovalStore {
     clearNotice: () => { notice.set(null); errorStatus.set(null); },
     registerSessionResetHandler: () => undefined,
     resumeAfterAcceptedSession: () => undefined,
-    forConversation: (conversationId: string) => pendingCollection().items.filter((item) => item.conversationId === conversationId),
+    forConversation: (conversationId: string) => pendingCollection().items.filter((item) => 'conversationId' in item && item.conversationId === conversationId),
     statusLabel: (status: string) => status[0].toUpperCase() + status.slice(1),
     executionLabel: (status: string) => status === 'not_started' ? 'Waiting to run' : status === 'queued' ? 'Queued' : status === 'executing' ? 'Executing' : status === 'completed' ? 'Completed' : status === 'denied' ? 'Denied' : 'Failed',
     canDecide: (approval: ApprovalSummary) => !decisionConfirmationRequired() && approval.status === 'pending' && selected()?.id === approval.id,
@@ -98,6 +100,7 @@ type Story = StoryObj<ApprovalsPageComponent>;
 export const Pending: Story = { name: 'Pending decision inbox' };
 export const History: Story = { name: 'Terminal history', decorators: [applicationConfig({ providers: [{ provide: ApprovalStore, useValue: fixtureStore({ view: 'history', items: [approved, rejected], pendingItems: [pending] }) }] })] };
 export const Detail: Story = { name: 'Pending detail review', decorators: [applicationConfig({ providers: [{ provide: ActivatedRoute, useValue: detailRoute(detail.id) }, { provide: ApprovalStore, useValue: fixtureStore({ selected: detail }) }] })] };
+export const WorkflowDetail: Story = { name: 'Immutable workflow consequence detail', decorators: [applicationConfig({ providers: [{ provide: ActivatedRoute, useValue: detailRoute(workflowDetail.id) }, { provide: ApprovalStore, useValue: fixtureStore({ items: [workflowPending], pendingItems: [workflowPending], selected: workflowDetail }) }] })] };
 export const TerminalDetail: Story = { name: 'Terminal detail', decorators: [applicationConfig({ providers: [{ provide: ActivatedRoute, useValue: detailRoute(approvedDetail.id) }, { provide: ApprovalStore, useValue: fixtureStore({ selected: approvedDetail, view: 'history', items: [approved, rejected], pendingItems: [pending] }) }] })] };
 export const Loading: Story = { name: 'Loading approvals', decorators: [applicationConfig({ providers: [{ provide: ApprovalStore, useValue: fixtureStore({ items: [], pendingItems: [], loading: true, loadedView: null }) }] })] };
 export const Empty: Story = { name: 'Empty pending inbox', decorators: [applicationConfig({ providers: [{ provide: ApprovalStore, useValue: fixtureStore({ items: [], pendingItems: [] }) }] })] };

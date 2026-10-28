@@ -587,4 +587,37 @@ test.describe('notification centre', () => {
     await expect(page.getByRole('alert').filter({ hasText: 'Live notifications stopped after several attempts' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Retry live updates', exact: true })).toBeVisible();
   });
+
+  test('keeps workflow notifications content-free and does not add a workflow deep link', async ({ page }) => {
+    const workflow = { id: 'notification-workflow', workflowId: 'workflow-private', workflowRevisionId: 'revision-private', workflowInstanceId: 'instance-private', workflowStepOrdinal: 3, workflowStepExecutionId: 'execution-private', workflowResultId: 'result-private', status: 'delivered', version: 1, createdAt: now, updatedAt: now, deliveredAt: now, acknowledgedAt: null };
+    const workflowEventBase = { schemaVersion: 1, eventType: 'notification.delivered', notificationId: workflow.id, workflowId: '550e8400-e29b-41d4-a716-446655440001', workflowRevisionId: '550e8400-e29b-41d4-a716-446655440002', workflowInstanceId: '550e8400-e29b-41d4-a716-446655440003', workflowStepOrdinal: 3, workflowStepExecutionId: '550e8400-e29b-41d4-a716-446655440004', workflowResultId: '550e8400-e29b-41d4-a716-446655440005', status: 'delivered', notificationVersion: 1, occurredAt: now };
+    const malformedWorkflowEvents = [
+      { ...workflowEventBase, eventId: '550e8400-e29b-41d4-a716-446655440011', workflowId: 'not-a-uuid' },
+      { ...workflowEventBase, eventId: '550e8400-e29b-41d4-a716-446655440012', workflowStepOrdinal: 0 },
+      { ...workflowEventBase, eventId: '550e8400-e29b-41d4-a716-446655440015', workflowStepOrdinal: 9 },
+      { ...workflowEventBase, eventId: '550e8400-e29b-41d4-a716-446655440013', reminderId: 'reminder-mixed-source' },
+      { ...workflowEventBase, eventId: '550e8400-e29b-41d4-a716-446655440014', extra: 'not-in-contract' },
+    ];
+    const malformedStream = malformedWorkflowEvents.map((event) => `event: notification.delivered\ndata: ${JSON.stringify(event)}\n\n`).join('');
+    await page.route('**/api/v1/**', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: session });
+      if (url.pathname.endsWith('/notifications/stream')) return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: `${malformedStream}event: heartbeat\ndata: {"schemaVersion":1,"eventType":"heartbeat","occurredAt":"2099-10-08T09:00:00Z"}\n\n` });
+      if (url.pathname === '/api/v1/notifications' && request.method() === 'GET') return route.fulfill({ json: { items: [workflow], nextCursor: null, unacknowledgedCount: 1 } });
+      if (url.pathname.endsWith('/notifications/notification-workflow') && request.method() === 'GET') return route.fulfill({ json: workflow });
+      return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
+    });
+    await page.goto('/notifications');
+    await expect(page.getByRole('button', { name: 'Open notification: A workflow update is available.', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Open notification: A workflow update is available.', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'A workflow update is available.', exact: true })).toBeVisible();
+    await expect(dialog).toContainText('contains no workflow input, output, instruction, approval, or result content');
+    await expect(dialog).toContainText('This update is recorded privately. Workflow details aren’t available in this version.');
+    await expect(dialog).not.toContainText('Step 3');
+    await expect(dialog.getByRole('link')).toHaveCount(0);
+    await expect(dialog.locator('.detail-actions button')).toHaveCount(1);
+    await expect(dialog).not.toContainText('result-private');
+  });
 });

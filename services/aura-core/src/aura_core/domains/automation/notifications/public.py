@@ -6,11 +6,11 @@ import base64
 import hashlib
 import hmac
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 from uuid import UUID
 
 NOTIFICATION_COMPONENT = "aura.automation.notification_delivery"
@@ -30,6 +30,7 @@ class NotificationView(StrEnum):
 class NotificationSourceKind(StrEnum):
     REMINDER = "reminder"
     BRIEFING = "briefing"
+    WORKFLOW = "workflow"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +53,56 @@ class BriefingNotificationSource:
     briefing_occurrence_id: UUID
     briefing_result_id: UUID
 
+    def payload(self) -> dict[str, object]:
+        return {
+            "kind": self.kind,
+            "briefingScheduleId": str(self.briefing_schedule_id),
+            "briefingOccurrenceId": str(self.briefing_occurrence_id),
+            "briefingResultId": str(self.briefing_result_id),
+        }
 
-NotificationSource = ReminderNotificationSource | BriefingNotificationSource
+
+@dataclass(frozen=True, slots=True)
+class WorkflowNotificationSource:
+    """Opaque workflow lineage; notification content is owned by inbox."""
+
+    kind: Literal["workflow"]
+    workflow_id: UUID
+    workflow_revision_id: UUID
+    workflow_instance_id: UUID
+    workflow_step_ordinal: int
+    workflow_step_execution_id: UUID
+    workflow_result_id: UUID
+
+    def __post_init__(self) -> None:
+        if any(
+            type(value) is not UUID
+            for value in (
+                self.workflow_id,
+                self.workflow_revision_id,
+                self.workflow_instance_id,
+                self.workflow_step_execution_id,
+                self.workflow_result_id,
+            )
+        ):
+            raise ValueError("workflow notification source must use UUIDs")
+        if not 1 <= self.workflow_step_ordinal <= 8:
+            raise ValueError("workflow step ordinal is out of bounds")
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "workflowId": str(self.workflow_id),
+            "workflowRevisionId": str(self.workflow_revision_id),
+            "workflowInstanceId": str(self.workflow_instance_id),
+            "workflowStepOrdinal": self.workflow_step_ordinal,
+            "workflowStepExecutionId": str(self.workflow_step_execution_id),
+            "workflowResultId": str(self.workflow_result_id),
+        }
+
+
+NotificationSource = (
+    ReminderNotificationSource | BriefingNotificationSource | WorkflowNotificationSource
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +132,30 @@ DeliverBriefingNotification = CreateBriefingNotification
 
 
 @dataclass(frozen=True, slots=True)
+class CreateWorkflowNotification:
+    issuer: str
+    subject: str
+    workflow_id: UUID
+    workflow_revision_id: UUID
+    workflow_instance_id: UUID
+    workflow_step_ordinal: int
+    workflow_step_execution_id: UUID
+    workflow_result_id: UUID
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        if not self.issuer or not self.subject:
+            raise ValueError("authenticated owner is required")
+        if not self.idempotency_key or len(self.idempotency_key) > 255:
+            raise ValueError("notification idempotency key is required")
+        WorkflowNotificationSource(
+            "workflow", self.workflow_id, self.workflow_revision_id,
+            self.workflow_instance_id, self.workflow_step_ordinal,
+            self.workflow_step_execution_id, self.workflow_result_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Notification:
     id: UUID
     issuer: str
@@ -107,6 +180,12 @@ class Notification:
     def briefing_result_id(self) -> UUID | None:
         if isinstance(self.source, BriefingNotificationSource):
             return self.source.briefing_result_id
+        return None
+
+    @property
+    def workflow_result(self) -> UUID | None:
+        if isinstance(self.source, WorkflowNotificationSource):
+            return self.source.workflow_result_id
         return None
 
 
@@ -147,6 +226,8 @@ class NotificationReplayEvent:
                     "briefingResultId": str(self.source.briefing_result_id),
                 }
             )
+        elif isinstance(self.source, WorkflowNotificationSource):
+            payload.update(self.source.payload())
         return payload
 
 
@@ -210,6 +291,10 @@ class NotificationRepository(Protocol):
 
     async def create_briefing_notification(
         self, command: CreateBriefingNotification
+    ) -> Notification: ...
+
+    async def create_workflow_notification(
+        self, command: CreateWorkflowNotification
     ) -> Notification: ...
 
     async def deliver_due(self, *, limit: int = 100) -> DueDeliveryResult: ...
@@ -281,6 +366,17 @@ class NotificationApplicationService:
         self, command: CreateBriefingNotification
     ) -> Notification:
         return await self.repository.create_briefing_notification(command)
+
+    async def create_workflow_notification(
+        self, command: CreateWorkflowNotification
+    ) -> Notification:
+        creator = getattr(self.repository, "create_workflow_notification", None)
+        if not callable(creator):
+            raise NotificationError("workflow notifications are unavailable")
+        typed_creator = cast(
+            Callable[[CreateWorkflowNotification], Awaitable[Notification]], creator
+        )
+        return await typed_creator(command)
 
     async def deliver_briefing_notification(
         self, command: CreateBriefingNotification
@@ -374,12 +470,15 @@ def as_payload(item: Notification) -> dict[str, object]:
                 "briefingResultId": str(item.source.briefing_result_id),
             }
         )
+    elif isinstance(item.source, WorkflowNotificationSource):
+        payload.update(item.source.payload())
     return payload
 
 
 __all__ = [
     "DueDeliveryResult",
     "BriefingNotificationSource",
+    "CreateWorkflowNotification",
     "CreateBriefingNotification",
     "DeliverBriefingNotification",
     "Notification",
@@ -396,6 +495,7 @@ __all__ = [
     "NotificationVersionConflict",
     "NotificationView",
     "ReminderNotificationSource",
+    "WorkflowNotificationSource",
     "NOTIFICATION_COMPONENT",
     "NOTIFICATION_TOPIC",
     "as_payload",

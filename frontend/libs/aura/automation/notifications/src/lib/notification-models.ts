@@ -1,4 +1,4 @@
-import type { Notification, NotificationLifecycleEvent, NotificationPage, NotificationStatus } from '@aura/aura-api-client';
+import type { Notification, NotificationLifecycleEvent, NotificationPage, NotificationStatus, WorkflowNotification } from '@aura/aura-api-client';
 
 export type NotificationRecord = Notification;
 export type NotificationEvent = NotificationLifecycleEvent;
@@ -16,7 +16,8 @@ export type NotificationView = 'unread' | 'history';
  */
 export type NotificationSourceView =
   | { readonly kind: 'reminder'; readonly reminderId: string }
-  | { readonly kind: 'briefing'; readonly briefingScheduleId: string; readonly briefingOccurrenceId: string; readonly briefingResultId: string; readonly destination: 'briefing_result' };
+  | { readonly kind: 'briefing'; readonly briefingScheduleId: string; readonly briefingOccurrenceId: string; readonly briefingResultId: string; readonly destination: 'briefing_result' }
+  | { readonly kind: 'workflow'; readonly workflowId: string; readonly workflowRevisionId: string; readonly workflowInstanceId: string; readonly workflowStepOrdinal: number; readonly workflowStepExecutionId: string; readonly workflowResultId: string };
 
 function isBoundedIdentifier(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 160;
@@ -24,6 +25,9 @@ function isBoundedIdentifier(value: unknown): value is string {
 
 /** Returns the closed source union, accepting the pre-union reminder shape. */
 export function notificationSource(notification: NotificationRecord): NotificationSourceView | null {
+  if (isWorkflowNotification(notification)) {
+    return { kind: 'workflow', workflowId: notification.workflowId, workflowRevisionId: notification.workflowRevisionId, workflowInstanceId: notification.workflowInstanceId, workflowStepOrdinal: notification.workflowStepOrdinal, workflowStepExecutionId: notification.workflowStepExecutionId, workflowResultId: notification.workflowResultId };
+  }
   const source = (notification as unknown as { readonly source?: unknown }).source;
   if (source && typeof source === 'object') {
     const candidate = source as { readonly kind?: unknown; readonly reminderId?: unknown; readonly briefingScheduleId?: unknown; readonly briefingOccurrenceId?: unknown; readonly briefingResultId?: unknown; readonly destination?: unknown };
@@ -38,6 +42,15 @@ export function notificationSource(notification: NotificationRecord): Notificati
   if (isBoundedIdentifier(briefingScheduleId) && isBoundedIdentifier(briefingOccurrenceId) && isBoundedIdentifier(briefingResultId)) return briefingSource(briefingScheduleId, briefingOccurrenceId, briefingResultId);
   const legacyReminderId = (notification as unknown as { readonly reminderId?: unknown }).reminderId;
   return isBoundedIdentifier(legacyReminderId) ? { kind: 'reminder', reminderId: legacyReminderId } : null;
+}
+
+export function isWorkflowNotification(notification: NotificationRecord): notification is WorkflowNotification {
+  return 'workflowId' in notification && typeof notification.workflowId === 'string';
+}
+
+export function notificationWorkflow(notification: NotificationRecord): Extract<NotificationSourceView, { readonly kind: 'workflow' }> | null {
+  const source = notificationSource(notification);
+  return source?.kind === 'workflow' ? source : null;
 }
 
 /** Keeps the canonical route lineage available to the feature while retaining
@@ -82,7 +95,9 @@ const boundedUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}
 const lifecycleBaseKeys = ['schemaVersion', 'eventId', 'eventType', 'notificationId', 'status', 'notificationVersion', 'occurredAt'] as const;
 const reminderLifecycleKeys = new Set<string>([...lifecycleBaseKeys, 'reminderId']);
 const briefingLifecycleKeys = new Set<string>([...lifecycleBaseKeys, 'briefingScheduleId', 'briefingOccurrenceId', 'briefingResultId']);
+const workflowLifecycleKeys = new Set<string>([...lifecycleBaseKeys, 'workflowId', 'workflowRevisionId', 'workflowInstanceId', 'workflowStepOrdinal', 'workflowStepExecutionId', 'workflowResultId']);
 function hasOnlyLifecycleKeys(value: object, allowed: ReadonlySet<string>): boolean { return Object.keys(value).every((key) => allowed.has(key)); }
+function isWorkflowUuid(value: unknown): value is string { return typeof value === 'string' && boundedUuid.test(value); }
 export function isValidNotificationEvent(value: unknown): value is NotificationEvent {
   if (!value || typeof value !== 'object') return false;
   const event = value as Partial<NotificationEvent>;
@@ -90,6 +105,12 @@ export function isValidNotificationEvent(value: unknown): value is NotificationE
   const briefingScheduleId = (value as { readonly briefingScheduleId?: unknown }).briefingScheduleId;
   const briefingOccurrenceId = (value as { readonly briefingOccurrenceId?: unknown }).briefingOccurrenceId;
   const briefingResultId = (value as { readonly briefingResultId?: unknown }).briefingResultId;
+  const workflowId = (value as { readonly workflowId?: unknown }).workflowId;
+  const workflowRevisionId = (value as { readonly workflowRevisionId?: unknown }).workflowRevisionId;
+  const workflowInstanceId = (value as { readonly workflowInstanceId?: unknown }).workflowInstanceId;
+  const workflowStepOrdinal = (value as { readonly workflowStepOrdinal?: unknown }).workflowStepOrdinal;
+  const workflowStepExecutionId = (value as { readonly workflowStepExecutionId?: unknown }).workflowStepExecutionId;
+  const workflowResultId = (value as { readonly workflowResultId?: unknown }).workflowResultId;
   const commonValid = event.schemaVersion === 1 && typeof event.eventId === 'string' && boundedUuid.test(event.eventId) &&
     ((event.eventType === 'notification.delivered' && event.status === 'delivered') || (event.eventType === 'notification.acknowledged' && event.status === 'acknowledged')) &&
     typeof event.notificationId === 'string' && event.notificationId.length > 0 && event.notificationId.length <= 160 &&
@@ -97,7 +118,8 @@ export function isValidNotificationEvent(value: unknown): value is NotificationE
     Number(event.notificationVersion) > 0 && typeof event.occurredAt === 'string' && Number.isFinite(Date.parse(event.occurredAt));
   const hasReminder = isBoundedIdentifier(legacyReminderId) && hasOnlyLifecycleKeys(value, reminderLifecycleKeys);
   const hasBriefing = isBoundedIdentifier(briefingScheduleId) && isBoundedIdentifier(briefingOccurrenceId) && isBoundedIdentifier(briefingResultId) && hasOnlyLifecycleKeys(value, briefingLifecycleKeys);
-  return commonValid && (hasReminder || hasBriefing);
+  const hasWorkflow = isWorkflowUuid(workflowId) && isWorkflowUuid(workflowRevisionId) && isWorkflowUuid(workflowInstanceId) && Number.isInteger(workflowStepOrdinal) && Number(workflowStepOrdinal) >= 1 && Number(workflowStepOrdinal) <= 8 && isWorkflowUuid(workflowStepExecutionId) && isWorkflowUuid(workflowResultId) && hasOnlyLifecycleKeys(value, workflowLifecycleKeys);
+  return commonValid && (hasReminder || hasBriefing || hasWorkflow);
 }
 
 export function appendNotificationPage(current: NotificationCollection, next: NotificationCollection): NotificationCollection {

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { Notification } from '@aura/aura-api-client';
-import { appendNotificationPage, isValidNotificationEvent, loadUnreadProjection, notificationBriefingResult, notificationSource, NotificationApiError, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection, type NotificationsApi } from './notification-models';
+import { appendNotificationPage, isValidNotificationEvent, isWorkflowNotification, loadUnreadProjection, notificationBriefingResult, notificationSource, notificationWorkflow, NotificationApiError, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection, type NotificationsApi } from './notification-models';
 import { NotificationSessionHydrator } from './notification-session-hydration';
 
 const page = readFileSync('libs/aura/automation/notifications/src/lib/notifications-page.component.html', 'utf8');
@@ -191,5 +191,28 @@ describe('notification centre contracts', () => {
     guard.clearRoute();
     const replacement = guard.begin('notification-c');
     expect(guard.isRouteCurrent(replacement)).toBe(true);
+  });
+
+  it('keeps workflow notifications content-free and source-neutral', () => {
+    const workflow = { id: 'notification-workflow', workflowId: 'workflow-1', workflowRevisionId: 'revision-1', workflowInstanceId: 'instance-1', workflowStepOrdinal: 3, workflowStepExecutionId: 'execution-1', workflowResultId: 'result-1', status: 'delivered', version: 1, createdAt: '2026-10-08T09:00:00.000Z', updatedAt: '2026-10-08T09:00:00.000Z', deliveredAt: '2026-10-08T09:00:00.000Z', acknowledgedAt: null } as unknown as Notification;
+    expect(isWorkflowNotification(workflow)).toBe(true);
+    expect(notificationWorkflow(workflow)).toMatchObject({ kind: 'workflow', workflowStepOrdinal: 3 });
+    expect(notificationSource(workflow)).not.toHaveProperty('content');
+    expect(page).toContain('This compact notification contains no workflow input, output, instruction, approval, or result content.');
+    expect(page).toContain('This update is recorded privately. Workflow details aren’t available in this version.');
+    expect(page).not.toContain('private workflow workspace');
+    expect(page).not.toContain('Open workflow');
+  });
+
+  it('accepts only complete workflow lifecycle metadata', () => {
+    const event = { schemaVersion: 1, eventId: '550e8400-e29b-41d4-a716-446655440000', eventType: 'notification.delivered', notificationId: 'notification-workflow', workflowId: '550e8400-e29b-41d4-a716-446655440001', workflowRevisionId: '550e8400-e29b-41d4-a716-446655440002', workflowInstanceId: '550e8400-e29b-41d4-a716-446655440003', workflowStepOrdinal: 3, workflowStepExecutionId: '550e8400-e29b-41d4-a716-446655440004', workflowResultId: '550e8400-e29b-41d4-a716-446655440005', status: 'delivered', notificationVersion: 1, occurredAt: '2026-10-08T09:00:00.000Z' };
+    expect(isValidNotificationEvent(event)).toBe(true);
+    expect(isValidNotificationEvent({ ...event, kind: 'workflow' })).toBe(false);
+    expect(isValidNotificationEvent({ ...event, workflowId: 'workflow-1' })).toBe(false);
+    expect(isValidNotificationEvent({ ...event, workflowStepOrdinal: 0 })).toBe(false);
+    expect(isValidNotificationEvent({ ...event, workflowStepOrdinal: 9 })).toBe(false);
+    expect(isValidNotificationEvent({ ...event, workflowResultId: undefined })).toBe(false);
+    expect(isValidNotificationEvent({ ...event, reminderId: 'reminder-1' })).toBe(false);
+    expect(isValidNotificationEvent({ ...event, extra: 'not-in-contract' })).toBe(false);
   });
 });

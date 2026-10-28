@@ -762,6 +762,22 @@ modules:
   - aura-core.domains.execution.runs.public
   - aura-core.domains.automation.notifications
   - aura-core.domains.interaction.agents.public
+- id: aura-core.domains.automation.workflows
+  root: services/aura-core/src/aura_core/domains/automation/workflows
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/automation/workflows/public.py
+  python_modules:
+  - aura_core.domains.automation.workflows
+  source_files:
+  - services/aura-core/src/aura_core/domains/automation/workflows/__init__.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/models.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/public.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/repository.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/state.py
+  dependencies:
+  - aura-core.platform.database.base
+  - aura-core.platform.telemetry
 - id: aura-core.domains.automation.reminders.proposals
   root: services/aura-core/src/aura_core/domains/automation/reminders/proposals.py
   kind: python

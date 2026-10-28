@@ -72,6 +72,43 @@ function persistedRecoveryDetail(status: Run['status']): ConversationDetail {
 }
 
 describe('ConversationStore', () => {
+  it('ignores workflow-origin runs and events without a conversation id', async () => {
+    const workflowRun = {
+      id: 'workflow-run',
+      conversationId: null,
+      userMessageId: null,
+      assistantMessageId: null,
+      status: 'running' as const,
+      agentRevisionId: 'agent-rev-1',
+      modelPolicyRevisionId: 'policy-1',
+      provider: 'workflow',
+      modelId: 'workflow-owner-approval',
+      retryOfRunId: null,
+      createdAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      error: null,
+      workflowOrigin: { workflowRevisionId: 'workflow-revision', workflowInstanceId: 'workflow-instance', workflowStepExecutionId: 'workflow-step' },
+    } as Run;
+    const conversationId = 'conversation-workflow-isolated';
+    const detail = { ...summary(conversationId), currentRun: workflowRun, recentRuns: [workflowRun], messages: [] } as ConversationDetail;
+    let streamCalls = 0;
+    const api = fakeApi(async () => ({ items: [summary(conversationId)], nextCursor: null }), [detail], [workflowRun], (_id, _last, _onEvent) => { streamCalls += 1; return { close: () => undefined }; });
+    const store = new ConversationStore(api);
+    await vi.waitFor(() => expect(store.authState()).toBe('authenticated'));
+    await expect(store.selectFromRoute(conversationId)).resolves.toEqual({ status: 'selected' });
+
+    expect(store.selected().currentRun).toBeNull();
+    expect(store.selected().retryableRun).toBeNull();
+    expect(store.selected().runs).toEqual([]);
+    expect(streamCalls).toBe(0);
+
+    const applyEvent = (store as unknown as { applyEvent: (event: RunEvent) => void }).applyEvent.bind(store);
+    applyEvent({ schemaVersion: 1, eventId: 'workflow-event', sequence: 1, eventType: 'run.status', runId: workflowRun.id, conversationId: null, workflowOrigin: workflowRun.workflowOrigin, occurredAt: new Date().toISOString(), data: { status: 'completed', startedAt: workflowRun.startedAt, finishedAt: new Date().toISOString() } } as RunEvent);
+    expect(store.selected().currentRun).toBeNull();
+    expect(store.runState()).toBe('idle');
+  });
+
   it('normalizes citations to owner-safe internal-link data and drops malformed or duplicate markers', () => {
     expect(normalizeDocumentCitations([{ documentId: 'doc-a', displayLabel: 'Guide', locator: 'page:4', excerpt: 'private' }, { documentId: 'doc-a', displayLabel: 'Duplicate', locator: 'page:4' }, { documentId: 'https://attacker.test', displayLabel: 'Remote', locator: 'page:1' }, { documentId: 'doc-b', displayLabel: 'Notes', locator: 'section:2' }, { documentId: 'doc-c', displayLabel: 'Bad', locator: 'page:0' }])).toEqual([{ documentId: 'doc-a', displayLabel: 'Guide', locator: 'page:4' }, { documentId: 'doc-b', displayLabel: 'Notes', locator: 'section:2' }]);
   });

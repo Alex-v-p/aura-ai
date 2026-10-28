@@ -153,6 +153,16 @@ const draftAgent: AgentReference = { profileId: '', revisionId: '', revision: 1,
 const emptyBranchState = (): ConversationBranchState => ({ summaries: [], activeId: null, nextCursor: null, loading: false, error: null, errorAction: null, editingMessageId: null, editDraft: '' });
 const emptyDraft: Conversation = { id: 'draft-welcome', title: 'New conversation', turns: [], updatedAt: Date.now(), modelId: '', version: 0, archivedAt: null, currentRun: null, retryableRun: null, agent: null, assignments: [], persona: null, personaOverride: false, personaAssignments: [], runs: [], branch: emptyBranchState() };
 
+type ConversationRun = Run & { readonly conversationId: string };
+type ConversationRunEvent = RunEvent & { readonly conversationId: string };
+/** Workflow-origin runs are not conversation-owned; never let their null id cross this boundary. */
+function isConversationRun(run: Run | null | undefined): run is ConversationRun {
+  return typeof run?.conversationId === 'string' && run.conversationId.length > 0;
+}
+function isConversationRunEvent(event: RunEvent | null | undefined): event is ConversationRunEvent {
+  return typeof event?.conversationId === 'string' && event.conversationId.length > 0;
+}
+
 @Injectable({ providedIn: 'root' })
 export class ConversationStore {
   readonly loading = signal(true);
@@ -680,7 +690,7 @@ export class ConversationStore {
       this.cancelPendingConfigurationForSelection(id);
       this.selectedId.set(id);
       this.setNotice(id, null);
-      if (detail.currentRun) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); }
+      if (isConversationRun(detail.currentRun)) { this.setRunState(id, this.statusToState(detail.currentRun.status)); this.subscribe(detail.currentRun); }
       else if (conversation.retryableRun) { this.setRunState(id, this.statusToState(conversation.retryableRun.status)); }
       void this.loadBranches(id);
       return { status: 'selected' };
@@ -1073,6 +1083,7 @@ export class ConversationStore {
 
   private acceptRun(id: string, accepted: ConversationRunAccepted, pendingTurnId?: string): void {
     const existing = this.find(id); if (!existing) return;
+    if (!isConversationRun(accepted.run)) return;
     this.clearThinkingForConversation(id);
     const turns = existing.turns.map((turn) => !pendingTurnId || turn.id === pendingTurnId ? (turn.id.startsWith('pending-user-') ? this.fromMessage(accepted.userMessage) : turn) : turn);
     const acceptedConversation = this.fromSummary(accepted.conversation);
@@ -1086,6 +1097,7 @@ export class ConversationStore {
   private async applyAcceptedBranch(id: string, accepted: ConversationBranchRunAccepted, action: BranchRetryAction): Promise<boolean> {
     const existing = this.find(id);
     if (!existing) return false;
+    if (!isConversationRun(accepted.run)) return false;
     const acceptedConversation = this.fromSummary(accepted.conversation);
     const branch = accepted.branch;
     if (!branch) {
@@ -1116,7 +1128,7 @@ export class ConversationStore {
       try {
         const detail = await this.api.getConversationBranch(id, branch.id);
         this.replaceConversation(this.fromBranchDetail(detail, this.find(id) ?? existing));
-        this.setRunState(id, this.statusToState(detail.recentRuns.at(-1)?.status ?? accepted.run.status));
+        this.setRunState(id, this.statusToState(accepted.run.status));
         this.setBranchAnnouncement(id, 'New conversation branch loaded.');
       } catch {
         this.updateBranchState({ loading: false, error: 'The branch was created, but its transcript is not available yet.', errorAction: { kind: 'select', branchId: branch.id } }, id);
@@ -1233,6 +1245,7 @@ export class ConversationStore {
   private clientTimeZone(): string | undefined { return typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined; }
 
   private subscribe(run: Run, attempt = 0): void {
+    if (!isConversationRun(run)) return;
     const guard = this.captureSessionGuard();
     const pendingReconnect = this.reconnectTimers.get(run.id);
     if (pendingReconnect) { clearTimeout(pendingReconnect); this.reconnectTimers.delete(run.id); }
@@ -1249,6 +1262,7 @@ export class ConversationStore {
   }
 
   private scheduleReconciliation(run: Run, attempt: number, error?: ConversationApiError, guard = this.captureSessionGuard()): void {
+    if (!isConversationRun(run)) return;
     if (!this.matchesSessionGuard(guard)) return;
     const current = this.find(run.conversationId)?.currentRun;
     if (!current || this.isTerminal(current.status)) return;
@@ -1261,6 +1275,7 @@ export class ConversationStore {
   private clearReconnect(runId: string): void { const timer = this.reconnectTimers.get(runId); if (timer) clearTimeout(timer); this.reconnectTimers.delete(runId); }
 
   private async reconcileRun(run: Run, attempt: number, guard = this.captureSessionGuard()): Promise<void> {
+    if (!isConversationRun(run)) return;
     try {
       const detail = await this.api.getConversation(run.conversationId);
       if (!this.matchesSessionGuard(guard)) return;
@@ -1271,7 +1286,7 @@ export class ConversationStore {
         await this.readMemoryActivity(run.conversationId, run.id, guard);
         if (!this.matchesSessionGuard(guard)) return;
       }
-      if (detail.currentRun && !this.isTerminal(detail.currentRun.status)) {
+      if (isConversationRun(detail.currentRun) && !this.isTerminal(detail.currentRun.status)) {
         this.expiredCursorRecoveries.delete(run.id); this.setRunState(run.conversationId, 'working'); this.setNotice(run.conversationId, null); this.subscribe(detail.currentRun, attempt); return;
       }
       if (conversation.retryableRun) {
@@ -1289,10 +1304,11 @@ export class ConversationStore {
   }
 
   private applyEvent(event: RunEvent, cursor?: string): void {
+    if (!isConversationRunEvent(event)) return;
     // Only the SSE `id` field identifies a persisted event.  Core heartbeats
     // are intentionally not persisted and do not carry a cursor.
     if (cursor && event.eventType !== 'heartbeat' && event.eventType !== 'model.thinking.delta') this.lastEventIds.set(event.runId, cursor);
-    if (event.eventType === 'run.snapshot') { this.replaceRun(event.conversationId, event.data.run); if (event.data.assistantMessage) this.upsertTurn(event.conversationId, this.fromMessage(event.data.assistantMessage)); }
+    if (event.eventType === 'run.snapshot') { if (isConversationRun(event.data.run)) this.replaceRun(event.conversationId, event.data.run); if (event.data.assistantMessage) this.upsertTurn(event.conversationId, this.fromMessage(event.data.assistantMessage)); }
     else if (event.eventType === 'run.status') { this.setRunState(event.conversationId, this.statusToState(event.data.status)); this.replaceConversationRun(event.conversationId, (run) => run ? { ...run, status: event.data.status, startedAt: event.data.startedAt, finishedAt: event.data.finishedAt } : run); if (this.isTerminal(event.data.status)) { this.clearReconnect(event.runId); void this.refresh(event.conversationId); } }
     else if (event.eventType === 'assistant.delta') this.appendAssistantDelta(event.conversationId, event.data.messageId, event.data.offset, event.data.text, event.runId);
     else if (event.eventType === 'model.thinking.delta') this.applyThinkingDelta(event.conversationId, event.runId, event.data.offset, event.data.text);
@@ -1491,7 +1507,8 @@ export class ConversationStore {
     const assignments = (raw.agentAssignments ?? []).map((item) => ({ id: item.id, agent: { profileId: item.agent.profileId, revisionId: item.agent.revisionId, revision: item.agent.revision, displayName: item.agent.displayName, status: item.agent.status, newerRevisionAvailable: item.agent.newerRevisionAvailable }, reason: item.reason, afterMessageId: item.effectiveAfterMessageId, changedAt: item.createdAt }));
     const persona = summary.persona ?? null;
     const personaAssignments = (summary.personaAssignments ?? []).map((item) => ({ id: item.id, persona: item.persona, source: item.source, reason: item.reason, afterMessageId: item.effectiveAfterMessageId, changedAt: item.createdAt }));
-    return { id: summary.id, title: summary.title, turns: [], updatedAt: Date.parse(summary.updatedAt), modelId: summary.modelId, version: summary.version, archivedAt: summary.archivedAt ?? null, currentRun: summary.currentRun, retryableRun: null, agent, assignments, persona, personaOverride: summary.personaOverride ?? false, personaAssignments, runs: summary.currentRun ? [summary.currentRun] : [], ...(previous?.branch ? { branch: previous.branch } : { branch: emptyBranchState() }) };
+    const currentRun = isConversationRun(summary.currentRun) ? summary.currentRun : null;
+    return { id: summary.id, title: summary.title, turns: [], updatedAt: Date.parse(summary.updatedAt), modelId: summary.modelId, version: summary.version, archivedAt: summary.archivedAt ?? null, currentRun, retryableRun: null, agent, assignments, persona, personaOverride: summary.personaOverride ?? false, personaAssignments, runs: currentRun ? [currentRun] : [], ...(previous?.branch ? { branch: previous.branch } : { branch: emptyBranchState() }) };
   }
   private mergeSummary(summary: ConversationSummary, existing: Conversation): Conversation {
     const mapped = this.fromSummary(summary);
@@ -1501,9 +1518,9 @@ export class ConversationStore {
     const retryableRun = currentRun && this.isRetryable(currentRun.status) ? currentRun : existing.retryableRun;
     return { ...mapped, turns: existing.turns, currentRun, retryableRun, runs: [...runsById.values()], ...(existing.toolActivities ? { toolActivities: existing.toolActivities } : {}), ...(existing.toolActivityEventIds ? { toolActivityEventIds: existing.toolActivityEventIds } : {}), ...(existing.toolActivityCursors ? { toolActivityCursors: existing.toolActivityCursors } : {}) };
   }
-  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); return { ...base, turns, currentRun: detail.currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])]), ...(previous?.branch ? { branch: previous.branch } : {}), ...(previous?.toolActivities ? { toolActivities: previous.toolActivities } : {}), ...(previous?.toolActivityEventIds ? { toolActivityEventIds: previous.toolActivityEventIds } : {}), ...(previous?.toolActivityCursors ? { toolActivityCursors: previous.toolActivityCursors } : {}) }; }
-  private uniqueRuns(runs: ReadonlyArray<Run>): ReadonlyArray<Run> { const seen = new Set<string>(); return runs.filter((run) => { if (seen.has(run.id)) return false; seen.add(run.id); return true; }); }
-  private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(detail.currentRun ? [detail.currentRun] : [])].filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
+  private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); const currentRun = isConversationRun(detail.currentRun) ? detail.currentRun : null; return { ...base, turns, currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(currentRun ? [currentRun] : [])]), ...(previous?.branch ? { branch: previous.branch } : {}), ...(previous?.toolActivities ? { toolActivities: previous.toolActivities } : {}), ...(previous?.toolActivityEventIds ? { toolActivityEventIds: previous.toolActivityEventIds } : {}), ...(previous?.toolActivityCursors ? { toolActivityCursors: previous.toolActivityCursors } : {}) }; }
+  private uniqueRuns(runs: ReadonlyArray<Run>): ReadonlyArray<Run> { const seen = new Set<string>(); return runs.filter(isConversationRun).filter((run) => { if (seen.has(run.id)) return false; seen.add(run.id); return true; }); }
+  private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(isConversationRun(detail.currentRun) ? [detail.currentRun] : [])].filter(isConversationRun).filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
   private fromMessage(message: Message): ConversationTurn { const raw = message as Message & { readonly citations?: unknown; readonly attachments?: unknown }; const citations = normalizeDocumentCitations(raw.citations); const attachments = normalizeAttachments(raw.attachments); return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId, ...(citations.length ? { citations } : {}), ...(attachments.length ? { attachments } : {}) }; }
   private hydrateHistoricalToolActivities(conversation: Conversation): void {
     for (const run of conversation.runs) {
@@ -1516,6 +1533,7 @@ export class ConversationStore {
         this.toolReplaySubscriptions.delete(run.id);
       };
       subscription = this.api.streamRunEvents(run.id, conversation.toolActivityCursors?.[run.id], (event, cursor) => {
+        if (!isConversationRunEvent(event)) return;
         if (event.eventType === 'tool.status') this.applyToolStatus(event.conversationId, event.runId, event.data, event.eventId, cursor);
         else if (event.eventType === 'run.status' && this.isTerminal(event.data.status)) finish();
       }, finish);

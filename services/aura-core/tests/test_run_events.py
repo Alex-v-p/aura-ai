@@ -35,6 +35,7 @@ class _Session:
         self.run_lock_requested = True
         return self.run if identifier == self.run.id else None
 
+
     async def scalar(self, statement: object) -> int | None:
         del statement
         self.scalar_calls += 1
@@ -44,6 +45,67 @@ class _Session:
         self.added.append(row)
         self.events[row.id] = row
         self.max_sequence = row.sequence
+
+
+def test_run_and_event_lineage_are_a_closed_ordinary_or_workflow_union() -> None:
+    common = {
+        "agent_revision_id": uuid4(),
+        "model_policy_revision_id": uuid4(),
+        "provider": "ollama",
+        "model_id": "fixture",
+    }
+    ordinary = Run(uuid4(), uuid4(), **common)
+    assert "workflowOrigin" not in run_payload(ordinary)
+    with pytest.raises(ValueError):
+        Run(ordinary.conversation_id, None, **common)
+    with pytest.raises(ValueError):
+        Run(
+            ordinary.conversation_id,
+            ordinary.user_message_id,
+            workflow_id=uuid4(),
+            workflow_revision_id=uuid4(),
+            workflow_instance_id=uuid4(),
+            workflow_step_ordinal=1,
+            workflow_step_execution_id=uuid4(),
+            **common,
+        )
+    ordinary_event = new_event("run.status", ordinary.id, ordinary.conversation_id, 0, {})
+    assert "workflowOrigin" not in ordinary_event.payload()
+    workflow = Run(
+        None,
+        None,
+        workflow_id=uuid4(),
+        workflow_revision_id=uuid4(),
+        workflow_instance_id=uuid4(),
+        workflow_step_ordinal=1,
+        workflow_step_execution_id=uuid4(),
+        **common,
+    )
+    assert run_payload(workflow)["conversationId"] is None
+    with pytest.raises(ValueError):
+        RunEvent(
+            uuid4(),
+            0,
+            "run.status",
+            workflow.id,
+            uuid4(),
+            datetime.now(UTC),
+            {},
+            workflow_id=uuid4(),
+        )
+    workflow_event = new_event(
+        "run.status",
+        workflow.id,
+        None,
+        0,
+        {},
+        workflow_id=workflow.workflow_id,
+        workflow_revision_id=workflow.workflow_revision_id,
+        workflow_instance_id=workflow.workflow_instance_id,
+        workflow_step_ordinal=workflow.workflow_step_ordinal,
+        workflow_step_execution_id=workflow.workflow_step_execution_id,
+    )
+    assert workflow_event.payload()["conversationId"] is None
 
 
 def _event(run_id: UUID, *, event_id: UUID | None = None) -> RunEvent:

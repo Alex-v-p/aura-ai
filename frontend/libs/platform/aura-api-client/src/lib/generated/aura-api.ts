@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 4bde49dbdc345999a1af922b0a66de55c8e31f5f6fba08ab5046f383f005627c
+// Contract SHA-256: 2c1744b9ace139e09583873e4a23a96bf83e2755577a5c68ea88ae937775eab6
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -232,7 +232,7 @@ export type ConversationDetail = ConversationSummary & { readonly "messages": Re
 
 export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "branchId"?: string; readonly "parentMessageId"?: string | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "attachments"?: ReadonlyArray<MessageAttachmentSummary>; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type Run = { readonly "id": string; readonly "conversationId": string; readonly "userMessageId": string; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "attachments"?: ReadonlyArray<MessageAttachmentSummary>; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "branchId"?: string | null; readonly "regeneratedFromRunId"?: string | null; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
+export type Run = { readonly "id": string; readonly "conversationId": string | null; readonly "userMessageId": string | null; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "attachments"?: ReadonlyArray<MessageAttachmentSummary>; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "branchId"?: string | null; readonly "regeneratedFromRunId"?: string | null; readonly "workflowOrigin"?: WorkflowRunOrigin; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
 
 export type RunStatus = "queued" | "running" | "waiting_for_confirmation" | "cancel_requested" | "canceled" | "completed" | "failed" | "interrupted";
 
@@ -248,7 +248,9 @@ export type ConversationRunAccepted = { readonly "conversation": ConversationSum
 
 export type RunEvent = RunSnapshotEvent | RunStatusEvent | AssistantDeltaEvent | ModelThinkingDeltaEvent | AssistantSnapshotEvent | RunErrorEvent | MemoryActivityEvent | ToolStatusEvent | ApprovalStatusEvent | HeartbeatEvent;
 
-export type RunEventBase = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "sequence": number; readonly "eventType": string; readonly "runId": string; readonly "conversationId": string; readonly "occurredAt": string; };
+export type RunEventBase = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "sequence": number; readonly "eventType": string; readonly "runId": string; readonly "conversationId": string | null; readonly "workflowOrigin"?: WorkflowRunOrigin; readonly "occurredAt": string; };
+
+export type WorkflowRunOrigin = { readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowStepExecutionId": string; };
 
 export type RunSnapshotEvent = RunEventBase & { readonly "eventType": "run.snapshot"; readonly "data": RunSnapshotData; };
 
@@ -328,13 +330,29 @@ export type ApprovalExecutionStatus = "not_started" | "queued" | "executing" | "
 
 export type ReminderApprovalToolId = "reminder.create" | "reminder.series.create" | "reminder.reschedule" | "reminder.series.update" | "reminder.series.pause" | "reminder.series.resume" | "reminder.cancel";
 
-export type Approval = { readonly "id": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolCallId": string; readonly "toolId": ReminderApprovalToolId; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "expiresAt": string; readonly "createdAt": string; readonly "updatedAt": string; readonly "decidedAt": string | null; };
+export type Approval = ReminderApproval | WorkflowApproval;
+
+export type ReminderApproval = { readonly "id": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolCallId": string; readonly "toolId": ReminderApprovalToolId; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "expiresAt": string; readonly "createdAt": string; readonly "updatedAt": string; readonly "decidedAt": string | null; };
+
+export type WorkflowApproval = { readonly "id": string; readonly "proposalId": string; readonly "origin": "manual_workflow_instance"; readonly "runId": null; readonly "conversationId": null; readonly "toolCallId": null; readonly "toolId": "workflow.owner_approval"; readonly "toolVersion": 1; readonly "workflowId": string; readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowStepOrdinal": number; readonly "workflowStepExecutionId": string; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "expiresAt": string; readonly "createdAt": string; readonly "updatedAt": string; readonly "decidedAt": string | null; };
 
 export type ReminderProposalDetail = { readonly "id": string; readonly "content": string; readonly "dueAt": string; };
 
 export type ReminderCommandProposalDetail = { readonly "id": string; readonly "operation": "series.create" | "reschedule" | "series.update" | "series.pause" | "series.resume" | "cancel"; readonly "summary": string; readonly "targetType": "series" | "reminder" | "occurrence" | null; readonly "targetId": string | null; readonly "expectedVersion": number | null; };
 
-export type ApprovalDetail = Approval & { readonly "proposal": ReminderProposalDetail | ReminderCommandProposalDetail; };
+export type ApprovalDetail = ReminderApprovalDetail | WorkflowApprovalDetail;
+
+export type ReminderApprovalDetail = ReminderApproval & { readonly "proposal": ReminderProposalDetail | ReminderCommandProposalDetail; };
+
+export type WorkflowApprovalNextStepKind = "agent_run" | "owner_approval" | "owner_notification" | "wait_until" | "complete";
+
+export type WorkflowApprovalConsequence = "continue_to_agent_run" | "continue_to_owner_approval" | "continue_to_owner_notification" | "continue_to_wait_until" | "complete_workflow";
+
+export type WorkflowApprovalConsequenceCopy = "Approve this step to continue to the agent run." | "Approve this step to continue to the next approval." | "Approve this step to continue to the private notification." | "Approve this step to continue to the wait." | "Approve this step to complete the workflow.";
+
+export type WorkflowApprovalProposal = { readonly "workflowId": string; readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowDisplayName": string; readonly "stepOrdinal": number; readonly "stepExecutionId": string; readonly "nextStepKind": WorkflowApprovalNextStepKind; readonly "consequence": WorkflowApprovalConsequence; readonly "consequenceCopy": WorkflowApprovalConsequenceCopy; readonly "ownerScopeId": OpaqueWorkflowIdentifier; readonly "workspaceScopeId": OpaqueWorkflowIdentifier; readonly "origin": "manual_workflow_instance"; readonly "expiresAt": string; };
+
+export type WorkflowApprovalDetail = WorkflowApproval & { readonly "proposal": WorkflowApprovalProposal; };
 
 export type ApprovalPage = { readonly "items": ReadonlyArray<Approval>; readonly "nextCursor": string | null; };
 
@@ -342,31 +360,155 @@ export type ApprovalDecisionRequest = { readonly "expectedVersion": number; };
 
 export type ApprovalStreamEvent = ApprovalEvent | ApprovalHeartbeatEvent;
 
-export type ApprovalEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "approval.pending" | "approval.approved" | "approval.rejected" | "approval.expired" | "approval.canceled"; readonly "approvalId": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolId": ReminderApprovalToolId; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "occurredAt": string; };
+export type ApprovalEvent = ReminderApprovalEvent | WorkflowApprovalEvent;
+
+export type ReminderApprovalEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "approval.pending" | "approval.approved" | "approval.rejected" | "approval.expired" | "approval.canceled"; readonly "approvalId": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "toolId": ReminderApprovalToolId; readonly "toolVersion": 1; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "occurredAt": string; };
+
+export type WorkflowApprovalEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "approval.pending" | "approval.approved" | "approval.rejected" | "approval.expired" | "approval.canceled"; readonly "approvalId": string; readonly "proposalId": string; readonly "origin": "manual_workflow_instance"; readonly "runId": null; readonly "conversationId": null; readonly "toolId": "workflow.owner_approval"; readonly "toolVersion": 1; readonly "workflowId": string; readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowStepOrdinal": number; readonly "workflowStepExecutionId": string; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; readonly "occurredAt": string; };
 
 export type ApprovalHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
 
 export type NotificationStatus = "delivered" | "acknowledged";
 
-export type Notification = ReminderNotification | BriefingNotification;
+export type Notification = ReminderNotification | BriefingNotification | WorkflowNotification;
 
 export type ReminderNotification = { readonly "id": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
 
 export type BriefingNotification = { readonly "id": string; readonly "briefingScheduleId": string; readonly "briefingOccurrenceId": string; readonly "briefingResultId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
 
+export type WorkflowNotification = { readonly "id": string; readonly "workflowId": string; readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowStepOrdinal": number; readonly "workflowStepExecutionId": string; readonly "workflowResultId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
+
 export type NotificationPage = { readonly "items": ReadonlyArray<Notification>; readonly "nextCursor": string | null; readonly "unacknowledgedCount": number; };
 
 export type NotificationAcknowledgeRequest = { readonly "expectedVersion": number; };
 
-export type NotificationStreamEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent | NotificationHeartbeatEvent;
+export type NotificationStreamEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent | WorkflowNotificationLifecycleEvent | NotificationHeartbeatEvent;
 
-export type NotificationLifecycleEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent;
+export type NotificationLifecycleEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent | WorkflowNotificationLifecycleEvent;
 
 export type ReminderNotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
 
 export type BriefingNotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "briefingScheduleId": string; readonly "briefingOccurrenceId": string; readonly "briefingResultId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
 
+export type WorkflowNotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "workflowId": string; readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowStepOrdinal": number; readonly "workflowStepExecutionId": string; readonly "workflowResultId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
+
 export type NotificationHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
+
+export type BoundedWorkflowText = string;
+
+export type OpaqueWorkflowIdentifier = string;
+
+export type WorkflowInputType = "bounded_text" | "instant";
+
+export type WorkflowInputFieldDefinition = { readonly "name": string; readonly "valueType": WorkflowInputType; };
+
+export type WorkflowInstanceInputSelector = { readonly "source": "instance_input"; readonly "field": string; };
+
+export type WorkflowStepOutputSelector = { readonly "source": "step_output"; readonly "stepOrdinal": number; readonly "field": "output" | "decision" | "decided_at" | "notification_id" | "status" | "resumed_at"; };
+
+export type WorkflowSelector = WorkflowInstanceInputSelector | WorkflowStepOutputSelector;
+
+export type WorkflowAgentRunStep = { readonly "kind": "agent_run"; readonly "agentRevisionId": OpaqueWorkflowIdentifier; readonly "instructions": BoundedWorkflowText; readonly "input": WorkflowSelector; };
+
+export type WorkflowOwnerApprovalStep = { readonly "kind": "owner_approval"; };
+
+export type WorkflowOwnerNotificationStep = { readonly "kind": "owner_notification"; readonly "content": WorkflowSelector; };
+
+export type WorkflowWaitUntilStep = { readonly "kind": "wait_until"; readonly "dueAt": WorkflowSelector; };
+
+export type WorkflowStep = WorkflowAgentRunStep | WorkflowOwnerApprovalStep | WorkflowOwnerNotificationStep | WorkflowWaitUntilStep;
+
+export type WorkflowLimits = { readonly "maxSteps": 8; readonly "maxAgentRuns": 1; readonly "agentRunDeadlineSeconds": 300; readonly "approvalLifetimeSeconds": 604800; readonly "waitHorizonSeconds": 2592000; readonly "instanceLifetimeSeconds": 2592000; readonly "maxDefinitionBytes": 65536; readonly "maxInstanceInputBytes": 32768; readonly "maxStepRecordBytes": 32768; readonly "maxCombinedValueBytes": 65536; readonly "maxCheckpointBytes": 8192; readonly "maxCheckpoints": 9; readonly "toolsEnabled": false; readonly "memoryEnabled": false; readonly "delegationEnabled": false; readonly "agentRunReplayEnabled": false; };
+
+export type WorkflowDefinitionStatus = "active" | "retired" | "deleted";
+
+export type WorkflowDefinition = { readonly "id": string; readonly "displayName": string; readonly "status": WorkflowDefinitionStatus; readonly "latestRevisionId": string | null; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "retiredAt": string | null; };
+
+export type WorkflowDefinitionPage = { readonly "items": ReadonlyArray<WorkflowDefinition>; readonly "nextCursor": string | null; };
+
+export type WorkflowDraft = { readonly "id": string; readonly "workflowId": string; readonly "displayName": string; readonly "inputFields": ReadonlyArray<WorkflowInputFieldDefinition>; readonly "steps": ReadonlyArray<WorkflowStep>; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type WorkflowRevision = { readonly "id": string; readonly "workflowId": string; readonly "revision": number; readonly "displayName": string; readonly "inputFields": ReadonlyArray<WorkflowInputFieldDefinition>; readonly "steps": ReadonlyArray<WorkflowStep>; readonly "limits": WorkflowLimits; readonly "publishedAt": string; };
+
+export type CreateWorkflowDraftRequest = { readonly "displayName": string; readonly "inputFields": ReadonlyArray<WorkflowInputFieldDefinition>; readonly "steps": ReadonlyArray<WorkflowStep>; };
+
+export type UpdateWorkflowDraftRequest = { readonly "displayName": string; readonly "inputFields": ReadonlyArray<WorkflowInputFieldDefinition>; readonly "steps": ReadonlyArray<WorkflowStep>; readonly "expectedVersion": number; };
+
+export type CloneWorkflowDraftRequest = { readonly "revisionId": string; readonly "expectedDefinitionVersion": number; };
+
+export type WorkflowVersionCommand = { readonly "expectedVersion": number; };
+
+export type WorkflowValidationIssue = { readonly "code": "invalid_value" | "invalid_selector" | "forward_reference" | "type_mismatch" | "resource_limit" | "agent_run_limit"; readonly "path": string; };
+
+export type WorkflowValidationResult = { readonly "valid": boolean; readonly "issues": ReadonlyArray<WorkflowValidationIssue>; readonly "validatedVersion": number; };
+
+export type WorkflowInputValue = BoundedWorkflowText | string;
+
+export type WorkflowInstanceInput = Readonly<Record<string, WorkflowInputValue>>;
+
+export type StartWorkflowInstanceRequest = { readonly "revisionId": string; readonly "input": WorkflowInstanceInput; };
+
+export type WorkflowAgentResult = { readonly "status": "completed"; readonly "output": BoundedWorkflowText; };
+
+export type WorkflowApprovalResult = { readonly "decision": "approved" | "rejected" | "expired"; readonly "decidedAt": string; };
+
+export type WorkflowNotificationReceipt = { readonly "notificationId": OpaqueWorkflowIdentifier; readonly "status": "inbox_available"; };
+
+export type WorkflowWaitResult = { readonly "resumedAt": string; };
+
+export type WorkflowStepResult = WorkflowAgentResult | WorkflowApprovalResult | WorkflowNotificationReceipt | WorkflowWaitResult;
+
+export type CreateWorkflowApproval = { readonly "workflowId": string; readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowStepOrdinal": number; readonly "workflowStepExecutionId": string; readonly "workflowDisplayName": string; readonly "nextStepKind": WorkflowApprovalNextStepKind; readonly "consequence": WorkflowApprovalConsequence; readonly "consequenceCopy": WorkflowApprovalConsequenceCopy; readonly "ownerScopeId": OpaqueWorkflowIdentifier; readonly "workspaceScopeId": OpaqueWorkflowIdentifier; readonly "expiresAt": string; };
+
+export type CreateWorkflowNotification = { readonly "workflowId": string; readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowStepOrdinal": number; readonly "workflowStepExecutionId": string; readonly "workflowResultId": string; };
+
+export type WorkflowInstanceStatus = "queued" | "running" | "waiting_for_time" | "waiting_for_approval" | "waiting_for_resolution" | "resolution_required" | "cancel_requested" | "terminal";
+
+export type WorkflowTerminalOutcome = "completed" | "canceled" | "failed";
+
+export type WorkflowStepStatus = "pending" | "running" | "waiting_for_time" | "waiting_for_approval" | "failed_replayable" | "resolution_required" | "completed" | "rejected" | "expired" | "canceled" | "failed";
+
+export type WorkflowEffectOutcome = "not_attempted" | "completed" | "definitively_failed" | "unknown";
+
+export type WorkflowRecoveryCapability = "request_replay" | "settle_failed" | "reconcile" | "cancel";
+
+export type WorkflowStepKind = "agent_run" | "owner_approval" | "owner_notification" | "wait_until";
+
+export type WorkflowStepState = { readonly "ordinal": number; readonly "kind": WorkflowStepKind; readonly "stepExecutionId": string; readonly "status": WorkflowStepStatus; readonly "effectOutcome": WorkflowEffectOutcome; readonly "recoveryCapabilities": ReadonlyArray<WorkflowRecoveryCapability>; readonly "replayUsed": boolean; readonly "result": WorkflowStepResult | null; readonly "startedAt": string | null; readonly "settledAt": string | null; };
+
+export type WorkflowCompletedEffect = { readonly "stepOrdinal": number; readonly "stepKind": WorkflowStepKind; };
+
+export type WorkflowCheckpointStatus = "current" | "settled";
+
+export type WorkflowCheckpointSummary = { readonly "id": string; readonly "stepOrdinal": number; readonly "status": WorkflowCheckpointStatus; readonly "version": number; readonly "createdAt": string; };
+
+export type WorkflowInstance = { readonly "id": string; readonly "workflowId": string; readonly "revisionId": string; readonly "input": WorkflowInstanceInput; readonly "status": WorkflowInstanceStatus; readonly "terminalOutcome": WorkflowTerminalOutcome | null; readonly "currentStepOrdinal": number | null; readonly "steps": ReadonlyArray<WorkflowStepState>; readonly "completedEffects": ReadonlyArray<WorkflowCompletedEffect>; readonly "checkpoints": ReadonlyArray<WorkflowCheckpointSummary>; readonly "result": WorkflowStepResult | null; readonly "version": number; readonly "admittedAt": string; readonly "deadlineAt": string; readonly "updatedAt": string; readonly "terminalAt": string | null; };
+
+export type WorkflowInstanceSummary = { readonly "id": string; readonly "workflowId": string; readonly "revisionId": string; readonly "status": WorkflowInstanceStatus; readonly "terminalOutcome": WorkflowTerminalOutcome | null; readonly "currentStepOrdinal": number | null; readonly "completedEffects": ReadonlyArray<WorkflowCompletedEffect>; readonly "version": number; readonly "admittedAt": string; readonly "deadlineAt": string; readonly "updatedAt": string; readonly "terminalAt": string | null; };
+
+export type WorkflowInstancePage = { readonly "items": ReadonlyArray<WorkflowInstanceSummary>; readonly "nextCursor": string | null; };
+
+export type WorkflowResolutionAction = "request_replay" | "settle_failed" | "reconcile_completed" | "reconcile_failed";
+
+export type ResolveWorkflowInstanceRequest = { readonly "action": WorkflowResolutionAction; readonly "stepExecutionId": string; readonly "expectedVersion": number; };
+
+export type WorkflowDeletionScope = "draft" | "retired_definition" | "published_revision" | "terminal_instance_state" | "terminal_instance_history" | "terminal_instance_result" | "terminal_instance_checkpoints";
+
+export type DeleteWorkflowDraftRequest = { readonly "scope": "draft"; readonly "expectedVersion": number; };
+
+export type DeleteWorkflowDefinitionRequest = { readonly "scope": "retired_definition"; readonly "expectedVersion": number; };
+
+export type DeleteWorkflowRevisionRequest = { readonly "scope": "published_revision"; readonly "expectedVersion": number; };
+
+export type DeleteWorkflowInstanceStateRequest = { readonly "scope": "terminal_instance_state"; readonly "expectedVersion": number; };
+
+export type DeleteWorkflowInstanceHistoryRequest = { readonly "scope": "terminal_instance_history"; readonly "expectedVersion": number; };
+
+export type DeleteWorkflowInstanceResultRequest = { readonly "scope": "terminal_instance_result"; readonly "expectedVersion": number; };
+
+export type DeleteWorkflowInstanceCheckpointsRequest = { readonly "scope": "terminal_instance_checkpoints"; readonly "expectedVersion": number; };
+
+export type WorkflowDeletionReceipt = { readonly "scope": WorkflowDeletionScope; readonly "deleted": boolean; readonly "tombstoneRetained": boolean; readonly "deletedAt": string; };
 
 export type BriefingScheduleStatus = "active" | "paused" | "deleted";
 
@@ -622,6 +764,27 @@ export interface AuraApiOperations {
   readonly getNotification: { readonly response: Notification; readonly body: never; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly acknowledgeNotification: { readonly response: Notification; readonly body: NotificationAcknowledgeRequest; readonly path: { readonly "notification_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly streamNotificationEvents: { readonly response: NotificationStreamEvent; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
+  readonly listWorkflows: { readonly response: WorkflowDefinitionPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly createWorkflowDraft: { readonly response: WorkflowDraft; readonly body: CreateWorkflowDraftRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getWorkflow: { readonly response: WorkflowDefinition; readonly body: never; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly cloneWorkflowDraft: { readonly response: WorkflowDraft; readonly body: CloneWorkflowDraftRequest; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getWorkflowDraft: { readonly response: WorkflowDraft; readonly body: never; readonly path: { readonly "workflow_id": string; readonly "draft_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly updateWorkflowDraft: { readonly response: WorkflowDraft; readonly body: UpdateWorkflowDraftRequest; readonly path: { readonly "workflow_id": string; readonly "draft_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly validateWorkflowDraft: { readonly response: WorkflowValidationResult; readonly body: WorkflowVersionCommand; readonly path: { readonly "workflow_id": string; readonly "draft_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly publishWorkflowDraft: { readonly response: WorkflowRevision; readonly body: WorkflowVersionCommand; readonly path: { readonly "workflow_id": string; readonly "draft_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getWorkflowRevision: { readonly response: WorkflowRevision; readonly body: never; readonly path: { readonly "workflow_id": string; readonly "revision_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly listWorkflowInstances: { readonly response: WorkflowInstancePage; readonly body: never; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly startWorkflowInstance: { readonly response: WorkflowInstance; readonly body: StartWorkflowInstanceRequest; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getWorkflowInstance: { readonly response: WorkflowInstance; readonly body: never; readonly path: { readonly "workflow_id": string; readonly "instance_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly cancelWorkflowInstance: { readonly response: WorkflowInstance; readonly body: WorkflowVersionCommand; readonly path: { readonly "workflow_id": string; readonly "instance_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly resolveWorkflowInstance: { readonly response: WorkflowInstance; readonly body: ResolveWorkflowInstanceRequest; readonly path: { readonly "workflow_id": string; readonly "instance_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly deleteWorkflowDraft: { readonly response: WorkflowDeletionReceipt; readonly body: DeleteWorkflowDraftRequest; readonly path: { readonly "workflow_id": string; readonly "draft_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly deleteWorkflowDefinition: { readonly response: WorkflowDeletionReceipt; readonly body: DeleteWorkflowDefinitionRequest; readonly path: { readonly "workflow_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly deleteWorkflowRevision: { readonly response: WorkflowDeletionReceipt; readonly body: DeleteWorkflowRevisionRequest; readonly path: { readonly "workflow_id": string; readonly "revision_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly deleteWorkflowInstanceState: { readonly response: WorkflowDeletionReceipt; readonly body: DeleteWorkflowInstanceStateRequest; readonly path: { readonly "workflow_id": string; readonly "instance_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly deleteWorkflowInstanceHistory: { readonly response: WorkflowDeletionReceipt; readonly body: DeleteWorkflowInstanceHistoryRequest; readonly path: { readonly "workflow_id": string; readonly "instance_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly deleteWorkflowInstanceResult: { readonly response: WorkflowDeletionReceipt; readonly body: DeleteWorkflowInstanceResultRequest; readonly path: { readonly "workflow_id": string; readonly "instance_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly deleteWorkflowInstanceCheckpoints: { readonly response: WorkflowDeletionReceipt; readonly body: DeleteWorkflowInstanceCheckpointsRequest; readonly path: { readonly "workflow_id": string; readonly "instance_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getBriefingCapabilities: { readonly response: BriefingCapabilities; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly listBriefingSchedules: { readonly response: BriefingSchedulePage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "status"?: BriefingScheduleStatus; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
   readonly createBriefingSchedule: { readonly response: BriefingSchedule; readonly body: CreateBriefingScheduleRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
@@ -757,6 +920,27 @@ export const AURA_API_OPERATIONS = {
   getNotification: { method: 'GET', pathTemplate: '/api/v1/notifications/{notification_id}', requestMode: 'none', responseMode: 'json' },
   acknowledgeNotification: { method: 'POST', pathTemplate: '/api/v1/notifications/{notification_id}/acknowledge', requestMode: 'json', responseMode: 'json' },
   streamNotificationEvents: { method: 'GET', pathTemplate: '/api/v1/notifications/stream', requestMode: 'none', responseMode: 'event-stream' },
+  listWorkflows: { method: 'GET', pathTemplate: '/api/v1/workflows', requestMode: 'none', responseMode: 'json' },
+  createWorkflowDraft: { method: 'POST', pathTemplate: '/api/v1/workflows', requestMode: 'json', responseMode: 'json' },
+  getWorkflow: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}', requestMode: 'none', responseMode: 'json' },
+  cloneWorkflowDraft: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts', requestMode: 'json', responseMode: 'json' },
+  getWorkflowDraft: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts/{draft_id}', requestMode: 'none', responseMode: 'json' },
+  updateWorkflowDraft: { method: 'PATCH', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts/{draft_id}', requestMode: 'json', responseMode: 'json' },
+  validateWorkflowDraft: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts/{draft_id}/validate', requestMode: 'json', responseMode: 'json' },
+  publishWorkflowDraft: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts/{draft_id}/publish', requestMode: 'json', responseMode: 'json' },
+  getWorkflowRevision: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}/revisions/{revision_id}', requestMode: 'none', responseMode: 'json' },
+  listWorkflowInstances: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}/instances', requestMode: 'none', responseMode: 'json' },
+  startWorkflowInstance: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/instances', requestMode: 'json', responseMode: 'json' },
+  getWorkflowInstance: { method: 'GET', pathTemplate: '/api/v1/workflows/{workflow_id}/instances/{instance_id}', requestMode: 'none', responseMode: 'json' },
+  cancelWorkflowInstance: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/instances/{instance_id}/cancel', requestMode: 'json', responseMode: 'json' },
+  resolveWorkflowInstance: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/instances/{instance_id}/resolve', requestMode: 'json', responseMode: 'json' },
+  deleteWorkflowDraft: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/drafts/{draft_id}/deletions', requestMode: 'json', responseMode: 'json' },
+  deleteWorkflowDefinition: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/deletions', requestMode: 'json', responseMode: 'json' },
+  deleteWorkflowRevision: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/revisions/{revision_id}/deletions', requestMode: 'json', responseMode: 'json' },
+  deleteWorkflowInstanceState: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/instances/{instance_id}/deletions', requestMode: 'json', responseMode: 'json' },
+  deleteWorkflowInstanceHistory: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/instances/{instance_id}/history-deletions', requestMode: 'json', responseMode: 'json' },
+  deleteWorkflowInstanceResult: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/instances/{instance_id}/result-deletions', requestMode: 'json', responseMode: 'json' },
+  deleteWorkflowInstanceCheckpoints: { method: 'POST', pathTemplate: '/api/v1/workflows/{workflow_id}/instances/{instance_id}/checkpoint-deletions', requestMode: 'json', responseMode: 'json' },
   getBriefingCapabilities: { method: 'GET', pathTemplate: '/api/v1/briefing-capabilities', requestMode: 'none', responseMode: 'json' },
   listBriefingSchedules: { method: 'GET', pathTemplate: '/api/v1/briefing-schedules', requestMode: 'none', responseMode: 'json' },
   createBriefingSchedule: { method: 'POST', pathTemplate: '/api/v1/briefing-schedules', requestMode: 'json', responseMode: 'json' },

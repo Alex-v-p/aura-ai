@@ -32,6 +32,7 @@ from aura_core.domains.automation.notifications.public import (
     NOTIFICATION_TOPIC,
     BriefingNotificationSource,
     CreateBriefingNotification,
+    CreateWorkflowNotification,
     DueDeliveryResult,
     Notification,
     NotificationIdempotencyConflict,
@@ -42,6 +43,7 @@ from aura_core.domains.automation.notifications.public import (
     NotificationVersionConflict,
     NotificationView,
     ReminderNotificationSource,
+    WorkflowNotificationSource,
     as_payload,
     decode_cursor,
     encode_cursor,
@@ -129,6 +131,20 @@ def _notification(row: NotificationRow | dict[str, object]) -> Notification:
         source = BriefingNotificationSource(
             "briefing", UUID(str(schedule_id)), UUID(str(occurrence_id)), UUID(str(result_id))
         )
+    elif source_kind == "workflow":
+        values = [
+            value(name)
+            for name in (
+                "workflow_id", "workflow_revision_id", "workflow_instance_id",
+                "workflow_step_ordinal", "workflow_step_execution_id", "workflow_result_id",
+            )
+        ]
+        if any(item is None for item in values):
+            raise ValueError("workflow notification is missing its lineage")
+        source = WorkflowNotificationSource(
+            "workflow", UUID(str(values[0])), UUID(str(values[1])), UUID(str(values[2])),
+            int(str(values[3])), UUID(str(values[4])), UUID(str(values[5])),
+        )
     else:
         raise ValueError("unknown notification source")
     return Notification(
@@ -165,6 +181,20 @@ def _replay(row: NotificationEventRow | dict[str, object]) -> NotificationReplay
         source = BriefingNotificationSource(
             "briefing", UUID(str(schedule_id)), UUID(str(occurrence_id)), UUID(str(result_id))
         )
+    elif source_kind == "workflow":
+        values = [
+            value(name)
+            for name in (
+                "workflow_id", "workflow_revision_id", "workflow_instance_id",
+                "workflow_step_ordinal", "workflow_step_execution_id", "workflow_result_id",
+            )
+        ]
+        if any(item is None for item in values):
+            raise ValueError("workflow notification event is missing its lineage")
+        source = WorkflowNotificationSource(
+            "workflow", UUID(str(values[0])), UUID(str(values[1])), UUID(str(values[2])),
+            int(str(values[3])), UUID(str(values[4])), UUID(str(values[5])),
+        )
     else:
         raise ValueError("unknown notification event source")
     return NotificationReplayEvent(
@@ -193,6 +223,15 @@ def _notification_from_response(
             source = BriefingNotificationSource(
                 "briefing", UUID(str(schedule_id)), UUID(str(occurrence_id)), UUID(str(result_id))
             )
+        elif response.get("workflowId") is not None:
+            source = WorkflowNotificationSource(
+                "workflow", UUID(str(response["workflowId"])),
+                UUID(str(response["workflowRevisionId"])),
+                UUID(str(response["workflowInstanceId"])),
+                int(str(response["workflowStepOrdinal"])),
+                UUID(str(response["workflowStepExecutionId"])),
+            UUID(str(response["workflowResultId"])),
+            )
         else:
             reminder_id = response.get("reminderId")
             if reminder_id is None:
@@ -206,6 +245,15 @@ def _notification_from_response(
             UUID(str(typed_source["briefingScheduleId"])),
             UUID(str(typed_source["briefingOccurrenceId"])),
             UUID(str(typed_source["briefingResultId"])),
+        )
+    elif typed_source.get("kind") == "workflow":
+        source = WorkflowNotificationSource(
+            "workflow", UUID(str(typed_source["workflowId"])),
+            UUID(str(typed_source["workflowRevisionId"])),
+            UUID(str(typed_source["workflowInstanceId"])),
+            int(str(typed_source["workflowStepOrdinal"])),
+            UUID(str(typed_source["workflowStepExecutionId"])),
+            UUID(str(typed_source["workflowResultId"])),
         )
     else:
         raise ValueError("unknown notification response source")
@@ -453,6 +501,35 @@ class MemoryNotificationRepository:
             self._wake.set()
             self._wake = asyncio.Event()
             return notification
+
+    async def create_workflow_notification(
+        self, command: CreateWorkflowNotification
+    ) -> Notification:
+        issuer, subject = _owner(command.issuer, command.subject)
+        source = WorkflowNotificationSource(
+            "workflow", command.workflow_id, command.workflow_revision_id,
+            command.workflow_instance_id, command.workflow_step_ordinal,
+            command.workflow_step_execution_id, command.workflow_result_id,
+        )
+        fingerprint = hashlib.sha256(json.dumps(source.payload(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        async with self._lock:
+            existing = self._idempotency.get((issuer, subject, command.idempotency_key))
+            if existing is not None:
+                if existing[0] != fingerprint:
+                    raise NotificationIdempotencyConflict("notification idempotency key was already used")
+                return existing[1]
+            duplicate = next((item for item in self._items.values() if item.issuer == issuer and item.subject == subject and item.workflow_result == command.workflow_result_id), None)
+            if duplicate is not None:
+                self._idempotency[(issuer, subject, command.idempotency_key)] = (fingerprint, duplicate)
+                return duplicate
+            now = self._time()
+            item = Notification(uuid4(), issuer, subject, source, NotificationStatus.DELIVERED, 1, now, now, now)
+            self._items[item.id] = item
+            self._events.append(NotificationReplayEvent(uuid4(), item.id, source, item.status, item.version, now))
+            self._idempotency[(issuer, subject, command.idempotency_key)] = (fingerprint, item)
+            self._wake.set()
+            self._wake = asyncio.Event()
+            return item
 
     async def deliver_due(self, *, limit: int = 100) -> DueDeliveryResult:
         if not 1 <= limit <= 100:
@@ -955,6 +1032,83 @@ class SqlNotificationRepository:
                     created_at=now,
                 )
             )
+            self._wake.set()
+            self._wake = asyncio.Event()
+            return item
+
+    async def create_workflow_notification(
+        self, command: CreateWorkflowNotification
+    ) -> Notification:
+        issuer, subject = _owner(command.issuer, command.subject)
+        source = WorkflowNotificationSource(
+            "workflow", command.workflow_id, command.workflow_revision_id,
+            command.workflow_instance_id, command.workflow_step_ordinal,
+            command.workflow_step_execution_id, command.workflow_result_id,
+        )
+        fingerprint = hashlib.sha256(json.dumps(source.payload(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        async with self.sessions() as session, session.begin():
+            for lock_key in sorted({
+                _idempotency_lock_key(issuer, subject, command.idempotency_key),
+                _idempotency_lock_key(issuer, subject, f"workflow:{command.workflow_result_id}"),
+            }):
+                await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"), {"lock_key": lock_key})
+            existing = await session.get(NotificationIdempotencyRow, (issuer, subject, command.idempotency_key))
+            if existing is not None:
+                if existing.fingerprint != fingerprint:
+                    raise NotificationIdempotencyConflict("notification idempotency key was already used")
+                return _notification_from_response(existing.response, issuer, subject)
+            row = (await session.execute(select(NotificationRow).where(
+                NotificationRow.principal_issuer == issuer,
+                NotificationRow.principal_subject == subject,
+                NotificationRow.source_kind == "workflow",
+                NotificationRow.workflow_result_id == command.workflow_result_id,
+            ))).scalar_one_or_none()
+            if row is not None:
+                item = _notification(row)
+                session.add(NotificationIdempotencyRow(
+                    principal_issuer=issuer, principal_subject=subject,
+                    idempotency_key=command.idempotency_key, fingerprint=fingerprint,
+                    notification_id=item.id, response=as_payload(item), created_at=self._time(),
+                ))
+                return item
+            now = self._time()
+            item = Notification(uuid4(), issuer, subject, source, NotificationStatus.DELIVERED, 1, now, now, now)
+            session.add(NotificationRow(
+                id=item.id, principal_issuer=issuer, principal_subject=subject,
+                source_kind="workflow", reminder_id=None, briefing_schedule_id=None,
+                briefing_occurrence_id=None, briefing_result_id=None,
+                workflow_id=source.workflow_id, workflow_revision_id=source.workflow_revision_id,
+                workflow_instance_id=source.workflow_instance_id,
+                workflow_step_ordinal=source.workflow_step_ordinal,
+                workflow_step_execution_id=source.workflow_step_execution_id,
+                workflow_result_id=source.workflow_result_id,
+                status=item.status.value, version=item.version, created_at=now,
+                updated_at=now, delivered_at=now,
+            ))
+            event_id = uuid4()
+            session.add(NotificationEventRow(
+                id=event_id, principal_issuer=issuer, principal_subject=subject,
+                notification_id=item.id, source_kind="workflow", reminder_id=None,
+                briefing_schedule_id=None, briefing_occurrence_id=None,
+                briefing_result_id=None, workflow_id=source.workflow_id,
+                workflow_revision_id=source.workflow_revision_id,
+                workflow_instance_id=source.workflow_instance_id,
+                workflow_step_ordinal=source.workflow_step_ordinal,
+                workflow_step_execution_id=source.workflow_step_execution_id,
+                workflow_result_id=source.workflow_result_id,
+                status=item.status.value, version=item.version, occurred_at=now,
+            ))
+            principal = await self._identities.resolve(session, issuer, subject)
+            self._audit.stage(session, principal.id, "notification.workflow_delivered", str(item.id), {"status": item.status.value, "version": item.version})
+            await self._outbox.stage_command(session, command=make_aggregate_command(
+                NOTIFICATION_TOPIC, event_id, "automation.notification", item.id,
+                identifiers=(("eventType", "notification.delivered"), ("status", item.status.value), ("version", item.version), ("eventId", event_id)),
+            ))
+            session.add(NotificationIdempotencyRow(
+                principal_issuer=issuer, principal_subject=subject,
+                idempotency_key=command.idempotency_key, fingerprint=fingerprint,
+                notification_id=item.id, response=as_payload(item), created_at=now,
+            ))
             self._wake.set()
             self._wake = asyncio.Event()
             return item

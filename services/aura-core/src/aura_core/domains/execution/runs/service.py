@@ -423,6 +423,8 @@ class RunCoordinator:
 
     async def enqueue(self, run: Run) -> None:
         try:
+            if run.conversation_id is None:
+                raise ValueError("workflow runs are enqueued by the workflow coordinator")
             await self.outbox.publish_run(run.id, run.conversation_id)
         except Exception:
             self._error(run, "queue")
@@ -4075,8 +4077,8 @@ def message_payload(message: Message) -> dict[str, object]:
 def run_payload(run: Run, *, include_attachments: bool = True) -> dict[str, object]:
     payload: dict[str, object] = {
         "id": str(run.id),
-        "conversationId": str(run.conversation_id),
-        "userMessageId": str(run.user_message_id),
+        "conversationId": str(run.conversation_id) if run.conversation_id else None,
+        "userMessageId": str(run.user_message_id) if run.user_message_id else None,
         "assistantMessageId": str(run.assistant_message_id) if run.assistant_message_id else None,
         "status": run.status.value,
         "agentRevisionId": str(run.agent_revision_id),
@@ -4118,6 +4120,12 @@ def run_payload(run: Run, *, include_attachments: bool = True) -> dict[str, obje
         payload["promptBundleRevisionId"] = str(run.prompt_bundle_revision_id)
     if run.prompt_hash is not None:
         payload["promptHash"] = run.prompt_hash
+    if run.workflow_revision_id is not None:
+        payload["workflowOrigin"] = {
+            "workflowRevisionId": str(run.workflow_revision_id),
+            "workflowInstanceId": str(run.workflow_instance_id),
+            "workflowStepExecutionId": str(run.workflow_step_execution_id),
+        }
     if run.citations:
         payload["citations"] = [_citation_payload(item) for item in run.citations]
     if include_attachments and run.attachments:

@@ -17,10 +17,46 @@ class RunEvent:
     sequence: int
     event_type: str
     run_id: UUID
-    conversation_id: UUID
+    conversation_id: UUID | None
     occurred_at: datetime
     data: dict[str, Any]
     schema_version: int = 1
+    workflow_id: UUID | None = None
+    workflow_revision_id: UUID | None = None
+    workflow_instance_id: UUID | None = None
+    workflow_step_ordinal: int | None = None
+    workflow_step_execution_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        lineage = (
+            self.workflow_id,
+            self.workflow_revision_id,
+            self.workflow_instance_id,
+            self.workflow_step_ordinal,
+            self.workflow_step_execution_id,
+        )
+        ordinary = self.conversation_id is not None and all(
+            value is None for value in lineage
+        )
+        workflow = self.conversation_id is None and all(
+            value is not None for value in lineage
+        )
+        if not ordinary and not workflow:
+            raise ValueError(
+                "run event lineage must be either conversation-only or complete workflow"
+            )
+        if workflow and any(
+            type(value) is not UUID
+            for value in (
+                self.workflow_id,
+                self.workflow_revision_id,
+                self.workflow_instance_id,
+                self.workflow_step_execution_id,
+            )
+        ):
+            raise ValueError("workflow event lineage must use UUIDs")
+        if self.workflow_step_ordinal is not None and not 1 <= self.workflow_step_ordinal <= 8:
+            raise ValueError("workflow step ordinal is out of bounds")
 
     def __getattribute__(self, name: str) -> Any:
         # Event transports inspect ``event_type`` before fan-out. Validate
@@ -38,7 +74,19 @@ class RunEvent:
         value["eventId"] = str(value.pop("event_id"))
         value["eventType"] = value.pop("event_type")
         value["runId"] = str(value.pop("run_id"))
-        value["conversationId"] = str(value.pop("conversation_id"))
+        conversation_id = value.pop("conversation_id")
+        value["conversationId"] = str(conversation_id) if conversation_id else None
+        workflow_revision_id = value.pop("workflow_revision_id")
+        workflow_instance_id = value.pop("workflow_instance_id")
+        workflow_step_execution_id = value.pop("workflow_step_execution_id")
+        value.pop("workflow_id")
+        value.pop("workflow_step_ordinal")
+        if workflow_revision_id is not None:
+            value["workflowOrigin"] = {
+                "workflowRevisionId": str(workflow_revision_id),
+                "workflowInstanceId": str(workflow_instance_id),
+                "workflowStepExecutionId": str(workflow_step_execution_id),
+            }
         value["occurredAt"] = self.occurred_at.isoformat()
         value.pop("occurred_at", None)
         value["data"] = _json_values(value["data"])
@@ -61,9 +109,20 @@ def _json_values(value: Any) -> Any:
 
 
 def new_event(
-    event_type: str, run_id: UUID, conversation_id: UUID, sequence: int, data: dict[str, Any]
+    event_type: str,
+    run_id: UUID,
+    conversation_id: UUID | None,
+    sequence: int,
+    data: dict[str, Any],
+    *, workflow_id: UUID | None = None, workflow_revision_id: UUID | None = None,
+    workflow_instance_id: UUID | None = None, workflow_step_ordinal: int | None = None,
+    workflow_step_execution_id: UUID | None = None,
 ) -> RunEvent:
-    return RunEvent(uuid4(), sequence, event_type, run_id, conversation_id, utc_now(), data)
+    return RunEvent(
+        uuid4(), sequence, event_type, run_id, conversation_id, utc_now(), data, 1,
+        workflow_id, workflow_revision_id, workflow_instance_id, workflow_step_ordinal,
+        workflow_step_execution_id,
+    )
 
 
 # Realtime memory activity is deliberately a narrow, identifier-only envelope.

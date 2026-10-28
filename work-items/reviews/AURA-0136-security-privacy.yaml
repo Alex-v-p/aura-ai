@@ -1,0 +1,28 @@
+agent: security_privacy_reviewer
+work_item: AURA-0136
+verdict: PASS
+checked:
+  - >-
+    Final security and privacy recheck found no unresolved findings against
+    the AURA-0136 security concerns and the corrected implementation.
+  - >-
+    Workflow and run contracts require complete typed workflow lineage when
+    conversation lineage is absent; ordinary legacy lineage remains intact and
+    callers cannot fabricate or omit both origins.
+  - >-
+    Approval presentation is immutable, system-derived, exact-step-bound,
+    bounded, owner/version/expiry constrained, and cannot absorb private prior
+    output or broaden grants.
+  - >-
+    Workflow notifications, lifecycle events, telemetry, replay, and browser
+    compatibility remain metadata-only and exclude private workflow values,
+    instructions, outputs, credentials, executor state, and arbitrary deep
+    links.
+  - >-
+    State transitions, idempotency, optimistic versions, unknown effects,
+    terminal immutability, owner authorization, and non-cascading deletion
+    preserve the reviewed safety and privacy boundaries.
+  - >-
+    Security/privacy, contract, isolation, baseline, and diff checks passed;
+    no protected baseline or Observatory change was introduced.
+findings: []

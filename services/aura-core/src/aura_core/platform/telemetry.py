@@ -62,14 +62,15 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.knowledge.document_deletion": "1.0.0",
     "aura.automation.reminder_management": "1.2.0",
     "aura.automation.reminder_scheduler": "1.1.0",
-    "aura.automation.notification_delivery": "1.1.0",
+    "aura.automation.notification_delivery": "1.2.0",
     "aura.automation.briefing_scheduler": "1.0.0",
     "aura.execution.briefing_admission": "1.0.0",
     "aura.execution.briefing_context": "1.0.0",
     "aura.automation.briefing_persistence": "1.0.0",
     "aura.automation.briefing_cancellation": "1.0.0",
     "aura.automation.briefing_delivery": "1.0.0",
-    "aura.governance.approval_workflow": "1.1.0",
+    "aura.governance.approval_workflow": "1.2.0",
+    "aura.automation.workflow_state": "1.0.0",
     "aura.evaluation.runner": "1.0.0",
     "aura.integration.calendar_connection": "1.0.0",
     "aura.provider.google_calendar": "1.0.0",
@@ -268,6 +269,16 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "notification_sse_duration_ms",
             "notification_sse_replay_duration_ms",
             "notification_acknowledgement_duration_ms",
+        }
+    ),
+    "aura.automation.workflow_state": frozenset(
+        {
+            "workflow_transition_outcome",
+            "workflow_command_outcome",
+            "workflow_repository_outcome",
+            "workflow_transition_duration_ms",
+            "workflow_command_duration_ms",
+            "workflow_repository_duration_ms",
         }
     ),
     "aura.automation.briefing_scheduler": frozenset(
@@ -637,6 +648,9 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.automation.notification_delivery": frozenset(
         {"notification.sse.connect", "notification.sse.replay", "notification.acknowledge"}
     ),
+    "aura.automation.workflow_state": frozenset(
+        {"workflow.transition", "workflow.command", "workflow.repository"}
+    ),
     "aura.automation.briefing_scheduler": frozenset(
         {"briefing.schedule.scan", "briefing.schedule.claim"}
     ),
@@ -751,6 +765,7 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.automation.reminder_management": "reminder_command_duration_ms",
     "aura.automation.reminder_scheduler": "reminder_scheduler_scan_duration_ms",
     "aura.automation.notification_delivery": "notification_sse_duration_ms",
+    "aura.automation.workflow_state": "workflow_transition_duration_ms",
     "aura.automation.briefing_scheduler": "briefing_schedule_claim_duration_ms",
     "aura.execution.briefing_admission": "briefing_admission_duration_ms",
     "aura.execution.briefing_context": "briefing_context_assembly_duration_ms",
@@ -850,6 +865,8 @@ _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
         "aura.automation.notification_delivery",
         "notification.acknowledge",
     ): "notification_acknowledgement_duration_ms",
+    ("aura.automation.workflow_state", "workflow.command"): "workflow_command_duration_ms",
+    ("aura.automation.workflow_state", "workflow.repository"): "workflow_repository_duration_ms",
     (
         "aura.automation.briefing_scheduler",
         "briefing.schedule.scan",
@@ -905,6 +922,45 @@ _DIMENSION_KEYS = frozenset(
         "event_count_bucket",
         "relationship_count_bucket",
         "retry_class",
+    }
+)
+
+_WORKFLOW_OPERATIONS = frozenset(
+    {"workflow.transition", "workflow.command", "workflow.repository"}
+)
+_WORKFLOW_DEPENDENCIES = frozenset(
+    {"application_validation", "postgresql", "transactional_outbox"}
+)
+_WORKFLOW_ERROR_CLASSES = frozenset(
+    {
+        "authorization",
+        "conflict",
+        "database",
+        "database_programming",
+        "idempotency",
+        "internal",
+        "not_found",
+        "persistence",
+        "serialization",
+        "timeout",
+        "validation",
+        "unknown",
+    }
+)
+_WORKFLOW_OUTCOMES = frozenset(
+    {
+        "accepted",
+        "canceled",
+        "completed",
+        "conflict",
+        "duplicate",
+        "error",
+        "failed",
+        "idempotent",
+        "invalid",
+        "ok",
+        "replayed",
+        "unknown",
     }
 )
 
@@ -1020,6 +1076,12 @@ _TRACE_ATTRIBUTE_KEYS = frozenset(
         "briefing_schedule_id",
         "briefing_occurrence_id",
         "briefing_result_id",
+        "workflow_id",
+        "revision_id",
+        "instance_id",
+        "step_execution_id",
+        "expected_version",
+        "result_version",
     }
 )
 _UUID_TRACE_ATTRIBUTES = frozenset(
@@ -1062,6 +1124,10 @@ _UUID_TRACE_ATTRIBUTES = frozenset(
         "briefing_schedule_id",
         "briefing_occurrence_id",
         "briefing_result_id",
+        "workflow_id",
+        "revision_id",
+        "instance_id",
+        "step_execution_id",
     }
 )
 _COUNT_TRACE_ATTRIBUTES = frozenset(
@@ -1082,6 +1148,8 @@ _COUNT_TRACE_ATTRIBUTES = frozenset(
         "context_tokens",
         "event_version",
         "approval_version",
+        "expected_version",
+        "result_version",
     }
 )
 _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
@@ -1091,6 +1159,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "event_store",
             "model_policy",
             "nats_jetstream",
+            "transactional_outbox",
             "postgresql",
             "sse_client",
             "configuration_store",
@@ -1184,6 +1253,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "generated",
             "ignored",
             "idempotent",
+            "replayed",
             "ok",
             "retryable",
             "review",
@@ -1265,6 +1335,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "serialize",
             "queue_offer",
             "transport_publish",
+            "workflow.transition",
+            "workflow.command",
+            "workflow.repository",
         }
     ),
     "status": frozenset(
@@ -2286,6 +2359,8 @@ class MetadataMetrics:
             and operation == "reminder.series.advance"
         ):
             dimensions["operation"] = "fire"
+        elif component == "aura.automation.workflow_state":
+            dimensions["operation"] = operation
         if error_class is not None:
             dimensions["error_class"] = error_class
         if provider is not None:
@@ -2438,6 +2513,15 @@ class MetadataMetrics:
         for key, value in dimensions.items():
             if key not in _DIMENSION_KEYS or _looks_like_uuid(value):
                 return None
+            if component == "aura.automation.workflow_state":
+                if key == "operation" and value not in _WORKFLOW_OPERATIONS:
+                    return None
+                if key == "dependency" and value not in _WORKFLOW_DEPENDENCIES:
+                    return None
+                if key == "outcome" and value not in _WORKFLOW_OUTCOMES:
+                    return None
+                if key == "error_class" and value not in _WORKFLOW_ERROR_CLASSES:
+                    return None
             allowed = _ENUM_DIMENSIONS.get(key)
             if allowed is not None and value not in allowed:
                 return None
