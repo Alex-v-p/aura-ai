@@ -1501,6 +1501,9 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "source_absent",
         }
     ),
+    # Provider identity is finite repository metadata.  Research components
+    # apply the stricter subset below; legacy components retain their
+    # established labels without accepting arbitrary caller-controlled names.
     "provider": frozenset(
         {
             "searxng",
@@ -1511,6 +1514,18 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "garage",
             "nats",
             "none",
+            "google",
+            "google_calendar",
+            "workflow",
+            "fixture-provider",
+            "evaluation",
+            "model_provider",
+            "test",
+            "unknown",
+            "openai",
+            "anthropic",
+            "gemini",
+            "azure_openai",
         }
     ),
     "operation": frozenset(
@@ -1635,6 +1650,18 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
     "event_count_bucket": frozenset({"0", "1_10", "11_50", "51_100"}),
     "retry_class": frozenset({"none", "rate_limit", "transient", "unknown"}),
 }
+
+_RESEARCH_TELEMETRY_COMPONENTS = frozenset(
+    {
+        "aura.research.search@1",
+        "aura.research.static_fetch@1",
+        "aura.research.browser_fetch@1",
+        "aura.research.extraction@1",
+    }
+)
+_RESEARCH_PROVIDER_VALUES = frozenset(
+    {"searxng", "static_fetcher", "browser_fetcher", "none"}
+)
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 _OTLP_NO_TRACE_NAMESPACE = UUID("9e8e7f18-92ed-4c10-82ec-a0d1cdb0b35c")
 _OTLP_NO_TRACE_ID = "0" * 32
@@ -2755,6 +2782,18 @@ class MetadataMetrics:
         normalized_dimensions: list[tuple[str, str]] = []
         for key, value in dimensions.items():
             if key not in _DIMENSION_KEYS or _looks_like_uuid(value):
+                return None
+            if key == "provider" and (
+                _V2_PRIVATE_MARKER_SEGMENT.search(value)
+                or "://" in value
+                or value.startswith(("/", "\\"))
+            ):
+                return None
+            if (
+                component in _RESEARCH_TELEMETRY_COMPONENTS
+                and key == "provider"
+                and value not in _RESEARCH_PROVIDER_VALUES
+            ):
                 return None
             if component == "aura.automation.workflow_state":
                 if key == "operation" and value not in _WORKFLOW_OPERATIONS:

@@ -20,11 +20,38 @@ checked:
     capabilities remain disabled by default.
   - >-
     Re-ran the exact required AURA-0144 pytest command after the final
-    trace/exporter/evaluator corrections: all 132 tests passed. Re-ran the required Ruff and
+    trace/exporter/evaluator and finite-provider-vocabulary corrections: all
+    133 tests passed. Re-ran the required Ruff and
     Pyright commands with zero findings. Module-registry, import-boundary,
     service-isolation, repository-shape, observability, dependency-lock,
     Compose-render, architecture unittest, and diff checks passed; baseline
     protection skipped because no protected baseline changed.
+  - >-
+    Ran the full Core suite after the stabilization amendments: 1819 tests
+    passed and 124 dependency-gated tests skipped. This confirms the provider
+    vocabulary remains finite without rejecting established non-research labels
+    such as Ollama, Google Calendar, workflow, model, and evaluation adapters.
+    Arbitrary, URL-like, path-like, UUID, exception-like, private-marker, and
+    otherwise unregistered provider labels are rejected for every component,
+    while research components apply the stricter searxng, static_fetcher,
+    browser_fetcher, and none subset. The dedicated regression covers both
+    accepted repository labels and rejected hostile labels component by
+    component.
+  - >-
+    Verified memory processing still composes SQL task invalidations after the
+    redundant explicit outbox argument was removed. memory_processing_service
+    calls memory_repository without an override, and memory_repository's SQL
+    branch installs TaskSourceInvalidationStage(SqlOutboxRepository()) by
+    default; the in-memory testing branch remains unchanged.
+    The combined memory-processing and task-projection suites report 198 passed
+    and 3 dependency-gated skips.
+  - >-
+    Verified the generated-artifact live SQL coverage was not weakened. With
+    isolation disabled, the two live tests default-skip and make no accidental
+    developer-database connection. With AURA_TEST_DEPENDENCIES_ISOLATED=1 and
+    AURA_TEST_DATABASE_URL absent, both tests fail explicitly rather than
+    skipping. When enabled, both tests use only AURA_TEST_DATABASE_URL and no
+    longer carry a localhost fallback.
   - >-
     Traced the final observability corrections through real execution paths.
     Core emits canonical W3C traceparent headers per call; static and browser
@@ -52,11 +79,10 @@ checked:
     ASGI journeys use an isolated temporary test-only attestation stub, so
     passing tests cannot be mistaken for production egress proof.
   - >-
-    Changed-path validation still reports already integrated AURA-0142 and
-    AURA-0143 files outside AURA-0144 scope on the shared initiative branch.
-    Those paths are covered by their own integration records and are not an
-    AURA-0144 implementation finding; the AURA-0144-owned paths, module roots,
-    dependency rules, and repository shape validate successfully.
+    Changed-path validation now passes for all eight stabilization paths,
+    including the amended work item and handoffs. Contract validation reports
+    no new contract change; module roots, dependency rules, and repository
+    shape remain valid.
   - >-
     Distinguished repository acceptance from deployment enablement. The
     Platform handoff correctly retains ADR_REQUIRED for selection and

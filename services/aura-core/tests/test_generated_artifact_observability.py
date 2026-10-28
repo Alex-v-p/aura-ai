@@ -69,14 +69,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 ROOT = Path(__file__).parents[1]
 OWNER = ("https://authentik.example", "artifact-owner")
 CREATOR = "aura.research.synthesis@1"
-SQL_DATABASE_URL = os.environ.get(
-    "AURA_0142_DATABASE_URL",
-    os.environ.get(
-        "AURA_TEST_DATABASE_URL",
-        "postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143",
-    ),
-)
-
 EXPECTED = {
     "artifact-persistence.yaml": {
         "component": "aura.artifacts.persistence@1",
@@ -233,14 +225,26 @@ async def _bytes_stream(value: bytes) -> AsyncIterator[bytes]:
 
 @asynccontextmanager
 async def _sql_repository() -> AsyncGenerator[tuple[Any, Any]]:
+    # SQL evidence is opt-in: a normal full-Core run must not accidentally
+    # connect to a developer database.  Once the isolated gate is enabled,
+    # however, a missing URL is a configuration error rather than a skip so
+    # the explicit live-PostgreSQL work-item check cannot silently omit either
+    # SQL test.
     if os.environ.get("AURA_TEST_DEPENDENCIES_ISOLATED") != "1":
-        raise AssertionError("AURA_TEST_DEPENDENCIES_ISOLATED=1 is required for SQL evidence")
+        pytest.skip(
+            "AURA_TEST_DEPENDENCIES_ISOLATED=1 is required for live SQL evidence"
+        )
+    database_url = os.environ.get("AURA_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.fail(
+            "AURA_TEST_DATABASE_URL is required when the isolated live SQL gate is enabled"
+        )
     schema = f"aura0142_artifacts_{uuid4().hex[:12]}"
-    admin_engine = create_engine(SQL_DATABASE_URL)
+    admin_engine = create_engine(database_url)
     with admin_engine.begin() as connection:
         connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_async_engine(
-        SQL_DATABASE_URL,
+        database_url,
         connect_args={"options": f"-c search_path={schema}"},
     )
     sessions = async_sessionmaker(engine, expire_on_commit=False)

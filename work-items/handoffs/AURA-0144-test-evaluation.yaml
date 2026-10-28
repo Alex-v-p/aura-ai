@@ -15,6 +15,7 @@ files_changed:
   - deploy/tests/test_aura0144_research_provider_topology.py
   - deploy/tests/test_aura0144_research_provider_security.py
   - deploy/tests/test_aura0144_research_provider_limits.py
+  - services/aura-core/tests/test_generated_artifact_observability.py
 contracts:
   changed: false
 migrations:
@@ -30,6 +31,44 @@ observability:
     surfaces remain content-free; no telemetry implementation was changed.
 verification:
   passed:
+    - >-
+      Default full-Core dependency-gated run of
+      services/aura-core/tests/test_generated_artifact_observability.py
+      collected 22 tests, with 20 passed and the two live SQL tests skipped
+      because AURA_TEST_DEPENDENCIES_ISOLATED=1 and AURA_TEST_DATABASE_URL
+      were not enabled.
+    - >-
+      Explicit live PostgreSQL gate
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 with the disposable
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      completed the generated-artifact observability file with 22 passed and
+      no skips; both SQL tests executed against a unique schema.
+    - >-
+      Negative gate check with AURA_TEST_DEPENDENCIES_ISOLATED=1 and no
+      AURA_TEST_DATABASE_URL produced 20 passed and two expected configuration
+      failures (not skips), proving an explicitly requested live gate cannot
+      silently omit either SQL test.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/tests/test_generated_artifact_observability.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/tests/test_generated_artifact_observability.py (0 errors)
+    - >-
+      git diff --check -- services/aura-core/tests/test_generated_artifact_observability.py
+      work-items/handoffs/AURA-0144-test-evaluation.yaml
+    - >-
+      Full services/aura-core pytest suite completed with 1819 passed, 124
+      skipped, and one Authlib deprecation warning; no Core test failures
+      remain after provider-vocabulary stabilization.
+    - >-
+      Exact required AURA-0144 aggregate completed with 133 passed tests
+      across contracts, Core clients/settings/observability, static/browser
+      providers, topology, security, and limits.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0144.yaml validated all 8 current
+      shared-tree paths.
     - "UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check assigned AURA-0144 deployment suites"
     - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider deploy/tests/test_aura0144_research_provider_topology.py deploy/tests/test_aura0144_research_provider_security.py deploy/tests/test_aura0144_research_provider_limits.py -q --tb=no (80 passed)"
     - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0144_research_provider_contract.py services/aura-research-static-fetcher/tests services/aura-research-browser-fetcher/tests -q --tb=no (23 passed)"
@@ -48,13 +87,17 @@ verification:
     - "PYTHONPATH=services/aura-core/src uv run python negative evaluator fixture check: all four research evaluators return fail/score-zero for hostile evidence (4/4 fail-closed)."
     - "Telemetry serialization checks for static/browser production sinks and Core provider observability: 11 passed; records remain metadata-only and JSON-serializable."
     - "Bundled egress declaration checker is verified test-only: it has no enforcement-attestation mode or production attestation token, while provider readiness requires the operator-supplied attestation probe."
-    - "Exact required AURA-0144 pytest command completed with 132 passing tests; all independent contract, provider, topology, security, limit, telemetry, signed-control, replay, cancellation, stream, MIME, and privacy guards passed."
+    - "Exact required AURA-0144 pytest command completed with 133 passing tests; all independent contract, provider, topology, security, limit, telemetry, signed-control, replay, cancellation, stream, MIME, and privacy guards passed."
     - "git diff --check -- assigned AURA-0144 deployment suites"
-  failed:
-    - "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0144.yaml: shared feature branch contains concurrent AURA-0142 paths and other forbidden/out-of-scope changes; this is integration scope, not caused by the assigned test files."
+  failed: []
   not_run:
-    - "Full repository-wide aggregate remains Integration Maintainer scope after concurrent AURA-0142/AURA-0143 paths and module ownership reconciliation."
+    - "Full repository-wide aggregate remains Integration Maintainer scope; the required full Core aggregate and exact AURA-0144 aggregate completed successfully."
 decisions:
+  - >-
+    Aligned the generated-artifact SQL helper with the repository-wide
+    isolated dependency gate: ordinary Core runs skip only when the isolated
+    switch is absent, while an enabled switch with no database URL fails as a
+    configuration error and the explicit live gate runs both SQL cases.
   - "Preserved the platform-authored tests and extended only the three assigned deployment suites with independent hostile-network, sandbox, limit, replay, privacy, and topology assertions."
   - "Used deterministic socket and HTTPX mocks; no network tools or live destinations were used."
   - "Tests intentionally inspect provider configuration/source boundaries for no-download, no-persistence, no-credential, and content-free telemetry guarantees without changing provider behavior."
@@ -63,7 +106,6 @@ decisions:
   - "Signed controls, TTL/replay, decompression/stream/MIME ceilings, drain/stop paths, POST-only search privacy, lock/secrets isolation, and metadata-only telemetry remain independent fail-closed guards."
   - "The new contract and integration tests are deliberately fail-closed guards for the Architecture/General findings; they do not lower thresholds or replace a golden result."
 risks:
-  - "The full shared-branch changed-path validator remains blocked by concurrent AURA-0142/AURA-0143 files and pending module ownership registration; this is not caused by the assigned test files."
-  - "AURA-0144 provider/security evaluation has no independent assertion failures; final delivery still requires shared-branch changed-path cleanup and image provenance attestation."
+  - "AURA-0144 provider/security evaluation has no independent assertion failures; final provider enablement still requires immutable image provenance attestation."
 unresolved:
-  - "Integration Maintainer must reconcile the remaining concurrent AURA-0142/AURA-0143 changed paths and rerun aggregate validation; deployment owner must complete immutable image provenance/attestation before enablement."
+  - "Deployment owner must complete immutable provider image provenance/signature attestation before enablement; full repository-wide aggregate remains Integration Maintainer scope."

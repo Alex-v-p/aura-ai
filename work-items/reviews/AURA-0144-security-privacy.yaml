@@ -19,7 +19,13 @@ checked:
     Production readiness rejects the bundled diagnostic probe, requires a
     separate operator attestation executable and exact marker, and otherwise
     fails closed.
-  - The exact required AURA-0144 aggregate suite passed 132 tests.
+  - >-
+    Provider labels use one finite repository vocabulary with a stricter
+    four-value research subset; hostile arbitrary, private, credential,
+    content, URL, path, UUID, and exception-shaped probes are rejected.
+  - >-
+    The exact AURA-0144 aggregate passed 133 tests and the full Core suite
+    passed 1819 tests with 124 explicit dependency-gated skips.
 findings:
   - severity: critical
     rule: >-

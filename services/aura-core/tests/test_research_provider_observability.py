@@ -149,6 +149,96 @@ def test_production_metadata_sink_accepts_research_spans_and_closed_dimensions()
     }
 
 
+def test_provider_labels_use_research_subset_and_repository_closed_vocabulary() -> None:
+    trace_id = "a" * 32
+    cases = (
+        ("aura.research.search@1", "research.search", "searxng_port", "success", "searxng"),
+        (
+            "aura.provider.google_calendar",
+            "calendar.provider.request",
+            "event_store",
+            "ok",
+            "google_calendar",
+        ),
+        ("aura.interaction.persona_preview", "persona.preview", "model_gateway", "ok", "ollama"),
+        (
+            "aura.knowledge.memory_extraction",
+            "memory.extraction",
+            "structured_inference",
+            "ok",
+            "test",
+        ),
+        (
+            "aura.automation.workflow_state",
+            "workflow.transition",
+            "application_validation",
+            "ok",
+            "workflow",
+        ),
+        ("aura.evaluation.runner", "evaluation.execute", "model_gateway", "ok", "evaluation"),
+        ("aura.runtime.model_inference", "model.infer", "model_gateway", "ok", "ollama"),
+    )
+
+    accepted = MetadataMetrics()
+    for component, operation, dependency, outcome, provider in cases:
+        accepted.record_span(
+            component,
+            operation,
+            1.0,
+            trace_id=trace_id,
+            span_id=uuid4().hex[:16],
+            parent_span_id=None,
+            dependency=dependency,
+            outcome=outcome,
+            provider=provider,
+        )
+    assert accepted.stats().rejected == 0
+    assert len(accepted.snapshot()) == len(cases)
+
+    invalid_labels = (
+        "owner_private_secret",
+        "credential",
+        "content",
+        "https://provider.invalid/secret",
+        "/var/run/provider.sock",
+        str(uuid4()),
+        "RuntimeError: provider secret",
+        "arbitrary-provider-label",
+    )
+    rejected = MetadataMetrics()
+    for component, operation, dependency, outcome, _provider in cases:
+        for provider in invalid_labels:
+            rejected.record_span(
+                component,
+                operation,
+                1.0,
+                trace_id=trace_id,
+                span_id=uuid4().hex[:16],
+                parent_span_id=None,
+                dependency=dependency,
+                outcome=outcome,
+                provider=provider,
+            )
+    assert rejected.snapshot() == ()
+    assert rejected.stats().rejected == len(cases) * len(invalid_labels)
+
+    research = MetadataMetrics()
+    for provider in ("searxng", "static_fetcher", "browser_fetcher", "none"):
+        research.record_span(
+            "aura.research.search@1",
+            "research.search",
+            1.0,
+            trace_id=trace_id,
+            span_id=uuid4().hex[:16],
+            parent_span_id=None,
+            dependency="searxng_port",
+            outcome="success",
+            provider=provider,
+        )
+    assert research.stats().rejected == 0
+    assert len(research.snapshot()) == 4
+
+
 @pytest.mark.asyncio
 async def test_correlated_provider_error_survives_http_502_and_records_limit_class() -> None:
     metrics = MetadataMetrics()

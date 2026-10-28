@@ -1148,7 +1148,6 @@ def memory_processing_service(
         sessions,
         testing=sessions is None,
         metrics=metrics,
-        outbox=TaskSourceInvalidationStage(SqlOutboxRepository()),
     )
     memory_metrics = metrics or MetadataMetrics()
     endpoint = str(getattr(settings, "ollama_url", "http://ollama:11434"))

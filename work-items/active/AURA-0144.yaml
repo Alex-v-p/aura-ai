@@ -29,6 +29,7 @@ sources_of_truth:
     - AURA-0144 owns tooling/architecture/modules.yaml after AURA-0142 and AURA-0143 module names stabilize, avoiding parallel registry edits.
     - The Contract Steward owns provider schemas and conformance fixtures; the Core Worker owns inward clients and settings seams; the Platform Worker owns isolated services dependency locks deployment policy and final registry reconciliation; the Test and Evaluation Engineer owns independent hostile-network sandbox privacy limit and instrumentation suites.
     - On the shared feature branch provider work may run beside both Core tickets because it uses an overlay and distinct service roots; the Integration Maintainer alone updates modules.yaml after reviewed AURA-0142 and AURA-0143 handoffs and then runs aggregate architecture validation.
+    - Final parallel-slice reconciliation may correct only shared telemetry composition, memory Task Center composition, and default-suite dependency gating needed to keep the integrated AURA-0142 through AURA-0144 Core tree regression-free; it must not add research coordinator behavior.
   contracts:
     - contracts/openapi/aura-v1.yaml
     - contracts/events/knowledge/v1/research-events.schema.json
@@ -58,6 +59,7 @@ allowed_paths:
   - contracts/tests/test_aura0144_research_provider_contract.py
   - services/aura-core/src/aura_core/providers/research/**
   - services/aura-core/src/aura_core/bootstrap/research_providers.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
   - services/aura-core/src/aura_core/platform/research_provider_settings.py
   - services/aura-core/src/aura_core/platform/telemetry.py
   - services/aura-core/resources/component-manifests/research-search.yaml
@@ -67,6 +69,7 @@ allowed_paths:
   - services/aura-core/tests/test_research_provider_clients.py
   - services/aura-core/tests/test_research_provider_settings.py
   - services/aura-core/tests/test_research_provider_observability.py
+  - services/aura-core/tests/test_generated_artifact_observability.py
   - services/aura-research-static-fetcher/**
   - services/aura-research-browser-fetcher/**
   - deploy/compose/research-providers.yaml
@@ -193,6 +196,12 @@ acceptance_criteria:
   - Security evaluation covers SSRF DNS rebinding redirect loops userinfo ports downgrade MIME confusion polyglots decompression and size limits browser escape downloads persistence credential filesystem environment socket probes replay expiry malformed signatures resource exhaustion hostile prompt injection Observatory outage and content leakage with the approved pass thresholds.
   - The research provider overlay composes with compose.yaml without modifying it, keeps all services disabled unless their explicit profiles and switches are selected, and provides health and topology tests that require no usable secrets in source or rendered configuration.
   - The Integration Maintainer updates tooling/architecture/modules.yaml only after AURA-0142 and AURA-0143 module names stabilize, registering all three parallel slices without changing their product behavior; no other ticket may edit that registry concurrently.
+  - >-
+    The default full Core test suite remains regression-free: legacy calendar
+    persona and memory telemetry is accepted unchanged, memory processing
+    composition remains compatible with public repository factories, and live
+    artifact SQL evidence skips only when the explicit isolated dependency gate
+    is absent while still running in the required live PostgreSQL check.
   - No research task admission coordinator evidence persistence citation synthesis artifact Task Center frontend Observatory public API event generated-client migration protected baseline authenticated browsing HTTP destination arbitrary binary PDF archive image or cloud research provider behavior occurs.
 required_checks:
   - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0144.yaml
@@ -209,6 +218,7 @@ required_checks:
   - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/providers/research services/aura-core/src/aura_core/bootstrap/research_providers.py services/aura-core/src/aura_core/platform/research_provider_settings.py services/aura-core/tests/test_research_provider_clients.py services/aura-core/tests/test_research_provider_settings.py services/aura-core/tests/test_research_provider_observability.py services/aura-research-static-fetcher services/aura-research-browser-fetcher contracts/tests/test_aura0144_research_provider_contract.py deploy/tests/test_aura0144_research_provider_topology.py deploy/tests/test_aura0144_research_provider_security.py deploy/tests/test_aura0144_research_provider_limits.py
   - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/providers/research services/aura-core/src/aura_core/bootstrap/research_providers.py services/aura-core/src/aura_core/platform/research_provider_settings.py services/aura-core/tests/test_research_provider_clients.py services/aura-core/tests/test_research_provider_settings.py services/aura-core/tests/test_research_provider_observability.py services/aura-research-static-fetcher services/aura-research-browser-fetcher
   - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0144_research_provider_contract.py services/aura-core/tests/test_research_provider_clients.py services/aura-core/tests/test_research_provider_settings.py services/aura-core/tests/test_research_provider_observability.py services/aura-research-static-fetcher/tests services/aura-research-browser-fetcher/tests deploy/tests/test_aura0144_research_provider_topology.py deploy/tests/test_aura0144_research_provider_security.py deploy/tests/test_aura0144_research_provider_limits.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
   - docker compose -f compose.yaml -f deploy/compose/research-providers.yaml config --quiet
   - git diff --check
 baseline_changes_allowed: false

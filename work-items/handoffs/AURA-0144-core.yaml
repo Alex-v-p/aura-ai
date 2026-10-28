@@ -72,6 +72,7 @@ verification:
     - "Core search client round-trips signed health and limits through the integrated SearXNG ASGI route"
     - "validate-observability: research manifests satisfy declared obligations"
     - "validate-import-boundaries, validate-service-isolation, validate-repository-shape, contract-change, and baseline checks pass"
+    - "validate-module-registry: module roots and dependency rules valid after evaluator dependency reconciliation"
     - "python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v: 27 passed"
     - "docker compose -f compose.yaml -f deploy/compose/research-providers.yaml config --quiet"
     - "git diff --check and UV lock --check pass"
@@ -90,7 +91,12 @@ verification:
     - "Production static/browser apps register bounded extraction sinks; only actual Trafilatura/plain-text or DOM extraction emits the exact extraction metric/span metadata"
     - "Signed envelope verification enforces issued-at skew, exact ttlMs-to-window binding, expiry, audience/method, signature, and replay semantics"
     - "Versioned deterministic research evaluators expose only the result/fixture-runner API; their private evidence constructors are populated by the real Core provider client against controlled local transports, the hostile.html extraction fixture, Core extraction telemetry, bounded terminal outcomes, and MetadataMetrics observations. Positive fixtures pass and all four observed negative regressions fail; replay is deterministic and content-free"
-    - "Evaluator execution was verified by uv run pytest -q tests/test_research_provider_observability.py (9 passed) and the assigned client/settings/observability set (29 passed); runner replay and public-API restriction assertions are covered"
+    - "Evaluator execution was verified by uv run pytest -q tests/test_research_provider_observability.py (10 passed) and the assigned client/settings/observability set (30 passed); runner replay, public-API restriction, and provider-label privacy assertions are covered"
+    - "Core stabilization: component-local provider validation preserves legacy calendar, memory, and persona provider labels while keeping the research provider vocabulary closed; memory_processing_service no longer passes redundant outbox kwargs, preserving memory_repository compatibility and its SQL default invalidation outbox"
+    - "Telemetry provider-label stabilization: repository-wide provider values are finite and reject arbitrary, private-marker, URL/path, UUID, credential, content, and exception-derived labels; research components additionally enforce the exact research subset, while calendar/persona/memory/workflow/evaluation/model-provider labels remain accepted"
+    - "Focused provider-label regression tests cover research exact set, non-research arbitrary rejection, sensitive-label rejection, and established legacy labels"
+    - "12 previously failing calendar/memory/persona telemetry tests now pass; full services/aura-core suite passes 1819 tests with 124 skipped and one Authlib deprecation warning"
+    - "Exact AURA-0144 aggregate provider suite passes: 133 tests"
     - "Production static/browser extraction sinks emit schema-required metadata-observation-v2 JSON with bounded deployment metadata, exact units, trace-only spans, optional injected OTLP bytes export, three-attempt retry exhaustion, and dropped/rejected/export-failure/abandoned-batch accounting"
     - "Provider sinks drain continuously and on shutdown through FastAPI lifespan hooks; overflow drops oldest and counts, exporter failure retries exactly three times, and sink failures never affect provider execution"
     - "Production extraction output was checked for v2 required fields, schemaVersion 2, trace-only lineage, and absence of query, target, content, request, exception, or schema-unsupported fields"
@@ -99,9 +105,7 @@ verification:
     - "Core settings accept only canonical unpadded base64url signing keys and independently fail closed"
     - "Executable research fixture runner derives evaluator evidence from URL/address policy observations, execution-state deltas for hostile instructions/policies/tools/permissions/budgets, bounded provider outcomes, and metadata records; positive fixtures pass and all four negative regressions fail"
   failed:
-    - "validate-changed-paths: shared worktree contains unrelated concurrent AURA-0142/AURA-0143/AURA-0144 platform files"
-    - "validate-module-registry: the new executable evaluator imports Core client and MetadataMetrics seams; the registry entry needs the corresponding dependencies. Registry edits are intentionally deferred to the Integration Maintainer per AURA-0144 ownership"
-    - "Full services/aura-core pytest run: 1806 passed, 122 skipped, 14 failures in unrelated calendar/memory/persona/SQL suites (including the concurrent telemetry baseline); scoped AURA-0144 checks remain green"
+    []
   not_run: []
 decisions:
   - "Core uses Ed25519 signed research-provider.v1 envelopes with public-key verification, expiry, audience/method validation, and replay-id cache; signing material stays in Core composition."
