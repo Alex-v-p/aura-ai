@@ -80,6 +80,7 @@ allowed_paths:
   - deploy/tests/test_aura0144_research_provider_security.py
   - deploy/tests/test_aura0144_research_provider_limits.py
   - tooling/architecture/modules.yaml
+  - tooling/architecture/path-ownership.yaml
   - tooling/architecture/tests/test_modules.py
   - pyproject.toml
   - uv.lock
