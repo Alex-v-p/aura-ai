@@ -59,6 +59,7 @@ allowed_paths:
   - services/aura-core/src/aura_core/providers/research/**
   - services/aura-core/src/aura_core/bootstrap/research_providers.py
   - services/aura-core/src/aura_core/platform/research_provider_settings.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
   - services/aura-core/resources/component-manifests/research-search.yaml
   - services/aura-core/resources/component-manifests/research-static-fetch.yaml
   - services/aura-core/resources/component-manifests/research-browser-fetch.yaml
