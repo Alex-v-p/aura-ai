@@ -1,0 +1,119 @@
+agent: test_evaluation_engineer
+work_item: AURA-0142
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0142_tests
+  worktree: shared-main
+scope:
+  ownership_zone: evaluation.generated-artifact-lifecycle
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_generated_artifact_observability.py
+  - work-items/handoffs/AURA-0142-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.artifacts.persistence@1
+    - aura.artifacts.deletion@1
+  metrics_added:
+    - artifact_write_outcome_count
+    - artifact_write_latency_ms
+    - artifact_deletion_outcome_count
+    - artifact_deletion_latency_ms
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/tests/test_generated_artifact_observability.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/tests/test_generated_artifact_observability.py
+    - git diff --check -- services/aura-core/tests/test_generated_artifact_observability.py
+    - >-
+      Twenty-two focused observability, lifecycle, fault/privacy, and evaluator
+      tests passed. Coverage includes production MetadataMetrics registration,
+      exact finite dimensions and trace-only correlation, public object-key
+      exclusion, sanitizer behavior, append reservation recovery and race
+      exclusion, admission-only cleanup claim/execute/settle with lease expiry
+      and stale claims, retry/reconcile/timeout, Garage immutability and failure
+      mapping, full create/append/delete idempotency fingerprints, and live SQL
+      create/append replay/conflict, transactional outbox, cleanup admission,
+      claim lease expiry, stale-token rejection, and restart settlement. The
+      four generated-artifact evaluators are independently checked for typed
+      pass/fail results, stable replay keys, invalid-input fail-closed behavior,
+      bounded metadata-only diagnostics, and prohibited content/identifier
+      absence. Failure-phase deltas assert exactly three observations per
+      lifecycle instrumentation call (one span and two metrics) for validation,
+      storage, conflict, and timeout/settlement paths.
+    - >-
+      AURA_TEST_DEPENDENCIES_ISOLATED=1
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run pytest -q services/aura-core/tests/test_generated_artifact_observability.py
+    - >-
+      AURA_TEST_DEPENDENCIES_ISOLATED=1
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_generated_artifact_observability.py
+      services/aura-core/tests/test_generated_artifacts.py
+      services/aura-core/tests/test_generated_artifact_storage.py
+      services/aura-core/tests/test_generated_artifact_deletion.py
+      services/aura-core/tests/test_generated_artifact_api.py
+      services/aura-core/tests/test_migration_0029_generated_artifacts.py
+      services/aura-core/tests/test_migrations.py -q (58 passed, no skips)
+  failed:
+    []
+  not_run:
+    - Repository-wide changed-path validation while concurrent AURA-0143/AURA-0144 paths are present.
+decisions:
+  - >-
+    Tests use a local recording metrics port so they verify Core's exact typed
+    component and metric boundary independently of exporter implementation.
+  - >-
+    The privacy suite injects owner-private titles, content, SHA-256 values,
+    object keys, and exception text, and rejects their appearance in emitted
+    observations while allowing correlation identifiers only in trace-only
+    fields.
+  - >-
+    Persistence covers successful create and immutable append plus storage
+    failure; deletion covers truthful deletion_failed and cleanup_unknown
+    outcomes; idempotent replay checks stable metadata-only lifecycle events.
+  - >-
+    Added independent collision, digest-tamper, timeout, retry, reconciliation,
+    and delete-replay cases. The fake object port implements put_if_absent so
+    the test detects accidental overwrites rather than masking them. The
+    reconciliation assertion is deliberately read-only: a present object
+    settles to deletion_failed and requires an explicit retry before deletion.
+  - >-
+    Raw object-port TimeoutError is exercised as a known failed cleanup at the
+    Core boundary; the Garage adapter's provider ambiguity, immutable
+    put-if-absent behavior, integrity collision, and generic failure mapping
+    are covered independently. Admission-only deletion is executed through
+    claim/lease/restart settlement rather than a synchronous delete shortcut.
+  - >-
+    Live SQL tests create and drop a unique schema in the isolated AURA-0143
+    PostgreSQL database, so each run verifies the real SQL repository and
+    transactional outbox without sharing or deleting another test's records.
+    A failed publication is asserted to leave no artifact, lifecycle event, or
+    outbox row before the same admission is replayed after the simulated crash.
+  - >-
+    Manifest boundary assertions use the approved exact
+    ArtifactRevisionWriteInputV1/ArtifactRevisionWriteResultV1 and
+    ArtifactDeleteInputV1/ArtifactDeleteResultV1 schema names, plus the
+    approved transactional_outbox dependency declaration.
+risks:
+  - >-
+    Aggregate runtime checks must still verify the artifact component catalogue
+    and exporter integration after the Core worker completes its instrumentation.
+unresolved:
+  - >-
+    Repository-wide changed-path validation and final cross-worker integration
+    remain the Integration Maintainer's responsibility; the amended aggregate
+    AURA-0142 pytest gate is green with no skips.

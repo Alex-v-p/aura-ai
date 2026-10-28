@@ -205,6 +205,40 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("AURA_OBJECT_STORAGE_SECRET_KEY_FILE"),
     )
+    # Generated artifacts use a separate Garage identity and bucket.  These
+    # settings are intentionally distinct from the document-store grant.
+    artifact_storage_endpoint: str = Field(
+        default="http://127.0.0.1:3900",
+        validation_alias=AliasChoices("AURA_ARTIFACT_STORAGE_ENDPOINT"),
+    )
+    artifact_storage_region: str = Field(
+        default="garage",
+        validation_alias=AliasChoices("AURA_ARTIFACT_STORAGE_REGION"),
+    )
+    artifact_storage_bucket: str = Field(
+        default="aura-artifacts",
+        validation_alias=AliasChoices("AURA_ARTIFACT_STORAGE_BUCKET"),
+    )
+    artifact_storage_access_key: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("AURA_ARTIFACT_STORAGE_ACCESS_KEY"),
+    )
+    artifact_storage_access_key_file: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("AURA_ARTIFACT_STORAGE_ACCESS_KEY_FILE"),
+    )
+    artifact_storage_secret_key: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("AURA_ARTIFACT_STORAGE_SECRET_KEY"),
+    )
+    artifact_storage_secret_key_file: str = Field(
+        default="",
+        repr=False,
+        validation_alias=AliasChoices("AURA_ARTIFACT_STORAGE_SECRET_KEY_FILE"),
+    )
     evaluation_runner_max_concurrency: int = Field(default=2, ge=1, le=64)
     evaluation_runner_max_queue_depth: int = Field(default=32, ge=1, le=4096)
     evaluation_runner_max_timeout_ms: int = Field(default=300_000, ge=100, le=86_400_000)
@@ -370,6 +404,14 @@ class Settings(BaseSettings):
         self.object_storage_secret_key = read_secret(
             self.object_storage_secret_key, self.object_storage_secret_key_file
         )
+        self.artifact_storage_access_key = read_secret(
+            self.artifact_storage_access_key, self.artifact_storage_access_key_file
+        )
+        self.artifact_storage_secret_key = read_secret(
+            self.artifact_storage_secret_key, self.artifact_storage_secret_key_file
+        )
+        if self.artifact_storage_bucket != "aura-artifacts":
+            raise ValueError("artifact storage bucket must be aura-artifacts")
         if not self.database_url:
             self.database_url = (
                 f"postgresql+psycopg://{quote(self.database_user)}:{quote(password, safe='')}"

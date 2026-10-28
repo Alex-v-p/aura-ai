@@ -1,0 +1,31 @@
+agent: observability_steward
+work_item: AURA-0142
+verdict: PASS
+checked:
+  - >-
+    Verified stable aura.artifacts.persistence@1 and
+    aura.artifacts.deletion@1 identities and versions, exact typed boundaries,
+    artifact.revision_write and artifact.delete spans, declared dependencies,
+    count and millisecond units, and closed operation, outcome, error, and
+    dimension vocabularies.
+  - >-
+    Verified per-operation trace lineage, unique span identifiers, trace-only
+    correlation, metadata-only capture, prohibited content and identifier
+    rejection, bounded retention, deterministic replay, and all required
+    typed evaluators with pass, fail, invalid-input, and privacy coverage.
+  - >-
+    Verified exactly one counter, one latency sample, and one span for
+    persistence and deletion success, validation, replay, storage, admission,
+    claim, settlement, reconciliation, transactional-outbox, timeout,
+    conflict, and ambiguous-failure paths.
+  - >-
+    Re-ran the final generic repository-settlement fault directly through
+    production MetadataMetrics. It emitted exactly one accepted outcome
+    counter, one latency sample, and one artifact.delete span, all
+    unknown/settlement_unknown against core_postgresql, with zero rejected
+    observations.
+  - >-
+    The focused production-sink settlement regression passed. The amended
+    isolated PostgreSQL work-item suite passed 63 tests, and the observability
+    validator passed.
+findings: []
