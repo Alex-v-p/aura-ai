@@ -29,6 +29,9 @@ export default defineConfig({
       '@aura/aura/automation/briefings': fileURLToPath(
         new URL('./libs/aura/automation/briefings/src/index.ts', import.meta.url),
       ),
+      '@aura/aura/automation/workflows': fileURLToPath(
+        new URL('./libs/aura/automation/workflows/src/index.ts', import.meta.url),
+      ),
       '@aura/aura/integrations/calendar': fileURLToPath(
         new URL('./libs/aura/integrations/calendar/src/lib/calendar-store.ts', import.meta.url),
       ),

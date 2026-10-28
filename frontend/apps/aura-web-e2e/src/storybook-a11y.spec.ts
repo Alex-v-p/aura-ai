@@ -110,6 +110,16 @@ const approvalStories = [
   'mobile',
   'workflow-detail',
 ] as const;
+const workflowStories = [
+  'empty-authoring',
+  'authored-workflow',
+  'waiting-for-approval',
+  'recovery-required',
+  'authenticated-error',
+  'permission-error',
+  'reconnecting',
+  'mobile-authoring',
+] as const;
 const todayStories = [
   'action-center',
   'calm-empty',
@@ -696,6 +706,32 @@ for (const story of approvalStories) {
         ).toBeVisible();
       }
       const results = await new AxeBuilder({ page }).include('.approvals-page').analyze();
+      expect(results.violations).toEqual([]);
+    });
+  }
+}
+
+for (const story of workflowStories) {
+  for (const theme of themes) {
+    test(`Workflow Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop', 'Workflow Storybook axe coverage runs once in the desktop project.');
+      await page.goto(`${storybookBaseUrl}/iframe.html?id=aura-automate-workflows--${story}&viewMode=story`);
+      await expect(page.locator('.workflow-studio').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      if (story === 'empty-authoring') {
+        await expect(page.getByLabel('Workflow name', { exact: true })).toBeVisible();
+        await expect(page.getByText('Unsaved content stays in memory', { exact: false })).toBeVisible();
+      }
+      if (story === 'authored-workflow') await expect(page.getByRole('heading', { name: 'Prepare owner update', exact: true })).toBeVisible();
+      if (story === 'waiting-for-approval') {
+        await expect(page.getByRole('heading', { name: 'Run instance-story', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Step execution details', exact: true })).toBeVisible();
+      }
+      if (story === 'recovery-required') await expect(page.getByRole('heading', { name: 'Run instance-recovery-story', exact: true })).toBeVisible();
+      if (story === 'authenticated-error') await expect(page.getByRole('link', { name: 'Sign in again', exact: true })).toBeVisible();
+      if (story === 'permission-error') await expect(page.getByRole('button', { name: 'Check permission again', exact: true })).toBeVisible();
+      if (story === 'reconnecting') await expect(page.getByRole('status').filter({ hasText: 'Reconnecting' })).toBeVisible();
+      const results = await new AxeBuilder({ page }).include('.workflow-studio').analyze();
       expect(results.violations).toEqual([]);
     });
   }

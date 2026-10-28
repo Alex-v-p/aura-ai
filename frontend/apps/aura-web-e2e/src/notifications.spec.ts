@@ -588,7 +588,7 @@ test.describe('notification centre', () => {
     await expect(page.getByRole('button', { name: 'Retry live updates', exact: true })).toBeVisible();
   });
 
-  test('keeps workflow notifications content-free and does not add a workflow deep link', async ({ page }) => {
+  test('keeps workflow notifications content-free and exposes an opaque workflow deep link', async ({ page }) => {
     const workflow = { id: 'notification-workflow', workflowId: 'workflow-private', workflowRevisionId: 'revision-private', workflowInstanceId: 'instance-private', workflowStepOrdinal: 3, workflowStepExecutionId: 'execution-private', workflowResultId: 'result-private', status: 'delivered', version: 1, createdAt: now, updatedAt: now, deliveredAt: now, acknowledgedAt: null };
     const workflowEventBase = { schemaVersion: 1, eventType: 'notification.delivered', notificationId: workflow.id, workflowId: '550e8400-e29b-41d4-a716-446655440001', workflowRevisionId: '550e8400-e29b-41d4-a716-446655440002', workflowInstanceId: '550e8400-e29b-41d4-a716-446655440003', workflowStepOrdinal: 3, workflowStepExecutionId: '550e8400-e29b-41d4-a716-446655440004', workflowResultId: '550e8400-e29b-41d4-a716-446655440005', status: 'delivered', notificationVersion: 1, occurredAt: now };
     const malformedWorkflowEvents = [
@@ -616,7 +616,9 @@ test.describe('notification centre', () => {
     await expect(dialog).toContainText('contains no workflow input, output, instruction, approval, or result content');
     await expect(dialog).toContainText('This update is recorded privately. Workflow details aren’t available in this version.');
     await expect(dialog).not.toContainText('Step 3');
-    await expect(dialog.getByRole('link')).toHaveCount(0);
+    const workflowLink = dialog.getByRole('link', { name: 'View workflow run', exact: true });
+    await expect(workflowLink).toHaveAttribute('href', `/workflows/${workflow.workflowId}/instances/${workflow.workflowInstanceId}`);
+    await expect(workflowLink).not.toContainText(/private|result|execution/);
     await expect(dialog.locator('.detail-actions button')).toHaveCount(1);
     await expect(dialog).not.toContainText('result-private');
   });

@@ -2681,6 +2681,12 @@ modules:
   - aura-web.interaction-agents
   - aura-web.integrations-calendar
   - aura-web.knowledge-documents
+- id: aura-web.automation-workflows
+  root: frontend/libs/aura/automation/workflows
+  kind: frontend-feature
+  public_api: frontend/libs/aura/automation/workflows/src/index.ts
+  dependencies:
+  - aura-web.api-client
 - id: aura-web.governance-approvals
   root: frontend/libs/aura/governance/approvals
   kind: frontend-feature

@@ -1,6 +1,6 @@
 id: AURA-0138
 title: Build the Aura Web Workflow Studio
-status: in_progress
+status: integrated
 change_class: repository_governance
 intent: >
   Add an accessible, responsive Aura Web studio for authoring, publishing,

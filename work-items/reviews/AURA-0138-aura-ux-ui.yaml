@@ -1,0 +1,29 @@
+agent: aura_ux_ui_reviewer
+work_item: AURA-0138
+verdict: PASS
+checked:
+  - >-
+    Verified the immutable publish review presents declared input names and
+    types, authorized agent revision, typed mappings, approval points, bounded
+    limits, immutable consequences, and explicit cancel and publish actions.
+  - >-
+    Verified initial focus, forward and reverse Tab containment, inert
+    background, Escape and cancel behavior, and synchronous confirm-path focus
+    restoration for slow and unknown publication outcomes.
+  - >-
+    Verified the dialog is viewport-bounded, internally scrollable,
+    single-column on mobile, and free of horizontal overflow, and that run
+    heading order and the EmptyAuthoring Storybook state are correct.
+  - >-
+    Verified the mobile step editor marks the active card with aria-current and
+    a distinct visual treatment, visibly focuses programmatic step headings,
+    preserves immediate predecessor context, and maintains focus after
+    navigation, clone, move, and remove actions with a bounded announced final
+    Next action.
+  - >-
+    Responsive dialog probes passed at 1440, 768, and 390 pixels with Axe,
+    content, focus, inertness, overflow, and delayed-confirm assertions;
+    mobile authoring and accessibility probes passed with 200-percent zoom,
+    reduced motion, Axe, overflow, active semantics, and focus assertions;
+    workflow unit, lint, TypeScript, production, and Storybook checks passed.
+findings: []

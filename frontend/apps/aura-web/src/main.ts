@@ -86,7 +86,19 @@ bootstrapApplication(AppComponent, {
         const approvalStore = inject(ApprovalStore);
         const calendarStore = inject(CalendarStore);
         const briefingStore = inject(BriefingStore);
+        type SessionResettable = { resetSessionState: () => void };
+        let workflowStore: SessionResettable | null = null;
         const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore), inject(MemoryStore), inject(DocumentsStore), inject(ReminderStore), briefingStore, notificationStore, approvalStore, calendarStore];
+        const resetWorkflowStore = (): void => {
+          if (workflowStore) { workflowStore.resetSessionState(); return; }
+          // Workflow Studio is lazy-loaded. Resolve its root store only when a
+          // session reset occurs, so the shell does not pull the feature into
+          // the initial bundle while still clearing private state.
+          void import('@aura/aura/automation/workflows').then(({ WorkflowStore }) => {
+            workflowStore = injector.get(WorkflowStore);
+            workflowStore.resetSessionState();
+          });
+        };
         let authorizationFailure = false;
         let resetting = false;
         return {
@@ -95,6 +107,7 @@ bootstrapApplication(AppComponent, {
             resetting = true;
             try {
               for (const store of stores) store.resetSessionState();
+              resetWorkflowStore();
               // Reconnect metadata only after ConversationStore accepts the
               // replacement principal; an auth failure remains disconnected.
               queueMicrotask(() => {

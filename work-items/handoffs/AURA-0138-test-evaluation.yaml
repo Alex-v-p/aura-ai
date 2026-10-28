@@ -1,0 +1,134 @@
+agent: test_evaluation_engineer
+work_item: AURA-0138
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0138_tests
+  worktree: shared
+scope:
+  ownership_zone: frontend.e2e.workflow-studio
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web-e2e/src/workflows.spec.ts
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+contracts:
+  changed: false
+  notes: E2E fixtures consume the generated workflow client contract and do not change schemas or generated files.
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+  capture_policy: metadata_only
+  notes: Tests assert workflow content and mappings are absent from URL, browser storage, and metadata-only stream payloads.
+verification:
+  passed:
+    - cd frontend && pnpm exec eslint apps/aura-web-e2e/src/workflows.spec.ts
+    - cd frontend && pnpm exec eslint apps/aura-web-e2e/src/notifications.spec.ts
+    - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/workflows.spec.ts --list (21 tests discovered across desktop/tablet/mobile)
+    - >-
+      cd frontend && AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test apps/aura-web-e2e/src/workflows.spec.ts:
+      21 passed across desktop, tablet, and mobile; the isolated-port rerun also completed 21/21.
+    - >-
+      cd frontend && AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test apps/aura-web-e2e/src/notifications.spec.ts
+      --grep "opaque workflow deep link": 3 passed across desktop, tablet, and mobile.
+    - >-
+      cd frontend && AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test apps/aura-web-e2e/src/approvals.spec.ts
+      apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts:
+      335 passed and 442 intentionally skipped by the existing Storybook project matrix; no failures.
+    - >-
+      Isolated-port reruns: approvals 73 passed and 2 skipped; notifications 43 passed and 2 skipped; Storybook
+      accessibility 219 passed and 438 skipped. Each browser command was explicitly time-capped and used distinct
+      app/Storybook ports.
+    - >-
+      Latest focused Storybook workflow/approval/notification accessibility matrix: 46 passed in 46.9 seconds on
+      the desktop project, including workflow-detail, authentication-error, permission-error, conflict,
+      unknown-outcome, recovery, mobile, and notification workflow stories.
+    - >-
+      Latest focused authoring/responsive run before the final mobile-navigation assertion adjustment: desktop and
+      tablet authoring plus desktop/tablet/mobile 200-percent/reduced-motion checks passed (5 passed); the mobile
+      authoring attempt exposed the expected active-step navigation requirement and the test now navigates back to
+      step 1 before interacting with its controls.
+    - >-
+      Final isolated auth-reset rerun: all 6 desktop/tablet/mobile cases for stream 401 and 403 passed, including
+      sign-in/permission guidance, private input clearing, session epoch reset, and authorized-agent privacy.
+    - cd frontend && pnpm exec nx run aura-workflows:test (11 passed)
+    - cd frontend && pnpm exec nx run aura-workflows:test (6 passed)
+    - cd frontend && pnpm exec nx run aura-workflows:lint
+    - cd frontend && pnpm exec nx run aura-web:test (15 passed)
+    - cd frontend && pnpm exec nx run aura-web:lint
+    - cd frontend && pnpm exec nx run aura-approvals:test (17 passed)
+    - cd frontend && pnpm exec nx run aura-approvals:lint
+    - cd frontend && pnpm exec nx run aura-notifications:test (22 passed)
+    - cd frontend && pnpm exec nx run aura-notifications:lint
+    - cd frontend && pnpm exec nx run aura-web:build:production
+    - cd frontend && pnpm exec nx run storybook:build
+    - >-
+      Final bounded desktop workflow rerun: 18 passed, including strict RFC3339 validation, unknown-outcome
+      retry with identical idempotency key and unrelated SSE, bounded replay/coalescing/cursor advancement,
+      parent adoption and route rebind, same-workflow definition/revision SSE preserving an open run until parent
+      navigation, run heading order, lifecycle/deletion scopes, session reset privacy, deep links, responsive
+      behavior, and publish-review accessibility.
+    - >-
+      Final focused workflow Storybook matrix on the isolated Storybook server: 16 passed (8 stories in light and
+      dark themes), including the true EmptyAuthoring story, publish/run states, auth/permission/reconnecting
+      states, and axe accessibility checks.
+    - >-
+      Final targeted publish/SSE rerun: 2 passed, covering dialog forward/reverse Tab wrapping, background inertness,
+      full input/agent/mapping review content, dialog Axe checks, responsive no-overflow behavior, delayed confirm
+      focus restoration, and same-workflow revision SSE instance preservation.
+    - >-
+      Final focused stream timing probes on reused isolated servers: 2 passed. The delayed-EOF case holds the
+      authoritative REST projection for 750ms (longer than the 500ms retry timer), verifies the consumed retry opens
+      a subsequent stream with the committed Last-Event-ID, and confirms the UI does not remain in Reconnecting;
+      the coalescing/cursor case also passed.
+    - >-
+      Final expanded publish-dialog viewport rerun: 3 passed across desktop (1440px), tablet (768px), and mobile
+      (390px), covering the focus trap, inert background, complete review content, Axe checks, responsive overflow,
+      and immediate confirm/cancel focus restoration.
+    - >-
+      Strict standalone TypeScript checking of workflows.spec.ts with DOM and Playwright typings, plus its ESLint
+      target, passed after closing the stream-mode union and fixture typing gaps.
+    - >-
+      Final isolated mobile focus journey: 1 passed, covering active-card aria-current/is-active semantics, visible
+      focus within each intended step, immediate predecessor visibility with no hidden-card ambiguity, announced
+      final-step Next no-op, clone/move/remove focus transitions, reduced motion, and Axe/no-overflow checks.
+    - >-
+      Final mobile authoring/accessibility regression checks: 2 passed, covering the full four-step mapping journey
+      and the 200-percent zoom/reduced-motion responsive Axe scenario.
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0138.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0138.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0138.yaml (skipped; no baseline changes)
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Added executable browser assertions for exact four-step authoring, eight-step bounds, mapping invalidation,
+    privacy/session boundaries, stable unknown-outcome idempotency, metadata-only SSE reconciliation, run deep links,
+    approval/recovery/cancel affordances, explicit deletion scopes, accessibility, reduced motion, and 200-percent zoom.
+  - >-
+    Updated the pre-existing notification journey to assert the approved opaque workflow-instance deep link while
+    continuing to reject workflow content and result identifiers.
+  - >-
+    Kept all changes within test/evaluation paths; no production code was changed to make tests pass.
+  - >-
+    Added final dialog contract coverage for focus trapping, inert background, complete review provenance, Axe,
+    responsive no-overflow behavior, and immediate confirm-path focus restoration under a delayed publish response.
+  - >-
+    Added workflow-only revision SSE coverage proving an open run remains selected for same-workflow invalidations
+    while explicit navigation to the parent definition clears the instance view.
+risks:
+  []
+unresolved: []
