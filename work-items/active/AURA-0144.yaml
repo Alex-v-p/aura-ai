@@ -1,7 +1,7 @@
 id: AURA-0144
 title: Deploy isolated governed research providers
 status: approved
-change_class: infrastructure
+change_class: repository_governance
 intent: >
   Add closed versioned internal provider transports, Core-side clients, and
   separately deployable SearXNG, static HTTPX and Trafilatura, and Playwright
@@ -209,5 +209,5 @@ required_checks:
   - docker compose -f compose.yaml -f deploy/compose/research-providers.yaml config --quiet
   - git diff --check
 baseline_changes_allowed: false
-human_approval_required: false
+human_approval_required: true
 open_decisions: []
