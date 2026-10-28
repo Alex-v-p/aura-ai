@@ -1,0 +1,235 @@
+id: AURA-0139
+title: Add aggregate Observatory workflow monitoring
+status: in_progress
+change_class: contract
+intent: >
+  Give the Observatory owner a bounded, privacy-preserving workflow health
+  dashboard derived exclusively from Observatory-owned telemetry, with
+  aggregate lifecycle, latency, wait, failure, and correlated run/trace
+  evidence while preserving Core independence and excluding per-instance
+  projections.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - work-items/archived/AURA-0087.yaml
+    - work-items/archived/AURA-0117.yaml
+    - work-items/archived/AURA-0137.yaml
+    - AURA-0087 owns the bounded operational analytics catalogue, ClickHouse query port, finite query limits, automation focus, REST-authoritative snapshots, and generic metadata-only live invalidation extended by this item.
+    - The closed analytics allowlist adds exactly the fifteen AURA-0137 workflow measurements workflow_transition_outcome workflow_command_outcome workflow_repository_outcome workflow_transition_duration_ms workflow_command_duration_ms workflow_repository_duration_ms workflow_definition_validation_duration_ms workflow_agent_run_step_duration_ms workflow_approval_command_duration_ms workflow_notification_step_duration_ms workflow_wait_command_duration_ms workflow_wait_lag_ms workflow_checkpoint_persistence_duration_ms workflow_cancellation_duration_ms and workflow_settlement_duration_ms under the existing automation focus.
+    - Scheduler measurements remain excluded because scheduled workflows are outside this release. Existing reminder and notification automation measurements remain backward compatible.
+    - GET /api/v1/automation/workflows/monitoring is a bounded owner-authorized metadata-only snapshot assembled exclusively from Observatory-owned telemetry storage through the public query port. It never reads Core databases imports Core code copies Core manifests or requires Core availability.
+    - The snapshot defaults to a 24-hour UTC window and preserves the established maximum 31-day window 200 points per series 12 series 50 breakdowns 1000000 scanned rows and 5000 millisecond execution limit. Recent correlated references are additionally capped at 25.
+    - Lifecycle counts latency summaries time series and failure breakdowns are aggregates over allowlisted metadata fields only. Workflow definition content mappings inputs outputs checkpoints results approval presentation notification content owner identity exception text arbitrary attributes and content-derived values are unrepresentable.
+    - Only workflow agent-run observations are expected to carry reliable run and trace correlation. Other workflow signals report correlation as unavailable rather than joining to Core state inferring identifiers or manufacturing references.
+    - Correlated references expose only existing opaque run and trace drill-down identifiers plus bounded UTC timing operation component outcome and error-class metadata. Workflow definition revision instance step-execution and lifecycle-event identifiers are not returned or used as grouping dimensions.
+    - Existing generic metadata-only Observatory SSE is an invalidation hint only. The browser performs coalesced bounded REST refresh and keeps usable stale state during reconnect partial data or service failure; analytical payloads and filters never enter SSE or URLs.
+    - No Observatory database migration is required. Existing telemetry v2 and governed automation_input and automation_output run-evidence categories remain unchanged; this item does not create a new ingestion protocol or content grant.
+    - Per-instance workflow projection listing failed-step identity ordering replay retention deletion propagation or command capability is outside scope and remains ADR_REQUIRED because it would establish a new replicated cross-service data boundary.
+    - Existing architecture authorizes aggregate Observatory-owned telemetry analysis. Return ADR_REQUIRED if implementation requires a Core import database read manifest copy lifecycle-event projection new telemetry contract new persistence authority or Observatory-to-Core command path.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/telemetry/v2/metadata-observation.schema.json
+feature_references:
+  - OBS-014
+  - OBS-015
+  - OBS-016
+  - OBS-023
+  - OBS-039
+ownership_zones:
+  - contracts.observatory-v1.workflow-monitoring
+  - services.aura-observatory.workflow-analytics
+  - services.aura-observatory.workflow-query-adapter
+  - frontend.platform.observatory-api-client
+  - frontend.observatory.workflow-monitoring
+  - frontend.observatory.workflow-monitoring-browser-acceptance
+  - evaluation.aura0139-tests
+  - delivery.aura0139
+allowed_paths:
+  - work-items/active/AURA-0139.yaml
+  - work-items/archived/AURA-0139.yaml
+  - work-items/handoffs/AURA-0139-*.yaml
+  - work-items/reviews/AURA-0139-*.yaml
+  - work-items/integration/AURA-0139.yaml
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_observatory_v1.py
+  - contracts/tests/test_observatory_v1_compatibility.py
+  - contracts/tests/test_aura0139_*.py
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/tests/test_aura0139_*.py
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/observatory-gateway.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/libs/observatory/src/lib/features/workflows/**
+  - frontend/apps/observatory-web/src/app/app.component.ts
+  - frontend/apps/observatory-web/src/app/app.component.css
+  - frontend/apps/observatory-web/src/app.component.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-workflows.spec.ts
+  - frontend/apps/storybook/src/observatory-workflows.stories.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/resources/component-manifests/live-updates.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - contracts/telemetry/**
+  - contracts/events/**
+  - contracts/evaluation/**
+  - contracts/run-evidence/**
+  - contracts/openapi/aura-v1.yaml
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - deploy/**
+  - infra/**
+  - tooling/architecture/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - observatory-v1 workflow monitoring snapshot and generated TypeScript transport
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: operational-analytics
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  required_metrics:
+    - observatory_query_duration_ms
+    - observatory_query_outcome
+    - observatory_query_freshness_lag_ms
+  required_evaluators:
+    - workflow_monitoring_contract_bounds
+    - workflow_monitoring_metric_semantics
+    - workflow_monitoring_privacy
+    - workflow_monitoring_failure_isolation
+    - workflow_monitoring_accessibility
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every workflow-monitoring query is owner-authorized and accepts only closed UTC windows and established finite limits; storage queries are parameterized and fail before execution when any bound is invalid.
+    - Responses expose aggregates plus at most 25 opaque existing run and trace references from agent-run observations. They never expose workflow content owner identity definition revision instance step-execution event evidence object or arbitrary correlation identifiers.
+    - Failure analysis uses only bounded component operation outcome and error-class vocabularies and never returns exception messages stack traces provider payloads input cohorts arbitrary attributes or content-derived values.
+    - Missing sparse late partially retained stale and unavailable signals remain explicit and cannot be inferred as zero success failure or correlation.
+    - Authenticated monitoring responses chart data and UTC filter state remain memory-only and are excluded from browser persistence service-worker caches URLs telemetry logs screenshots and SSE payloads.
+    - Logout authorization-generation change retention deletion malformed responses and service unavailability clear or safely invalidate workflow monitoring state without restoring stale principal data.
+  data_classes:
+    - operational_workflow_telemetry_metadata
+    - aggregate_workflow_health_metrics
+    - opaque_run_trace_correlation_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The backward-compatible observatory-v1 contract and generated TypeScript client add GET /api/v1/automation/workflows/monitoring with a closed metadata-only snapshot and no change to Core or telemetry contracts.
+  - The existing analytics catalogue classifies all fifteen authoritative AURA-0137 workflow measurements under automation with correct count or milliseconds units and supported aggregations while excluding every scheduler measurement.
+  - The monitoring endpoint uses only Observatory telemetry storage through its public query port and returns lifecycle outcome counts latency summaries allowlisted time series bounded failure breakdowns and no more than 25 recent correlated run references.
+  - Workflow state transition command and repository outcomes remain distinct measurements; definition validation agent step approval notification wait checkpoint cancellation and settlement latencies retain their declared units and are never combined across incompatible units.
+  - The response explicitly reports snapshot time requested UTC window source freshness partial state unavailable signals maximum scanned rows actual scanned rows maximum series maximum points per series returned series returned points execution timeout and whether an execution or storage limit truncated results.
+  - Failure breakdowns group only finite component operation outcome and error-class metadata with a maximum of 50 rows; exception text arbitrary dimensions content and individual workflow or step identities cannot appear.
+  - Recent correlations are sorted deterministically newest first capped at 25 and emitted only when an agent-run observation supplies valid existing run and trace identifiers. Other component signals declare run-trace correlation unavailable.
+  - No endpoint response lists workflow instances definitions revisions step executions lifecycle events or failed-step identities. Observatory issues no workflow command and cannot mutate Core state.
+  - Observatory Web adds Monitor then Workflows with UTC window controls health and lifecycle summaries latency and wait-lag trends aggregate failed-step operations and links into existing run and trace inspection.
+  - The automation analytics description includes workflows without replacing reminder and notification coverage; generic metadata-only live events trigger a coalesced bounded authoritative REST refresh with no analytical payload or filter in SSE or URLs.
+  - The workflow monitoring view distinguishes loading empty sparse partial stale disconnected malformed unauthorized unavailable and truncated states preserves usable stale data during reconnect and offers bounded accessible recovery.
+  - Charts have adjacent semantically equivalent tables explicit units and UTC labels; states use text and accessible names in addition to colour; keyboard focus screen-reader announcements high contrast reduced motion narrow layouts and 200 and 400 percent zoom remain usable.
+  - Authenticated monitoring state remains memory-only and is cleared on logout or authorization-generation change. Retention effects and late responses cannot restore deleted observations or a prior principal snapshot.
+  - Contract service adapter and privacy tests cover all fifteen allowlisted measurements unit semantics UTC bucket boundaries count and percentile aggregation failure classification limits injection attempts sparse missing partial late stale and truncated data deterministic correlation ordering and forbidden fields.
+  - Frontend unit Storybook accessibility and real-browser tests cover UTC controls summaries charts equivalent tables failure drill-down live refresh reconnect malformed and unavailable recovery responsive layouts keyboard operation reduced motion and run/trace navigation.
+  - Full-stack acceptance proves aggregate monitoring from synthetic workflow telemetry and proves Observatory remains usable with Aura Core unavailable; Core execution remains usable with Observatory stopped through existing isolation checks.
+  - No Core source database manifest import scheduler metric per-instance projection Observatory migration package dependency deployment topology protected golden result or repository baseline change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0139.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0139.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0139.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0139.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0139.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-observatory
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-observatory/tests contracts/tests -q
+  - cd frontend && pnpm exec nx run observatory-api-client:generate
+  - cd frontend && pnpm exec nx run observatory-api-client:check-generated
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+  - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook
+  - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/storybook.config.ts
+  - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+  - bash deploy/compose/run-observatory-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Per-instance workflow monitoring remains deferred until an accepted ADR authorizes a versioned asynchronous metadata-only Core lifecycle event and an Observatory-owned idempotent non-authoritative projection with ordering replay retention deletion propagation and privacy rules.
