@@ -1,0 +1,155 @@
+agent: test_evaluation_engineer
+work_item: AURA-0143
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0143_tests
+  worktree: shared-main
+scope:
+  ownership_zone: evaluation.task-projection-consistency
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_task_projection_sources.py
+  - services/aura-core/tests/test_task_projection_rebuild.py
+  - services/aura-core/tests/test_task_projection_races.py
+  - services/aura-core/tests/test_task_projection_architecture.py
+  - services/aura-core/tests/test_task_projection_observability.py
+  - work-items/handoffs/AURA-0143-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.execution.task_projection@1
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      After the platform outbox pending-row idempotency correction, the
+      literal AURA-0143 projection pytest command collected 79 tests; all 79
+      pass with isolated PostgreSQL/pgvector enabled and no skips. The owned
+      independent suite collected 62 tests; all 62 pass against the amended
+      Core/platform implementation.
+    - >-
+      The post-correction literal outbox/JetStream/migration regression
+      command collected 37 tests; all 37 pass with AURA_TEST_NATS_URL set to the live
+      nats://127.0.0.1:54222 endpoint. This includes duplicate publish,
+      redelivery after restart, durable acknowledgement failure, and the live
+      0031 constraint/downgrade case. The separate AURA-0101 plus outbox
+      batch collected 32 tests; all 32 pass. Pending-row duplicate and
+      same-ID conflict behavior is green.
+    - >-
+      The explicit live SQL source and migration batch collected 28 tests; all
+      28 pass with AURA_TEST_DATABASE_URL and
+      AURA_0143_MIGRATION_DATABASE_URL set to
+      postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143 and
+      AURA_TEST_DEPENDENCIES_ISOLATED=1. The focused rebuild/races/worker
+      batch collected 18 tests; all 18 pass. No AURA-owned live SQL case
+      skipped. The source transition cases covering the corrected outbox
+      autoflush and briefing parent/child flush ordering are green.
+    - >-
+      Live SQL source acceptance ran with
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      and AURA_TEST_DEPENDENCIES_ISOLATED=1; all four production source seams
+      passed multi-page opaque cursor/fence, restart-safe keyset, concurrent
+      insertion/status-update, owner isolation, and final-page behavior.
+      AURA_0143_MIGRATION_DATABASE_URL was pointed at the same isolated
+      database so the live 0031 upgrade/constraint/downgrade test did not skip.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check on the complete AURA-0143 source and test path set.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright on the complete
+      AURA-0143 source and test path set (0 errors).
+    - >-
+      python3 -m py_compile services/aura-core/tests/test_task_projection_sources.py
+      services/aura-core/tests/test_task_projection_rebuild.py
+      services/aura-core/tests/test_task_projection_races.py
+      services/aura-core/tests/test_task_projection_architecture.py
+      services/aura-core/tests/test_task_projection_observability.py
+    - >-
+      git diff --check -- assigned AURA-0143 test/evaluation paths
+    - >-
+      python3 tooling/architecture/validate-observability.py
+      --work-item work-items/active/AURA-0143.yaml (passed; obligations
+      declared).
+    - >-
+      SQL/keyset/concurrent coverage passed: migration guardrails verify the
+      0030 single-head/no-cross-domain-FK SQL shape; live source seams cover
+      four-source page boundaries and concurrent mutations; rebuild tests cover
+      cursor paging, durable cursor restart, completed scan settlement, and a
+      concurrent newer live row fence; race tests cover concurrent
+      out-of-order/duplicate invalidations and command version isolation;
+      architecture tests cover durable replay across service instances and
+      Last-Event-ID gap behavior.
+    - >-
+      The required workflow/briefing/document regression batch collected 68
+      passed and one unrelated legacy skip: test_document_sql.py:333 requires
+      AURA_0068_DATABASE_URL, not the AURA-0143 isolated database. The
+      required memory persistence batch collected 30 passed. The live system
+      NATS duplicate-command/producer-restart acceptance test collected one
+      pass.
+    - >-
+      Python compilation of all five owned evaluation modules plus the live
+      0031 migration test passed. The exact required Ruff command passed, the
+      exact required Pyright command reported 0 errors, 0 warnings, and 0
+      informations, and supplementary Ruff/Pyright checks for the 0031 test
+      also passed. git diff --check passed for the owned paths.
+    - >-
+      Architecture validators passed for work-item, import boundaries, service
+      isolation, repository shape, baseline protection, and observability.
+  failed: []
+  not_run:
+    - >-
+      The required changed-paths validator failed on unrelated concurrent
+      AURA-0142/AURA-0144 files (provider deployables/contracts, artifacts,
+      research services, shared composition, and other work-item handoffs),
+      including 0031 and task-production paths outside this evaluation
+      ownership zone. The contract-changes validator failed because the same
+      concurrent AURA-0144 provider contract files are present although
+      AURA-0143 authorizes no contract changes. These are shared-branch
+      integration failures; no owned evaluation path was reported.
+    - >-
+      The module-registry validator failed on concurrent unregistered
+      AURA-0142/AURA-0144 modules and shared Core source dependency entries;
+      it also reports the AURA-0143 task modules as having no registry owner
+      and source-domain-to-task dependency declarations absent from the shared
+      registry. This validator result is retained for the Integration
+      Maintainer; the independent architecture/import/service-isolation and
+      observability validators pass.
+decisions:
+  - >-
+    Projection assertions use only the execution task contracts, source public
+    snapshot seam, projection capability marker, and in-memory projection
+    repository. The live SQL acceptance fixture imports source-owned mapping
+    models only to seed authoritative rows; execution.tasks production code
+    remains free of source ORM/table imports, and no production behavior was
+    edited.
+  - >-
+    Coverage asserts exact live queries and identical cursor rebuild boundary,
+      source-version monotonicity, duplicate and out-of-order replay, restart
+      and stale-row settlement, owner isolation, routed capability-gated
+    commands, unknown outcomes, closed metadata-only invalidations, and the
+    versioned metadata-only observability boundary.
+  - >-
+    The strengthened suite additionally locks cross-kind/source-ID/owner
+    mismatch rejection, equal-version no-op behavior, durable rebuild cursor
+    resume and race fencing, exact public summary/detail serialization,
+    Last-Event-ID replay and REST-gap signaling, source-adapter capability
+    denial, idempotency validation, and the exact task projection telemetry
+    catalogue and outcome/lag separation.
+  - >-
+    Updated superseded expectations after the Core correction: rebuild absence
+    remains source_deleted=false with projection-local unknown status until an
+    authoritative source tombstone; the component and replay manifest fields
+    are validated as structured mappings; and SSE replay fixtures append events
+    through the durable repository instead of the service-local deque.
+risks:
+  - >-
+    The shared branch contains concurrent unintegrated provider and artifact
+    work; full repository validators must be rerun after composition.
+unresolved: []

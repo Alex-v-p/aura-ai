@@ -4,6 +4,7 @@ from aura_core.platform.outbox.nats import (
     BRIEFING_EVENT_SUBJECT,
     BRIEFING_WAKE_SUBJECT,
     NatsBriefingConsumer,
+    NatsJsonEventConsumer,
 )
 from aura_core.platform.outbox.repository import SqlOutboxRepository
 from aura_core.platform.outbox.service import (
@@ -44,4 +45,5 @@ __all__ = [
     "make_identifier_command",
     "make_run_command",
     "NatsBriefingConsumer",
+    "NatsJsonEventConsumer",
 ]

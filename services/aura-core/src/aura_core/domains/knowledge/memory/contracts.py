@@ -1037,6 +1037,10 @@ class MemoryEmbeddingGeneration:
     model_digest: str | None = None
     issuer: str = ""
     subject: str = ""
+    # Durable lifecycle revision for the Task Center source contract.  This is
+    # independent of the model generation number and advances on each state
+    # transition (building -> active/failed/retired).
+    task_projection_version: int = 1
 
 
 @dataclass(frozen=True, slots=True)

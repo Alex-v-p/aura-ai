@@ -50,20 +50,48 @@ class SqlOutboxRepository:
         persists the command envelope and never interprets its identifiers.
         """
 
-        existing = await session.get(OutboxRow, command.id)
-        if existing is None:
-            aggregate_id = command.aggregate_id or command.run_id
-            if aggregate_id is None:
-                raise ValueError("outbox command has no aggregate identity")
-            session.add(
-                OutboxRow(
-                    id=command.id,
-                    topic=command.topic,
-                    aggregate_type=command.aggregate_type or "run",
-                    aggregate_id=aggregate_id,
-                    payload=json.loads(command.wire_payload()),
-                )
+        aggregate_id = command.aggregate_id or command.run_id
+        if aggregate_id is None:
+            raise ValueError("outbox command has no aggregate identity")
+        payload = json.loads(command.wire_payload())
+        aggregate_type = command.aggregate_type or "run"
+
+        def matches(row: OutboxRow) -> bool:
+            return (
+                row.topic == command.topic
+                and row.aggregate_type == aggregate_type
+                and row.aggregate_id == aggregate_id
+                and row.payload == payload
             )
+
+        # ``session.get`` cannot see pending rows in ``session.new``. Check
+        # them first so repeated staging in one transaction is idempotent and
+        # a same-ID envelope conflict is rejected before flush/commit.
+        for pending in session.new:
+            if isinstance(pending, OutboxRow) and pending.id == command.id:
+                if not matches(pending):
+                    raise ValueError("outbox command id conflicts with staged envelope")
+                return command.id
+
+        # Source lifecycle staging is invoked while the authoritative
+        # aggregate mutation still has pending rows.  Looking up an
+        # idempotency key must not trigger an autoflush that can violate a
+        # source-owned foreign-key ordering before the aggregate is complete.
+        with session.no_autoflush:
+            existing = await session.get(OutboxRow, command.id)
+        if existing is not None:
+            if not matches(existing):
+                raise ValueError("outbox command id conflicts with persisted envelope")
+            return command.id
+        session.add(
+            OutboxRow(
+                id=command.id,
+                topic=command.topic,
+                aggregate_type=aggregate_type,
+                aggregate_id=aggregate_id,
+                payload=payload,
+            )
+        )
         return command.id
 
     async def pending(self, session: AsyncSession, limit: int) -> list[OutboxCommand]:
@@ -80,7 +108,14 @@ class SqlOutboxRepository:
             .all()
         )
         return [
-            OutboxCommand.from_record(row.id, row.topic, row.payload, row.created_at or now())
+            OutboxCommand.from_record(
+                row.id,
+                row.topic,
+                row.payload,
+                row.created_at or now(),
+                row.aggregate_type,
+                row.aggregate_id,
+            )
             for row in rows
         ]
 

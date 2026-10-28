@@ -244,6 +244,77 @@ class EvaluationJetStreamConsumer:
         await asyncio.gather(drain(request_sub), drain(cancellation_sub))
 
 
+JsonEventParser = Callable[[Mapping[str, object]], Mapping[str, object]]
+JsonEventHandler = Callable[[Mapping[str, object]], Awaitable[None]]
+
+
+class NatsJsonEventConsumer:
+    """Durable pull consumer for a domain-owned schema-event parser.
+
+    The platform handles only JSON framing and ack timing.  The caller owns
+    subject vocabulary, schema validation, and event interpretation.
+    """
+
+    def __init__(
+        self,
+        connection_url: str,
+        *,
+        subject: str,
+        parser: JsonEventParser,
+        durable: str = "aura-core-json-event-consumer",
+    ) -> None:
+        self.connection_url = connection_url
+        self.durable = durable
+        self.subject = subject
+        self.parser = parser
+        self._connection: Any = None
+        self._subscription: Any = None
+
+    async def connect(self) -> None:
+        nats_module: Any = nats
+        self._connection = await nats_module.connect(self.connection_url)
+        jetstream = self._connection.jetstream()
+        await _ensure_command_stream(jetstream, (self.subject,))
+        await jetstream.account_info()
+        info = await jetstream.stream_info(AURA_RUNS_STREAM)
+        if self.subject not in _stream_subjects(info):
+            raise RuntimeError("AURA_RUNS does not contain configured event subject")
+        self._subscription = await jetstream.pull_subscribe(
+            self.subject, durable=self.durable, stream=AURA_RUNS_STREAM
+        )
+
+    async def consume(
+        self,
+        handler: JsonEventHandler,
+        stop: asyncio.Event,
+    ) -> None:
+        if self._subscription is None:
+            raise RuntimeError("JSON event consumer is not connected")
+        while not stop.is_set():
+            try:
+                messages = await self._subscription.fetch(1, timeout=0.5)
+            except NatsTimeoutError:
+                continue
+            for message in messages:
+                try:
+                    raw = json.loads(message.data)
+                    if not isinstance(raw, dict):
+                        raise ValueError("JSON event payload must be an object")
+                    payload = self.parser(cast(dict[str, object], raw))
+                except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+                    await message.ack()
+                    continue
+                # Do not ack until projection reconciliation has committed.
+                await handler(payload)
+                await message.ack()
+
+    async def close(self) -> None:
+        if self._connection is not None:
+            await self._connection.drain()
+            self._connection = None
+            self._subscription = None
+
+
 class NatsOutbox:
     def __init__(
         self,

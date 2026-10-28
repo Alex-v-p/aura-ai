@@ -1,5 +1,7 @@
 """Deterministic in-memory and PostgreSQL briefing repositories."""
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import base64
@@ -14,8 +16,9 @@ from typing import cast
 from uuid import UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from aura_core.domains.automation.briefings.persistence import (
     BriefingCommandIdempotencyRow,
@@ -237,6 +240,7 @@ class MemoryBriefingRepository(BriefingRepository):
         metrics: MetadataMetrics | None = None,
         lifecycle_events: BriefingLifecycleEventPort | None = None,
     ) -> None:
+        self.__task_projection_capability: object | None = None
         self.metrics = metrics
         self.lifecycle_events = lifecycle_events
         self.schedules: dict[UUID, BriefingSchedule] = {}
@@ -245,6 +249,18 @@ class MemoryBriefingRepository(BriefingRepository):
         self._commands: dict[tuple[str, str, str, str], tuple[str, object]] = {}
         self._history_deleted: set[UUID] = set()
         self._sequence: dict[UUID, int] = {}
+
+    def __bind_capability(self, capability: object) -> None:  # pyright: ignore[reportUnusedFunction]
+        if self.__task_projection_capability is not None:
+            raise PermissionError("briefing projection capability is already bound")
+        self.__task_projection_capability = capability
+
+    def __validate_task_projection_capability(self, capability: object) -> None:
+        if (
+            self.__task_projection_capability is None
+            or capability is not self.__task_projection_capability
+        ):
+            raise PermissionError("briefing projection capability is not admitted")
 
     def _remember(
         self,
@@ -725,6 +741,31 @@ class MemoryBriefingRepository(BriefingRepository):
             items, _cursor(start + limit) if start + limit < len(values) else None
         )
 
+    async def get_occurrence_for_task_projection(
+        self, occurrence_id: UUID, *, capability: object | None = None
+    ) -> BriefingOccurrence:
+        self.__validate_task_projection_capability(capability)
+        item = self.occurrences.get(occurrence_id)
+        if item is None or item.id in self._history_deleted:
+            raise BriefingNotFound("briefing occurrence not found")
+        return item
+
+    async def list_occurrences_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object | None = None
+    ) -> tuple[BriefingOccurrence, ...]:
+        self.__validate_task_projection_capability(capability)
+        values = sorted(
+            (item for item in self.occurrences.values() if item.id not in self._history_deleted),
+            key=lambda item: (item.created_at, item.id),
+            reverse=True,
+        )
+        if cursor:
+            from .task_cursor import decode_task_cursor
+
+            _fence, stamp, item_id = decode_task_cursor(cursor)
+            values = [item for item in values if (item.created_at, item.id) < (stamp, item_id)]
+        return tuple(values[:limit])
+
     async def get_occurrence(
         self, issuer: str, subject: str, schedule_id: UUID, occurrence_id: UUID
     ) -> BriefingOccurrence:
@@ -1175,6 +1216,19 @@ class SqlBriefingRepository(BriefingRepository):
         self.sessions = sessions
         self.metrics = metrics
         self.lifecycle_events = lifecycle_events
+        self.__task_projection_capability: object | None = None
+
+    def __bind_capability(self, capability: object) -> None:  # pyright: ignore[reportUnusedFunction]
+        if self.__task_projection_capability is not None:
+            raise PermissionError("briefing projection capability is already bound")
+        self.__task_projection_capability = capability
+
+    def __validate_task_projection_capability(self, capability: object) -> None:
+        if (
+            self.__task_projection_capability is None
+            or capability is not self.__task_projection_capability
+        ):
+            raise PermissionError("briefing projection capability is not admitted")
 
     async def create_schedule(
         self,
@@ -1254,6 +1308,11 @@ class SqlBriefingRepository(BriefingRepository):
                         updated_at=current,
                     )
                 )
+                # The occurrence has a source-owned FK to the newly-created
+                # schedule.  Flush the aggregate root before staging its
+                # lifecycle events so async outbox lookups cannot reorder the
+                # pending inserts on PostgreSQL.
+                await session.flush()
                 local = due.astimezone(ZoneInfo(cadence.time_zone))
                 initial_occurrence = BriefingOccurrenceRow(
                         id=occurrence_id(item.id, local.date()),
@@ -1768,6 +1827,45 @@ class SqlBriefingRepository(BriefingRepository):
         if row is None:
             raise BriefingNotFound("briefing occurrence not found")
         return _occurrence_from_row(row)
+
+    async def get_occurrence_for_task_projection(
+        self, occurrence_id: UUID, *, capability: object | None = None
+    ) -> BriefingOccurrence:
+        self.__validate_task_projection_capability(capability)
+        return await self.get_occurrence_by_id(occurrence_id)
+
+    async def list_occurrences_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object | None = None
+    ) -> tuple[BriefingOccurrence, ...]:
+        self.__validate_task_projection_capability(capability)
+        from .task_cursor import decode_task_cursor
+
+        position = decode_task_cursor(cursor) if cursor else None
+        filters: list[ColumnElement[bool]] = [BriefingOccurrenceRow.deleted_at.is_(None)]
+        if position:
+            fence, stamp, item_id = position
+            filters.append(
+                or_(
+                    and_(BriefingOccurrenceRow.created_at <= fence, BriefingOccurrenceRow.created_at < stamp),
+                    and_(BriefingOccurrenceRow.created_at == stamp, BriefingOccurrenceRow.id < item_id),
+                )
+            )
+        else:
+            fence = datetime.now(UTC)
+            filters.append(BriefingOccurrenceRow.created_at <= fence)
+        async with self.sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(BriefingOccurrenceRow)
+                    .where(*filters)
+                    .order_by(
+                        BriefingOccurrenceRow.created_at.desc(),
+                        BriefingOccurrenceRow.id.desc(),
+                    )
+                    .limit(limit)
+                )
+            ).all()
+        return tuple(_occurrence_from_row(row) for row in rows)
 
     async def delete_history(
         self,

@@ -1,5 +1,7 @@
 """Transactional outbox abstractions and an in-process transport."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import re
@@ -323,6 +325,8 @@ class OutboxCommand:
         topic: str,
         payload: dict[str, object],
         created_at: datetime,
+        aggregate_type: str | None = None,
+        aggregate_id: UUID | None = None,
     ) -> OutboxCommand:
         schema_version = payload.get("schemaVersion")
         if type(schema_version) is not int:
@@ -439,6 +443,25 @@ class OutboxCommand:
                 UUID(str(payload["causationId"])),
                 schema_version=1,
                 aggregate_type="knowledge.document",
+                aggregate_id=aggregate_id,
+                event_payload=dict(payload),
+            )
+        # Schema-event replay is deliberately generic.  Domain-owned parsers
+        # validate the closed event envelope before consumption; the platform
+        # only preserves it while recovering the transactional outbox row.
+        if aggregate_type is not None and aggregate_id is not None and {
+            "eventId", "eventType"
+        } <= payload.keys():
+            return cls(
+                command_id,
+                topic,
+                None,
+                None,
+                created_at,
+                UUID(str(payload.get("correlationId", command_id))),
+                UUID(str(payload.get("causationId", command_id))),
+                schema_version=schema_version,
+                aggregate_type=aggregate_type,
                 aggregate_id=aggregate_id,
                 event_payload=dict(payload),
             )

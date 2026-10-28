@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID, uuid5
 
+from aura_core.domains.execution.tasks.transport import TaskSourceInvalidationStage
 from aura_core.domains.knowledge.documents.persistence import DocumentLifecycleEventRow
 from aura_core.domains.knowledge.documents.public import (
     DOCUMENT_ID_NAMESPACE,
@@ -93,6 +94,7 @@ class SqlDocumentCommandSink(DocumentCommandSink):
     def __init__(self, sessions: Any) -> None:
         del sessions
         self.outbox = SqlOutboxRepository()
+        self.task_stage = TaskSourceInvalidationStage(self.outbox)
 
     async def publish(self, document_id: UUID, *, operation: str = "process") -> None:
         del document_id, operation
@@ -156,3 +158,16 @@ class SqlDocumentCommandSink(DocumentCommandSink):
             )
         )
         await self.outbox.stage_command(session, command=event_command)
+        task_event_id = uuid5(DOCUMENT_ID_NAMESPACE, f"task-source:{event_id}")
+        task_payload = {
+            "schemaVersion": 1,
+            "eventId": str(task_event_id),
+            "eventType": "task.source_invalidated",
+            "sourceKind": "document_processing",
+            "sourceId": str(document.id),
+            "sourceVersion": document.version,
+            "occurredAt": document.updated_at.isoformat(),
+            "correlationId": str(correlation_id),
+            "causationId": str(event_id),
+        }
+        await self.task_stage.stage_task_source_invalidation(session, payload=task_payload)

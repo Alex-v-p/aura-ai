@@ -153,6 +153,22 @@ class WorkflowApplicationService:
         self.lifecycle = lifecycle
         self.evidence = evidence
         self.metrics = metrics
+        self.__task_projection_capability: object | None = None
+
+    def __bind_capability(self, capability: object) -> None:  # pyright: ignore[reportUnusedFunction]
+        if self.__task_projection_capability is not None:
+            raise PermissionError("workflow projection capability is already bound")
+        self.__task_projection_capability = capability
+        bind = getattr(self.repository, f"_{type(self.repository).__name__}__bind_capability", None)
+        if callable(bind):
+            bind(capability)
+
+    def __validate_task_projection_capability(self, capability: object) -> None:
+        if (
+            self.__task_projection_capability is None
+            or capability is not self.__task_projection_capability
+        ):
+            raise PermissionError("workflow projection capability is not admitted")
 
     async def create_draft(self, revision: WorkflowRevision, *, issuer: str, subject: str,
                            idempotency_key: str | None = None,
@@ -206,6 +222,22 @@ class WorkflowApplicationService:
         self, issuer: str, subject: str, workflow_id: UUID, **kwargs: object
     ) -> object:
         return await self.repository.list_instances(issuer, subject, workflow_id, **kwargs)  # type: ignore[arg-type]
+
+    async def get_instance_for_task_projection(
+        self, instance_id: UUID, *, capability: object | None = None
+    ) -> WorkflowInstance:
+        self.__validate_task_projection_capability(capability)
+        return await self.repository.get_instance_for_task_projection(
+            instance_id, capability=capability
+        )
+
+    async def list_instances_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object | None = None
+    ) -> tuple[WorkflowInstance, ...]:
+        self.__validate_task_projection_capability(capability)
+        return await self.repository.list_instances_for_task_projection(
+            cursor=cursor, limit=limit, capability=capability
+        )
 
     async def authorize_instance_in_workflow(
         self, issuer: str, subject: str, workflow_id: UUID, instance_id: UUID,
@@ -966,10 +998,10 @@ class WorkflowApplicationService:
         return _selector_value(selector, state) if selector is not None else None
 
     async def _emit(self, state: WorkflowState | WorkflowInstance, *, event_kind: str) -> None:
+        instance = state.instance if isinstance(state, WorkflowState) else state
         if self.lifecycle is not None and isinstance(state, WorkflowState):
             await self.lifecycle.publish(_metadata_event(state, event_kind=event_kind))
         if self.evidence is not None:
-            instance = state.instance if isinstance(state, WorkflowState) else state
             try:
                 phase = (
                     "admission" if event_kind == "admitted" else

@@ -10,7 +10,7 @@ import asyncio
 import hashlib
 import math
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import InitVar, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -198,9 +198,7 @@ class DocumentLifecycleEvent:
             "eventId": str(self.event_id),
             "eventType": self.event_type,
             "documentId": str(self.document_id),
-            "status": (
-                "deleted" if self.event_type == "document.deleted" else self.status.value
-            ),
+            "status": ("deleted" if self.event_type == "document.deleted" else self.status.value),
             "documentVersion": self.version,
             "occurredAt": self.occurred_at.isoformat(),
             "correlationId": str(self.correlation_id),
@@ -304,8 +302,7 @@ class MemoryDocumentRepository:
     ) -> Document:
         existing = self.documents.get(document.id)
         if existing is not None and (
-            existing.status is not DocumentStatus.UPLOADING
-            or existing.version != document.version
+            existing.status is not DocumentStatus.UPLOADING or existing.version != document.version
         ):
             raise DocumentVersionConflict("upload placeholder changed")
         if idempotency_key:
@@ -464,7 +461,8 @@ class MemoryDocumentRepository:
             for item in sorted(
                 self.documents.values(), key=lambda value: (value.updated_at, value.id)
             )
-            if item.status is DocumentStatus.UPLOADING and item.updated_at < before
+            if item.status is DocumentStatus.UPLOADING
+            and item.updated_at < before
             and any(
                 session.document_id == item.id
                 and session.id not in self.claimed_upload_sessions
@@ -537,6 +535,11 @@ class MemoryDocumentRepository:
             ),
             key=lambda item: (item.created_at, item.id),
             reverse=True,
+        )[offset : offset + limit]
+
+    async def list_all(self, *, offset: int = 0, limit: int = 100) -> list[Document]:
+        return sorted(
+            self.documents.values(), key=lambda item: (item.updated_at, item.id), reverse=True
         )[offset : offset + limit]
 
     async def find_duplicate(self, owner: tuple[str, str], digest: str) -> Document | None:
@@ -743,12 +746,10 @@ class MemoryDocumentRepository:
             )
             self.documents[document.id] = transitioned
             if idempotency_key:
-                self.command_receipts[
-                    (document.owner, "delete", idempotency_key)
-                ] = transitioned
-                self.command_receipt_fingerprints[
-                    (document.owner, "delete", idempotency_key)
-                ] = fingerprint or _mutation_fingerprint(document.id, expected_version)
+                self.command_receipts[(document.owner, "delete", idempotency_key)] = transitioned
+                self.command_receipt_fingerprints[(document.owner, "delete", idempotency_key)] = (
+                    fingerprint or _mutation_fingerprint(document.id, expected_version)
+                )
             return transitioned
 
     async def transition_retry(
@@ -779,9 +780,9 @@ class MemoryDocumentRepository:
             self.documents[document.id] = queued
             if idempotency_key:
                 self.command_receipts[(document.owner, "retry", idempotency_key)] = queued
-                self.command_receipt_fingerprints[
-                    (document.owner, "retry", idempotency_key)
-                ] = fingerprint or _mutation_fingerprint(document.id, expected_version)
+                self.command_receipt_fingerprints[(document.owner, "retry", idempotency_key)] = (
+                    fingerprint or _mutation_fingerprint(document.id, expected_version)
+                )
             return queued
 
     async def search(
@@ -907,6 +908,25 @@ class DocumentService:
         self.metrics = metrics
         self.clock = clock or (lambda: datetime.now(UTC))
         self.upload_sessions: dict[UUID, DocumentUploadSession] = {}
+        self.__task_projection_capability: object | None = None
+
+    def __bind_capability(self, capability: object) -> None:  # pyright: ignore[reportUnusedFunction]
+        if self.__task_projection_capability is not None:
+            raise PermissionError("document projection capability is already bound")
+        self.__task_projection_capability = capability
+        repository = getattr(self, "repository", None)
+        bind_repository = getattr(
+            repository, f"_{type(repository).__name__}__bind_capability", None
+        )
+        if callable(bind_repository):
+            bind_repository(capability)
+
+    def __validate_task_projection_capability(self, capability: object) -> None:
+        if (
+            self.__task_projection_capability is None
+            or capability is not self.__task_projection_capability
+        ):
+            raise PermissionError("document projection capability is not admitted")
 
     def _record_metric(
         self,
@@ -934,9 +954,7 @@ class DocumentService:
             # The command context identifies the parent operation.  Derive a
             # stable child span for this use case so repeated deliveries retain
             # the same lineage without generating random identifiers.
-            span_id = uuid5(
-                DOCUMENT_ID_NAMESPACE, f"span:{trace_id}:{stable_seed}"
-            ).hex[:16]
+            span_id = uuid5(DOCUMENT_ID_NAMESPACE, f"span:{trace_id}:{stable_seed}").hex[:16]
             span_kwargs: dict[str, object] = {
                 "trace_id": trace_id,
                 "span_id": span_id,
@@ -1353,9 +1371,7 @@ class DocumentService:
                     "upload",
                     idempotency_key,
                     document,
-                    fingerprint=(
-                        f"{upload_id}:{expected_version or session.version}"
-                    ),
+                    fingerprint=(f"{upload_id}:{expected_version or session.version}"),
                 )
         return document
 
@@ -1386,9 +1402,7 @@ class DocumentService:
     async def resolve_lifecycle_event(self, event_id: UUID) -> UUID | None:
         resolver = getattr(self.repository, "resolve_lifecycle_event", None)
         if callable(resolver):
-            typed_resolver = cast(
-                Callable[[UUID], Any], resolver
-            )
+            typed_resolver = cast(Callable[[UUID], Any], resolver)
             resolved = await typed_resolver(event_id)
             if resolved is not None:
                 return resolved[0]
@@ -1600,10 +1614,24 @@ class DocumentService:
         }
         if offset:
             kwargs["offset"] = offset
-        return [
-            item
-            for item in await repository.list(self._owner(issuer, subject), **kwargs)
-        ]  # type: ignore[misc]
+        return [item for item in await repository.list(self._owner(issuer, subject), **kwargs)]  # type: ignore[misc]
+
+    async def get_for_task_projection(
+        self, document_id: UUID, *, capability: object | None = None
+    ) -> Document:
+        self.__validate_task_projection_capability(capability)
+        item = await self.repository.get_any(document_id)
+        if item is None:
+            raise DocumentNotFound("document task not found")
+        return item
+
+    async def list_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object | None = None
+    ) -> tuple[Document, ...]:
+        self.__validate_task_projection_capability(capability)
+        offset = int(cursor or "0")
+        values = await cast(Any, self.repository).list_all(offset=offset, limit=limit)
+        return tuple(values)
 
     async def search(
         self,
@@ -1692,8 +1720,11 @@ class DocumentService:
             )
             raise
         degraded_reason = (
-            "identity_mismatch" if identity_mismatch else
-            "embedding_unavailable" if embedding_degraded else None
+            "identity_mismatch"
+            if identity_mismatch
+            else "embedding_unavailable"
+            if embedding_degraded
+            else None
         )
         self._record_metric(
             "aura.knowledge.document_retrieval",
@@ -1839,9 +1870,7 @@ class DocumentService:
                 document = failed
             except DocumentVersionConflict:
                 return await self._get_by_id(document.id)
-        if self.events is not None and not getattr(
-            self.repository, "transactional_outbox", False
-        ):
+        if self.events is not None and not getattr(self.repository, "transactional_outbox", False):
             await self.events.emit(
                 "document.ready" if document.status is DocumentStatus.READY else "document.failed",
                 document=_lifecycle_event(
@@ -1863,9 +1892,7 @@ class DocumentService:
             outcome="ok" if document.status is DocumentStatus.READY else "failed",
             dependency=_processing_dependency(document.failure_code),
             error_class=(
-                None
-                if document.status is DocumentStatus.READY
-                else document.failure_code
+                None if document.status is DocumentStatus.READY else document.failure_code
             ),
             document_id=document.id,
             context=context,
@@ -2208,9 +2235,7 @@ def _embedding_identity_matches(
     )
 
 
-def _cosine(
-    left: tuple[float, ...] | None, right: tuple[float, ...] | None
-) -> float:
+def _cosine(left: tuple[float, ...] | None, right: tuple[float, ...] | None) -> float:
     if not left or not right or len(left) != len(right):
         return 0.0
     denominator = math.sqrt(sum(item * item for item in left)) * math.sqrt(
@@ -2222,3 +2247,308 @@ def _cosine(
         0.0,
         min(1.0, sum(a * b for a, b in zip(left, right, strict=False)) / denominator),
     )
+
+
+async def query_task_projection_snapshots(
+    query: object,
+    *,
+    capability: object,
+) -> object:
+    """Metadata-only processing projection used by the Task Center adapter."""
+    from aura_core.domains.execution.tasks.contracts import (
+        TaskProjectionSnapshotQuery,
+    )
+
+    if not isinstance(query, TaskProjectionSnapshotQuery):
+        raise TypeError("task projection query is invalid")
+    raise PermissionError("document snapshot enumeration requires a bound source adapter")
+
+
+class DocumentTaskProjectionApplication:
+    """Bound, metadata-only view of :class:`DocumentService` for Task Center.
+
+    The projection never reads ``documents`` or a persistence model directly.
+    It invokes the service's existing owner-scoped ``get``/``list``/command
+    methods and converts the returned ``Document`` value objects to the
+    execution contract.
+    """
+
+    def __init__(
+        self,
+        application: Any,
+        *,
+        owner_scope_id: UUID | None = None,
+        issuer: str | None = None,
+        subject: str | None = None,
+    ) -> None:
+        self.application: Any = application
+        self.owner_scope_id: Any = owner_scope_id or getattr(
+            application, "task_projection_owner_scope_id", None
+        )
+        owner: Any = getattr(application, "task_projection_owner", None)
+        self.issuer: Any
+        self.subject: Any
+        self.issuer, self.subject = (
+            (issuer, subject)
+            if issuer is not None and subject is not None
+            else owner
+            if isinstance(owner, tuple) and len(cast(tuple[object, ...], owner)) == 2
+            else (getattr(application, "issuer", None), getattr(application, "subject", None))
+        )
+        self.__capability: object | None = None
+
+    def __bind_capability(self, capability: object) -> None:  # composition-only  # pyright: ignore[reportUnusedFunction]  # noqa: E501
+        if self.__capability is not None:
+            raise PermissionError("document projection capability is already bound")
+        self.__capability = capability
+        bind = getattr(
+            self.application,
+            f"_{type(self.application).__name__}__bind_capability",
+            None,
+        )
+        if callable(bind):
+            bind(capability)
+
+    def __validate_capability(self, capability: object) -> None:
+        if self.__capability is None or capability is not self.__capability:
+            raise PermissionError("document projection capability is not admitted")
+
+    async def get_for_task_projection(
+        self, document_id: UUID, *, capability: object | None = None
+    ) -> Document:
+        self.__validate_capability(capability)
+        method = getattr(self.application, "get_for_task_projection", None)
+        if not callable(method):
+            method = getattr(getattr(self.application, "repository", None), "get_any", None)
+        if not callable(method):
+            raise TypeError("document source does not expose global document lookup")
+        try:
+            result = method(document_id, capability=capability)
+        except TypeError as exc:
+            if "capability" not in str(exc):
+                raise
+            result = method(document_id)
+        result = await cast(Awaitable[object], result)
+        if not isinstance(result, Document):
+            raise DocumentNotFound("document task not found")
+        return result
+
+    async def list_for_task_projection(
+        self, *, cursor: str | None, limit: int, capability: object | None = None
+    ) -> tuple[Document, ...]:
+        self.__validate_capability(capability)
+        method = getattr(self.application, "list_for_task_projection", None)
+        if not callable(method):
+            method = getattr(getattr(self.application, "repository", None), "list_all", None)
+        if not callable(method):
+            raise TypeError("document source does not expose global document enumeration")
+        try:
+            result = method(cursor=cursor, limit=limit, capability=capability)
+        except TypeError as exc:
+            if "capability" not in str(exc):
+                raise
+            try:
+                result = method(cursor=cursor, limit=limit)
+            except TypeError as cursor_exc:
+                if "cursor" not in str(cursor_exc):
+                    raise
+                result = method(offset=int(cursor or "0"), limit=limit)
+        result = await cast(Awaitable[object], result)
+        values = getattr(result, "items", result)
+        return tuple(cast(tuple[Document, ...], values))
+
+    async def _documents(self, query: Any, *, capability: object) -> tuple[Document, ...]:
+        from aura_core.domains.execution.tasks.contracts import TaskProjectionSnapshotQuery
+
+        if not isinstance(query, TaskProjectionSnapshotQuery):
+            raise TypeError("task projection query is invalid")
+        if query.mode == "exact":
+            assert query.source_id is not None
+            item = await self.get_for_task_projection(
+                query.source_id, capability=capability
+            )
+            return (
+                (item,)
+                if item.version >= query.minimum_source_version
+                else ()
+            )
+        values = await self.list_for_task_projection(
+            cursor=query.cursor, limit=query.page_size, capability=capability
+        )
+        return tuple(values)
+
+    @staticmethod
+    def _snapshot(item: Document, owner_scope_id: UUID) -> object:
+        from aura_core.domains.execution.tasks.contracts import (
+            TaskNormalizedStatus,
+            TaskProjectionCapability,
+            TaskProjectionSnapshot,
+            TaskSourceKind,
+        )
+
+        status = {
+            DocumentStatus.UPLOADING: TaskNormalizedStatus.QUEUED,
+            DocumentStatus.QUEUED: TaskNormalizedStatus.QUEUED,
+            DocumentStatus.PROCESSING: TaskNormalizedStatus.RUNNING,
+            DocumentStatus.READY: TaskNormalizedStatus.COMPLETED,
+            DocumentStatus.FAILED: TaskNormalizedStatus.FAILED,
+            DocumentStatus.DELETING: TaskNormalizedStatus.CANCELED,
+        }[item.status]
+        return TaskProjectionSnapshot(
+            owner_scope_id=owner_scope_id,
+            source_kind=TaskSourceKind.DOCUMENT_PROCESSING,
+            source_id=item.id,
+            source_version=item.version,
+            status=status,
+            source_status=item.status.value,
+            source_outcome=item.failure_code,
+            stage=item.status.value,
+            progress=1.0 if status is TaskNormalizedStatus.COMPLETED else None,
+            capabilities=TaskProjectionCapability(
+                can_cancel=status in {TaskNormalizedStatus.QUEUED, TaskNormalizedStatus.RUNNING},
+                can_retry=status is TaskNormalizedStatus.FAILED,
+            ),
+            route_key="document_detail",
+            failure_class=item.failure_code,
+            created_at=item.created_at,
+            updated_at=item.updated_at,
+            finished_at=item.updated_at
+            if status
+            in {
+                TaskNormalizedStatus.COMPLETED,
+                TaskNormalizedStatus.FAILED,
+                TaskNormalizedStatus.CANCELED,
+            }
+            else None,
+            source_deleted=item.status is DocumentStatus.DELETING,
+        )
+
+    async def query_task_projection_snapshots(self, query: Any, *, capability: object) -> Any:
+        self.__validate_capability(capability)
+        from aura_core.domains.execution.tasks.contracts import TaskProjectionSnapshotPage
+
+        def owner_for(item: object) -> UUID:
+            value = getattr(item, "owner_scope_id", None)
+            if isinstance(value, UUID):
+                return value
+            resolver = getattr(self.application, "task_projection_owner_scope_id_for", None)
+            resolved = resolver(item) if callable(resolver) else None
+            if isinstance(resolved, UUID):
+                return resolved
+            issuer = getattr(item, "issuer", None)
+            subject = getattr(item, "subject", None)
+            if isinstance(issuer, str) and isinstance(subject, str):
+                return uuid5(UUID("8edc7ad7-8f83-4f13-b34b-1fa37d4c6bf4"), f"{issuer}:{subject}")
+            raise ValueError("document source did not provide an owner scope")
+
+        items: tuple[Any, ...] = tuple(
+            self._snapshot(item, owner_for(item))
+            for item in await self._documents(query, capability=capability)
+        )
+        if getattr(query, "mode", None) == "exact":
+            return items[0] if items else None
+        page_size = query.page_size
+        from .task_cursor import decode_task_cursor, encode_task_cursor
+
+        page_items = items[:page_size]
+        next_cursor = (
+            encode_task_cursor(
+                decode_task_cursor(query.cursor)[0] if query.cursor else page_items[0].created_at,
+                page_items[-1].created_at,
+                page_items[-1].source_id,
+            )
+            if len(page_items) == page_size and page_items
+            else None
+        )
+        return TaskProjectionSnapshotPage(
+            items=page_items,
+            next_cursor=next_cursor,
+            scan_complete=len(page_items) < page_size,
+        )
+
+    async def command_task(
+        self,
+        source_id: UUID,
+        command: object,
+        *,
+        owner_scope_id: UUID,
+        expected_source_version: int,
+        idempotency_key: str,
+    ) -> object:
+        from aura_core.domains.execution.tasks.contracts import (
+            TaskCommand,
+            TaskCommandReceipt,
+            TaskCommandState,
+        )
+
+        if isinstance(self.owner_scope_id, UUID) and owner_scope_id != self.owner_scope_id:
+            return TaskCommandReceipt(
+                source_id, TaskCommand(command), TaskCommandState.REJECTED, expected_source_version
+            )
+        operation = "delete" if TaskCommand(command) is TaskCommand.CANCEL else "retry"
+        method: Any = getattr(self.application, operation, None)
+        if not callable(method):
+            return TaskCommandReceipt(
+                source_id, TaskCommand(command), TaskCommandState.UNKNOWN, expected_source_version
+            )
+        result: Any = await cast(Any, method)(
+            self.issuer,
+            self.subject,
+            source_id,
+            expected_version=expected_source_version,
+            idempotency_key=idempotency_key,
+        )
+        return TaskCommandReceipt(
+            source_id,
+            TaskCommand(command),
+            TaskCommandState.ACCEPTED,
+            int(getattr(result, "version", expected_source_version)),
+        )
+
+    async def resolve_task_detail(
+        self, source_id: UUID, *, owner_scope_id: UUID
+    ) -> dict[str, object]:
+        if isinstance(self.owner_scope_id, UUID) and owner_scope_id != self.owner_scope_id:
+            raise PermissionError("document task owner mismatch")
+        getter: Any = getattr(self.application, "get", None)
+        if not callable(getter):
+            raise TypeError("document application must expose get")
+        item: Any = await cast(Any, getter)(self.issuer, self.subject, source_id)
+        if not isinstance(item, Document):
+            raise DocumentNotFound("document task not found")
+        return {
+            "displayLabel": item.filename,
+            "recoveryAction": "retry" if item.status is DocumentStatus.FAILED else None,
+        }
+
+
+class DocumentTaskSourceAdapter:
+    """TaskSourcePort backed by the document application facade."""
+
+    kind = "document_processing"
+
+    def __init__(
+        self,
+        application: object,
+        *,
+        owner_scope_id: UUID | None = None,
+        issuer: str | None = None,
+        subject: str | None = None,
+    ) -> None:
+        from aura_core.domains.execution.tasks.contracts import TaskSourceKind
+        from aura_core.domains.execution.tasks.source_adapter import ApplicationTaskSourceAdapter
+
+        bound_application = (
+            application
+            if callable(getattr(application, "query_task_projection_snapshots", None))
+            else DocumentTaskProjectionApplication(
+                application, owner_scope_id=owner_scope_id, issuer=issuer, subject=subject
+            )
+        )
+        self._adapter = ApplicationTaskSourceAdapter(
+            TaskSourceKind.DOCUMENT_PROCESSING, bound_application
+        )
+        self.kind = self._adapter.kind
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._adapter, name)

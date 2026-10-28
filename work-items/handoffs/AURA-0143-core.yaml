@@ -1,0 +1,260 @@
+agent: core_worker
+work_item: AURA-0143
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0143_core
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: services.aura-core.task-projection-and-task-source-public-adapters
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0030_task_projection.py
+  - services/aura-core/migrations/versions/0031_memory_reindex_task_version.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/__init__.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/contracts.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/ports.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/repository.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/service.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/sql_repository.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/source_adapter.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/transport.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/public.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/contracts.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/store.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/ports.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/application.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/repository.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/task_cursor.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/task_cursor.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/task_cursor.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/task_cursor.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/repository.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/repository.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  - services/aura-core/src/aura_core/bootstrap/task_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/tasks.py
+  - services/aura-core/src/aura_core/entrypoints/worker/tasks.py
+  - services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+  - services/aura-core/src/aura_core/bootstrap/briefing_uow.py
+  - services/aura-core/src/aura_core/bootstrap/document_uow.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/platform/outbox/__init__.py
+  - services/aura-core/src/aura_core/platform/outbox/service.py
+  - services/aura-core/src/aura_core/platform/outbox/repository.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/resources/component-manifests/task-projection.yaml
+  - services/aura-core/tests/test_task_projection.py
+  - services/aura-core/tests/test_task_projection_api.py
+  - services/aura-core/tests/test_task_projection_worker.py
+  - services/aura-core/tests/test_task_projection_sources.py
+  - services/aura-core/tests/test_migration_0030_task_projection.py
+  - services/aura-core/tests/test_task_projection_observability.py
+  - services/aura-core/tests/test_aura0101_nats_stream.py
+contracts: {changed: false}
+migrations:
+  changed: true
+  revision: 0030_task_projection
+  down_revision: 0029_generated_artifacts
+observability:
+  components: [aura.execution.task_projection@1]
+  metrics_added:
+    - task_projection_outcome_count
+    - task_projection_reconcile_latency_ms
+    - task_projection_lag_ms
+verification:
+  passed:
+    - python3 -m compileall on all assigned Python files
+    - >-
+      PYTHONPATH=services/aura-core/src uv run pytest on the complete assigned
+      projection, source, rebuild, API, worker, architecture, observability,
+      migration, and migration-order suite (43 passed)
+    - >-
+      Source repository, lifecycle, cursor, and migration checks (106 passed,
+      27 skipped)
+    - >-
+      Isolated PostgreSQL/pgvector memory persistence suite with the composed
+      source-outbox omission fixture compatibility path (30 passed).
+    - >-
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider
+      [SUPERSEDED] Earlier isolated source-only run: 23 passed. Superseded by
+      the latest 24-pass source run below after platform outbox deduplication.
+      This covers all four production SQL source adapters with multi-page
+      immutable-fence pagination, restart token reuse, concurrent insert
+      exclusion, concurrent status/version updates, duplicate-page replay,
+      production rebuild stale settlement, and source/outbox commit plus
+      forced-rollback assertions for every source kind.
+    - >-
+      Live production mutation acceptance:
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_task_projection_sources.py -q: 24 passed.
+      Production-composed workflow admission, briefing schedule creation,
+      document upload, and memory embedding-generation transitions each emit
+      one exact TaskSourceInvalidated envelope with the authoritative source
+      version in the same commit; injected staging failures roll back both
+      source truth and outbox rows. Generic raw outbox coverage remains a
+      separate platform test. Source transaction fixes prevent premature
+      outbox lookup autoflush and flush briefing roots before child inserts.
+    - >-
+      Latest literal projection/source acceptance with the isolated PostgreSQL
+      dependency:
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider services/aura-core/tests/test_task_projection.py
+      services/aura-core/tests/test_task_projection_sources.py
+      services/aura-core/tests/test_task_projection_rebuild.py
+      services/aura-core/tests/test_task_projection_races.py
+      services/aura-core/tests/test_task_projection_api.py
+      services/aura-core/tests/test_task_projection_worker.py
+      services/aura-core/tests/test_task_projection_architecture.py
+      services/aura-core/tests/test_task_projection_observability.py
+      services/aura-core/tests/test_migration_0030_task_projection.py
+      services/aura-core/tests/test_migrations.py -q: 79 passed in 1.71s.
+    - >-
+      Latest focused source/outbox acceptance with the isolated PostgreSQL
+      dependency (source adapters, platform outbox, and AURA-0133 outbox):
+      38 passed in 2.71s. Platform outbox deduplication and pending-row
+      handling are included in this run.
+    - Production metadata sink assertions for exact outcomes, approved error classes, exactly-once rebuild terminal branches, and admitted/omitted span lineage (observability suite 7 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check on all assigned source and test files
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright on all corrected assigned source seams (0 errors)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0143.yaml
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0143.yaml
+    - git diff --check on assigned tracked paths
+    - >-
+      validate-changed-paths was run and is blocked solely by concurrent
+      AURA-0142/AURA-0144 files outside this work item.
+    - >-
+      Final correction: migration/repositories persist and enforce projection
+      revision baselines for rebuild fencing; recover_unknown is exact-source-
+      version-only and greater versions use strict upsert.
+    - >-
+      Final correction: source adapters validate the private composition
+      capability at the source seam; workflow, briefing, document, and memory
+      public facades expose global cursor/exact projection methods without
+      aggregate slicing in the projection path.
+    - >-
+      Final correction: memory reindex projects durable embedding-generation
+      lifecycle revisions and no longer uses conversation processing jobs.
+    - >-
+      Final correction: SQL event replay orders by monotonic event_sequence,
+      pages durably, exposes retention pruning, and the worker consumes the
+      source-owned invalidation outbox.
+    - >-
+      Final observability correction: every rebuild terminal branch, including
+      missing source, begin/checkpoint/page/finalization failures, emits one
+      bounded terminal observation only; final-page success is emitted after
+      tombstone and completion. Error classes remain the approved vocabulary.
+      Spans use a fresh telemetry-layer child per operation. An admitted
+      trace-context provider is evaluated for each operation; omitted context
+      receives unique content-free root/child IDs across service instances and
+      restarts, with OTLP serialization coverage.
+    - >-
+      Final security correction: global workflow, briefing, and document
+      projection enumerators/lookups are capability-gated at their source-owned
+      application/repository seams and adapters propagate only the private
+      bootstrap-bound identity. SQL SSE cursor lookup and retention floors bind
+      owner and source; internal event_sequence is excluded from public SSE
+      payloads.
+    - >-
+      Production-source correction: concrete SQL workflow, briefing, document,
+      and memory repositories now expose aggregate-wide exact/cursor source
+      APIs. Memory embedding generation lifecycle revisions are persisted and
+      advanced for building, active, failed, and retired transitions. Source
+      mutations stage exact envelopes through the bootstrap-composed
+      transactional platform outbox, and the worker consumes dedicated
+      durable JetStream delivery with ack-after-reconcile semantics.
+    - >-
+      Final security/worker correction: execution repositories no longer expose
+      source-invalidation append or replay APIs. Production delivery uses a
+      dedicated durable transport and acknowledges only after reconciliation.
+    - >-
+      Source seam correction: workflow, briefing, document, and memory
+      projection enumerators now use opaque immutable created-at/id keyset
+      cursors with a carried high-water fence in memory and SQL
+      implementations; snapshot-page responses derive the next
+      cursor from the last emitted metadata row and no longer use numeric
+      offsets in the projection path.
+    - >-
+      Final observability correction: rebuild page read, validation,
+      quarantine, upsert, checkpoint, stale settlement, and completion are
+      covered by one terminal observation guard. Repository read and
+      quarantine failures emit exactly one failed/storage_unavailable outcome,
+      latency, and reconcile span; dedicated production-sink tests cover both
+      failure sites.
+    - >-
+      Cursor ownership correction: immutable high-water/created_at/id cursor
+      encoding and decoding now live in each source domain, not execution;
+      public source pages preserve the decoded fence unchanged across pages.
+      Four-source restart, concurrent-insert, and update-stability coverage
+      passes (34 focused tests).
+    - >-
+      Final observability correction: rebuild resets boundary provenance for
+      each page item, so a malformed item after a valid PostgreSQL-backed item
+      emits exactly one rejected/validation_failed/source_snapshot_api
+      observation rather than inheriting core storage classification. Mixed
+      valid-then-malformed production-sink regression passes.
+    - >-
+      Final transport security correction: TaskSourceInvalidation.from_payload
+      now enforces closed fields, exact non-boolean integer schema/source
+      versions within the signed 32-bit contract bound, exact string UUIDs,
+      closed source kind/event type, and timezone-bearing RFC3339 occurredAt
+      values before constructing the domain event. Generic JSON-consumer poison
+      cases (string, oversized, boolean, non-string UUID, and naive timestamp)
+      are terminally acknowledged without invoking the handler (20 NATS stream
+      tests and 33 focused task projection tests pass).
+  failed:
+    - >-
+      validate-changed-paths is blocked by concurrent AURA-0142/AURA-0144 changes
+      outside this work item, including shared telemetry.py and forbidden
+      provider/deployment/contract paths.
+    - >-
+      validate-module-registry requires the integration maintainer to register
+      the new execution task module and source-to-execution dependencies in the
+      shared modules.yaml, which this worker is forbidden to edit.
+    - >-
+      validate-contract-changes is blocked by concurrent AURA-0144 contract
+      files outside AURA-0143.
+    - >-
+      The combined isolated PostgreSQL source plus memory-persistence command
+      was not used as evidence because concurrent fixture teardown on the
+      shared database produced unrelated drop_all deadlocks/missing-table
+      errors; the source acceptance command above was rerun alone and passed
+      all 23 tests without skips. Earlier isolated memory coverage remains
+      recorded separately (30 passed before the unrelated shared-database
+      contention).
+  not_run:
+    - AURA-0143 repository-wide architecture and migration checks (integration maintainer/test engineer owns shared composition and independent consistency cases)
+decisions:
+  - Source invalidations contain only identifier and version metadata; live and rebuild use a private composition capability and the same public snapshot query.
+  - Unknown source snapshots and unavailable research registration never fabricate terminal truth.
+  - SQL projection has no cross-domain foreign keys or cascades and upserts only non-regressing source versions.
+risks:
+  - Integration maintainer must compose task_projection_service into AppState/worker app and register source adapters after AURA-0142 and research source implementations land.
+  - Workflow, briefing, document, and memory adapters require global source-owned snapshot enumerators and exact lookup facades; no owner-bound compatibility path or source persistence is imported by Core.
+  - Rebuild stale settlement retains authoritative source status/version and records local unknown absence without fabricating source_deleted.
+  - Ambiguous command outcomes persist dedupe receipts, disable mutation capabilities, and enqueue bounded reconciliation.
+  - Projection capability is an unexported identity minted in task_uow composition and rebound only into source adapters; no module-level singleton or factory remains.
+  - Rebuild validates source kind, identity uniqueness, and owner continuity before upsert; invalid items become unknown/reconciliation work.
+  - Task invalidation events are staged as full identifier-only envelopes by source transactions through the platform outbox; source versions remain authoritative. Execution does not author source events, and the worker consumes only dedicated durable transport deliveries.
+  - Unknown recovery updates projection-local state at the same authoritative source version; source upsert remains strictly newer-only. Rebuild checkpoints persist baseline IDs, seen IDs, cursor, pass, and start fence.
+  - Runtime telemetry maps source/repository failures to the approved snapshot_unavailable, storage_unavailable, validation_failed, version_gap, timeout, and unknown classes; only exact operation/outcome/error_class/dependency dimensions are emitted, with deterministic omitted trace lineage when no context is admitted.
+  - Metadata SSE replays the durable event source across process boundaries with monotonic event sequences; route authorization and detail lookup remain application-owned.
+unresolved:
+  - Integration maintainer must update shared module registry and reconcile manifest validator versus independent test shape before aggregate validation.

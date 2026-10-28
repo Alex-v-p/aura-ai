@@ -1,0 +1,31 @@
+agent: security_privacy_reviewer
+work_item: AURA-0143
+verdict: PASS
+checked:
+  - >-
+    Outbox no-autoflush transaction behavior and briefing aggregate flush
+    ordering preserve atomic source and outbox commit and rollback.
+  - >-
+    The strict closed TaskSourceInvalidated parser rejects string or oversized
+    sourceVersion, boolean schemaVersion, naive occurredAt, invalid UUIDs, and
+    extra fields.
+  - >-
+    Malformed poison deliveries are acknowledged without invoking
+    reconciliation; valid deliveries are acknowledged only after successful
+    reconciliation and failures remain unacknowledged for redelivery.
+  - >-
+    The bootstrap-minted task_projection:read capability remains private and
+    nondelegable.
+  - >-
+    Task SSE cursor lookup and retention floors remain owner and source bound;
+    public payloads exclude owner identity and internal sequence.
+  - >-
+    No shared task_source_invalidations or task_source_invalidation_checkpoints
+    tables, execution repository authoring APIs, private source payloads,
+    credentials, or content-bearing telemetry were reintroduced.
+  - >-
+    Focused strict parser, poison, and acknowledgement tests passed 13 tests;
+    focused AURA-0143 regression tests passed 98 tests, with seven live
+    PostgreSQL or NATS cases environment-gated in the reviewer's local run and
+    covered by the independent live evaluation.
+findings: []

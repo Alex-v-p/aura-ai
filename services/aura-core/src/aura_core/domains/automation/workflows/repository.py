@@ -21,10 +21,11 @@ from time import monotonic
 from typing import Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from sqlalchemy import and_, or_, select
 from sqlalchemy import delete as sql_delete
-from sqlalchemy import select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from aura_core.platform.telemetry import MetadataMetrics, new_span_id
 
@@ -180,6 +181,7 @@ class MemoryWorkflowRepository:
 
     def __init__(self, metrics: MetadataMetrics | None = None,
                  intents: WorkflowIntentPort | None = None) -> None:
+        self.__task_projection_capability: object | None = None
         self._revisions: dict[UUID, WorkflowRevision] = {}
         self._drafts: dict[UUID, WorkflowDraft] = {}
         self._instances: dict[UUID, WorkflowState] = {}
@@ -195,6 +197,18 @@ class MemoryWorkflowRepository:
         self._metrics = metrics
         self._intents = intents
         self._lock = asyncio.Lock()
+
+    def __bind_capability(self, capability: object) -> None:  # pyright: ignore[reportUnusedFunction]
+        if self.__task_projection_capability is not None:
+            raise PermissionError("workflow projection capability is already bound")
+        self.__task_projection_capability = capability
+
+    def __validate_task_projection_capability(self, capability: object) -> None:
+        if (
+            self.__task_projection_capability is None
+            or capability is not self.__task_projection_capability
+        ):
+            raise PermissionError("workflow projection capability is not admitted")
 
     def _event(self, state: WorkflowState, event_kind: str) -> None:
         event_id = str(UUID(int=secrets.randbits(128)))
@@ -847,6 +861,35 @@ class MemoryWorkflowRepository:
             issuer, subject, instance_id, trace_context=trace_context
         )).instance
 
+    async def get_instance_for_task_projection(
+        self, instance_id: UUID, *, capability: object | None = None
+    ) -> WorkflowInstance:
+        self.__validate_task_projection_capability(capability)
+        state = self._instances.get(instance_id)
+        if state is None:
+            raise WorkflowNotFound("workflow instance was not found")
+        return state.instance
+
+    async def list_instances_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object | None = None
+    ) -> tuple[WorkflowInstance, ...]:
+        self.__validate_task_projection_capability(capability)
+        values = sorted(
+            (state.instance for state in self._instances.values()),
+            key=lambda item: (item.admitted_at, item.id),
+            reverse=True,
+        )
+        if cursor:
+            from .task_cursor import decode_task_cursor
+
+            _fence, stamp, item_id = decode_task_cursor(cursor)
+            values = [
+                item
+                for item in values
+                if (item.admitted_at, item.id) < (stamp, item_id)
+            ]
+        return tuple(values[:limit])
+
     async def authorize_instance_in_workflow(
         self, issuer: str, subject: str, workflow_id: UUID, instance_id: UUID,
     ) -> WorkflowInstanceAuthorization:
@@ -1492,6 +1535,16 @@ class SqlWorkflowRepository:
         self.sessions = sessions
         self._metrics = metrics
         self._intents = intents
+        self.__task_projection_capability: object | None = None
+
+    def __bind_capability(self, capability: object) -> None:  # pyright: ignore[reportUnusedFunction]
+        if self.__task_projection_capability is not None:
+            raise PermissionError("workflow projection capability is already bound")
+        self.__task_projection_capability = capability
+
+    def __validate_task_projection_capability(self, capability: object | None) -> None:
+        if self.__task_projection_capability is None or capability is not self.__task_projection_capability:
+            raise PermissionError("workflow projection capability is not admitted")
 
     async def get_idempotent(
         self, issuer: str, subject: str, idempotency_key: str, *,
@@ -2148,6 +2201,59 @@ class SqlWorkflowRepository:
         instances: list[WorkflowInstance] = []
         for row in rows:
             instances.append(await self.get_instance(issuer, subject, row.id))
+        return tuple(instances)
+
+    async def get_instance_for_task_projection(
+        self, instance_id: UUID, *, capability: object | None = None
+    ) -> WorkflowInstance:
+        self.__validate_task_projection_capability(capability)
+        from .persistence import WorkflowInstanceRow
+
+        async with self.sessions() as session:
+            row = await session.scalar(
+                select(WorkflowInstanceRow).where(WorkflowInstanceRow.id == instance_id)
+            )
+        if row is None:
+            raise WorkflowNotFound("workflow instance was not found")
+        return await self.get_instance(row.principal_issuer, row.principal_subject, instance_id)
+
+    async def list_instances_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object | None = None
+    ) -> tuple[WorkflowInstance, ...]:
+        self.__validate_task_projection_capability(capability)
+        from .persistence import WorkflowInstanceRow
+        from .task_cursor import decode_task_cursor
+
+        position = decode_task_cursor(cursor) if cursor else None
+        created_at = WorkflowInstanceRow.created_at
+        filters: list[ColumnElement[bool]] = []
+        if position:
+            fence, stamp, item_id = position
+            filters.append(
+                or_(
+                    and_(created_at <= fence, created_at < stamp),
+                    and_(created_at == stamp, WorkflowInstanceRow.id < item_id),
+                )
+            )
+        else:
+            fence = datetime.now(UTC)
+            filters.append(created_at <= fence)
+        async with self.sessions() as session:
+            rows = list(
+                (
+                    await session.scalars(
+                        select(WorkflowInstanceRow)
+                        .where(*filters)
+                        .order_by(created_at.desc(), WorkflowInstanceRow.id.desc())
+                        .limit(limit)
+                    )
+                ).all()
+            )
+        instances: list[WorkflowInstance] = []
+        for row in rows:
+            instances.append(
+                await self.get_instance(row.principal_issuer, row.principal_subject, row.id)
+            )
         return tuple(instances)
 
     async def publish(self, revision_id: UUID, *, expected_version: int, issuer: str, subject: str,

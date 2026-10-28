@@ -1,5 +1,7 @@
 """Owner-scoped SQL repository for documents."""
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import math
@@ -9,10 +11,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
 
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy import cast as sql_cast
-from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from aura_core.domains.knowledge.documents.persistence import (
     DocumentChunkRow,
@@ -78,6 +81,16 @@ class SqlDocumentRepository:
         self.outbox = outbox
         self.transactional_outbox = outbox is not None
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.__task_projection_capability: object | None = None
+
+    def __bind_capability(self, capability: object) -> None:  # pyright: ignore[reportUnusedFunction]
+        if self.__task_projection_capability is not None:
+            raise PermissionError("document projection capability is already bound")
+        self.__task_projection_capability = capability
+
+    def __validate_task_projection_capability(self, capability: object | None) -> None:
+        if self.__task_projection_capability is None or capability is not self.__task_projection_capability:
+            raise PermissionError("document projection capability is not admitted")
 
     @staticmethod
     def _document(row: DocumentRow) -> Document:
@@ -560,7 +573,58 @@ class SqlDocumentRepository:
                     .limit(limit)
                 )
             ).all()
-            return [self._document(row) for row in rows]
+        return [self._document(row) for row in rows]
+
+    async def list_all(self, *, offset: int = 0, limit: int = 100) -> list[Document]:
+        async with self.sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(DocumentRow)
+                    .order_by(DocumentRow.updated_at.desc(), DocumentRow.id.desc())
+                    .offset(offset)
+                    .limit(limit)
+                )
+            ).all()
+        return [self._document(row) for row in rows]
+
+    async def get_for_task_projection(
+        self, document_id: UUID, *, capability: object | None = None
+    ) -> Document:
+        self.__validate_task_projection_capability(capability)
+        value = await self.get_any(document_id)
+        if value is None:
+            raise DocumentRepositoryUnavailable("document task not found")
+        return value
+
+    async def list_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object | None = None
+    ) -> tuple[Document, ...]:
+        self.__validate_task_projection_capability(capability)
+        from .task_cursor import decode_task_cursor
+
+        position = decode_task_cursor(cursor) if cursor else None
+        filters: list[ColumnElement[bool]] = []
+        if position:
+            fence, stamp, item_id = position
+            filters.append(
+                or_(
+                    and_(DocumentRow.created_at <= fence, DocumentRow.created_at < stamp),
+                    and_(DocumentRow.created_at == stamp, DocumentRow.id < item_id),
+                )
+            )
+        else:
+            fence = datetime.now(UTC)
+            filters.append(DocumentRow.created_at <= fence)
+        async with self.sessions() as session:
+            rows = (
+                await session.scalars(
+                    select(DocumentRow)
+                    .where(*filters)
+                    .order_by(DocumentRow.created_at.desc(), DocumentRow.id.desc())
+                    .limit(limit)
+                )
+            ).all()
+        return tuple(self._document(row) for row in rows)
 
     async def find_duplicate(self, owner: tuple[str, str], digest: str) -> Document | None:
         async with self.sessions() as session:

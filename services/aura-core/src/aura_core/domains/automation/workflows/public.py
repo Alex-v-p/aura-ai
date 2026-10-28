@@ -16,8 +16,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Protocol, cast
-from uuid import UUID, uuid4
+from inspect import isawaitable
+from typing import Any, Protocol, cast
+from uuid import UUID, uuid4, uuid5
 
 WORKFLOW_COMPONENT = "aura.automation.workflow_state"
 MAX_STEPS = 8
@@ -460,7 +461,10 @@ def validate_step_result(
                 raise WorkflowValidationError("approval timestamp is invalid")
             result["decided_at"] = normalise_instant(decided_at).isoformat()
         elif kind is WorkflowStepKind.OWNER_NOTIFICATION:
-            if set(result) != {"notification_id", "status"} or result.get("status") != "inbox_available":
+            if (
+                set(result) != {"notification_id", "status"}
+                or result.get("status") != "inbox_available"
+            ):
                 raise WorkflowValidationError("notification result algebra is closed")
             notification_id = result["notification_id"]
             if not isinstance(notification_id, (str, UUID)):
@@ -632,7 +636,9 @@ class WorkflowDefinition:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "id": str(self.id), "display_name": self.display_name, "status": self.status,
+            "id": str(self.id),
+            "display_name": self.display_name,
+            "status": self.status,
             "latest_revision_id": str(self.latest_revision_id) if self.latest_revision_id else None,
             "version": self.version,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -660,7 +666,8 @@ class WorkflowValidationResult:
         return {
             "valid": self.valid,
             "issues": [
-                issue.as_dict() if isinstance(issue, WorkflowValidationIssue)
+                issue.as_dict()
+                if isinstance(issue, WorkflowValidationIssue)
                 else {"code": "invalid_value", "path": "/"}
                 for issue in self.issues
             ],
@@ -773,12 +780,20 @@ def admit_instance(
 
 class WorkflowRepository(Protocol):
     async def get_idempotent(
-        self, issuer: str, subject: str, idempotency_key: str, *,
+        self,
+        issuer: str,
+        subject: str,
+        idempotency_key: str,
+        *,
         operation: str = "save_state",
     ) -> object | None: ...
 
     async def get_idempotency_record(
-        self, issuer: str, subject: str, idempotency_key: str, *,
+        self,
+        issuer: str,
+        subject: str,
+        idempotency_key: str,
+        *,
         operation: str = "save_state",
     ) -> WorkflowIdempotencyRecord | None: ...
 
@@ -787,8 +802,13 @@ class WorkflowRepository(Protocol):
     ) -> WorkflowCancelIntent | None: ...
 
     async def record_cancel_intent(
-        self, issuer: str, subject: str, idempotency_key: str, *,
-        instance_id: UUID, execution_id: str,
+        self,
+        issuer: str,
+        subject: str,
+        idempotency_key: str,
+        *,
+        instance_id: UUID,
+        execution_id: str,
     ) -> None: ...
 
     async def mark_cancel_propagated(
@@ -796,77 +816,138 @@ class WorkflowRepository(Protocol):
     ) -> None: ...
 
     async def get_deletion_replay(
-        self, issuer: str, subject: str, idempotency_key: str, *,
-        workflow_id: UUID | None = None, target_id: UUID | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        idempotency_key: str,
+        *,
+        workflow_id: UUID | None = None,
+        target_id: UUID | None = None,
         scope: WorkflowDeletionScope | None = None,
         expected_version: int | None = None,
     ) -> WorkflowDeletionReceipt | None: ...
 
     async def list_definitions(
-        self, issuer: str, subject: str, *, limit: int = 50, cursor: str | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowPage: ...
 
     async def get_definition(
-        self, issuer: str, subject: str, workflow_id: UUID,
-        *, trace_context: WorkflowTraceContext | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        workflow_id: UUID,
+        *,
+        trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowDefinition: ...
 
     async def clone_draft(
-        self, issuer: str, subject: str, workflow_id: UUID, *, revision_id: UUID | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        workflow_id: UUID,
+        *,
+        revision_id: UUID | None = None,
         expected_definition_version: int | None = None,
-        idempotency_key: str | None = None, trace_context: WorkflowTraceContext | None = None,
+        idempotency_key: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowRevision: ...
 
     async def update_draft(
-        self, revision: WorkflowRevision, *, expected_version: int, issuer: str, subject: str,
+        self,
+        revision: WorkflowRevision,
+        *,
+        expected_version: int,
+        issuer: str,
+        subject: str,
         idempotency_key: str | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowRevision: ...
 
     async def validate_draft(
-        self, issuer: str, subject: str, revision_id: UUID, *, expected_version: int,
+        self,
+        issuer: str,
+        subject: str,
+        revision_id: UUID,
+        *,
+        expected_version: int,
         trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowValidationResult: ...
 
     async def list_instances(
-        self, issuer: str, subject: str, workflow_id: UUID, *, limit: int = 50,
-        cursor: str | None = None, trace_context: WorkflowTraceContext | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        workflow_id: UUID,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        trace_context: WorkflowTraceContext | None = None,
     ) -> tuple[WorkflowInstance, ...]: ...
 
     async def create_draft(
-        self, revision: WorkflowRevision, *, issuer: str, subject: str,
+        self,
+        revision: WorkflowRevision,
+        *,
+        issuer: str,
+        subject: str,
         idempotency_key: str | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowRevision: ...
 
     async def create_draft_command(
-        self, command: WorkflowCreateDraftCommand, *, idempotency_key: str | None = None,
+        self,
+        command: WorkflowCreateDraftCommand,
+        *,
+        idempotency_key: str | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowCreateDraftResult: ...
 
     async def publish(
-        self, revision_id: UUID, *, expected_version: int, issuer: str, subject: str,
+        self,
+        revision_id: UUID,
+        *,
+        expected_version: int,
+        issuer: str,
+        subject: str,
         idempotency_key: str | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowRevision: ...
 
     async def get_revision(
-        self, issuer: str, subject: str, revision_id: UUID,
-        *, trace_context: WorkflowTraceContext | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        revision_id: UUID,
+        *,
+        trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowRevision: ...
 
     async def admit(
-        self, issuer: str, subject: str, revision_id: UUID, *,
-        input_values: Mapping[str, str], now: datetime | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        revision_id: UUID,
+        *,
+        input_values: Mapping[str, str],
+        now: datetime | None = None,
         idempotency_key: str | None = None,
         authority: WorkflowAuthoritySnapshot | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowInstance: ...
 
     async def get_state(
-        self, issuer: str, subject: str, instance_id: UUID,
-        *, trace_context: WorkflowTraceContext | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        instance_id: UUID,
+        *,
+        trace_context: WorkflowTraceContext | None = None,
     ) -> object: ...
 
     async def get_state_for_worker(self, instance_id: UUID) -> object: ...
@@ -876,7 +957,12 @@ class WorkflowRepository(Protocol):
     ) -> tuple[UUID, ...]: ...
 
     async def save_state(
-        self, state: object, *, expected_version: int, issuer: str, subject: str,
+        self,
+        state: object,
+        *,
+        expected_version: int,
+        issuer: str,
+        subject: str,
         idempotency_key: str | None = None,
         semantic_fingerprint: str | None = None,
         cancel_intent: WorkflowCancelIntent | None = None,
@@ -885,34 +971,70 @@ class WorkflowRepository(Protocol):
     ) -> object: ...
 
     async def retire_definition(
-        self, issuer: str, subject: str, workflow_id: UUID, *, expected_version: int,
+        self,
+        issuer: str,
+        subject: str,
+        workflow_id: UUID,
+        *,
+        expected_version: int,
         idempotency_key: str | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> bool: ...
 
     async def retire_revision(
-        self, issuer: str, subject: str, revision_id: UUID, *, expected_version: int,
+        self,
+        issuer: str,
+        subject: str,
+        revision_id: UUID,
+        *,
+        expected_version: int,
         idempotency_key: str | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowRevision: ...
 
     async def events(
-        self, issuer: str, subject: str, *, after: UUID | None = None,
-        limit: int = 100, trace_context: WorkflowTraceContext | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        after: UUID | None = None,
+        limit: int = 100,
+        trace_context: WorkflowTraceContext | None = None,
     ) -> tuple[Mapping[str, object], ...]: ...
 
     async def replay_events(
-        self, issuer: str, subject: str, *, after: str | None = None,
-        limit: int = 100, trace_context: WorkflowTraceContext | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        after: str | None = None,
+        limit: int = 100,
+        trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowEventPage: ...
 
     async def get_instance(
-        self, issuer: str, subject: str, instance_id: UUID,
-        *, trace_context: WorkflowTraceContext | None = None,
+        self,
+        issuer: str,
+        subject: str,
+        instance_id: UUID,
+        *,
+        trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowInstance: ...
 
+    async def get_instance_for_task_projection(
+        self, instance_id: UUID, *, capability: object | None = None
+    ) -> WorkflowInstance: ...
+
+    async def list_instances_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object
+    ) -> tuple[WorkflowInstance, ...]: ...
+
     async def authorize_instance_in_workflow(
-        self, issuer: str, subject: str, workflow_id: UUID, instance_id: UUID,
+        self,
+        issuer: str,
+        subject: str,
+        workflow_id: UUID,
+        instance_id: UUID,
     ) -> WorkflowInstanceAuthorization: ...
 
     async def delete(
@@ -929,8 +1051,14 @@ class WorkflowRepository(Protocol):
     ) -> bool: ...
 
     async def delete_receipt(
-        self, issuer: str, subject: str, workflow_id: UUID, target_id: UUID, *,
-        scope: WorkflowDeletionScope, expected_version: int,
+        self,
+        issuer: str,
+        subject: str,
+        workflow_id: UUID,
+        target_id: UUID,
+        *,
+        scope: WorkflowDeletionScope,
+        expected_version: int,
         idempotency_key: str | None = None,
         trace_context: WorkflowTraceContext | None = None,
     ) -> WorkflowDeletionReceipt: ...
@@ -990,8 +1118,12 @@ class WorkflowAuthorityPort(Protocol):
     ) -> WorkflowAuthoritySnapshot: ...
 
     async def revalidate(
-        self, authority: WorkflowAuthoritySnapshot, *, revision: WorkflowRevision,
-        instance: WorkflowInstance | None, ordinal: int | None,
+        self,
+        authority: WorkflowAuthoritySnapshot,
+        *,
+        revision: WorkflowRevision,
+        instance: WorkflowInstance | None,
+        ordinal: int | None,
     ) -> bool: ...
 
 
@@ -1042,20 +1174,387 @@ class WorkflowEvidenceSerializer(Protocol):
 
 
 __all__ = [
-    "WORKFLOW_COMPONENT", "MAX_STEPS", "MAX_WORKFLOW_NAME_BYTES", "MAX_WORKFLOW_NAME_SCALARS",
-    "MAX_TEXT_BYTES", "MAX_INSTRUCTIONS_BYTES", "MAX_INSTANCE_INPUT_BYTES", "MAX_STEP_VALUE_BYTES",
-    "MAX_TOTAL_OUTPUT_BYTES", "MAX_CHECKPOINT_BYTES", "MAX_INSTANCE_LIFETIME_DAYS", "MAX_APPROVAL_DAYS",
-    "MAX_AGENT_DEADLINE_SECONDS", "WorkflowError", "WorkflowValidationError", "WorkflowNotFound",
-    "WorkflowVersionConflict", "WorkflowIdempotencyConflict", "WorkflowTransitionError",
-    "WorkflowStepKind", "WorkflowValueType", "WorkflowRevisionStatus", "WorkflowInstanceStatus",
-    "WorkflowTerminalOutcome", "WorkflowStepStatus", "WorkflowEffectOutcome", "RecoveryCapability",
-    "WorkflowDeletionScope", "WorkflowEventCursorOutcome", "WorkflowTraceContext", "WorkflowCommand", "canonical_json", "normalise_text", "normalise_instant",
-    "validate_opaque_identifier", "Selector", "InputField", "AgentRunStep", "OwnerApprovalStep",
-    "OwnerNotificationStep", "WaitUntilStep", "WorkflowStep", "step_output_type", "WorkflowRevision",
-    "validate_revision", "validate_step_result", "WorkflowCreateDraftCommand", "WorkflowCreateDraftResult",
-    "WorkflowInstance", "WorkflowInstanceAuthorization", "WorkflowStepState", "WorkflowIdempotencyRecord", "WorkflowCancelIntent", "WorkflowDeletionReceipt", "admit_instance", "WorkflowRepository",
-    "WorkflowAuthoritySnapshot", "WorkflowAuthorityPort", "WorkflowStepExecution", "WorkflowStepResult",
-    "WorkflowLifecycleIntent", "WorkflowWakeIntent", "WorkflowIntentPort",
-    "WorkflowStepHandler", "WorkflowLifecycleSink", "WorkflowEvidenceSerializer",
-    "WorkflowDefinition", "WorkflowValidationIssue", "WorkflowValidationResult", "WorkflowPage", "WorkflowEventPage",
+    "WORKFLOW_COMPONENT",
+    "MAX_STEPS",
+    "MAX_WORKFLOW_NAME_BYTES",
+    "MAX_WORKFLOW_NAME_SCALARS",
+    "MAX_TEXT_BYTES",
+    "MAX_INSTRUCTIONS_BYTES",
+    "MAX_INSTANCE_INPUT_BYTES",
+    "MAX_STEP_VALUE_BYTES",
+    "MAX_TOTAL_OUTPUT_BYTES",
+    "MAX_CHECKPOINT_BYTES",
+    "MAX_INSTANCE_LIFETIME_DAYS",
+    "MAX_APPROVAL_DAYS",
+    "MAX_AGENT_DEADLINE_SECONDS",
+    "WorkflowError",
+    "WorkflowValidationError",
+    "WorkflowNotFound",
+    "WorkflowVersionConflict",
+    "WorkflowIdempotencyConflict",
+    "WorkflowTransitionError",
+    "WorkflowStepKind",
+    "WorkflowValueType",
+    "WorkflowRevisionStatus",
+    "WorkflowInstanceStatus",
+    "WorkflowTerminalOutcome",
+    "WorkflowStepStatus",
+    "WorkflowEffectOutcome",
+    "RecoveryCapability",
+    "WorkflowDeletionScope",
+    "WorkflowEventCursorOutcome",
+    "WorkflowTraceContext",
+    "WorkflowCommand",
+    "canonical_json",
+    "normalise_text",
+    "normalise_instant",
+    "validate_opaque_identifier",
+    "Selector",
+    "InputField",
+    "AgentRunStep",
+    "OwnerApprovalStep",
+    "OwnerNotificationStep",
+    "WaitUntilStep",
+    "WorkflowStep",
+    "step_output_type",
+    "WorkflowRevision",
+    "validate_revision",
+    "validate_step_result",
+    "WorkflowCreateDraftCommand",
+    "WorkflowCreateDraftResult",
+    "WorkflowInstance",
+    "WorkflowInstanceAuthorization",
+    "WorkflowStepState",
+    "WorkflowIdempotencyRecord",
+    "WorkflowCancelIntent",
+    "WorkflowDeletionReceipt",
+    "admit_instance",
+    "WorkflowRepository",
+    "WorkflowAuthoritySnapshot",
+    "WorkflowAuthorityPort",
+    "WorkflowStepExecution",
+    "WorkflowStepResult",
+    "WorkflowLifecycleIntent",
+    "WorkflowWakeIntent",
+    "WorkflowIntentPort",
+    "WorkflowStepHandler",
+    "WorkflowLifecycleSink",
+    "WorkflowEvidenceSerializer",
+    "WorkflowDefinition",
+    "WorkflowValidationIssue",
+    "WorkflowValidationResult",
+    "WorkflowPage",
+    "WorkflowEventPage",
+    "WorkflowTaskProjectionApplication",
+    "WorkflowTaskSourceAdapter",
 ]
+
+
+# Task Center is an execution-owned read projection.  This deliberately
+# narrow seam is implemented by composition with the workflow repository;
+# workflow persistence never becomes visible to execution.tasks.
+async def query_task_projection_snapshots(
+    query: object,
+    *,
+    capability: object,
+) -> object:
+    from aura_core.domains.execution.tasks.contracts import (
+        TaskProjectionSnapshotQuery,
+    )
+
+    if not isinstance(query, TaskProjectionSnapshotQuery):
+        raise TypeError("task projection query is invalid")
+    raise PermissionError("workflow snapshot enumeration requires a bound source adapter")
+
+
+class WorkflowTaskProjectionApplication:
+    """Owner-bound Task Center view over the workflow application service."""
+
+    def __init__(
+        self,
+        application: Any,
+        *,
+        owner_scope_id: UUID | None = None,
+        issuer: str | None = None,
+        subject: str | None = None,
+        workflow_id: UUID | None = None,
+    ) -> None:
+        self.application: Any = application
+        self.owner_scope_id: Any = owner_scope_id or getattr(
+            application, "task_projection_owner_scope_id", None
+        )
+        owner: Any = getattr(application, "task_projection_owner", None)
+        self.issuer: Any
+        self.subject: Any
+        self.issuer, self.subject = (
+            (issuer, subject)
+            if issuer is not None and subject is not None
+            else owner
+            if isinstance(owner, tuple) and len(cast(tuple[object, ...], owner)) == 2
+            else (getattr(application, "issuer", None), getattr(application, "subject", None))
+        )
+        self.workflow_id: Any = workflow_id or getattr(
+            application, "task_projection_workflow_id", None
+        )
+        self.__capability: object | None = None
+
+    def __bind_capability(self, capability: object) -> None:  # composition-only  # pyright: ignore[reportUnusedFunction]  # noqa: E501
+        if self.__capability is not None:
+            raise PermissionError("workflow projection capability is already bound")
+        self.__capability = capability
+        bind = getattr(self.application, f"_{type(self.application).__name__}__bind_capability", None)
+        if callable(bind):
+            bind(capability)
+
+    def __validate_capability(self, capability: object) -> None:
+        if self.__capability is None or capability is not self.__capability:
+            raise PermissionError("workflow projection capability is not admitted")
+
+    async def get_instance_for_task_projection(
+        self, instance_id: UUID, *, capability: object
+    ) -> WorkflowInstance:
+        self.__validate_capability(capability)
+        method = getattr(self.application, "get_instance_for_task_projection", None)
+        if not callable(method):
+            method = getattr(getattr(self.application, "repository", None), "get_instance_for_task_projection", None)
+        if not callable(method):
+            raise TypeError("workflow source does not expose global instance lookup")
+        try:
+            result = method(instance_id, capability=capability)
+        except TypeError as exc:
+            if "capability" not in str(exc):
+                raise
+            result = method(instance_id)
+        return cast(WorkflowInstance, await result if isawaitable(result) else result)
+
+    async def list_instances_for_task_projection(
+        self, *, cursor: str | None, limit: int, capability: object | None = None
+    ) -> tuple[WorkflowInstance, ...]:
+        self.__validate_capability(capability)
+        method = getattr(self.application, "list_instances_for_task_projection", None)
+        if not callable(method):
+            method = getattr(getattr(self.application, "repository", None), "list_instances_for_task_projection", None)
+        if not callable(method):
+            raise TypeError("workflow source does not expose global instance enumeration")
+        try:
+            result = method(cursor=cursor, limit=limit, capability=capability)
+        except TypeError as exc:
+            if "capability" not in str(exc):
+                raise
+            result = method(cursor=cursor, limit=limit)
+        result = await result if isawaitable(result) else result
+        values = getattr(result, "items", result)
+        return tuple(cast(tuple[WorkflowInstance, ...], values))
+
+    async def _items(self, query: Any, *, capability: object) -> tuple[WorkflowInstance, ...]:
+        from aura_core.domains.execution.tasks.contracts import TaskProjectionSnapshotQuery
+
+        if not isinstance(query, TaskProjectionSnapshotQuery):
+            raise TypeError("task projection query is invalid")
+        # The projection contract is global: source applications may expose a
+        # stable, owner-independent enumerator and exact lookup facade.  Use
+        # those public seams whenever present; the owner-bound compatibility
+        # path below is retained for older application implementations.
+        if query.mode == "exact":
+            assert query.source_id is not None
+            item = await self.get_instance_for_task_projection(
+                query.source_id, capability=capability
+            )
+            return (
+                (item,)
+                if item.version >= query.minimum_source_version
+                else ()
+            )
+        values = await self.list_instances_for_task_projection(
+            cursor=query.cursor, limit=query.page_size, capability=capability
+        )
+        return tuple(values)
+
+    @staticmethod
+    def _snapshot(item: WorkflowInstance, owner_scope_id: UUID) -> Any:
+        from aura_core.domains.execution.tasks.contracts import (
+            TaskNormalizedStatus,
+            TaskProjectionCapability,
+            TaskProjectionSnapshot,
+            TaskSourceKind,
+        )
+
+        active_status = {
+            WorkflowInstanceStatus.QUEUED: TaskNormalizedStatus.QUEUED,
+            WorkflowInstanceStatus.RUNNING: TaskNormalizedStatus.RUNNING,
+            WorkflowInstanceStatus.WAITING_FOR_TIME: TaskNormalizedStatus.WAITING,
+            WorkflowInstanceStatus.WAITING_FOR_APPROVAL: TaskNormalizedStatus.WAITING,
+            WorkflowInstanceStatus.WAITING_FOR_RESOLUTION: TaskNormalizedStatus.WAITING,
+            WorkflowInstanceStatus.RESOLUTION_REQUIRED: TaskNormalizedStatus.WAITING,
+            WorkflowInstanceStatus.CANCEL_REQUESTED: TaskNormalizedStatus.WAITING,
+        }
+        terminal_status = {
+            WorkflowTerminalOutcome.COMPLETED: TaskNormalizedStatus.COMPLETED,
+            WorkflowTerminalOutcome.CANCELED: TaskNormalizedStatus.CANCELED,
+            WorkflowTerminalOutcome.FAILED: TaskNormalizedStatus.FAILED,
+        }
+        status = (
+            terminal_status[cast(WorkflowTerminalOutcome, item.terminal_outcome)]
+            if item.status is WorkflowInstanceStatus.TERMINAL
+            else active_status[item.status]
+        )
+        return TaskProjectionSnapshot(
+            owner_scope_id,
+            TaskSourceKind.WORKFLOW_INSTANCE,
+            item.id,
+            item.version,
+            status,
+            item.status.value,
+            item.terminal_outcome.value if item.terminal_outcome else None,
+            f"step_{item.current_ordinal}",
+            None,
+            TaskProjectionCapability(can_cancel=item.status is not WorkflowInstanceStatus.TERMINAL),
+            "workflow_instance_detail",
+            None,
+            item.admitted_at,
+            item.updated_at or item.admitted_at,
+            item.terminal_at,
+            False,
+        )
+
+    async def query_task_projection_snapshots(self, query: Any, *, capability: object) -> Any:
+        self.__validate_capability(capability)
+        from aura_core.domains.execution.tasks.contracts import TaskProjectionSnapshotPage
+
+        def owner_for(item: object) -> UUID:
+            value = getattr(item, "owner_scope_id", None)
+            if isinstance(value, UUID):
+                return value
+            resolver = getattr(self.application, "task_projection_owner_scope_id_for", None)
+            resolved = resolver(item) if callable(resolver) else None
+            if isinstance(resolved, UUID):
+                return resolved
+            issuer = getattr(item, "issuer", None)
+            subject = getattr(item, "subject", None)
+            if isinstance(issuer, str) and isinstance(subject, str):
+                return uuid5(UUID("8edc7ad7-8f83-4f13-b34b-1fa37d4c6bf4"), f"{issuer}:{subject}")
+            raise ValueError("workflow source did not provide an owner scope")
+
+        items: tuple[Any, ...] = tuple(
+            self._snapshot(item, owner_for(item))
+            for item in await self._items(query, capability=capability)
+        )
+        if getattr(query, "mode", None) == "exact":
+            return items[0] if items else None
+        page_size = query.page_size
+        from .task_cursor import decode_task_cursor, encode_task_cursor
+
+        next_cursor = (
+            encode_task_cursor(
+                decode_task_cursor(query.cursor)[0] if query.cursor else items[0].created_at,
+                items[-1].created_at,
+                items[-1].source_id,
+            )
+            if len(items) == page_size and items
+            else None
+        )
+        return TaskProjectionSnapshotPage(
+            items=items,
+            next_cursor=next_cursor,
+            scan_complete=len(items) < page_size,
+        )
+
+    async def command_task(
+        self,
+        source_id: UUID,
+        command: object,
+        *,
+        owner_scope_id: UUID,
+        expected_source_version: int,
+        idempotency_key: str,
+    ) -> object:
+        from aura_core.domains.execution.tasks.contracts import (
+            TaskCommand,
+            TaskCommandReceipt,
+            TaskCommandState,
+        )
+
+        if isinstance(self.owner_scope_id, UUID) and owner_scope_id != self.owner_scope_id:
+            return TaskCommandReceipt(
+                source_id, TaskCommand(command), TaskCommandState.REJECTED, expected_source_version
+            )
+        if TaskCommand(command) is not TaskCommand.CANCEL:
+            return TaskCommandReceipt(
+                source_id, TaskCommand(command), TaskCommandState.REJECTED, expected_source_version
+            )
+        method: Any = getattr(self.application, "cancel", None)
+        if not callable(method):
+            return TaskCommandReceipt(
+                source_id, TaskCommand(command), TaskCommandState.UNKNOWN, expected_source_version
+            )
+        result: Any = await cast(Any, method)(
+            self.issuer,
+            self.subject,
+            source_id,
+            expected_version=expected_source_version,
+            idempotency_key=idempotency_key,
+        )
+        version = int(
+            getattr(getattr(result, "instance", result), "version", expected_source_version)
+        )
+        return TaskCommandReceipt(
+            source_id, TaskCommand(command), TaskCommandState.ACCEPTED, version
+        )
+
+    async def resolve_task_detail(
+        self, source_id: UUID, *, owner_scope_id: UUID
+    ) -> dict[str, object]:
+        if isinstance(self.owner_scope_id, UUID) and owner_scope_id != self.owner_scope_id:
+            raise PermissionError("workflow task owner mismatch")
+        getter: Any = getattr(self.application, "get_instance", None)
+        if not callable(getter):
+            repository: Any = getattr(self.application, "repository", None)
+            getter = getattr(repository, "get_instance", None)
+        if not callable(getter):
+            raise TypeError("workflow application must expose get_instance")
+        item: Any = await cast(Any, getter)(self.issuer, self.subject, source_id)
+        if not isinstance(item, WorkflowInstance):
+            raise WorkflowNotFound("workflow instance not found")
+        return {
+            "displayLabel": f"Workflow {item.workflow_id}",
+            "recoveryAction": "cancel"
+            if item.status is not WorkflowInstanceStatus.TERMINAL
+            else None,
+        }
+
+
+class WorkflowTaskSourceAdapter:
+    """TaskSourcePort backed by the workflow application facade."""
+
+    kind = "workflow_instance"
+
+    def __init__(
+        self,
+        application: object,
+        *,
+        owner_scope_id: UUID | None = None,
+        issuer: str | None = None,
+        subject: str | None = None,
+        workflow_id: UUID | None = None,
+    ) -> None:
+        from aura_core.domains.execution.tasks.contracts import TaskSourceKind
+        from aura_core.domains.execution.tasks.source_adapter import ApplicationTaskSourceAdapter
+
+        bound_application = (
+            application
+            if callable(getattr(application, "query_task_projection_snapshots", None))
+            else WorkflowTaskProjectionApplication(
+                application,
+                owner_scope_id=owner_scope_id,
+                issuer=issuer,
+                subject=subject,
+                workflow_id=workflow_id,
+            )
+        )
+        self._adapter = ApplicationTaskSourceAdapter(
+            TaskSourceKind.WORKFLOW_INSTANCE, bound_application
+        )
+        self.kind = self._adapter.kind
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._adapter, name)

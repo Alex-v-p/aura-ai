@@ -15,6 +15,7 @@ from uuid import UUID, uuid4, uuid5
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aura_core.domains.execution.runs.public import Run, RunStatus, SqlRunRepository
+from aura_core.domains.execution.tasks.transport import TaskSourceInvalidationStage
 from aura_core.domains.governance.identity.public import SqlIdentityRepository
 from aura_core.domains.interaction.agents.public import (
     AgentConfigurationRepository,
@@ -66,7 +67,7 @@ from aura_core.domains.knowledge.memory.recall import (
     MemoryRecallTelemetryPort,
 )
 from aura_core.domains.knowledge.memory.repository import SqlMemoryRepository
-from aura_core.platform.outbox import OutboxCommand, make_identifier_command
+from aura_core.platform.outbox import OutboxCommand, SqlOutboxRepository, make_identifier_command
 from aura_core.platform.telemetry import (
     MemoryTraceContext,
     MetadataMetrics,
@@ -125,6 +126,8 @@ def memory_command_factory(
     run_id = run.id
     assistant_id = assistant.id
     agent_revision_id = run.agent_revision_id
+    if run.user_message_id is None:
+        raise MemoryValidationError("completed memory run evidence is incomplete")
     command_id = uuid5(_MEMORY_COMMAND_NAMESPACE, f"command:{run_id}")
     return make_identifier_command(
         MEMORY_PROCESSING_TOPIC,
@@ -166,6 +169,8 @@ def _production_memory_loaders(
             run = await runs.get(session, run_id)
             if run is None or run.status is not RunStatus.COMPLETED:
                 raise MemoryValidationError("completed memory run is unavailable")
+            if run.conversation_id is None or run.user_message_id is None:
+                raise MemoryValidationError("completed memory run evidence is incomplete")
             # Resolve the principal through the conversation owner, never from
             # provider or command metadata.
             conversation = await conversations.get(session, run.conversation_id)
@@ -986,12 +991,17 @@ def memory_repository(
     *,
     testing: bool = False,
     metrics: MetadataMetrics | None = None,
+    outbox: object | None = None,
 ) -> MemoryRepository:
     if testing or sessions is None:
         repository: MemoryRepository = MemoryStore()
         dependency = "memory_store"
     else:
-        repository = SqlMemoryRepository(sessions)
+        repository = SqlMemoryRepository(
+            sessions,
+            source_outbox=outbox
+            or TaskSourceInvalidationStage(SqlOutboxRepository()),
+        )
         dependency = "postgresql"
     return InstrumentedMemoryRepository(repository, metrics or MetadataMetrics(), dependency)
 
@@ -1109,7 +1119,12 @@ def memory_processing_service(
 ) -> object:
     """Compose the worker memory processor without introducing a service."""
 
-    repository = memory_repository(sessions, testing=sessions is None, metrics=metrics)
+    repository = memory_repository(
+        sessions,
+        testing=sessions is None,
+        metrics=metrics,
+        outbox=TaskSourceInvalidationStage(SqlOutboxRepository()),
+    )
     memory_metrics = metrics or MetadataMetrics()
     endpoint = str(getattr(settings, "ollama_url", "http://ollama:11434"))
     timeout = float(getattr(settings, "ollama_run_timeout_seconds", 30.0))

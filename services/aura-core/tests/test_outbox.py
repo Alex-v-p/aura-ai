@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -12,9 +13,13 @@ from aura_core.entrypoints.api.state import AppState
 from aura_core.platform.auth import Settings
 from aura_core.platform.outbox import (
     OutboxCommand,
+    SqlOutboxRepository,
     identifier_trace_metadata,
     make_aggregate_command,
 )
+from aura_core.platform.outbox.persistence import OutboxRow
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 def test_run_envelope_remains_byte_compatible() -> None:
@@ -29,7 +34,6 @@ def test_run_envelope_remains_byte_compatible() -> None:
         run_id,
         run_id,
     )
-
     assert (
         command.wire_payload()
         == json.dumps(
@@ -46,6 +50,83 @@ def test_run_envelope_remains_byte_compatible() -> None:
         ).encode()
     )
 
+
+def test_real_transactional_outbox_commit_and_rollback() -> None:
+    url = os.environ.get("AURA_TEST_DATABASE_URL")
+    if not url or os.environ.get("AURA_TEST_DEPENDENCIES_ISOLATED") != "1":
+        pytest.skip(
+            "AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 are required "
+            "for PostgreSQL outbox coverage"
+        )
+
+    async def scenario() -> None:
+        schema = f"aura0143_outbox_{uuid4().hex[:12]}"
+        admin_engine = create_engine(url)
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        engine = create_async_engine(url, connect_args={"options": f"-c search_path={schema}"})
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        committed = uuid4()
+        rolled_back = uuid4()
+        pending_conflict = uuid4()
+        repository = SqlOutboxRepository()
+        committed_command = make_aggregate_command(
+            "aura.test.transactional.v1", committed, "test.aggregate", committed
+        )
+        rolled_back_command = make_aggregate_command(
+            "aura.test.transactional.v1", rolled_back, "test.aggregate", rolled_back
+        )
+        pending_command = make_aggregate_command(
+            "aura.test.transactional.v1", pending_conflict, "test.aggregate", pending_conflict
+        )
+        pending_conflict_command = make_aggregate_command(
+            "aura.test.transactional.conflict.v1",
+            pending_conflict,
+            "test.aggregate",
+            pending_conflict,
+        )
+        persisted_conflict = make_aggregate_command(
+            "aura.test.transactional.conflict.v1",
+            committed,
+            "test.aggregate",
+            committed,
+        )
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(
+                    cast(Any, OutboxRow.__table__).create,
+                    checkfirst=True,
+                )
+            async with sessions.begin() as session:
+                await repository.stage_command(session, command=committed_command)
+                await repository.stage_command(session, command=committed_command)
+            with pytest.raises(RuntimeError, match="rollback"):
+                async with sessions.begin() as session:
+                    await repository.stage_command(session, command=rolled_back_command)
+                    raise RuntimeError("rollback")
+            with pytest.raises(ValueError, match="staged envelope"):
+                async with sessions.begin() as session:
+                    await repository.stage_command(session, command=pending_command)
+                    await repository.stage_command(session, command=pending_conflict_command)
+            with pytest.raises(ValueError, match="persisted envelope"):
+                async with sessions.begin() as session:
+                    await repository.stage_command(session, command=persisted_conflict)
+            async with sessions() as session:
+                rows = (
+                    await session.execute(
+                        select(OutboxRow.id).where(
+                            OutboxRow.id.in_((committed, rolled_back, pending_conflict))
+                        )
+                    )
+                ).scalars().all()
+                assert rows == [committed]
+        finally:
+            await engine.dispose()
+            with admin_engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            admin_engine.dispose()
+
+    asyncio.run(scenario())
 
 def test_generic_aggregate_command_has_no_run_or_conversation_ids() -> None:
     reminder_id = uuid4()

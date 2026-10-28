@@ -1,8 +1,11 @@
 """PostgreSQL adapter for the public memory repository port."""
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import hashlib
+import inspect
 import math
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
@@ -151,9 +154,11 @@ class SqlMemoryRepository:
         sessions: async_sessionmaker[AsyncSession],
         *,
         clock: Callable[[], datetime] | None = None,
+        source_outbox: object | None = None,
     ) -> None:
         self.sessions = sessions
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._source_outbox = source_outbox
         self._run_recall_metadata_loader: Callable[..., Awaitable[object]] | None = None
         self._candidate_evidence_loader: Callable[..., Awaitable[object]] | None = None
         self._embedding_queue_boundary: Callable[..., Awaitable[object]] | None = None
@@ -183,6 +188,42 @@ class SqlMemoryRepository:
 
         value = self._clock()
         return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+    async def _append_task_source_invalidation(
+        self,
+        session: AsyncSession,
+        *,
+        source_id: UUID,
+        source_version: int,
+        occurred_at: datetime,
+        correlation_id: UUID,
+        causation_id: UUID,
+    ) -> None:
+        """Stage through the bootstrap-composed platform outbox port."""
+        stage = getattr(self._source_outbox, "stage_task_source_invalidation", None)
+        if not callable(stage):
+            # Direct repository fixtures may omit the transport; production
+            # composition always injects the platform outbox port.  Never
+            # fall back to execution-owned persistence here.
+            return
+        event_id = uuid5(
+            UUID("4c2a5df3-8b07-4a6d-a9ca-3d19f4ee0d4e"),
+            f"memory_reindex:{source_id}:{source_version}",
+        )
+        payload = {
+            "schemaVersion": 1,
+            "eventId": str(event_id),
+            "eventType": "task.source_invalidated",
+            "sourceKind": "memory_reindex",
+            "sourceId": str(source_id),
+            "sourceVersion": source_version,
+            "occurredAt": occurred_at.isoformat(),
+            "correlationId": str(correlation_id),
+            "causationId": str(causation_id),
+        }
+        result = stage(session, payload=payload)
+        if inspect.isawaitable(result):
+            await result
 
     def set_clock_for_testing(self, clock: Callable[[], datetime]) -> None:
         """Replace the clock through an explicit deterministic test seam."""
@@ -349,6 +390,7 @@ class SqlMemoryRepository:
                 row.model_digest,
                 row.principal_issuer,
                 row.principal_subject,
+                row.task_projection_version,
             )
 
     async def list_embedding_generations(
@@ -379,9 +421,84 @@ class SqlMemoryRepository:
                     row.model_digest,
                     row.principal_issuer,
                     row.principal_subject,
+                    row.task_projection_version,
                 )
                 for row in rows
             ]
+
+    async def get_reindex_task(self, generation_id: UUID) -> MemoryEmbeddingGeneration:
+        async with self.sessions() as session:
+            row = await session.get(MemoryEmbeddingGenerationRow, generation_id)
+        if row is None:
+            raise MemoryNotFound("embedding generation not found")
+        return MemoryEmbeddingGeneration(
+            row.id,
+            row.generation,
+            row.model_id,
+            row.model_revision,
+            row.dimension,
+            row.status,
+            row.created_at or datetime.now(UTC),
+            row.activated_at,
+            row.model_digest,
+            row.principal_issuer,
+            row.principal_subject,
+            row.task_projection_version,
+        )
+
+    async def list_reindex_tasks(
+        self, *, cursor: str | None = None, limit: int = 100
+    ) -> tuple[MemoryEmbeddingGeneration, ...]:
+        from .task_cursor import decode_task_cursor
+
+        position = decode_task_cursor(cursor) if cursor else None
+        filters: list[ColumnElement[bool]] = []
+        if position:
+            fence, stamp, item_id = position
+            filters.append(
+                or_(
+                    and_(MemoryEmbeddingGenerationRow.created_at <= fence,
+                        MemoryEmbeddingGenerationRow.created_at < stamp),
+                    and_(
+                        MemoryEmbeddingGenerationRow.created_at == stamp,
+                        MemoryEmbeddingGenerationRow.id < item_id,
+                    ),
+                )
+            )
+        else:
+            fence = datetime.now(UTC)
+            filters.append(MemoryEmbeddingGenerationRow.created_at <= fence)
+        async with self.sessions() as session:
+            rows = list(
+                (
+                    await session.scalars(
+                        select(MemoryEmbeddingGenerationRow)
+                        .where(*filters)
+                        .order_by(
+                            MemoryEmbeddingGenerationRow.created_at.desc(),
+                            MemoryEmbeddingGenerationRow.id.desc(),
+                        )
+                        .limit(limit)
+                    )
+                ).all()
+            )
+        return tuple(
+            MemoryEmbeddingGeneration(
+                row.id,
+                row.generation,
+                row.model_id,
+                row.model_revision,
+                row.dimension,
+                row.status,
+                row.created_at or datetime.now(UTC),
+                row.activated_at,
+                row.model_digest,
+                row.principal_issuer,
+                row.principal_subject,
+                row.task_projection_version,
+            )
+            for row in rows
+        )
 
     async def get_active_embedding_generation(
         self, issuer: str, subject: str
@@ -418,6 +535,7 @@ class SqlMemoryRepository:
                 row.model_digest,
                 issuer,
                 subject,
+                row.task_projection_version,
             )
 
     async def _ensure_active_embedding_job(
@@ -624,6 +742,7 @@ class SqlMemoryRepository:
                 row = MemoryMaintenanceStateRow(
                     principal_issuer=issuer,
                     principal_subject=subject,
+                    task_projection_version=1,
                     last_run_at=ran_at,
                     last_reindex_generation=generation,
                     reindex_generation_id=generation_id,
@@ -2016,7 +2135,12 @@ class SqlMemoryRepository:
                     created_at=item.created_at,
                     principal_issuer=issuer,
                     principal_subject=subject,
+                    task_projection_version=1,
                 )
+            )
+            await self._append_task_source_invalidation(
+                session, source_id=item.id, source_version=1,
+                occurred_at=item.created_at, correlation_id=item.id, causation_id=item.id
             )
         return item
 
@@ -2084,7 +2208,20 @@ class SqlMemoryRepository:
                     and previous.principal_subject == subject
                 ):
                     previous.status = "retired"
+                    previous.task_projection_version += 1
+                    await self._append_task_source_invalidation(
+                        session, source_id=previous.id,
+                        source_version=previous.task_projection_version,
+                        occurred_at=previous.activated_at or self._now(),
+                        correlation_id=previous.id, causation_id=generation_id,
+                    )
             row.status, row.activated_at = "active", datetime.now(UTC)
+            row.task_projection_version += 1
+            await self._append_task_source_invalidation(
+                session, source_id=row.id, source_version=row.task_projection_version,
+                occurred_at=row.activated_at or self._now(),
+                correlation_id=row.id, causation_id=row.id,
+            )
             if configuration is not None:
                 configuration.embedding_generation = generation_id
                 configuration.version += 1
@@ -2101,6 +2238,7 @@ class SqlMemoryRepository:
                 row.model_digest,
                 row.principal_issuer,
                 row.principal_subject,
+                row.task_projection_version,
             )
 
     async def mark_embedding_generation_failed(
@@ -2115,6 +2253,11 @@ class SqlMemoryRepository:
             if row.status != "building":
                 raise MemoryValidationError("only a building embedding generation can fail")
             row.status = "failed"
+            row.task_projection_version += 1
+            await self._append_task_source_invalidation(
+                session, source_id=row.id, source_version=row.task_projection_version,
+                occurred_at=self._now(), correlation_id=row.id, causation_id=row.id,
+            )
             return MemoryEmbeddingGeneration(
                 row.id,
                 row.generation,
@@ -2127,6 +2270,7 @@ class SqlMemoryRepository:
                 row.model_digest,
                 row.principal_issuer,
                 row.principal_subject,
+                row.task_projection_version,
             )
 
     async def attach_embedding(

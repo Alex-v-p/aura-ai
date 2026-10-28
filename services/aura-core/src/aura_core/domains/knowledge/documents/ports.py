@@ -124,6 +124,10 @@ class DocumentRepository(Protocol):
 
     async def get_any(self, document_id: UUID) -> Document | None: ...
 
+    async def list_all(
+        self, *, offset: int = 0, limit: int = 100
+    ) -> list[Document]: ...
+
     async def list(
         self,
         owner: tuple[str, str],

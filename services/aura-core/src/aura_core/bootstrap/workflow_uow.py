@@ -48,6 +48,7 @@ from aura_core.domains.execution.runs.public import (
     RunCoordinatorWorkflowAdapter,
     WorkflowRunLineage,
 )
+from aura_core.domains.execution.tasks.transport import TaskSourceInvalidationStage
 from aura_core.domains.governance.approvals.public import WorkflowApprovalOrigin
 from aura_core.domains.interaction.agents.public import AgentCatalog, AgentConfigurationService
 from aura_core.platform.outbox import (
@@ -81,14 +82,34 @@ class _WorkflowOutboxIntent(WorkflowIntentPort):
 
     def __init__(self) -> None:
         self._outbox = SqlOutboxRepository()
+        self._task_stage = TaskSourceInvalidationStage(self._outbox)
 
     async def stage_lifecycle(
         self, intent: WorkflowLifecycleIntent, *, transaction: object | None = None
     ) -> None:
-        # Lifecycle rows are already persisted by the workflow repository. The
-        # live API replays that authoritative table; no second content-bearing
-        # event is sent through NATS.
-        del intent, transaction
+        if transaction is None:
+            raise WorkflowCompositionError("workflow lifecycle requires the state transaction")
+        event = intent.event
+        source_id = event.get("instanceId")
+        source_version = event.get("version", event.get("instanceVersion"))
+        occurred_at = event.get("occurredAt")
+        if source_id is None or source_version is None or occurred_at is None:
+            raise WorkflowCompositionError("workflow lifecycle event lacks projection metadata")
+        event_id = UUID(str(event["eventId"]))
+        payload = {
+            "schemaVersion": 1,
+            "eventId": str(event_id),
+            "eventType": "task.source_invalidated",
+            "sourceKind": "workflow_instance",
+            "sourceId": str(source_id),
+            "sourceVersion": int(str(source_version)),
+            "occurredAt": str(occurred_at),
+            "correlationId": str(event_id),
+            "causationId": str(event_id),
+        }
+        await self._task_stage.stage_task_source_invalidation(
+            cast(Any, transaction), payload=payload
+        )
 
     async def stage_wakeup(
         self, intent: WorkflowWakeIntent, *, transaction: object | None = None

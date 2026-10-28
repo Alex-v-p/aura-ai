@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid5
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -487,6 +487,14 @@ class BriefingRepository(Protocol):
 
     async def get_occurrence_by_id(self, occurrence_id: UUID) -> BriefingOccurrence: ...
 
+    async def get_occurrence_for_task_projection(
+        self, occurrence_id: UUID, *, capability: object | None = None
+    ) -> BriefingOccurrence: ...
+
+    async def list_occurrences_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object | None = None
+    ) -> tuple[BriefingOccurrence, ...]: ...
+
     async def delete_history(
         self,
         issuer: str,
@@ -739,6 +747,22 @@ class BriefingApplicationService:
         self.repository = repository
         self.cancellation_port: BriefingCancellationPort | None = None
         self.execution_application: object | None = None
+        self.__task_projection_capability: object | None = None
+
+    def __bind_capability(self, capability: object) -> None:  # pyright: ignore[reportUnusedFunction]
+        if self.__task_projection_capability is not None:
+            raise PermissionError("briefing projection capability is already bound")
+        self.__task_projection_capability = capability
+        bind = getattr(self.repository, f"_{type(self.repository).__name__}__bind_capability", None)
+        if callable(bind):
+            bind(capability)
+
+    def __validate_task_projection_capability(self, capability: object) -> None:
+        if (
+            self.__task_projection_capability is None
+            or capability is not self.__task_projection_capability
+        ):
+            raise PermissionError("briefing projection capability is not admitted")
 
     def set_cancellation_port(self, port: BriefingCancellationPort) -> None:
         self.cancellation_port = port
@@ -861,6 +885,46 @@ class BriefingApplicationService:
             return await cast(Awaitable[BriefingOccurrence], result)
         return cast(BriefingOccurrence, result)
 
+    async def get_occurrence_for_task_projection(
+        self, occurrence_id_value: UUID, *, capability: object | None = None
+    ) -> BriefingOccurrence:
+        self.__validate_task_projection_capability(capability)
+        method = getattr(self.repository, "get_occurrence_for_task_projection", None)
+        if not callable(method):
+            raise BriefingTransitionError("briefing projection lookup is unavailable")
+        result = await cast(Callable[..., Awaitable[BriefingOccurrence]], method)(
+            occurrence_id_value, capability=capability
+        )
+        return result
+
+    async def list_occurrences_for_task_projection(
+        self, *, cursor: str | None = None, limit: int = 100, capability: object | None = None
+    ) -> tuple[BriefingOccurrence, ...]:
+        self.__validate_task_projection_capability(capability)
+        method = getattr(self.repository, "list_occurrences_for_task_projection", None)
+        if not callable(method):
+            raise BriefingTransitionError("briefing projection enumeration is unavailable")
+        result = await cast(Callable[..., Awaitable[object]], method)(
+            cursor=cursor, limit=limit, capability=capability
+        )
+        values = getattr(result, "items", result)
+        return tuple(cast(tuple[BriefingOccurrence, ...], values))
+
+    async def admit_occurrence(self, *args: object, **kwargs: object) -> BriefingOccurrence:
+        method = self.repository.admit_occurrence
+        occurrence = await cast(Callable[..., Awaitable[BriefingOccurrence]], method)(
+            *args, **kwargs
+        )
+        return occurrence
+
+    async def create_result(self, result: BriefingResult) -> BriefingResult:
+        value = await self.repository.create_result(result)
+        return value
+
+    async def update_result(self, result: BriefingResult) -> BriefingResult:
+        value = await self.repository.update_result(result)
+        return value
+
     async def delete_occurrence_history(
         self, issuer: str, subject: str, schedule_id: UUID, **kwargs: object
     ) -> BriefingDeletionReceipt:
@@ -873,3 +937,328 @@ class BriefingApplicationService:
         self, issuer: str, subject: str, result_id: UUID, **kwargs: object
     ) -> BriefingDeletionReceipt:
         return await self.repository.delete_result_content(issuer, subject, result_id, **kwargs)  # type: ignore[arg-type]
+
+
+async def query_task_projection_snapshots(
+    query: object,
+    *,
+    capability: object,
+) -> object:
+    """Expose only the closed, metadata-only occurrence projection seam."""
+    from aura_core.domains.execution.tasks.contracts import (
+        TaskProjectionSnapshotQuery,
+    )
+
+    if not isinstance(query, TaskProjectionSnapshotQuery):
+        raise TypeError("task projection query is invalid")
+    raise PermissionError("briefing snapshot enumeration requires a bound source adapter")
+
+
+class BriefingTaskProjectionApplication:
+    """Bound Task Center view over the briefing occurrence application API."""
+
+    def __init__(
+        self,
+        application: Any,
+        *,
+        owner_scope_id: UUID | None = None,
+        issuer: str | None = None,
+        subject: str | None = None,
+        schedule_id: UUID | None = None,
+    ) -> None:
+        self.application: Any = application
+        self.owner_scope_id: Any = owner_scope_id or getattr(
+            application, "task_projection_owner_scope_id", None
+        )
+        owner: Any = getattr(application, "task_projection_owner", None)
+        self.issuer: Any
+        self.subject: Any
+        self.issuer, self.subject = (
+            (issuer, subject)
+            if issuer is not None and subject is not None
+            else owner
+            if isinstance(owner, tuple) and len(cast(tuple[object, ...], owner)) == 2
+            else (getattr(application, "issuer", None), getattr(application, "subject", None))
+        )
+        self.schedule_id: Any = schedule_id or getattr(
+            application, "task_projection_schedule_id", None
+        )
+        self.__capability: object | None = None
+
+    def __bind_capability(self, capability: object) -> None:  # composition-only  # pyright: ignore[reportUnusedFunction]  # noqa: E501
+        if self.__capability is not None:
+            raise PermissionError("briefing projection capability is already bound")
+        self.__capability = capability
+        bind = getattr(
+            self.application,
+            f"_{type(self.application).__name__}__bind_capability",
+            None,
+        )
+        if callable(bind):
+            bind(capability)
+        repository = getattr(self.application, "repository", None)
+        bind_repository = getattr(
+            repository, f"_{type(repository).__name__}__bind_capability", None
+        )
+        if callable(bind_repository):
+            bind_repository(capability)
+
+    def __validate_capability(self, capability: object) -> None:
+        if self.__capability is None or capability is not self.__capability:
+            raise PermissionError("briefing projection capability is not admitted")
+
+    async def get_occurrence_for_task_projection(
+        self, occurrence_id_value: UUID, *, capability: object | None = None
+    ) -> BriefingOccurrence:
+        self.__validate_capability(capability)
+        method = getattr(self.application, "get_occurrence_for_task_projection", None)
+        if not callable(method):
+            method = getattr(
+                getattr(self.application, "repository", None),
+                "get_occurrence_for_task_projection",
+                None,
+            )
+        if not callable(method):
+            raise TypeError("briefing source does not expose global occurrence lookup")
+        try:
+            result = method(occurrence_id_value, capability=capability)
+        except TypeError as exc:
+            if "capability" not in str(exc):
+                raise
+            result = method(occurrence_id_value)
+        result = await cast(Awaitable[object], result)
+        return cast(BriefingOccurrence, result)
+
+    async def list_occurrences_for_task_projection(
+        self, *, cursor: str | None, limit: int, capability: object | None = None
+    ) -> tuple[BriefingOccurrence, ...]:
+        self.__validate_capability(capability)
+        method = getattr(self.application, "list_occurrences_for_task_projection", None)
+        if not callable(method):
+            method = getattr(
+                getattr(self.application, "repository", None),
+                "list_occurrences_for_task_projection",
+                None,
+            )
+        if not callable(method):
+            raise TypeError("briefing source does not expose global occurrence enumeration")
+        try:
+            result = method(cursor=cursor, limit=limit, capability=capability)
+        except TypeError as exc:
+            if "capability" not in str(exc):
+                raise
+            result = method(cursor=cursor, limit=limit)
+        result = await cast(Awaitable[object], result)
+        values = getattr(result, "items", result)
+        return tuple(cast(tuple[BriefingOccurrence, ...], values))
+
+    async def _items(self, query: Any, *, capability: object) -> tuple[BriefingOccurrence, ...]:
+        from aura_core.domains.execution.tasks.contracts import TaskProjectionSnapshotQuery
+
+        if not isinstance(query, TaskProjectionSnapshotQuery):
+            raise TypeError("task projection query is invalid")
+        if query.mode == "exact":
+            assert query.source_id is not None
+            item = await self.get_occurrence_for_task_projection(
+                query.source_id, capability=capability
+            )
+            return (
+                (item,)
+                if item.version >= query.minimum_source_version
+                else ()
+            )
+        values = await self.list_occurrences_for_task_projection(
+            cursor=query.cursor, limit=query.page_size, capability=capability
+        )
+        return tuple(values)
+
+    @staticmethod
+    def _snapshot(item: BriefingOccurrence, owner_scope_id: UUID) -> object:
+        from aura_core.domains.execution.tasks.contracts import (
+            TaskNormalizedStatus,
+            TaskProjectionCapability,
+            TaskProjectionSnapshot,
+            TaskSourceKind,
+        )
+
+        status = {
+            BriefingOccurrenceStatus.SCHEDULED: TaskNormalizedStatus.WAITING,
+            BriefingOccurrenceStatus.ADMITTED: TaskNormalizedStatus.RUNNING,
+            BriefingOccurrenceStatus.RUNNING: TaskNormalizedStatus.RUNNING,
+            BriefingOccurrenceStatus.COMPLETED: TaskNormalizedStatus.COMPLETED,
+            BriefingOccurrenceStatus.PARTIAL: TaskNormalizedStatus.COMPLETED,
+            BriefingOccurrenceStatus.FAILED: TaskNormalizedStatus.FAILED,
+            BriefingOccurrenceStatus.CANCELED: TaskNormalizedStatus.CANCELED,
+            BriefingOccurrenceStatus.SKIPPED: TaskNormalizedStatus.CANCELED,
+            BriefingOccurrenceStatus.UNKNOWN: TaskNormalizedStatus.UNKNOWN,
+        }[item.status]
+        return TaskProjectionSnapshot(
+            owner_scope_id,
+            TaskSourceKind.BRIEFING_OCCURRENCE,
+            item.id,
+            item.version,
+            status,
+            item.status.value,
+            item.status.value
+            if status
+            in {
+                TaskNormalizedStatus.COMPLETED,
+                TaskNormalizedStatus.FAILED,
+                TaskNormalizedStatus.CANCELED,
+            }
+            else None,
+            item.status.value,
+            1.0 if status is TaskNormalizedStatus.COMPLETED else None,
+            TaskProjectionCapability(),
+            "briefing_occurrence_detail",
+            None,
+            item.created_at,
+            item.updated_at,
+            item.finished_at,
+        )
+
+    async def query_task_projection_snapshots(self, query: Any, *, capability: object) -> Any:
+        self.__validate_capability(capability)
+        from aura_core.domains.execution.tasks.contracts import TaskProjectionSnapshotPage
+
+        def owner_for(item: object) -> UUID:
+            value = getattr(item, "owner_scope_id", None)
+            if isinstance(value, UUID):
+                return value
+            resolver = getattr(self.application, "task_projection_owner_scope_id_for", None)
+            resolved = resolver(item) if callable(resolver) else None
+            if isinstance(resolved, UUID):
+                return resolved
+            issuer = getattr(item, "issuer", None)
+            subject = getattr(item, "subject", None)
+            if isinstance(issuer, str) and isinstance(subject, str):
+                return uuid5(UUID("8edc7ad7-8f83-4f13-b34b-1fa37d4c6bf4"), f"{issuer}:{subject}")
+            raise ValueError("briefing source did not provide an owner scope")
+
+        items: tuple[Any, ...] = tuple(
+            self._snapshot(item, owner_for(item))
+            for item in await self._items(query, capability=capability)
+        )
+        if getattr(query, "mode", None) == "exact":
+            return items[0] if items else None
+        page_size = query.page_size
+        from .task_cursor import decode_task_cursor, encode_task_cursor
+
+        next_cursor = (
+            encode_task_cursor(
+                decode_task_cursor(query.cursor)[0] if query.cursor else items[0].created_at,
+                items[-1].created_at,
+                items[-1].source_id,
+            )
+            if len(items) == page_size and items
+            else None
+        )
+        return TaskProjectionSnapshotPage(
+            items=items,
+            scan_complete=len(items) < page_size,
+            next_cursor=next_cursor,
+        )
+
+    async def command_task(
+        self,
+        source_id: UUID,
+        command: object,
+        *,
+        owner_scope_id: UUID,
+        expected_source_version: int,
+        idempotency_key: str,
+    ) -> object:
+        from aura_core.domains.execution.tasks.contracts import (
+            TaskCommand,
+            TaskCommandReceipt,
+            TaskCommandState,
+        )
+
+        action = "cancel_occurrence" if str(command) == "cancel" else "retry_occurrence"
+        method: Any = getattr(self.application, action, None)
+        if (
+            isinstance(self.owner_scope_id, UUID) and owner_scope_id != self.owner_scope_id
+        ) or not callable(method):
+            return TaskCommandReceipt(
+                source_id,
+                TaskCommand(command),
+                TaskCommandState.REJECTED
+                if owner_scope_id != self.owner_scope_id
+                else TaskCommandState.UNKNOWN,
+                expected_source_version,
+            )
+        result: Any = await cast(Any, method)(
+            self.issuer,
+            self.subject,
+            source_id,
+            expected_version=expected_source_version,
+            idempotency_key=idempotency_key,
+        )
+        return TaskCommandReceipt(
+            source_id,
+            TaskCommand(command),
+            TaskCommandState.ACCEPTED,
+            int(getattr(result, "version", expected_source_version)),
+        )
+
+    async def resolve_task_detail(
+        self, source_id: UUID, *, owner_scope_id: UUID
+    ) -> dict[str, object]:
+        if isinstance(self.owner_scope_id, UUID) and owner_scope_id != self.owner_scope_id:
+            raise PermissionError("briefing task owner mismatch")
+        from aura_core.domains.execution.tasks.contracts import (
+            TaskProjectionSnapshotQuery,
+            TaskSourceKind,
+        )
+
+        if self.__capability is None:
+            raise PermissionError("briefing projection capability is not admitted")
+        item = await self._items(
+            TaskProjectionSnapshotQuery.exact(TaskSourceKind.BRIEFING_OCCURRENCE, source_id),
+            capability=self.__capability,
+        )
+        if not item:
+            raise BriefingNotFound("briefing occurrence not found")
+        return {
+            "displayLabel": f"Briefing occurrence {item[0].sequence}",
+            "recoveryAction": "retry"
+            if item[0].status is BriefingOccurrenceStatus.FAILED
+            else None,
+        }
+
+
+class BriefingTaskSourceAdapter:
+    """TaskSourcePort backed by the briefing application facade."""
+
+    kind = "briefing_occurrence"
+
+    def __init__(
+        self,
+        application: object,
+        *,
+        owner_scope_id: UUID | None = None,
+        issuer: str | None = None,
+        subject: str | None = None,
+        schedule_id: UUID | None = None,
+    ) -> None:
+        from aura_core.domains.execution.tasks.contracts import TaskSourceKind
+        from aura_core.domains.execution.tasks.source_adapter import ApplicationTaskSourceAdapter
+
+        bound_application = (
+            application
+            if callable(getattr(application, "query_task_projection_snapshots", None))
+            else BriefingTaskProjectionApplication(
+                application,
+                owner_scope_id=owner_scope_id,
+                issuer=issuer,
+                subject=subject,
+                schedule_id=schedule_id,
+            )
+        )
+        self._adapter = ApplicationTaskSourceAdapter(
+            TaskSourceKind.BRIEFING_OCCURRENCE, bound_application
+        )
+        self.kind = self._adapter.kind
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._adapter, name)

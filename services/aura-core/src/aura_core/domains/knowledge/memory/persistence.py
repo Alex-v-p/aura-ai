@@ -18,6 +18,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKeyConstraint,
@@ -163,7 +164,12 @@ class MemoryEmbeddingGenerationRow(Base):
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     principal_issuer: Mapped[str] = mapped_column(String(1024), nullable=False, server_default="")
     principal_subject: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
+    task_projection_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     __table_args__ = (
+        CheckConstraint(
+            "task_projection_version > 0",
+            name="ck_memory_embedding_generations_task_projection_version",
+        ),
         UniqueConstraint(
             "id", "principal_issuer", "principal_subject", name="uq_memory_generation_id_owner"
         ),

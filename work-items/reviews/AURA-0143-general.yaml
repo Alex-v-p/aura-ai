@@ -1,0 +1,45 @@
+agent: general_reviewer
+work_item: AURA-0143
+verdict: PASS
+checked:
+  - >-
+    Re-traced the final generic platform outbox and JetStream boundary,
+    execution-owned task invalidation adapter, source-owned public snapshot
+    seams and stable keyset fences, durable rebuild/reconciliation behavior,
+    task API/SSE behavior, and the ordered 0029 -> 0030 -> 0031 migration chain.
+  - >-
+    Verified live production lifecycle atomicity for workflow admission,
+    briefing schedule and occurrence creation, document upload, and memory
+    embedding-generation registration. Each real repository hook stages one
+    exact TaskSourceInvalidated envelope with the authoritative version in the
+    source transaction; injected staging failures roll back both source truth
+    and the event.
+  - >-
+    Verified SqlOutboxRepository pending-row handling against live PostgreSQL.
+    Staging an identical command twice in one transaction commits one row,
+    while pending and persisted same-ID envelope conflicts raise deterministic
+    validation errors before commit. Briefing root flush ordering and the
+    no-autoflush source lifecycle path remain green.
+  - >-
+    The literal isolated PostgreSQL projection/source command passes 79 tests
+    with zero skips. The literal live outbox, AURA-0133, JetStream, and 0031
+    migration command passes 37 tests with zero skips. The focused production
+    source suite passes 24 tests with zero skips.
+  - >-
+    The workflow, briefing, document, and document-SQL batch passes 68 tests;
+    its single skip is the pre-existing optional AURA-0068 concurrency case and
+    is outside AURA-0143 acceptance. The isolated memory persistence batch
+    passes 30 tests with zero skips.
+  - >-
+    Required ruff, pyright, import-boundary, service-isolation,
+    repository-shape, observability, work-item, baseline-protection, and diff
+    checks pass for the reviewed slice. Changed-path, contract-change, and
+    module-registry failures are limited to concurrent AURA-0142/AURA-0144 and
+    integration-owned shared composition and were not treated as worker-slice
+    blockers under the approved delivery sequence.
+  - >-
+    Core, platform, and test/evaluation handoffs record the final 79-test and
+    37-test literal results, the 24-test focused source result, live migration
+    and durable redelivery evidence, and the corrected pending-row duplicate
+    and conflict behavior.
+findings: []

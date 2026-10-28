@@ -776,6 +776,8 @@ class _MemoryStoreBase(MemoryRepository):
 
 
 class MemoryStore(_MemoryStoreBase):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
     async def list_embedding_generations(
         self, issuer: str, subject: str, *, status: str | None = None
     ) -> list[MemoryEmbeddingGeneration]:
@@ -797,6 +799,25 @@ class MemoryStore(_MemoryStoreBase):
         if item is None or item.issuer != issuer or item.subject != subject:
             raise MemoryNotFound("embedding generation not found")
         return item
+
+    async def get_reindex_task(self, generation_id: UUID) -> MemoryEmbeddingGeneration | None:
+        """Internal projection lookup over the authoritative reindex lifecycle."""
+        return self.embedding_generations.get(generation_id)
+
+    async def list_reindex_tasks(
+        self, *, cursor: str | None = None, limit: int = 100
+    ) -> tuple[MemoryEmbeddingGeneration, ...]:
+        values = sorted(
+            self.embedding_generations.values(),
+            key=lambda item: (item.created_at, item.id),
+            reverse=True,
+        )
+        if cursor:
+            from .task_cursor import decode_task_cursor
+
+            _fence, stamp, item_id = decode_task_cursor(cursor)
+            values = [item for item in values if (item.created_at, item.id) < (stamp, item_id)]
+        return tuple(values[:limit])
 
     async def list_memories(
         self, issuer: str, subject: str, filters: MemoryFilters | None = None
@@ -1504,12 +1525,14 @@ class MemoryStore(_MemoryStoreBase):
                     and previous.subject == subject
                 ):
                     previous.status = "retired"
+                    previous.task_projection_version += 1
             self.model_configurations[(issuer, subject)] = replace(
                 configuration,
                 embedding_generation=generation_id,
                 version=configuration.version + 1,
             )
         item.status = "active"
+        item.task_projection_version += 1
         item.activated_at = self._now()
         activated = item
         self.embedding_generations[generation_id] = item
@@ -1529,6 +1552,7 @@ class MemoryStore(_MemoryStoreBase):
         if item.status != "building":
             raise MemoryValidationError("only a building embedding generation can fail")
         item.status = "failed"
+        item.task_projection_version += 1
         return item
 
     async def attach_embedding(
