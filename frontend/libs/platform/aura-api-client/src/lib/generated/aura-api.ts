@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: 5af61a7dfce333d7284febba13ed3b7f73e2b142410caf5f626d84d5fea5f2c7
+// Contract SHA-256: c166093af4b4c3c6976be00f398e27bebb4d64039c88c4387441dd2467f3db4d
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -230,9 +230,9 @@ export type PersonaAssignment = { readonly "id": string; readonly "persona": Per
 
 export type ConversationDetail = ConversationSummary & { readonly "messages": ReadonlyArray<Message>; readonly "recentRuns": ReadonlyArray<Run>; readonly "branches"?: ReadonlyArray<ConversationBranchSummary>; };
 
-export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "branchId"?: string; readonly "parentMessageId"?: string | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "attachments"?: ReadonlyArray<MessageAttachmentSummary>; readonly "createdAt": string; readonly "updatedAt": string; };
+export type Message = { readonly "id": string; readonly "conversationId": string; readonly "role": "user" | "assistant"; readonly "content": string; readonly "state": "complete" | "partial" | "interrupted" | "failed"; readonly "runId": string | null; readonly "branchId"?: string; readonly "parentMessageId"?: string | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "webCitations"?: ReadonlyArray<ResearchCitation>; readonly "attachments"?: ReadonlyArray<MessageAttachmentSummary>; readonly "taskRefs"?: ReadonlyArray<OpaqueTaskReference>; readonly "artifactRefs"?: ReadonlyArray<OpaqueArtifactReference>; readonly "researchActivity"?: ResearchActivity; readonly "createdAt": string; readonly "updatedAt": string; };
 
-export type Run = { readonly "id": string; readonly "conversationId": string | null; readonly "userMessageId": string | null; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "attachments"?: ReadonlyArray<MessageAttachmentSummary>; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "branchId"?: string | null; readonly "regeneratedFromRunId"?: string | null; readonly "workflowOrigin"?: WorkflowRunOrigin; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
+export type Run = { readonly "id": string; readonly "conversationId": string | null; readonly "userMessageId": string | null; readonly "assistantMessageId": string | null; readonly "status": RunStatus; readonly "agentRevisionId": string; readonly "modelPolicyRevisionId": string; readonly "toolPolicyRevisionId"?: string; readonly "toolCallLimit"?: number; readonly "toolCallsUsed"?: number; readonly "clientTimeZone"?: ClientTimeZone | null; readonly "approvalId"?: string | null; readonly "pendingToolCallId"?: string | null; readonly "toolLifecycleStatus"?: RunToolLifecycleStatus | null; readonly "citations"?: ReadonlyArray<DocumentCitation>; readonly "webCitations"?: ReadonlyArray<ResearchCitation>; readonly "attachments"?: ReadonlyArray<MessageAttachmentSummary>; readonly "taskRefs"?: ReadonlyArray<OpaqueTaskReference>; readonly "artifactRefs"?: ReadonlyArray<OpaqueArtifactReference>; readonly "researchOrigin"?: ResearchRunOrigin; readonly "personaRevisionId"?: string; readonly "promptBundleRevisionId"?: string; readonly "promptHash"?: string; readonly "provider": string; readonly "modelId": string; readonly "retryOfRunId": string | null; readonly "branchId"?: string | null; readonly "regeneratedFromRunId"?: string | null; readonly "workflowOrigin"?: WorkflowRunOrigin; readonly "createdAt": string; readonly "startedAt": string | null; readonly "finishedAt": string | null; readonly "error": RunError | null; };
 
 export type RunStatus = "queued" | "running" | "waiting_for_confirmation" | "cancel_requested" | "canceled" | "completed" | "failed" | "interrupted";
 
@@ -284,7 +284,7 @@ export type AssistantSnapshotData = { readonly "message": Message; };
 
 export type ToolStatus = "pending" | "awaiting_confirmation" | "executing" | "completed" | "denied" | "failed";
 
-export type ToolStatusData = { readonly "callId": string; readonly "toolId": string; readonly "toolVersion": number; readonly "status": ToolStatus; readonly "errorClass"?: "capability" | "validation" | "policy" | "budget" | "timeout" | "provider_protocol" | "execution" | "cancellation"; readonly "errorCode"?: string; readonly "resultCount"?: number; };
+export type ToolStatusData = { readonly "callId": string; readonly "toolId": string; readonly "toolVersion": number; readonly "status": ToolStatus; readonly "errorClass"?: "capability" | "validation" | "policy" | "budget" | "timeout" | "provider_protocol" | "execution" | "cancellation"; readonly "errorCode"?: string; readonly "resultCount"?: number; readonly "researchAdmission"?: ResearchToolAdmissionResult; };
 
 export type ApprovalStatusData = { readonly "approvalId": string; readonly "proposalId": string; readonly "runId": string; readonly "conversationId": string; readonly "status": ApprovalStatus; readonly "executionStatus": ApprovalExecutionStatus; readonly "version": number; };
 
@@ -688,6 +688,116 @@ export type CalendarConflict = { readonly "left": CalendarConflictEventReference
 
 export type CalendarConflictPage = { readonly "rangeStart": string; readonly "rangeEnd": string; readonly "displayTimeZone": ClientTimeZone; readonly "items": ReadonlyArray<CalendarConflict>; readonly "nextCursor": string | null; readonly "partial": boolean; readonly "warnings": ReadonlyArray<CalendarReadWarning>; readonly "evaluatedAt": string; };
 
+export type VersionedCommand = { readonly "expectedVersion": number; };
+
+export type ResearchMode = "quick" | "auto" | "deep" | "agent_led";
+
+export type ResearchStage = "queued" | "planning" | "searching" | "fetching" | "validating_evidence" | "synthesizing" | "persisting" | "draining" | "terminal";
+
+export type ResearchOutcome = "completed" | "partial" | "budget_exhausted" | "failed" | "canceled" | "interrupted";
+
+export type ResearchFailureClass = "provider_disabled" | "provider_unavailable" | "validation_failed" | "authorization_denied" | "quota_exceeded" | "timeout" | "execution_failed" | "cleanup_failed" | "cleanup_unknown";
+
+export type ContentDeletionState = "active" | "deletion_pending" | "deletion_failed" | "cleanup_unknown" | "deleted";
+
+export type ResearchAdmissionState = "admitted" | "rejected";
+
+export type ResearchBudget = { readonly "wallTimeSeconds": number; readonly "fetchedSources": number; readonly "searchRequests": number; readonly "browserPages": number; readonly "modelCalls": number; };
+
+export type ResearchBudgetConsumption = { readonly "wallTimeSeconds": number; readonly "fetchedSources": number; readonly "searchRequests": number; readonly "browserPages": number; readonly "modelCalls": number; };
+
+export type ResearchModeEnvelope = { readonly "mode": ResearchMode; readonly "maximum": ResearchBudget; readonly "defaults": ResearchBudget; };
+
+export type ResearchSettings = { readonly "version": number; readonly "presets": ReadonlyArray<ResearchModeEnvelope>; readonly "updatedAt": string; };
+
+export type ReplaceResearchSettingsRequest = { readonly "expectedVersion": number; readonly "presets": ReadonlyArray<{ readonly "mode": ResearchMode; readonly "defaults": ResearchBudget; }>; };
+
+export type CreateResearchRequest = { readonly "question": string; readonly "mode": ResearchMode; readonly "budget"?: ResearchBudget; readonly "seedUrls"?: ReadonlyArray<string>; readonly "domains"?: ReadonlyArray<string>; };
+
+export type ResearchAdmission = { readonly "researchId": string; readonly "taskRef": OpaqueTaskReference; readonly "mode": ResearchMode; readonly "admissionState": ResearchAdmissionState; readonly "admittedBudget": ResearchBudget; readonly "version": number; readonly "createdAt": string; };
+
+export type ResearchCapabilities = { readonly "canCancel": boolean; readonly "canExtend": boolean; readonly "canDelete": boolean; readonly "canRetryCleanup": boolean; readonly "canReconcileCleanup": boolean; };
+
+export type ResearchSummary = { readonly "id": string; readonly "taskRef": OpaqueTaskReference; readonly "mode": ResearchMode; readonly "stage": ResearchStage; readonly "outcome": ResearchOutcome | null; readonly "contentState": ContentDeletionState; readonly "version": number; readonly "capabilities": ResearchCapabilities; readonly "createdAt": string; readonly "updatedAt": string; readonly "finishedAt": string | null; };
+
+export type ActiveResearchDetail = { readonly "id": string; readonly "taskRef": OpaqueTaskReference; readonly "mode": ResearchMode; readonly "stage": ResearchStage; readonly "outcome": ResearchOutcome | null; readonly "contentState": "active"; readonly "version": number; readonly "capabilities": ResearchCapabilities; readonly "createdAt": string; readonly "updatedAt": string; readonly "finishedAt": string | null; readonly "question": string; readonly "admittedBudget": ResearchBudget; readonly "consumedBudget": ResearchBudgetConsumption; readonly "extensionAccepted": boolean; readonly "sourceCount": number; readonly "failureClass": ResearchFailureClass | null; readonly "artifactRefs": ReadonlyArray<OpaqueArtifactReference>; readonly "citations": ReadonlyArray<WebCitation>; };
+
+export type DeletedResearchTombstone = { readonly "id": string; readonly "taskRef": OpaqueTaskReference; readonly "mode": ResearchMode; readonly "stage": ResearchStage; readonly "outcome": ResearchOutcome | null; readonly "contentState": "deletion_pending" | "deletion_failed" | "cleanup_unknown" | "deleted"; readonly "version": number; readonly "capabilities": ResearchCapabilities; readonly "createdAt": string; readonly "updatedAt": string; readonly "finishedAt": string | null; readonly "tombstoneLabel": "Research source deleted"; };
+
+export type ResearchDetail = ActiveResearchDetail | DeletedResearchTombstone;
+
+export type ResearchPage = { readonly "items": ReadonlyArray<ResearchSummary>; readonly "nextCursor": string | null; };
+
+export type ResearchEvidence = { readonly "sourceId": string; readonly "label": string; readonly "url": string; readonly "publisher": string | null; readonly "retrievedAt": string; readonly "mediaType": "text/html" | "application/xhtml+xml" | "text/plain"; readonly "extractionMethod": "static" | "browser"; readonly "freshnessAt": string | null; readonly "locators": ReadonlyArray<string>; };
+
+export type ResearchEvidencePage = { readonly "items": ReadonlyArray<ResearchEvidence>; readonly "nextCursor": string | null; };
+
+export type ExtendResearchRequest = { readonly "expectedVersion": number; readonly "cumulativeBudget": ResearchBudget; };
+
+export type DeleteResearchRequest = { readonly "expectedVersion": number; readonly "deleteLinkedArtifacts": boolean; };
+
+export type GeneratedArtifactMediaType = "text/markdown; charset=utf-8" | "text/plain; charset=utf-8" | "application/json";
+
+export type GeneratedArtifactKind = "research_report" | "research_source_manifest" | "generated_text" | "generated_data";
+
+export type GeneratedArtifactCapabilities = { readonly "canPreview": boolean; readonly "canDownload": boolean; readonly "canDelete": boolean; readonly "canRetryCleanup": boolean; readonly "canReconcileCleanup": boolean; };
+
+export type DeletedGeneratedArtifactCapabilities = { readonly "canPreview": false; readonly "canDownload": false; readonly "canDelete": false; readonly "canRetryCleanup": boolean; readonly "canReconcileCleanup": boolean; };
+
+export type GeneratedArtifactLineage = { readonly "taskId": string | null; readonly "runId": string | null; readonly "conversationId": string | null; readonly "workspaceId": string | null; };
+
+export type GeneratedArtifactRevision = { readonly "revision": number; readonly "mediaType": GeneratedArtifactMediaType; readonly "sha256": string; readonly "byteCount": number; readonly "creatorComponent": string; readonly "previousRevision": number | null; readonly "createdAt": string; };
+
+export type GeneratedArtifactIntegrityTruth = { readonly "revision": number; readonly "sha256": string; readonly "byteCount": number; readonly "createdAt": string; };
+
+export type ActiveGeneratedArtifactSummary = { readonly "id": string; readonly "kind": GeneratedArtifactKind; readonly "title": string; readonly "mediaType": GeneratedArtifactMediaType; readonly "contentState": "active"; readonly "currentRevision": number; readonly "version": number; readonly "capabilities": GeneratedArtifactCapabilities; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type ActiveGeneratedArtifactDetail = { readonly "id": string; readonly "kind": GeneratedArtifactKind; readonly "title": string; readonly "mediaType": GeneratedArtifactMediaType; readonly "contentState": "active"; readonly "currentRevision": number; readonly "version": number; readonly "capabilities": GeneratedArtifactCapabilities; readonly "createdAt": string; readonly "updatedAt": string; readonly "lineage": GeneratedArtifactLineage; readonly "revision": GeneratedArtifactRevision; };
+
+export type DeletedGeneratedArtifactTombstone = { readonly "id": string; readonly "kind": GeneratedArtifactKind; readonly "title": null; readonly "mediaType": null; readonly "contentState": "deletion_pending" | "deletion_failed" | "cleanup_unknown" | "deleted"; readonly "currentRevision": number; readonly "version": number; readonly "capabilities": DeletedGeneratedArtifactCapabilities; readonly "createdAt": string; readonly "updatedAt": string; readonly "lineage": GeneratedArtifactLineage; readonly "integrity": GeneratedArtifactIntegrityTruth; readonly "deletionAuditId": string; };
+
+export type GeneratedArtifactSummary = ActiveGeneratedArtifactSummary | DeletedGeneratedArtifactTombstone;
+
+export type GeneratedArtifactDetail = ActiveGeneratedArtifactDetail | DeletedGeneratedArtifactTombstone;
+
+export type GeneratedArtifactPage = { readonly "items": ReadonlyArray<GeneratedArtifactSummary>; readonly "nextCursor": string | null; };
+
+export type GeneratedArtifactPreview = { readonly "artifactId": string; readonly "revision": number; readonly "mediaType": GeneratedArtifactMediaType; readonly "text": string; readonly "truncated": boolean; };
+
+export type TaskSourceKind = "research" | "workflow_instance" | "briefing_occurrence" | "document_processing" | "memory_reindex";
+
+export type TaskNormalizedStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "canceled" | "unknown";
+
+export type TaskCapabilities = { readonly "canCancel": boolean; readonly "canRetry": boolean; readonly "hasSourceDetail": boolean; };
+
+export type DurableTaskSummary = { readonly "id": string; readonly "sourceKind": TaskSourceKind; readonly "sourceId": string; readonly "sourceVersion": number; readonly "status": TaskNormalizedStatus; readonly "sourceStatus": string; readonly "sourceOutcome": string | null; readonly "stage": string | null; readonly "progress": number | null; readonly "capabilities": TaskCapabilities; readonly "routeKey": "research_detail" | "workflow_instance_detail" | "briefing_occurrence_detail" | "document_detail" | "memory_reindex_detail"; readonly "createdAt": string; readonly "updatedAt": string; };
+
+export type DurableTaskDetail = { readonly "id": string; readonly "sourceKind": TaskSourceKind; readonly "sourceId": string; readonly "sourceVersion": number; readonly "status": TaskNormalizedStatus; readonly "sourceStatus": string; readonly "sourceOutcome": string | null; readonly "stage": string | null; readonly "progress": number | null; readonly "capabilities": TaskCapabilities; readonly "routeKey": "research_detail" | "workflow_instance_detail" | "briefing_occurrence_detail" | "document_detail" | "memory_reindex_detail"; readonly "createdAt": string; readonly "updatedAt": string; readonly "displayLabel": string | null; readonly "failureClass": string | null; readonly "recoveryAction": string | null; readonly "artifactRefs": ReadonlyArray<OpaqueArtifactReference>; };
+
+export type DurableTaskPage = { readonly "items": ReadonlyArray<DurableTaskSummary>; readonly "nextCursor": string | null; };
+
+export type TaskCommand = { readonly "expectedSourceVersion": number; };
+
+export type TaskCommandReceipt = { readonly "taskId": string; readonly "command": "cancel" | "retry"; readonly "state": "accepted" | "rejected" | "unknown"; readonly "sourceVersion": number; };
+
+export type TaskStreamEvent = { readonly "eventId": string; readonly "taskId": string; readonly "sourceKind": TaskSourceKind; readonly "sourceId": string; readonly "sourceVersion": number; readonly "occurredAt": string; };
+
+export type OpaqueTaskReference = { readonly "taskId": string; };
+
+export type OpaqueArtifactReference = { readonly "artifactId": string; };
+
+export type ResearchRunOrigin = { readonly "researchId": string; readonly "taskId": string; };
+
+export type ResearchActivity = { readonly "taskRef": OpaqueTaskReference; readonly "mode": ResearchMode; readonly "admissionState": ResearchAdmissionState; };
+
+export type WebCitation = { readonly "kind": "web"; readonly "sourceId": string; readonly "label": string; readonly "url": string; readonly "retrievedAt": string; readonly "locator": string | null; };
+
+export type DeletedResearchCitation = { readonly "kind": "deleted_research"; readonly "sourceId": string; readonly "label": "Research source deleted"; };
+
+export type ResearchCitation = WebCitation | DeletedResearchCitation;
+
+export type ResearchToolAdmissionResult = { readonly "taskRef": OpaqueTaskReference; readonly "mode": ResearchMode; readonly "admissionState": ResearchAdmissionState; };
+
 export type ModelVisionRequiredError = { readonly "type": string; readonly "title": string; readonly "status": 409; readonly "code": "model_vision_required"; readonly "detail": string; readonly "retryable": false; readonly "traceId": string; readonly "resource": string | null; };
 
 export type ErrorEnvelope = { readonly "type": string; readonly "title": string; readonly "status": number; readonly "code": string; readonly "detail": string; readonly "retryable": boolean; readonly "traceId": string; readonly "resource": string | null; readonly "fieldErrors"?: ReadonlyArray<FieldError>; };
@@ -839,6 +949,30 @@ export interface AuraApiOperations {
   readonly replaceCalendarSelection: { readonly response: CalendarSelection; readonly body: ReplaceCalendarSelectionRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly queryCalendarEvents: { readonly response: CalendarEventPage; readonly body: CalendarEventQuery; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly queryCalendarConflicts: { readonly response: CalendarConflictPage; readonly body: CalendarConflictQuery; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly getResearchSettings: { readonly response: ResearchSettings; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly replaceResearchSettings: { readonly response: ResearchSettings; readonly body: ReplaceResearchSettingsRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listResearchTasks: { readonly response: ResearchPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "mode"?: ResearchMode; readonly "outcome"?: ResearchOutcome; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly createResearchTask: { readonly response: ResearchAdmission; readonly body: CreateResearchRequest; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly getResearchTask: { readonly response: ResearchDetail; readonly body: never; readonly path: { readonly "research_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly listResearchEvidence: { readonly response: ResearchEvidencePage; readonly body: never; readonly path: { readonly "research_id": string; }; readonly query: { readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly cancelResearchTask: { readonly response: ResearchDetail; readonly body: VersionedCommand; readonly path: { readonly "research_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly extendResearchTask: { readonly response: ResearchDetail; readonly body: ExtendResearchRequest; readonly path: { readonly "research_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly deleteResearchContent: { readonly response: ResearchDetail; readonly body: DeleteResearchRequest; readonly path: { readonly "research_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly retryResearchCleanup: { readonly response: ResearchDetail; readonly body: VersionedCommand; readonly path: { readonly "research_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly reconcileResearchCleanup: { readonly response: ResearchDetail; readonly body: VersionedCommand; readonly path: { readonly "research_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listGeneratedArtifacts: { readonly response: GeneratedArtifactPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "mediaType"?: GeneratedArtifactMediaType; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getGeneratedArtifact: { readonly response: GeneratedArtifactDetail; readonly body: never; readonly path: { readonly "artifact_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly listGeneratedArtifactRevisions: { readonly response: ReadonlyArray<GeneratedArtifactRevision>; readonly body: never; readonly path: { readonly "artifact_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly previewGeneratedArtifact: { readonly response: GeneratedArtifactPreview; readonly body: never; readonly path: { readonly "artifact_id": string; }; readonly query: { readonly "revision"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly downloadGeneratedArtifact: { readonly response: AuraBinaryResponse; readonly body: never; readonly path: { readonly "artifact_id": string; }; readonly query: { readonly "revision"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly deleteGeneratedArtifact: { readonly response: GeneratedArtifactDetail; readonly body: VersionedCommand; readonly path: { readonly "artifact_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly retryGeneratedArtifactCleanup: { readonly response: GeneratedArtifactDetail; readonly body: VersionedCommand; readonly path: { readonly "artifact_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly reconcileGeneratedArtifactCleanup: { readonly response: GeneratedArtifactDetail; readonly body: VersionedCommand; readonly path: { readonly "artifact_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly listDurableTasks: { readonly response: DurableTaskPage; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: { readonly "sourceKind"?: TaskSourceKind; readonly "status"?: TaskNormalizedStatus; readonly "updatedFrom"?: string; readonly "updatedTo"?: string; readonly "cursor"?: string; readonly "limit"?: number; }; readonly headers: Readonly<Record<string, never>>; };
+  readonly getDurableTask: { readonly response: DurableTaskDetail; readonly body: never; readonly path: { readonly "task_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
+  readonly streamDurableTaskEvents: { readonly response: TaskStreamEvent; readonly body: never; readonly path: { readonly "task_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "Last-Event-ID"?: string; }; };
+  readonly cancelDurableTask: { readonly response: TaskCommandReceipt; readonly body: TaskCommand; readonly path: { readonly "task_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
+  readonly retryDurableTask: { readonly response: TaskCommandReceipt; readonly body: TaskCommand; readonly path: { readonly "task_id": string; }; readonly query: Readonly<Record<string, never>>; readonly headers: { readonly "X-CSRF-Token": string; readonly "Idempotency-Key": string; }; };
   readonly getLiveness: { readonly response: Liveness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
   readonly getReadiness: { readonly response: Readiness; readonly body: never; readonly path: Readonly<Record<string, never>>; readonly query: Readonly<Record<string, never>>; readonly headers: Readonly<Record<string, never>>; };
 }
@@ -998,6 +1132,30 @@ export const AURA_API_OPERATIONS = {
   replaceCalendarSelection: { method: 'PUT', pathTemplate: '/api/v1/integrations/calendar/calendars/selection', requestMode: 'json', responseMode: 'json' },
   queryCalendarEvents: { method: 'POST', pathTemplate: '/api/v1/integrations/calendar/events/query', requestMode: 'json', responseMode: 'json' },
   queryCalendarConflicts: { method: 'POST', pathTemplate: '/api/v1/integrations/calendar/conflicts/query', requestMode: 'json', responseMode: 'json' },
+  getResearchSettings: { method: 'GET', pathTemplate: '/api/v1/research/settings', requestMode: 'none', responseMode: 'json' },
+  replaceResearchSettings: { method: 'PUT', pathTemplate: '/api/v1/research/settings', requestMode: 'json', responseMode: 'json' },
+  listResearchTasks: { method: 'GET', pathTemplate: '/api/v1/research', requestMode: 'none', responseMode: 'json' },
+  createResearchTask: { method: 'POST', pathTemplate: '/api/v1/research', requestMode: 'json', responseMode: 'json' },
+  getResearchTask: { method: 'GET', pathTemplate: '/api/v1/research/{research_id}', requestMode: 'none', responseMode: 'json' },
+  listResearchEvidence: { method: 'GET', pathTemplate: '/api/v1/research/{research_id}/evidence', requestMode: 'none', responseMode: 'json' },
+  cancelResearchTask: { method: 'POST', pathTemplate: '/api/v1/research/{research_id}/cancel', requestMode: 'json', responseMode: 'json' },
+  extendResearchTask: { method: 'POST', pathTemplate: '/api/v1/research/{research_id}/extensions', requestMode: 'json', responseMode: 'json' },
+  deleteResearchContent: { method: 'POST', pathTemplate: '/api/v1/research/{research_id}/deletions', requestMode: 'json', responseMode: 'json' },
+  retryResearchCleanup: { method: 'POST', pathTemplate: '/api/v1/research/{research_id}/deletions/retry', requestMode: 'json', responseMode: 'json' },
+  reconcileResearchCleanup: { method: 'POST', pathTemplate: '/api/v1/research/{research_id}/deletions/reconcile', requestMode: 'json', responseMode: 'json' },
+  listGeneratedArtifacts: { method: 'GET', pathTemplate: '/api/v1/artifacts', requestMode: 'none', responseMode: 'json' },
+  getGeneratedArtifact: { method: 'GET', pathTemplate: '/api/v1/artifacts/{artifact_id}', requestMode: 'none', responseMode: 'json' },
+  listGeneratedArtifactRevisions: { method: 'GET', pathTemplate: '/api/v1/artifacts/{artifact_id}/revisions', requestMode: 'none', responseMode: 'json' },
+  previewGeneratedArtifact: { method: 'GET', pathTemplate: '/api/v1/artifacts/{artifact_id}/preview', requestMode: 'none', responseMode: 'json' },
+  downloadGeneratedArtifact: { method: 'GET', pathTemplate: '/api/v1/artifacts/{artifact_id}/content', requestMode: 'none', responseMode: 'binary' },
+  deleteGeneratedArtifact: { method: 'POST', pathTemplate: '/api/v1/artifacts/{artifact_id}/deletions', requestMode: 'json', responseMode: 'json' },
+  retryGeneratedArtifactCleanup: { method: 'POST', pathTemplate: '/api/v1/artifacts/{artifact_id}/deletions/retry', requestMode: 'json', responseMode: 'json' },
+  reconcileGeneratedArtifactCleanup: { method: 'POST', pathTemplate: '/api/v1/artifacts/{artifact_id}/deletions/reconcile', requestMode: 'json', responseMode: 'json' },
+  listDurableTasks: { method: 'GET', pathTemplate: '/api/v1/tasks', requestMode: 'none', responseMode: 'json' },
+  getDurableTask: { method: 'GET', pathTemplate: '/api/v1/tasks/{task_id}', requestMode: 'none', responseMode: 'json' },
+  streamDurableTaskEvents: { method: 'GET', pathTemplate: '/api/v1/tasks/{task_id}/events', requestMode: 'none', responseMode: 'event-stream' },
+  cancelDurableTask: { method: 'POST', pathTemplate: '/api/v1/tasks/{task_id}/cancel', requestMode: 'json', responseMode: 'json' },
+  retryDurableTask: { method: 'POST', pathTemplate: '/api/v1/tasks/{task_id}/retry', requestMode: 'json', responseMode: 'json' },
   getLiveness: { method: 'GET', pathTemplate: '/health/live', requestMode: 'none', responseMode: 'json' },
   getReadiness: { method: 'GET', pathTemplate: '/health/ready', requestMode: 'none', responseMode: 'json' },
 } as const satisfies Readonly<Record<AuraOperationId, AuraOperationDescriptor>>;

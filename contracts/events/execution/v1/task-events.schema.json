@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/execution/v1/task-events.schema.json",
+  "title": "Aura durable task source invalidation events v1",
+  "description": "Closed identifier-and-version-only invalidation plus the source-owned task_projection:read live/rebuild boundary definitions. The published invalidation excludes owner identity, source state, outcome, progress, stage, capabilities, title, display values, URL, digest, object reference, provider payload, credential, and content.",
+  "$ref": "#/$defs/TaskSourceInvalidated",
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "TaskSourceKind": { "type": "string", "enum": ["research", "workflow_instance", "briefing_occurrence", "document_processing", "memory_reindex"] },
+    "TaskNormalizedStatus": { "type": "string", "enum": ["queued", "running", "waiting", "completed", "failed", "canceled", "unknown"] },
+    "TaskCapabilities": { "type": "object", "additionalProperties": false, "required": ["canCancel", "canRetry", "hasSourceDetail"], "properties": { "canCancel": { "type": "boolean" }, "canRetry": { "type": "boolean" }, "hasSourceDetail": { "type": "boolean" } } },
+    "ExactTaskProjectionSnapshotQueryV1": { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "mode", "sourceKind", "sourceId", "minimumSourceVersion"], "properties": { "schemaVersion": { "const": 1 }, "mode": { "const": "exact" }, "sourceKind": { "$ref": "#/$defs/TaskSourceKind" }, "sourceId": { "$ref": "#/$defs/Uuid" }, "minimumSourceVersion": { "type": "integer", "minimum": 1 } } },
+    "CursorTaskProjectionSnapshotQueryV1": { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "mode", "sourceKind", "cursor", "pageSize"], "properties": { "schemaVersion": { "const": 1 }, "mode": { "const": "cursor" }, "sourceKind": { "$ref": "#/$defs/TaskSourceKind" }, "cursor": { "type": ["string", "null"], "maxLength": 1024 }, "pageSize": { "type": "integer", "minimum": 1, "maximum": 500 } } },
+    "TaskProjectionSnapshotQueryV1": { "oneOf": [{ "$ref": "#/$defs/ExactTaskProjectionSnapshotQueryV1" }, { "$ref": "#/$defs/CursorTaskProjectionSnapshotQueryV1" }], "description": "Closed nondelegable task_projection:read query for mutually exclusive exact live reconciliation or stable cursor rebuild." },
+    "TaskProjectionSnapshotV1": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "ownerScopeId", "sourceKind", "sourceId", "sourceVersion", "status", "sourceStatus", "sourceOutcome", "stage", "progress", "capabilities", "routeKey", "failureClass", "createdAt", "updatedAt", "finishedAt", "sourceDeleted"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "ownerScopeId": { "$ref": "#/$defs/Uuid" }, "sourceKind": { "$ref": "#/$defs/TaskSourceKind" }, "sourceId": { "$ref": "#/$defs/Uuid" }, "sourceVersion": { "type": "integer", "minimum": 1 }, "status": { "$ref": "#/$defs/TaskNormalizedStatus" }, "sourceStatus": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "sourceOutcome": { "type": ["string", "null"], "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "stage": { "type": ["string", "null"], "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "progress": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "capabilities": { "$ref": "#/$defs/TaskCapabilities" }, "routeKey": { "type": "string", "enum": ["research_detail", "workflow_instance_detail", "briefing_occurrence_detail", "document_detail", "memory_reindex_detail"] }, "failureClass": { "type": ["string", "null"], "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "createdAt": { "$ref": "#/$defs/Timestamp" }, "updatedAt": { "$ref": "#/$defs/Timestamp" }, "finishedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] }, "sourceDeleted": { "type": "boolean" }
+      },
+      "description": "Source-owned metadata DTO. ORM rows, provider material, private display text, question, report, excerpt, document name, workflow input, object key, URL, and content are prohibited."
+    },
+    "TaskProjectionSnapshotPageV1": { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "items", "nextCursor", "scanComplete"], "properties": { "schemaVersion": { "const": 1 }, "items": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/TaskProjectionSnapshotV1" } }, "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }, "scanComplete": { "type": "boolean" } } },
+    "TaskProjectionSnapshotResultV1": { "oneOf": [{ "$ref": "#/$defs/TaskProjectionSnapshotV1" }, { "$ref": "#/$defs/TaskProjectionSnapshotPageV1" }] },
+    "TaskSourceInvalidated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "sourceKind", "sourceId", "sourceVersion", "occurredAt", "correlationId", "causationId"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "const": "task.source_invalidated" },
+        "sourceKind": { "$ref": "#/$defs/TaskSourceKind" },
+        "sourceId": { "$ref": "#/$defs/Uuid" },
+        "sourceVersion": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "correlationId": { "$ref": "#/$defs/Uuid" },
+        "causationId": { "$ref": "#/$defs/Uuid" }
+      }
+    }
+  }
+}

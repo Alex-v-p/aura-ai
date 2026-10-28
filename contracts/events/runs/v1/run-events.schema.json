@@ -42,6 +42,16 @@
         "locator": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Server-derived page-or-section label for the cited evidence." }
       }
     },
+    "ResearchMode": { "type": "string", "enum": ["quick", "auto", "deep", "agent_led"] },
+    "ResearchAdmissionState": { "type": "string", "enum": ["admitted", "rejected"] },
+    "OpaqueTaskReference": { "type": "object", "additionalProperties": false, "required": ["taskId"], "properties": { "taskId": { "$ref": "#/$defs/Uuid" } } },
+    "OpaqueArtifactReference": { "type": "object", "additionalProperties": false, "required": ["artifactId"], "properties": { "artifactId": { "$ref": "#/$defs/Uuid" } } },
+    "ResearchRunOrigin": { "type": "object", "additionalProperties": false, "required": ["researchId", "taskId"], "properties": { "researchId": { "$ref": "#/$defs/Uuid" }, "taskId": { "$ref": "#/$defs/Uuid" } }, "description": "Opaque metadata-only research lineage. Question, source, provider, plan, evidence, and artifact content are prohibited." },
+    "ResearchActivity": { "type": "object", "additionalProperties": false, "required": ["taskRef", "mode", "admissionState"], "properties": { "taskRef": { "$ref": "#/$defs/OpaqueTaskReference" }, "mode": { "$ref": "#/$defs/ResearchMode" }, "admissionState": { "$ref": "#/$defs/ResearchAdmissionState" } }, "description": "Stable admission activity only; terminal research content and provider material are prohibited." },
+    "WebCitation": { "type": "object", "additionalProperties": false, "description": "Owner-authorized citation constructed only from task-scoped validated evidence. Queries, excerpts, object keys, provider payloads, browser state, and model-supplied evidence identifiers are prohibited.", "required": ["kind", "sourceId", "label", "url", "retrievedAt", "locator"], "properties": { "kind": { "const": "web" }, "sourceId": { "$ref": "#/$defs/Uuid" }, "label": { "type": "string", "minLength": 1, "maxLength": 300 }, "url": { "type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048 }, "retrievedAt": { "$ref": "#/$defs/Timestamp" }, "locator": { "type": ["string", "null"], "maxLength": 255 } } },
+    "DeletedResearchCitation": { "type": "object", "additionalProperties": false, "required": ["kind", "sourceId", "label"], "properties": { "kind": { "const": "deleted_research" }, "sourceId": { "$ref": "#/$defs/Uuid" }, "label": { "const": "Research source deleted" } }, "description": "Content-free tombstone with no URL, locator, excerpt, evidence, or artifact relation." },
+    "ResearchCitation": { "oneOf": [{ "$ref": "#/$defs/WebCitation" }, { "$ref": "#/$defs/DeletedResearchCitation" }] },
+    "ResearchToolAdmissionResult": { "type": "object", "additionalProperties": false, "required": ["taskRef", "mode", "admissionState"], "properties": { "taskRef": { "$ref": "#/$defs/OpaqueTaskReference" }, "mode": { "$ref": "#/$defs/ResearchMode" }, "admissionState": { "$ref": "#/$defs/ResearchAdmissionState" } }, "description": "Closed web.research@1 admission-only result. Research content, evidence, URLs, citations, provider material, and terminal results are prohibited." },
     "AttachmentAvailability": { "type": "string", "enum": ["available", "unavailable"] },
     "AttachmentSummaryMediaType": {
       "type": "string",
@@ -126,7 +136,11 @@
         "pendingToolCallId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
         "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/$defs/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
         "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/DocumentCitation" }, "description": "Optional validated document sources accepted from evidence returned during this exact run." },
+        "webCitations": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/ResearchCitation" }, "description": "Optional task-scoped validated web citations accepted for this exact run." },
         "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/MessageAttachmentSummary" }, "description": "Optional snapshot of the admitted source user message's immutable attachment links. Historical producers may omit it." },
+        "taskRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/OpaqueTaskReference" } },
+        "artifactRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/OpaqueArtifactReference" } },
+        "researchOrigin": { "$ref": "#/$defs/ResearchRunOrigin" },
         "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
         "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
         "retryOfRunId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
@@ -153,7 +167,11 @@
         "branchId": { "$ref": "#/$defs/Uuid", "description": "Opaque branch on which this immutable message was created. Optional for compatibility with pre-1.17 producers." },
         "parentMessageId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Previous message in this immutable ancestor path. Optional for compatibility with pre-1.17 producers." },
         "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property." },
+        "webCitations": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/ResearchCitation" }, "description": "Optional task-scoped validated web citations. Deleted research sources resolve to content-free tombstones." },
         "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/MessageAttachmentSummary" }, "description": "Optional immutable attachment-link summaries for a user message. Historical and assistant messages may omit this property." },
+        "taskRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/OpaqueTaskReference" } },
+        "artifactRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/OpaqueArtifactReference" } },
+        "researchActivity": { "$ref": "#/$defs/ResearchActivity" },
         "createdAt": { "$ref": "#/$defs/Timestamp" },
         "updatedAt": { "$ref": "#/$defs/Timestamp" }
       }
@@ -289,7 +307,8 @@
         "status": { "$ref": "#/$defs/ToolStatus" },
         "errorClass": { "type": "string", "enum": ["capability", "validation", "policy", "budget", "timeout", "provider_protocol", "execution", "cancellation"] },
         "errorCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
-        "resultCount": { "type": "integer", "minimum": 0, "maximum": 8 }
+        "resultCount": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "researchAdmission": { "$ref": "#/$defs/ResearchToolAdmissionResult", "description": "Present only for the admission-only web.research@1 result." }
       }
     },
     "ToolStatusEvent": {

@@ -2749,6 +2749,21 @@ modules:
   kind: event-contract
   public_api: contracts/events/artifacts/v1/attachment-events.schema.json
   dependencies: []
+- id: aura-contract.generated-artifact-events
+  root: contracts/events/artifacts/v1/generated-artifact-events.schema.json
+  kind: event-contract
+  public_api: contracts/events/artifacts/v1/generated-artifact-events.schema.json
+  dependencies: []
+- id: aura-contract.research-events
+  root: contracts/events/knowledge/v1/research-events.schema.json
+  kind: event-contract
+  public_api: contracts/events/knowledge/v1/research-events.schema.json
+  dependencies: []
+- id: aura-contract.task-events
+  root: contracts/events/execution/v1/task-events.schema.json
+  kind: event-contract
+  public_api: contracts/events/execution/v1/task-events.schema.json
+  dependencies: []
 - id: aura-contract.automation-reminder-events
   root: contracts/events/automation/v1
   kind: event-contract

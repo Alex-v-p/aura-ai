@@ -24,6 +24,9 @@
     { "name": "Calendar" },
     { "name": "Briefings" },
     { "name": "Workflows" },
+    { "name": "Research" },
+    { "name": "Artifacts" },
+    { "name": "Tasks" },
     { "name": "Health" }
   ],
   "paths": {
@@ -1895,6 +1898,91 @@
         }
       }
     },
+    "/api/v1/research/settings": {
+      "get": {
+        "operationId": "getResearchSettings", "tags": ["Research"],
+        "responses": { "200": { "description": "Owner research preset defaults and immutable operator envelopes", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchSettings" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "put": {
+        "operationId": "replaceResearchSettings", "tags": ["Research"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReplaceResearchSettingsRequest" } } } },
+        "responses": { "200": { "description": "Owner defaults replaced within operator envelopes", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchSettings" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } }
+      }
+    },
+    "/api/v1/research": {
+      "get": {
+        "operationId": "listResearchTasks", "tags": ["Research"],
+        "parameters": [{ "name": "mode", "in": "query", "schema": { "$ref": "#/components/schemas/ResearchMode" } }, { "name": "outcome", "in": "query", "schema": { "$ref": "#/components/schemas/ResearchOutcome" } }, { "name": "cursor", "in": "query", "schema": { "type": "string", "maxLength": 1024 } }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 } }],
+        "responses": { "200": { "description": "Owner-private research page", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchPage" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "post": {
+        "operationId": "createResearchTask", "tags": ["Research"], "description": "Admits exactly one bounded durable research task. Private question, domains, and seed URLs are accepted only in this no-store body.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateResearchRequest" } } } },
+        "responses": { "202": { "description": "Research durably admitted", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchAdmission" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }, "503": { "$ref": "#/components/responses/ServiceUnavailable" } }
+      }
+    },
+    "/api/v1/research/{research_id}": {
+      "get": { "operationId": "getResearchTask", "tags": ["Research"], "parameters": [{ "$ref": "#/components/parameters/ResearchId" }], "responses": { "200": { "description": "Authoritative owner-private research detail or content-free deleted tombstone", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchDetail" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } }
+    },
+    "/api/v1/research/{research_id}/evidence": {
+      "get": { "operationId": "listResearchEvidence", "tags": ["Research"], "parameters": [{ "$ref": "#/components/parameters/ResearchId" }, { "name": "cursor", "in": "query", "schema": { "type": "string", "maxLength": 1024 } }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 } }], "responses": { "200": { "description": "Task-scoped validated source evidence; deleted research returns no private evidence", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchEvidencePage" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } }
+    },
+    "/api/v1/research/{research_id}/cancel": {
+      "post": { "operationId": "cancelResearchTask", "tags": ["Research"], "parameters": [{ "$ref": "#/components/parameters/ResearchId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VersionedCommand" } } } }, "responses": { "202": { "description": "Cancellation intent accepted without claiming reversal of admitted provider work", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchDetail" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/research/{research_id}/extensions": {
+      "post": { "operationId": "extendResearchTask", "tags": ["Research"], "parameters": [{ "$ref": "#/components/parameters/ResearchId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExtendResearchRequest" } } } }, "responses": { "200": { "description": "One extension decision recorded", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchDetail" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } } }
+    },
+    "/api/v1/research/{research_id}/deletions": {
+      "post": { "operationId": "deleteResearchContent", "tags": ["Research"], "parameters": [{ "$ref": "#/components/parameters/ResearchId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteResearchRequest" } } } }, "responses": { "202": { "description": "Private research content made immediately unreadable and cleanup admitted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchDetail" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/research/{research_id}/deletions/retry": {
+      "post": { "operationId": "retryResearchCleanup", "tags": ["Research"], "parameters": [{ "$ref": "#/components/parameters/ResearchId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VersionedCommand" } } } }, "responses": { "202": { "description": "Known failed cleanup retry admitted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchDetail" } } } }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/research/{research_id}/deletions/reconcile": {
+      "post": { "operationId": "reconcileResearchCleanup", "tags": ["Research"], "parameters": [{ "$ref": "#/components/parameters/ResearchId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VersionedCommand" } } } }, "responses": { "202": { "description": "Unknown cleanup outcome reconciliation admitted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResearchDetail" } } } }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/artifacts": {
+      "get": { "operationId": "listGeneratedArtifacts", "tags": ["Artifacts"], "parameters": [{ "name": "mediaType", "in": "query", "schema": { "$ref": "#/components/schemas/GeneratedArtifactMediaType" } }, { "name": "cursor", "in": "query", "schema": { "type": "string", "maxLength": 1024 } }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 } }], "responses": { "200": { "description": "Owner-private generated artifact page", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GeneratedArtifactPage" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/artifacts/{artifact_id}": {
+      "get": { "operationId": "getGeneratedArtifact", "tags": ["Artifacts"], "parameters": [{ "$ref": "#/components/parameters/GeneratedArtifactId" }], "responses": { "200": { "description": "Owner-authorized artifact metadata or content-free tombstone", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GeneratedArtifactDetail" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } }
+    },
+    "/api/v1/artifacts/{artifact_id}/revisions": {
+      "get": { "operationId": "listGeneratedArtifactRevisions", "tags": ["Artifacts"], "parameters": [{ "$ref": "#/components/parameters/GeneratedArtifactId" }], "responses": { "200": { "description": "Immutable artifact revision metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/GeneratedArtifactRevision" } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/artifacts/{artifact_id}/preview": {
+      "get": { "operationId": "previewGeneratedArtifact", "tags": ["Artifacts"], "parameters": [{ "$ref": "#/components/parameters/GeneratedArtifactId" }, { "name": "revision", "in": "query", "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Bounded inert sanitized text preview", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } }, "X-Content-Type-Options": { "required": true, "schema": { "type": "string", "const": "nosniff" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GeneratedArtifactPreview" } } } }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/artifacts/{artifact_id}/content": {
+      "get": { "operationId": "downloadGeneratedArtifact", "tags": ["Artifacts"], "parameters": [{ "$ref": "#/components/parameters/GeneratedArtifactId" }, { "name": "revision", "in": "query", "schema": { "type": "integer", "minimum": 1 } }], "responses": { "200": { "description": "Owner-authorized immutable text artifact download", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } }, "Content-Disposition": { "required": true, "schema": { "type": "string" } }, "Content-Type": { "required": true, "schema": { "$ref": "#/components/schemas/GeneratedArtifactMediaType" } }, "X-Content-Type-Options": { "required": true, "schema": { "type": "string", "const": "nosniff" } } }, "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/artifacts/{artifact_id}/deletions": {
+      "post": { "operationId": "deleteGeneratedArtifact", "tags": ["Artifacts"], "parameters": [{ "$ref": "#/components/parameters/GeneratedArtifactId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VersionedCommand" } } } }, "responses": { "202": { "description": "Artifact made immediately unavailable and durable cleanup admitted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GeneratedArtifactDetail" } } } }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/artifacts/{artifact_id}/deletions/retry": {
+      "post": { "operationId": "retryGeneratedArtifactCleanup", "tags": ["Artifacts"], "parameters": [{ "$ref": "#/components/parameters/GeneratedArtifactId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VersionedCommand" } } } }, "responses": { "202": { "description": "Known failed object cleanup retry admitted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GeneratedArtifactDetail" } } } }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/artifacts/{artifact_id}/deletions/reconcile": {
+      "post": { "operationId": "reconcileGeneratedArtifactCleanup", "tags": ["Artifacts"], "parameters": [{ "$ref": "#/components/parameters/GeneratedArtifactId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VersionedCommand" } } } }, "responses": { "202": { "description": "Unknown object cleanup outcome reconciliation admitted", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GeneratedArtifactDetail" } } } }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/tasks": {
+      "get": { "operationId": "listDurableTasks", "tags": ["Tasks"], "parameters": [{ "name": "sourceKind", "in": "query", "schema": { "$ref": "#/components/schemas/TaskSourceKind" } }, { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/TaskNormalizedStatus" } }, { "name": "updatedFrom", "in": "query", "schema": { "type": "string", "format": "date-time" } }, { "name": "updatedTo", "in": "query", "schema": { "type": "string", "format": "date-time" } }, { "name": "cursor", "in": "query", "schema": { "type": "string", "maxLength": 1024 } }, { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 } }], "responses": { "200": { "description": "Owner-private rebuildable task projection page", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DurableTaskPage" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/tasks/{task_id}": {
+      "get": { "operationId": "getDurableTask", "tags": ["Tasks"], "parameters": [{ "$ref": "#/components/parameters/DurableTaskId" }], "responses": { "200": { "description": "Projection plus authoritative owner-authorized source detail presentation", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DurableTaskDetail" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } }
+    },
+    "/api/v1/tasks/{task_id}/events": {
+      "get": { "operationId": "streamDurableTaskEvents", "tags": ["Tasks"], "parameters": [{ "$ref": "#/components/parameters/DurableTaskId" }, { "name": "Last-Event-ID", "in": "header", "schema": { "type": "string", "format": "uuid" } }], "responses": { "200": { "description": "Metadata-only invalidation stream; reconnect reconciles through authoritative REST", "content": { "text/event-stream": { "schema": { "$ref": "#/components/schemas/TaskStreamEvent" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/tasks/{task_id}/cancel": {
+      "post": { "operationId": "cancelDurableTask", "tags": ["Tasks"], "parameters": [{ "$ref": "#/components/parameters/DurableTaskId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCommand" } } } }, "responses": { "202": { "description": "Capability-gated command routed to the authoritative source", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCommandReceipt" } } } }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/tasks/{task_id}/retry": {
+      "post": { "operationId": "retryDurableTask", "tags": ["Tasks"], "parameters": [{ "$ref": "#/components/parameters/DurableTaskId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCommand" } } } }, "responses": { "202": { "description": "Capability-gated retry routed to a new or identified source-owned attempt", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCommandReceipt" } } } }, "409": { "$ref": "#/components/responses/Conflict" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -1944,6 +2032,9 @@
       "DocumentUploadId": { "name": "upload_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "AttachmentId": { "name": "attachment_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped image attachment identifier." },
       "AttachmentUploadId": { "name": "upload_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped image upload-session identifier." },
+      "ResearchId": { "name": "research_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped research identifier." },
+      "GeneratedArtifactId": { "name": "artifact_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped generated artifact identifier." },
+      "DurableTaskId": { "name": "task_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped Task Center projection identifier." },
       "MemoryCollectionScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryCollectionScopeType" }], "default": "user" }, "description": "Collection scope selection. Omission selects user memory; agent selects every owner-authorized agent scope unless agentProfileId narrows it to one agent; all returns user and every owner-authorized agent scope and rejects agentProfileId." },
       "MemoryCollectionAgentProfileId": { "name": "agentProfileId", "in": "query", "required": false, "schema": { "type": "string", "format": "uuid" }, "description": "Optional narrowing filter when scopeType=agent. Omission selects all owner-authorized agent scopes. Rejected for user or all collection scope." },
       "MemoryReadScopeType": { "name": "scopeType", "in": "query", "required": false, "schema": { "allOf": [{ "$ref": "#/components/schemas/MemoryScopeType" }], "default": "user" }, "description": "Single-resource scope being inspected or mutated. Omission safely selects only owner-wide user memory; agent scope requires agentProfileId. All-scope resolution is not permitted for detail or mutations." },
@@ -3013,7 +3104,11 @@
           "branchId": { "type": "string", "format": "uuid", "description": "Opaque branch on which this immutable message was created. Optional for backward compatibility with pre-1.17 producers." },
           "parentMessageId": { "type": ["string", "null"], "format": "uuid", "description": "Previous message in this message's immutable ancestor path. Optional for backward compatibility with pre-1.17 producers." },
           "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property. Evidence identifiers, excerpts, queries, filenames, object keys, and model-provided URLs are excluded." },
+          "webCitations": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ResearchCitation" }, "description": "Optional task-scoped validated web citations. Deleted research sources resolve to content-free tombstones without changing legacy document citations." },
           "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/MessageAttachmentSummary" }, "description": "Optional immutable attachment-link summaries for a user message. Historical messages and assistant messages may omit this property. Deleted sources remain as unavailable content-free summaries." },
+          "taskRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/OpaqueTaskReference" }, "description": "Optional opaque durable-task links." },
+          "artifactRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/OpaqueArtifactReference" }, "description": "Optional opaque generated-artifact links." },
+          "researchActivity": { "$ref": "#/components/schemas/ResearchActivity", "description": "Optional stable admission activity. Terminal delivery is a separate assistant message." },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         }
@@ -3038,7 +3133,11 @@
           "pendingToolCallId": { "type": ["string", "null"], "format": "uuid", "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
           "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/components/schemas/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
           "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/components/schemas/DocumentCitation" }, "description": "Optional validated document sources accepted from evidence returned during this exact run. Historical runs and runs without validated document evidence may omit this property." },
+          "webCitations": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/components/schemas/ResearchCitation" }, "description": "Optional task-scoped validated web citations accepted for this exact run." },
           "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/MessageAttachmentSummary" }, "description": "Optional snapshot of the admitted source user message's immutable attachment links. Historical runs may omit it." },
+          "taskRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/OpaqueTaskReference" } },
+          "artifactRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/OpaqueArtifactReference" } },
+          "researchOrigin": { "$ref": "#/components/schemas/ResearchRunOrigin", "description": "Optional opaque research lineage for research-related orchestration." },
           "personaRevisionId": { "type": "string", "format": "uuid" },
           "promptBundleRevisionId": { "type": "string", "format": "uuid" },
           "promptHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -3190,6 +3289,7 @@
           "errorClass": { "type": "string", "enum": ["capability", "validation", "policy", "budget", "timeout", "provider_protocol", "execution", "cancellation"] },
           "errorCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
           "resultCount": { "type": "integer", "minimum": 0, "maximum": 8 }
+          ,"researchAdmission": { "$ref": "#/components/schemas/ResearchToolAdmissionResult", "description": "Present only for the admission-only web.research@1 result." }
         }
       },
       "ApprovalStatusData": {
@@ -4619,6 +4719,191 @@
           "evaluatedAt": { "type": "string", "format": "date-time" }
         }
       },
+      "VersionedCommand": {
+        "type": "object", "additionalProperties": false, "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "ResearchMode": { "type": "string", "enum": ["quick", "auto", "deep", "agent_led"] },
+      "ResearchStage": { "type": "string", "enum": ["queued", "planning", "searching", "fetching", "validating_evidence", "synthesizing", "persisting", "draining", "terminal"] },
+      "ResearchOutcome": { "type": "string", "enum": ["completed", "partial", "budget_exhausted", "failed", "canceled", "interrupted"] },
+      "ResearchFailureClass": { "type": "string", "enum": ["provider_disabled", "provider_unavailable", "validation_failed", "authorization_denied", "quota_exceeded", "timeout", "execution_failed", "cleanup_failed", "cleanup_unknown"] },
+      "ContentDeletionState": { "type": "string", "enum": ["active", "deletion_pending", "deletion_failed", "cleanup_unknown", "deleted"] },
+      "ResearchAdmissionState": { "type": "string", "enum": ["admitted", "rejected"] },
+      "ResearchBudget": {
+        "type": "object", "additionalProperties": false,
+        "required": ["wallTimeSeconds", "fetchedSources", "searchRequests", "browserPages", "modelCalls"],
+        "properties": {
+          "wallTimeSeconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+          "fetchedSources": { "type": "integer", "minimum": 1, "maximum": 60 },
+          "searchRequests": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "browserPages": { "type": "integer", "minimum": 0, "maximum": 15 },
+          "modelCalls": { "type": "integer", "minimum": 1, "maximum": 32 }
+        }
+      },
+      "ResearchBudgetConsumption": {
+        "type": "object", "additionalProperties": false,
+        "required": ["wallTimeSeconds", "fetchedSources", "searchRequests", "browserPages", "modelCalls"],
+        "properties": {
+          "wallTimeSeconds": { "type": "integer", "minimum": 0, "maximum": 3600 },
+          "fetchedSources": { "type": "integer", "minimum": 0, "maximum": 60 },
+          "searchRequests": { "type": "integer", "minimum": 0, "maximum": 20 },
+          "browserPages": { "type": "integer", "minimum": 0, "maximum": 15 },
+          "modelCalls": { "type": "integer", "minimum": 0, "maximum": 32 }
+        },
+        "description": "Authoritative cumulative consumption counters. All fields are zero-capable for a newly admitted task."
+      },
+      "ResearchModeEnvelope": {
+        "type": "object", "additionalProperties": false, "required": ["mode", "maximum", "defaults"],
+        "properties": { "mode": { "$ref": "#/components/schemas/ResearchMode" }, "maximum": { "$ref": "#/components/schemas/ResearchBudget" }, "defaults": { "$ref": "#/components/schemas/ResearchBudget" } }
+      },
+      "ResearchSettings": {
+        "type": "object", "additionalProperties": false, "required": ["version", "presets", "updatedAt"],
+        "properties": { "version": { "type": "integer", "minimum": 1 }, "presets": { "type": "array", "minItems": 4, "maxItems": 4, "items": { "$ref": "#/components/schemas/ResearchModeEnvelope" } }, "updatedAt": { "type": "string", "format": "date-time" } }
+      },
+      "ReplaceResearchSettingsRequest": {
+        "type": "object", "additionalProperties": false, "required": ["expectedVersion", "presets"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 }, "presets": { "type": "array", "minItems": 4, "maxItems": 4, "items": { "type": "object", "additionalProperties": false, "required": ["mode", "defaults"], "properties": { "mode": { "$ref": "#/components/schemas/ResearchMode" }, "defaults": { "$ref": "#/components/schemas/ResearchBudget" } } } } }
+      },
+      "CreateResearchRequest": {
+        "type": "object", "additionalProperties": false, "required": ["question", "mode"],
+        "properties": {
+          "question": { "type": "string", "minLength": 1, "maxLength": 10000, "description": "Owner-private research question; never placed in URLs, telemetry, events, or browser persistence." },
+          "mode": { "$ref": "#/components/schemas/ResearchMode" },
+          "budget": { "$ref": "#/components/schemas/ResearchBudget", "description": "Optional cumulative limits bounded by the immutable selected-mode envelope." },
+          "seedUrls": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048 } },
+          "domains": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[A-Za-z0-9.-]+$" } }
+        }
+      },
+      "ResearchAdmission": {
+        "type": "object", "additionalProperties": false, "required": ["researchId", "taskRef", "mode", "admissionState", "admittedBudget", "version", "createdAt"],
+        "properties": { "researchId": { "type": "string", "format": "uuid" }, "taskRef": { "$ref": "#/components/schemas/OpaqueTaskReference" }, "mode": { "$ref": "#/components/schemas/ResearchMode" }, "admissionState": { "$ref": "#/components/schemas/ResearchAdmissionState" }, "admittedBudget": { "$ref": "#/components/schemas/ResearchBudget" }, "version": { "type": "integer", "minimum": 1 }, "createdAt": { "type": "string", "format": "date-time" } },
+        "description": "Admission-only result. Research content, evidence, provider material, citations, artifacts, and terminal results are prohibited."
+      },
+      "ResearchCapabilities": {
+        "type": "object", "additionalProperties": false, "required": ["canCancel", "canExtend", "canDelete", "canRetryCleanup", "canReconcileCleanup"],
+        "properties": { "canCancel": { "type": "boolean" }, "canExtend": { "type": "boolean" }, "canDelete": { "type": "boolean" }, "canRetryCleanup": { "type": "boolean" }, "canReconcileCleanup": { "type": "boolean" } }
+      },
+      "ResearchSummary": {
+        "type": "object", "additionalProperties": false, "required": ["id", "taskRef", "mode", "stage", "outcome", "contentState", "version", "capabilities", "createdAt", "updatedAt", "finishedAt"],
+        "properties": { "id": { "type": "string", "format": "uuid" }, "taskRef": { "$ref": "#/components/schemas/OpaqueTaskReference" }, "mode": { "$ref": "#/components/schemas/ResearchMode" }, "stage": { "$ref": "#/components/schemas/ResearchStage" }, "outcome": { "oneOf": [{ "$ref": "#/components/schemas/ResearchOutcome" }, { "type": "null" }] }, "contentState": { "$ref": "#/components/schemas/ContentDeletionState" }, "version": { "type": "integer", "minimum": 1 }, "capabilities": { "$ref": "#/components/schemas/ResearchCapabilities" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "finishedAt": { "type": ["string", "null"], "format": "date-time" } }
+      },
+      "ActiveResearchDetail": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "taskRef", "mode", "stage", "outcome", "contentState", "version", "capabilities", "createdAt", "updatedAt", "finishedAt", "question", "admittedBudget", "consumedBudget", "extensionAccepted", "sourceCount", "failureClass", "artifactRefs", "citations"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "taskRef": { "$ref": "#/components/schemas/OpaqueTaskReference" },
+          "mode": { "$ref": "#/components/schemas/ResearchMode" },
+          "stage": { "$ref": "#/components/schemas/ResearchStage" },
+          "outcome": { "oneOf": [{ "$ref": "#/components/schemas/ResearchOutcome" }, { "type": "null" }] },
+          "contentState": { "type": "string", "const": "active" },
+          "version": { "type": "integer", "minimum": 1 },
+          "capabilities": { "$ref": "#/components/schemas/ResearchCapabilities" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "finishedAt": { "type": ["string", "null"], "format": "date-time" },
+          "question": { "type": "string", "minLength": 1, "maxLength": 10000 },
+          "admittedBudget": { "$ref": "#/components/schemas/ResearchBudget" },
+          "consumedBudget": { "$ref": "#/components/schemas/ResearchBudgetConsumption" },
+          "extensionAccepted": { "type": "boolean" },
+          "sourceCount": { "type": "integer", "minimum": 0, "maximum": 60 },
+          "failureClass": { "oneOf": [{ "$ref": "#/components/schemas/ResearchFailureClass" }, { "type": "null" }] },
+          "artifactRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/OpaqueArtifactReference" } },
+          "citations": { "type": "array", "maxItems": 60, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WebCitation" }, "description": "Required task-scoped citations constructed from validated evidence. Empty while no citation has settled." }
+        }
+      },
+      "DeletedResearchTombstone": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "taskRef", "mode", "stage", "outcome", "contentState", "version", "capabilities", "createdAt", "updatedAt", "finishedAt", "tombstoneLabel"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "taskRef": { "$ref": "#/components/schemas/OpaqueTaskReference" },
+          "mode": { "$ref": "#/components/schemas/ResearchMode" },
+          "stage": { "$ref": "#/components/schemas/ResearchStage" },
+          "outcome": { "oneOf": [{ "$ref": "#/components/schemas/ResearchOutcome" }, { "type": "null" }] },
+          "contentState": { "type": "string", "enum": ["deletion_pending", "deletion_failed", "cleanup_unknown", "deleted"] },
+          "version": { "type": "integer", "minimum": 1 },
+          "capabilities": { "$ref": "#/components/schemas/ResearchCapabilities" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "finishedAt": { "type": ["string", "null"], "format": "date-time" },
+          "tombstoneLabel": { "type": "string", "const": "Research source deleted" }
+        },
+        "description": "Content-free deleted or cleanup-pending research presentation. Question, plans, URLs, labels, excerpts, citations, artifacts, and provider material are prohibited."
+      },
+      "ResearchDetail": { "oneOf": [{ "$ref": "#/components/schemas/ActiveResearchDetail" }, { "$ref": "#/components/schemas/DeletedResearchTombstone" }] },
+      "ResearchPage": { "type": "object", "additionalProperties": false, "required": ["items", "nextCursor"], "properties": { "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/ResearchSummary" } }, "nextCursor": { "type": ["string", "null"], "maxLength": 1024 } } },
+      "ResearchEvidence": {
+        "type": "object", "additionalProperties": false, "required": ["sourceId", "label", "url", "publisher", "retrievedAt", "mediaType", "extractionMethod", "freshnessAt", "locators"],
+        "properties": { "sourceId": { "type": "string", "format": "uuid" }, "label": { "type": "string", "minLength": 1, "maxLength": 300 }, "url": { "type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048 }, "publisher": { "type": ["string", "null"], "maxLength": 300 }, "retrievedAt": { "type": "string", "format": "date-time" }, "mediaType": { "type": "string", "enum": ["text/html", "application/xhtml+xml", "text/plain"] }, "extractionMethod": { "type": "string", "enum": ["static", "browser"] }, "freshnessAt": { "type": ["string", "null"], "format": "date-time" }, "locators": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 255 } } }
+      },
+      "ResearchEvidencePage": { "type": "object", "additionalProperties": false, "required": ["items", "nextCursor"], "properties": { "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/ResearchEvidence" } }, "nextCursor": { "type": ["string", "null"], "maxLength": 1024 } } },
+      "ExtendResearchRequest": { "type": "object", "additionalProperties": false, "required": ["expectedVersion", "cumulativeBudget"], "properties": { "expectedVersion": { "type": "integer", "minimum": 1 }, "cumulativeBudget": { "$ref": "#/components/schemas/ResearchBudget" } } },
+      "DeleteResearchRequest": { "type": "object", "additionalProperties": false, "required": ["expectedVersion", "deleteLinkedArtifacts"], "properties": { "expectedVersion": { "type": "integer", "minimum": 1 }, "deleteLinkedArtifacts": { "type": "boolean", "default": false } } },
+      "GeneratedArtifactMediaType": { "type": "string", "enum": ["text/markdown; charset=utf-8", "text/plain; charset=utf-8", "application/json"] },
+      "GeneratedArtifactKind": { "type": "string", "enum": ["research_report", "research_source_manifest", "generated_text", "generated_data"] },
+      "GeneratedArtifactCapabilities": { "type": "object", "additionalProperties": false, "required": ["canPreview", "canDownload", "canDelete", "canRetryCleanup", "canReconcileCleanup"], "properties": { "canPreview": { "type": "boolean" }, "canDownload": { "type": "boolean" }, "canDelete": { "type": "boolean" }, "canRetryCleanup": { "type": "boolean" }, "canReconcileCleanup": { "type": "boolean" } } },
+      "DeletedGeneratedArtifactCapabilities": { "type": "object", "additionalProperties": false, "required": ["canPreview", "canDownload", "canDelete", "canRetryCleanup", "canReconcileCleanup"], "properties": { "canPreview": { "type": "boolean", "const": false }, "canDownload": { "type": "boolean", "const": false }, "canDelete": { "type": "boolean", "const": false }, "canRetryCleanup": { "type": "boolean" }, "canReconcileCleanup": { "type": "boolean" } } },
+      "GeneratedArtifactLineage": { "type": "object", "additionalProperties": false, "required": ["taskId", "runId", "conversationId", "workspaceId"], "properties": { "taskId": { "type": ["string", "null"], "format": "uuid" }, "runId": { "type": ["string", "null"], "format": "uuid" }, "conversationId": { "type": ["string", "null"], "format": "uuid" }, "workspaceId": { "type": ["string", "null"], "format": "uuid" } } },
+      "GeneratedArtifactRevision": {
+        "type": "object", "additionalProperties": false, "required": ["revision", "mediaType", "sha256", "byteCount", "creatorComponent", "previousRevision", "createdAt"],
+        "properties": { "revision": { "type": "integer", "minimum": 1 }, "mediaType": { "$ref": "#/components/schemas/GeneratedArtifactMediaType" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "byteCount": { "type": "integer", "minimum": 0, "maximum": 10000000 }, "creatorComponent": { "type": "string", "pattern": "^aura\\.[a-z0-9_.]+@[1-9][0-9]*$", "maxLength": 128 }, "previousRevision": { "type": ["integer", "null"], "minimum": 1 }, "createdAt": { "type": "string", "format": "date-time" } },
+        "description": "Immutable owner-authorized revision metadata. Object references are never exposed."
+      },
+      "GeneratedArtifactIntegrityTruth": {
+        "type": "object", "additionalProperties": false, "required": ["revision", "sha256", "byteCount", "createdAt"],
+        "properties": { "revision": { "type": "integer", "minimum": 1 }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "byteCount": { "type": "integer", "minimum": 0, "maximum": 10000000 }, "createdAt": { "type": "string", "format": "date-time" } },
+        "description": "Content-free immutable integrity truth retained after deletion acceptance."
+      },
+      "ActiveGeneratedArtifactSummary": {
+        "type": "object", "additionalProperties": false, "required": ["id", "kind", "title", "mediaType", "contentState", "currentRevision", "version", "capabilities", "createdAt", "updatedAt"],
+        "properties": { "id": { "type": "string", "format": "uuid" }, "kind": { "$ref": "#/components/schemas/GeneratedArtifactKind" }, "title": { "type": "string", "minLength": 1, "maxLength": 300 }, "mediaType": { "$ref": "#/components/schemas/GeneratedArtifactMediaType" }, "contentState": { "type": "string", "const": "active" }, "currentRevision": { "type": "integer", "minimum": 1 }, "version": { "type": "integer", "minimum": 1 }, "capabilities": { "$ref": "#/components/schemas/GeneratedArtifactCapabilities" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } }
+      },
+      "ActiveGeneratedArtifactDetail": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "kind", "title", "mediaType", "contentState", "currentRevision", "version", "capabilities", "createdAt", "updatedAt", "lineage", "revision"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" }, "kind": { "$ref": "#/components/schemas/GeneratedArtifactKind" }, "title": { "type": "string", "minLength": 1, "maxLength": 300 }, "mediaType": { "$ref": "#/components/schemas/GeneratedArtifactMediaType" }, "contentState": { "type": "string", "const": "active" }, "currentRevision": { "type": "integer", "minimum": 1 }, "version": { "type": "integer", "minimum": 1 }, "capabilities": { "$ref": "#/components/schemas/GeneratedArtifactCapabilities" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "lineage": { "$ref": "#/components/schemas/GeneratedArtifactLineage" }, "revision": { "$ref": "#/components/schemas/GeneratedArtifactRevision" }
+        }
+      },
+      "DeletedGeneratedArtifactTombstone": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "kind", "title", "mediaType", "contentState", "currentRevision", "version", "capabilities", "createdAt", "updatedAt", "lineage", "integrity", "deletionAuditId"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" }, "kind": { "$ref": "#/components/schemas/GeneratedArtifactKind" }, "title": { "type": "null", "const": null }, "mediaType": { "type": "null", "const": null }, "contentState": { "type": "string", "enum": ["deletion_pending", "deletion_failed", "cleanup_unknown", "deleted"] }, "currentRevision": { "type": "integer", "minimum": 1 }, "version": { "type": "integer", "minimum": 1 }, "capabilities": { "$ref": "#/components/schemas/DeletedGeneratedArtifactCapabilities" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "lineage": { "$ref": "#/components/schemas/GeneratedArtifactLineage" }, "integrity": { "$ref": "#/components/schemas/GeneratedArtifactIntegrityTruth" }, "deletionAuditId": { "type": "string", "format": "uuid" }
+        },
+        "description": "Content-free artifact tombstone. Title, media type, preview, download, filename, object reference, and bytes are unavailable while opaque lineage and immutable integrity truth remain."
+      },
+      "GeneratedArtifactSummary": { "oneOf": [{ "$ref": "#/components/schemas/ActiveGeneratedArtifactSummary" }, { "$ref": "#/components/schemas/DeletedGeneratedArtifactTombstone" }] },
+      "GeneratedArtifactDetail": { "oneOf": [{ "$ref": "#/components/schemas/ActiveGeneratedArtifactDetail" }, { "$ref": "#/components/schemas/DeletedGeneratedArtifactTombstone" }] },
+      "GeneratedArtifactPage": { "type": "object", "additionalProperties": false, "required": ["items", "nextCursor"], "properties": { "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/GeneratedArtifactSummary" } }, "nextCursor": { "type": ["string", "null"], "maxLength": 1024 } } },
+      "GeneratedArtifactPreview": { "type": "object", "additionalProperties": false, "required": ["artifactId", "revision", "mediaType", "text", "truncated"], "properties": { "artifactId": { "type": "string", "format": "uuid" }, "revision": { "type": "integer", "minimum": 1 }, "mediaType": { "$ref": "#/components/schemas/GeneratedArtifactMediaType" }, "text": { "type": "string", "maxLength": 262144, "description": "Sanitized inert preview. Raw HTML, scripts, remote embeds, and executable links are prohibited." }, "truncated": { "type": "boolean" } } },
+      "TaskSourceKind": { "type": "string", "enum": ["research", "workflow_instance", "briefing_occurrence", "document_processing", "memory_reindex"] },
+      "TaskNormalizedStatus": { "type": "string", "enum": ["queued", "running", "waiting", "completed", "failed", "canceled", "unknown"] },
+      "TaskCapabilities": { "type": "object", "additionalProperties": false, "required": ["canCancel", "canRetry", "hasSourceDetail"], "properties": { "canCancel": { "type": "boolean" }, "canRetry": { "type": "boolean" }, "hasSourceDetail": { "type": "boolean" } } },
+      "DurableTaskSummary": {
+        "type": "object", "additionalProperties": false, "required": ["id", "sourceKind", "sourceId", "sourceVersion", "status", "sourceStatus", "sourceOutcome", "stage", "progress", "capabilities", "routeKey", "createdAt", "updatedAt"],
+        "properties": { "id": { "type": "string", "format": "uuid" }, "sourceKind": { "$ref": "#/components/schemas/TaskSourceKind" }, "sourceId": { "type": "string", "format": "uuid" }, "sourceVersion": { "type": "integer", "minimum": 1 }, "status": { "$ref": "#/components/schemas/TaskNormalizedStatus" }, "sourceStatus": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "sourceOutcome": { "type": ["string", "null"], "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "stage": { "type": ["string", "null"], "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "progress": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "capabilities": { "$ref": "#/components/schemas/TaskCapabilities" }, "routeKey": { "type": "string", "enum": ["research_detail", "workflow_instance_detail", "briefing_occurrence_detail", "document_detail", "memory_reindex_detail"] }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } }
+      },
+      "DurableTaskDetail": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "sourceKind", "sourceId", "sourceVersion", "status", "sourceStatus", "sourceOutcome", "stage", "progress", "capabilities", "routeKey", "createdAt", "updatedAt", "displayLabel", "failureClass", "recoveryAction", "artifactRefs"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" }, "sourceKind": { "$ref": "#/components/schemas/TaskSourceKind" }, "sourceId": { "type": "string", "format": "uuid" }, "sourceVersion": { "type": "integer", "minimum": 1 }, "status": { "$ref": "#/components/schemas/TaskNormalizedStatus" }, "sourceStatus": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "sourceOutcome": { "type": ["string", "null"], "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "stage": { "type": ["string", "null"], "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "progress": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "capabilities": { "$ref": "#/components/schemas/TaskCapabilities" }, "routeKey": { "type": "string", "enum": ["research_detail", "workflow_instance_detail", "briefing_occurrence_detail", "document_detail", "memory_reindex_detail"] }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "displayLabel": { "type": ["string", "null"], "maxLength": 300, "description": "Owner-authorized value resolved from the authoritative source and never copied into invalidation events." }, "failureClass": { "type": ["string", "null"], "maxLength": 64, "pattern": "^[a-z][a-z0-9_]*$" }, "recoveryAction": { "type": ["string", "null"], "maxLength": 1000 }, "artifactRefs": { "type": "array", "maxItems": 16, "items": { "$ref": "#/components/schemas/OpaqueArtifactReference" } }
+        }
+      },
+      "DurableTaskPage": { "type": "object", "additionalProperties": false, "required": ["items", "nextCursor"], "properties": { "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/DurableTaskSummary" } }, "nextCursor": { "type": ["string", "null"], "maxLength": 1024 } } },
+      "TaskCommand": { "type": "object", "additionalProperties": false, "required": ["expectedSourceVersion"], "properties": { "expectedSourceVersion": { "type": "integer", "minimum": 1 } } },
+      "TaskCommandReceipt": { "type": "object", "additionalProperties": false, "required": ["taskId", "command", "state", "sourceVersion"], "properties": { "taskId": { "type": "string", "format": "uuid" }, "command": { "type": "string", "enum": ["cancel", "retry"] }, "state": { "type": "string", "enum": ["accepted", "rejected", "unknown"] }, "sourceVersion": { "type": "integer", "minimum": 1 } } },
+      "TaskStreamEvent": { "type": "object", "additionalProperties": false, "description": "Metadata-only invalidation. Private source status, outcome, progress, capabilities, owner, title, URL, digest, object reference, and content are prohibited.", "required": ["eventId", "taskId", "sourceKind", "sourceId", "sourceVersion", "occurredAt"], "properties": { "eventId": { "type": "string", "format": "uuid" }, "taskId": { "type": "string", "format": "uuid" }, "sourceKind": { "$ref": "#/components/schemas/TaskSourceKind" }, "sourceId": { "type": "string", "format": "uuid" }, "sourceVersion": { "type": "integer", "minimum": 1 }, "occurredAt": { "type": "string", "format": "date-time" } } },
+      "OpaqueTaskReference": { "type": "object", "additionalProperties": false, "required": ["taskId"], "properties": { "taskId": { "type": "string", "format": "uuid" } } },
+      "OpaqueArtifactReference": { "type": "object", "additionalProperties": false, "required": ["artifactId"], "properties": { "artifactId": { "type": "string", "format": "uuid" } } },
+      "ResearchRunOrigin": { "type": "object", "additionalProperties": false, "required": ["researchId", "taskId"], "properties": { "researchId": { "type": "string", "format": "uuid" }, "taskId": { "type": "string", "format": "uuid" } }, "description": "Opaque metadata-only lineage. Question, source, provider, plan, evidence, and artifact content are prohibited." },
+      "ResearchActivity": { "type": "object", "additionalProperties": false, "required": ["taskRef", "mode", "admissionState"], "properties": { "taskRef": { "$ref": "#/components/schemas/OpaqueTaskReference" }, "mode": { "$ref": "#/components/schemas/ResearchMode" }, "admissionState": { "$ref": "#/components/schemas/ResearchAdmissionState" } }, "description": "Stable admission activity only; it cannot represent terminal research content or provider material." },
+      "WebCitation": { "type": "object", "additionalProperties": false, "description": "Owner-authorized citation constructed only from task-scoped validated evidence. Queries, excerpts, object keys, provider payloads, browser state, and model-supplied evidence identifiers are prohibited.", "required": ["kind", "sourceId", "label", "url", "retrievedAt", "locator"], "properties": { "kind": { "type": "string", "const": "web" }, "sourceId": { "type": "string", "format": "uuid" }, "label": { "type": "string", "minLength": 1, "maxLength": 300 }, "url": { "type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048 }, "retrievedAt": { "type": "string", "format": "date-time" }, "locator": { "type": ["string", "null"], "maxLength": 255 } } },
+      "DeletedResearchCitation": { "type": "object", "additionalProperties": false, "required": ["kind", "sourceId", "label"], "properties": { "kind": { "type": "string", "const": "deleted_research" }, "sourceId": { "type": "string", "format": "uuid" }, "label": { "type": "string", "const": "Research source deleted" } }, "description": "Content-free tombstone with no URL, locator, excerpt, evidence, or artifact relation." },
+      "ResearchCitation": { "oneOf": [{ "$ref": "#/components/schemas/WebCitation" }, { "$ref": "#/components/schemas/DeletedResearchCitation" }] },
+      "ResearchToolAdmissionResult": { "type": "object", "additionalProperties": false, "required": ["taskRef", "mode", "admissionState"], "properties": { "taskRef": { "$ref": "#/components/schemas/OpaqueTaskReference" }, "mode": { "$ref": "#/components/schemas/ResearchMode" }, "admissionState": { "$ref": "#/components/schemas/ResearchAdmissionState" } }, "description": "Closed web.research@1 admission-only result. Research content, evidence, URLs, citations, provider material, and terminal results are prohibited." },
       "ModelVisionRequiredError": {
         "type": "object", "additionalProperties": false,
         "description": "Typed atomic run-admission failure returned only when the submitted or reused attachment set contains an image and the explicitly selected model has no fresh digest-identified verified vision capability. No message, links, or run are created and the client retains its draft and selection.",

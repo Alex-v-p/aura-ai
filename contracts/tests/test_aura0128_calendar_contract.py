@@ -138,8 +138,10 @@ def test_calendar_contract_is_v119_additive_and_operations_are_unique() -> None:
                     "Notification",
                     "NotificationStreamEvent",
                     "NotificationLifecycleEvent",
+                    "Message",
                     "Run",
                     "RunEventBase",
+                    "ToolStatusData",
                 }:
                     continue
                 assert current_components[name] == component, f"{component_group}/{name}"

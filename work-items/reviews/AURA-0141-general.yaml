@@ -1,0 +1,57 @@
+agent: general_reviewer
+work_item: AURA-0141
+verdict: PASS
+checked:
+  - >-
+    Re-read the corrected OpenAPI, event schemas, run-event additions,
+    generated client, amended work item, updated handoff, focused contract
+    tests, and the two authorized legacy compatibility-test changes against
+    ADR-0018 and the governed research/artifact/task design.
+  - >-
+    Re-verified the invalid detail-schema blocker. ActiveResearchDetail,
+    DeletedResearchTombstone, ActiveGeneratedArtifactDetail,
+    DeletedGeneratedArtifactTombstone, and DurableTaskDetail are now complete
+    closed object schemas rather than mutually rejecting allOf compositions.
+    Focused positive and negative instance fixtures cover active research,
+    partial research, all four research deletion states, active artifacts, all
+    four artifact deletion states, and durable-task detail, including rejection
+    of undeclared and post-deletion private fields.
+  - >-
+    Re-verified the budget-counter blocker. Positive admitted limits remain in
+    ResearchBudget, while ActiveResearchDetail.consumedBudget now uses the
+    closed ResearchBudgetConsumption schema with zero minima. Tests accept the
+    all-zero admitted snapshot and bounded partial consumption and reject zero
+    admitted limits and consumption beyond operator caps.
+  - >-
+    Re-verified the missing-citation blocker. ActiveResearchDetail now requires
+    a bounded unique citations collection of closed validated WebCitation
+    values; active, partial, and missing-citation fixtures prove the dedicated
+    research resource can return authoritative citations independently of
+    conversation delivery. DeletedResearchTombstone cannot carry citations.
+  - >-
+    Re-verified the deletion-truth blocker. Research detail is discriminated by
+    active versus pending/failed/unknown/deleted content state. Artifact summary
+    and detail are discriminated into active and content-free tombstone shapes;
+    tombstones force title and media type to null, disable preview/download,
+    preserve opaque lineage and required revision/digest/byte-count integrity
+    truth, and reject title leakage or missing integrity across every deletion
+    state.
+  - >-
+    Re-verified the contract-suite regression blocker. The AURA-0128 and
+    AURA-0132 compatibility guards now recognize only the intentionally evolved
+    Message and ToolStatusData components while retaining baseline equality for
+    every unrelated component. Run and Message legacy citations remain
+    byte-for-byte DocumentCitation arrays; task-scoped web citations are
+    additive optional webCitations fields. The focused compatibility selection
+    passes, and the full contracts suite now reports 114 passed and exactly two
+    failures. Direct comparison with commit 4028d72 confirms the four
+    notification schemas and notification event file implicated by those two
+    failures are byte-for-byte unchanged by AURA-0141, so both are pre-existing
+    notification-baseline failures rather than regressions in this work item.
+  - >-
+    Independently ran work-item, changed-path, generated-sync, import-boundary,
+    service-isolation, frontend-boundary, module-registry, repository-shape,
+    baseline-protection, and contract-change validators; all passed or returned
+    their declared not-applicable skip. The AURA-0141 focused suite passed 16
+    tests, the generated client is synchronized, and git diff validation passed.
+findings: []
