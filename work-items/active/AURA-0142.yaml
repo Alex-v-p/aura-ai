@@ -62,6 +62,7 @@ allowed_paths:
   - services/aura-core/src/aura_core/bootstrap/artifact_uow.py
   - services/aura-core/src/aura_core/entrypoints/api/routes/artifacts.py
   - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
   - services/aura-core/resources/component-manifests/artifact-persistence.yaml
   - services/aura-core/resources/component-manifests/artifact-deletion.yaml
   - services/aura-core/tests/test_generated_artifacts.py
