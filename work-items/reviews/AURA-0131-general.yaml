@@ -1,0 +1,11 @@
+agent: general_reviewer
+work_item: AURA-0131
+verdict: PASS
+checked:
+  - Fresh discovery adopts the first current server selection version while cursor continuation preserves the active chain version; the version 7 to 409 to version 8 retry regression passes.
+  - Private-state clearing invalidates every calendar request generation and suppresses stale responses after teardown, disconnect, authorization loss, and session replacement.
+  - Calendar discovery and agenda pagination are bounded, continuation-aware, selection replacement remains complete, and capped results are reported honestly.
+  - Today uses compound calendar and event identity, renders every server conflict, preserves directional relationships, and presents half-open multi-day ranges correctly.
+  - Both integration surfaces present authoritative reads, actions, sanitized errors, and closed recovery guidance.
+  - Focused feature tests, Aura Web tests, lint, diff checking, and the final browser matrix passed.
+findings: []

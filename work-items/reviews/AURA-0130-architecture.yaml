@@ -1,0 +1,12 @@
+agent: architecture_guardian
+work_item: AURA-0130
+verdict: PASS
+checked:
+  - Atomic OAuth supersession remains in the bootstrap Valkey adapter with bounded WATCH/MULTI contention handling and fail-closed production behavior.
+  - Cross-client contention coverage proves concurrent creation cannot leave mixed current, active, attempt, or state markers.
+  - CalendarRequestContext remains on the provider-neutral public boundary while server-only provider identifiers and cursor state remain internal.
+  - Google-specific behavior remains isolated in the adapter, concrete composition remains in bootstrap, and HTTP entrypoints remain thin.
+  - Migration 0024 remains Core-owned and introduces no durable event-content persistence.
+  - No contract, frontend, Observatory, deployment, service, persistence-ownership, or trust boundary changed and no ADR is required.
+  - All architecture, boundary, registry, observability, repository-shape, baseline, and diff checks passed.
+findings: []

@@ -1,4 +1,4 @@
-import type { Approval, ApprovalDetail as ApiApprovalDetail, ApprovalEvent as ApiApprovalEvent, ApprovalExecutionStatus, ApprovalPage as ApiApprovalPage, ApprovalStatus, ApprovalStreamEvent as ApiApprovalStreamEvent, ReminderApprovalToolId, ReminderCommandProposalDetail as ApiReminderCommandProposalDetail, ReminderProposalDetail as ApiReminderProposalDetail } from '@aura/aura-api-client';
+import type { Approval, ApprovalEvent as ApiApprovalEvent, ApprovalExecutionStatus, ApprovalPage as ApiApprovalPage, ApprovalStatus, ApprovalStreamEvent as ApiApprovalStreamEvent, ReminderApproval, ReminderApprovalToolId, ReminderCommandProposalDetail as ApiReminderCommandProposalDetail, ReminderProposalDetail as ApiReminderProposalDetail, WorkflowApproval, WorkflowApprovalDetail, WorkflowApprovalProposal as ApiWorkflowApprovalProposal } from '@aura/aura-api-client';
 
 export type { ApprovalExecutionStatus, ApprovalStatus };
 /** The approval inbox is intentionally closed over the reminder commands that
@@ -19,9 +19,10 @@ export function isApprovalToolId(value: unknown): value is ApprovalToolId {
 
 export type ReminderProposalDetail = ApiReminderProposalDetail;
 export type ReminderCommandProposalDetail = ApiReminderCommandProposalDetail;
-export type ApprovalProposal = ReminderProposalDetail | ReminderCommandProposalDetail;
-export type ApprovalSummary = Omit<Approval, 'toolId'> & { readonly toolId: ApprovalToolId };
-export type ApprovalDetail = Omit<ApiApprovalDetail, 'toolId' | 'proposal'> & { readonly toolId: ApprovalToolId; readonly proposal: ApprovalProposal };
+export type WorkflowApprovalProposal = ApiWorkflowApprovalProposal;
+export type ApprovalProposal = ReminderProposalDetail | ReminderCommandProposalDetail | WorkflowApprovalProposal;
+export type ApprovalSummary = Approval;
+export type ApprovalDetail = (ReminderApproval & { readonly proposal: ReminderProposalDetail | ReminderCommandProposalDetail }) | WorkflowApprovalDetail;
 export type ApprovalPage = Omit<ApiApprovalPage, 'items'> & { readonly items: ReadonlyArray<ApprovalSummary> };
 export type ApprovalEvent = ApiApprovalEvent;
 export type ApprovalStreamEvent = ApiApprovalStreamEvent;
@@ -31,12 +32,26 @@ export function isReminderCommandProposal(proposal: ApprovalProposal): proposal 
   return 'operation' in proposal;
 }
 
+export function isWorkflowApproval(approval: ApprovalSummary): approval is WorkflowApproval {
+  return 'origin' in approval && approval.origin === 'manual_workflow_instance';
+}
+
+export function isWorkflowApprovalDetail(approval: ApprovalSummary | ApprovalDetail): approval is WorkflowApprovalDetail {
+  return 'origin' in approval && approval.origin === 'manual_workflow_instance' && 'proposal' in approval;
+}
+
+export function workflowApprovalProposal(approval: ApprovalDetail): WorkflowApprovalProposal | null {
+  return isWorkflowApprovalDetail(approval) ? approval.proposal : null;
+}
+
 function targetLabel(targetType: ReminderCommandProposalDetail['targetType']): string {
   return targetType === 'occurrence' ? 'this reminder occurrence' : targetType === 'series' ? 'this recurring reminder' : 'this reminder';
 }
 
 /** Plain-language labels keep consequential scope visible without exposing protocol fields in the primary card. */
 export function approvalActionLabel(approval: ApprovalSummary | ApprovalDetail): string {
+  if (isWorkflowApprovalDetail(approval)) return `Approve ${approval.proposal.workflowDisplayName} · step ${approval.proposal.stepOrdinal}`;
+  if ('origin' in approval && approval.origin === 'manual_workflow_instance') return `Approve workflow step ${approval.workflowStepOrdinal}`;
   const proposal = 'proposal' in approval ? approval.proposal : null;
   if (proposal && isReminderCommandProposal(proposal)) {
     switch (proposal.operation) {
@@ -89,6 +104,10 @@ export function approvalLeadCopy(approval: ApprovalSummary): string {
   return 'This request was canceled and can no longer be changed.';
 }
 
+export function approvalOriginLabel(approval: ApprovalSummary | ApprovalDetail): string {
+  return 'origin' in approval && approval.origin === 'manual_workflow_instance' ? 'Manual workflow instance' : `Conversation ${(approval as ReminderApproval).conversationId}`;
+}
+
 export interface UuidSource { readonly randomUUID?: () => string; readonly getRandomValues?: (bytes: Uint8Array) => Uint8Array; }
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export function createUuidV4(source?: UuidSource): string {
@@ -107,9 +126,9 @@ export function shouldPreserveReviewedApproval(routeChanged: boolean, reviewedId
   return !routeChanged && reviewedId === approvalId && selectedId === approvalId;
 }
 export function approvalSummaryFromDetail(detail: ApprovalDetail): ApprovalSummary {
-  const { proposal, ...summary } = detail;
-  void proposal;
-  return summary;
+  const { proposal: _proposal, ...summary } = detail;
+  void _proposal;
+  return summary as ApprovalSummary;
 }
 
 export interface ApprovalStream { close(): void; }
@@ -149,7 +168,7 @@ export function approvalStreamBlockWithinBounds(block: string): boolean {
   return true;
 }
 const strictRfc3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
-const approvalEventKeys = ['schemaVersion', 'eventId', 'eventType', 'approvalId', 'proposalId', 'runId', 'conversationId', 'toolId', 'toolVersion', 'status', 'executionStatus', 'version', 'occurredAt'] as const;
+const approvalEventBaseKeys = ['schemaVersion', 'eventId', 'eventType', 'approvalId', 'proposalId', 'toolVersion', 'status', 'executionStatus', 'version', 'occurredAt'] as const;
 const boundedEventId = (value: unknown): value is string => typeof value === 'string' && boundedUuid.test(value);
 function isStrictRfc3339(value: unknown): value is string {
   if (typeof value !== 'string') return false;
@@ -161,16 +180,22 @@ function isStrictRfc3339(value: unknown): value is string {
 }
 export function isValidApprovalEvent(value: unknown): value is ApprovalEvent {
   if (!value || typeof value !== 'object') return false;
-  const event = value as Partial<ApprovalEvent>;
-  const keys = Object.keys(value);
-  if (keys.length !== approvalEventKeys.length || approvalEventKeys.some((key) => !Object.prototype.hasOwnProperty.call(value, key))) return false;
-  return event.schemaVersion === 1 && boundedEventId(event.eventId) &&
-    (event.eventType === 'approval.pending' || event.eventType === 'approval.approved' || event.eventType === 'approval.rejected' || event.eventType === 'approval.expired' || event.eventType === 'approval.canceled') &&
-    boundedEventId(event.approvalId) && boundedEventId(event.proposalId) && boundedEventId(event.runId) && boundedEventId(event.conversationId) &&
-    isApprovalToolId(event.toolId) && event.toolVersion === 1 &&
-    (event.status === 'pending' || event.status === 'approved' || event.status === 'rejected' || event.status === 'expired' || event.status === 'canceled') &&
-    (event.executionStatus === 'not_started' || event.executionStatus === 'queued' || event.executionStatus === 'executing' || event.executionStatus === 'completed' || event.executionStatus === 'failed' || event.executionStatus === 'denied') &&
-    Number.isInteger(event.version) && Number(event.version) > 0 && isStrictRfc3339(event.occurredAt);
+  const event = value as { readonly schemaVersion?: unknown; readonly eventId?: unknown; readonly eventType?: unknown; readonly approvalId?: unknown; readonly proposalId?: unknown; readonly toolVersion?: unknown; readonly status?: unknown; readonly executionStatus?: unknown; readonly version?: unknown; readonly occurredAt?: unknown; readonly origin?: unknown; readonly runId?: unknown; readonly conversationId?: unknown; readonly toolId?: unknown; readonly workflowId?: unknown; readonly workflowRevisionId?: unknown; readonly workflowInstanceId?: unknown; readonly workflowStepOrdinal?: unknown; readonly workflowStepExecutionId?: unknown };
+  const hasBase = approvalEventBaseKeys.every((key) => Object.prototype.hasOwnProperty.call(event, key));
+  if (!hasBase || event.schemaVersion !== 1 || !boundedEventId(event.eventId) ||
+    !['approval.pending', 'approval.approved', 'approval.rejected', 'approval.expired', 'approval.canceled'].includes(String(event.eventType)) ||
+    !boundedEventId(event.approvalId) || !boundedEventId(event.proposalId) || event.toolVersion !== 1 ||
+    !['pending', 'approved', 'rejected', 'expired', 'canceled'].includes(String(event.status)) ||
+    !['not_started', 'queued', 'executing', 'completed', 'failed', 'denied'].includes(String(event.executionStatus)) ||
+    !Number.isInteger(event.version) || Number(event.version) <= 0 || !isStrictRfc3339(event.occurredAt)) return false;
+  if (event.origin === 'manual_workflow_instance') {
+    return Object.keys(event).length === approvalEventBaseKeys.length + 9 && event.runId === null && event.conversationId === null && event.toolId === 'workflow.owner_approval' && boundedEventId(event.workflowId) && boundedEventId(event.workflowRevisionId) && boundedEventId(event.workflowInstanceId) && Number.isInteger(event.workflowStepOrdinal) && Number(event.workflowStepOrdinal) >= 1 && boundedEventId(event.workflowStepExecutionId);
+  }
+  const legacy = Object.prototype.hasOwnProperty.call(event, 'runId') || Object.prototype.hasOwnProperty.call(event, 'conversationId') || Object.prototype.hasOwnProperty.call(event, 'toolId');
+  if (legacy) {
+    return Object.keys(event).length === approvalEventBaseKeys.length + 3 && boundedEventId(event.runId) && boundedEventId(event.conversationId) && isApprovalToolId(event.toolId);
+  }
+  return false;
 }
 
 export async function collectApprovalHistory(fetchPage: (cursor?: string) => Promise<ApprovalPage>, initialCursor?: string): Promise<ApprovalCollection> {

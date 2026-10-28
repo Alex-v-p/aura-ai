@@ -1,0 +1,41 @@
+component:
+  id: aura.automation.briefing_cancellation
+  version: 1.0.0
+  owner: automation.briefings
+  category: application
+input:
+  schema: aura-briefing-cancellation-command-v1
+  replayable: true
+  replay_reason: Cancellation is owner-authorized and settles durable schedule and occurrence state idempotently.
+output:
+  schema: aura-briefing-events-v1
+  additional_schemas:
+    - contracts/events/automation/v1/briefing-events.schema.json
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - aura.execution.run_coordinator
+  - transactional_outbox
+metrics:
+  - briefing_cancellation_duration_ms
+  - briefing_outcome_count
+metric_semantics:
+  briefing_cancellation_duration_ms: Active duration of authorization and durable schedule or occurrence cancellation settlement.
+  briefing_outcome_count: Count of canceled, rejected, conflict, or error outcomes.
+capture_policy: metadata_only
+evaluators:
+  - briefing.cancellation.v1
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, status]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, schedule_id, occurrence_id, command_id, correlation_id, causation_id, event_type, event_status, event_version]
+  prohibited: [content, prompt, response, payload, token, credential, owner_identity, owner_subject, timezone, due_at, raw_error]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

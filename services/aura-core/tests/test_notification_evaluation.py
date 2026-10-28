@@ -9,12 +9,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from aura_core.domains.automation.notifications.public import (
+    CreateWorkflowNotification,
     NotificationApplicationService,
     NotificationNotFound,
+    WorkflowNotificationSource,
 )
 from aura_core.domains.automation.notifications.repository import MemoryNotificationRepository
 from aura_core.domains.automation.reminders.repository import MemoryReminderRepository
@@ -82,6 +84,71 @@ async def _fixture_repository(metrics: MetadataMetrics) -> tuple[
     return reminders, notifications, reminder.id, issuer, owner
 
 
+async def _workflow_notification_fixture() -> dict[str, bool]:
+    """Exercise workflow source identity, replay, acknowledgement, and privacy."""
+
+    repository = MemoryNotificationRepository()
+    result_id = uuid4()
+    command = CreateWorkflowNotification(
+        "https://aura0055.evaluation",
+        "workflow-owner",
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        3,
+        uuid4(),
+        result_id,
+        "workflow-source-eval",
+    )
+    first = await repository.create_workflow_notification(command)
+    retry = await repository.create_workflow_notification(command)
+    duplicate = await repository.create_workflow_notification(
+        CreateWorkflowNotification(
+            command.issuer,
+            command.subject,
+            command.workflow_id,
+            command.workflow_revision_id,
+            command.workflow_instance_id,
+            command.workflow_step_ordinal,
+            command.workflow_step_execution_id,
+            command.workflow_result_id,
+            "workflow-source-duplicate",
+        )
+    )
+    acknowledged = await repository.acknowledge(
+        command.issuer,
+        command.subject,
+        first.id,
+        expected_version=1,
+        idempotency_key="workflow-source-ack",
+    )
+    foreign = False
+    try:
+        await repository.get(command.issuer, "foreign-owner", first.id)
+    except NotificationNotFound:
+        foreign = True
+    events = await repository.replay(command.issuer, command.subject)
+    return {
+        "duplicate": first.id == retry.id == duplicate.id,
+        "owner": foreign
+        and await repository.cursor_is_authorized(command.issuer, command.subject, events[0].id)
+        and not await repository.cursor_is_authorized(
+            command.issuer, "foreign-owner", events[0].id
+        ),
+        "acknowledged": acknowledged.status.value == "acknowledged",
+        "replay": len(events) == 2
+        and all(event.source == first.source for event in events)
+        and isinstance(first.source, WorkflowNotificationSource),
+        "metadata": all(
+            not any(
+                forbidden in repr(event.payload()).lower()
+                for forbidden in ("content", "prompt", "response", "private")
+            )
+            for event in events
+        ),
+    }
+
+
 async def _exactly_once_result() -> EvaluationResult:
     metrics = MetadataMetrics()
     _, notifications, reminder_id, issuer, owner = await _fixture_repository(metrics)
@@ -91,12 +158,15 @@ async def _exactly_once_result() -> EvaluationResult:
     )
     page = await notifications.list(issuer, owner, limit=10)
     events = await notifications.replay(issuer, owner)
+    workflow = await _workflow_notification_fixture()
     passed = (
         len(first.notifications) + len(second.notifications) == 1
         and first.fired_count + second.fired_count == 1
         and len(page.items) == 1
         and page.items[0].reminder_id == reminder_id
         and len(events) == 1
+        and workflow["duplicate"]
+        and workflow["metadata"]
         and metrics.stats().rejected == 0
     )
     return _result(
@@ -106,6 +176,8 @@ async def _exactly_once_result() -> EvaluationResult:
         notification_count=str(len(page.items)),
         replay_event_count=str(len(events)),
         rejected_spans=str(metrics.stats().rejected),
+        workflow_duplicate=str(workflow["duplicate"]).lower(),
+        workflow_metadata_only=str(workflow["metadata"]).lower(),
     )
 
 
@@ -118,12 +190,14 @@ async def _owner_authorization_result() -> EvaluationResult:
     with pytest.raises(NotificationNotFound):
         await notifications.get(issuer, foreign, delivered.id)
     events = await notifications.replay(issuer, owner)
+    workflow = await _workflow_notification_fixture()
     passed = (
         delivered.reminder_id == reminder_id
         and foreign_page.items == ()
         and len(events) == 1
         and await notifications.cursor_is_authorized(issuer, owner, events[0].id)
         and not await notifications.cursor_is_authorized(issuer, foreign, events[0].id)
+        and workflow["owner"]
         and metrics.stats().rejected == 0
     )
     return _result(
@@ -132,6 +206,7 @@ async def _owner_authorization_result() -> EvaluationResult:
         owner_cursor="authorized",
         foreign_cursor="denied",
         rejected_spans=str(metrics.stats().rejected),
+        workflow_owner_cursor=str(workflow["owner"]).lower(),
     )
 
 
@@ -196,6 +271,7 @@ async def _replay_recovery_result() -> EvaluationResult:
         for item in metrics.snapshot()
         if item.metric == "notification_sse_replay_count"
     )
+    workflow = await _workflow_notification_fixture()
     passed = (
         len(delivered.notifications) == 2
         and len(offline) == 2
@@ -204,6 +280,8 @@ async def _replay_recovery_result() -> EvaluationResult:
         and after_second == ()
         and str(second.id) in text_chunk
         and replay_metric_count >= 1
+        and workflow["replay"]
+        and workflow["acknowledged"]
         and metrics.stats().rejected == 0
     )
     return _result(
@@ -213,6 +291,8 @@ async def _replay_recovery_result() -> EvaluationResult:
         stream_replay_count=str(int(replay_metric_count)),
         duplicate_wakeup="deduplicated",
         rejected_spans=str(metrics.stats().rejected),
+        workflow_replay=str(workflow["replay"]).lower(),
+        workflow_acknowledged=str(workflow["acknowledged"]).lower(),
     )
 
 

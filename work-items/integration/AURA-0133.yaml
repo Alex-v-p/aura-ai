@@ -1,0 +1,101 @@
+agent: integration_maintainer
+work_item: AURA-0133
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0133-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0133-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0133-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0133-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0133.yaml
+  - work-items/integration/AURA-0133.yaml
+checks:
+  passed:
+    - >-
+      All five implementation handoffs are complete, schema-valid, within
+      their authorized ownership zones, and contain no failed checks or
+      unresolved items after integration reconciliation.
+    - >-
+      All four required review artifacts are schema-valid PASS verdicts with
+      no findings; the final reviews cover the complete current tree and prior
+      correctness, architecture, security/privacy, and observability findings.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0133.yaml passed before archival.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0133.yaml passed for 50 authorized changed paths
+      before archival.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0133.yaml passed with no contract changes; the
+      check was skipped as not applicable.
+    - >-
+      python3 tooling/architecture/validate-generated-sync.py passed.
+    - >-
+      python3 tooling/architecture/validate-import-boundaries.py passed.
+    - >-
+      python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - >-
+      python3 tooling/architecture/validate-module-registry.py passed.
+    - >-
+      python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0133.yaml passed before archival.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0133.yaml passed with no protected baseline or
+      threshold changes; the check was skipped as not applicable.
+    - >-
+      The post-archive work-item and changed-path validators passed against
+      work-items/archived/AURA-0133.yaml for all 50 authorized changed paths.
+    - >-
+      The architecture common, module, and observability unittest gate passed
+      with 37 tests.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv lock --check passed.
+    - >-
+      Scoped Ruff validation passed for the complete AURA-0133 implementation
+      and test path set.
+    - >-
+      Scoped Pyright validation passed with 0 errors, warnings, or
+      informations.
+    - >-
+      The required focused AURA-0133 suite passed with 203 tests passed and 8
+      environment-dependent skips.
+    - >-
+      The full services/aura-core test suite passed with 1524 tests passed and
+      110 environment-dependent skips; one pre-existing Authlib deprecation
+      warning was reported.
+    - git diff --check passed.
+    - >-
+      The active work item was moved to work-items/archived/AURA-0133.yaml
+      with status integrated, and no active AURA-0133 copy remains.
+    - >-
+      No semantic conflicts, unauthorized paths, contract or generated-client
+      changes, dependency changes, protected baselines, frontend behavior,
+      provider behavior, deployment, or Observatory changes were introduced
+      during integration.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    PostgreSQL-specific migration, row-lock, and concurrent claim behavior is
+    environment-gated locally because the configured PostgreSQL test URL is
+    unavailable; the required suite recorded the expected skips.
+  - >-
+    This is a local integration checkpoint only; no remote push was performed.

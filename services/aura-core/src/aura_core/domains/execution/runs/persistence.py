@@ -3,7 +3,15 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,10 +21,10 @@ from aura_core.platform.database.base import Base
 class RunRow(Base):
     __tablename__ = "runs"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, index=True
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
     )
-    user_message_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     assistant_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     agent_revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     model_policy_revision_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -53,17 +61,54 @@ class RunRow(Base):
         UUID(as_uuid=True), index=True
     )
     attachments: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
+    workflow_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    workflow_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workflow_instance_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    workflow_step_ordinal: Mapped[int | None] = mapped_column(Integer)
+    workflow_step_execution_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    __table_args__ = (
+        CheckConstraint(
+            "((conversation_id IS NOT NULL AND user_message_id IS NOT NULL "
+            "AND workflow_id IS NULL AND workflow_revision_id IS NULL "
+            "AND workflow_instance_id IS NULL AND workflow_step_ordinal IS NULL "
+            "AND workflow_step_execution_id IS NULL) OR "
+            "(conversation_id IS NULL AND user_message_id IS NULL "
+            "AND workflow_id IS NOT NULL AND workflow_revision_id IS NOT NULL "
+            "AND workflow_instance_id IS NOT NULL "
+            "AND workflow_step_ordinal BETWEEN 1 AND 8 "
+            "AND workflow_step_execution_id IS NOT NULL))",
+            name="ck_runs_closed_lineage",
+        ),
+    )
 
 
 class RunEventRow(Base):
     __tablename__ = "run_events"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
-    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-    __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_run_event_sequence"),)
+    workflow_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workflow_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workflow_instance_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workflow_step_ordinal: Mapped[int | None] = mapped_column(Integer)
+    workflow_step_execution_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_run_event_sequence"),
+        CheckConstraint(
+            "((conversation_id IS NOT NULL AND workflow_id IS NULL "
+            "AND workflow_revision_id IS NULL AND workflow_instance_id IS NULL "
+            "AND workflow_step_ordinal IS NULL "
+            "AND workflow_step_execution_id IS NULL) OR "
+            "(conversation_id IS NULL AND workflow_id IS NOT NULL "
+            "AND workflow_revision_id IS NOT NULL AND workflow_instance_id IS NOT NULL "
+            "AND workflow_step_ordinal BETWEEN 1 AND 8 "
+            "AND workflow_step_execution_id IS NOT NULL))",
+            name="ck_run_events_closed_lineage",
+        ),
+    )

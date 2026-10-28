@@ -22,6 +22,9 @@ const fixtureModel: Model = { id: 'fixture-model', displayName: 'Fixture model',
 const fixtureSession: Session = { principal: { issuer: 'https://authentik.test', subject: 'storybook' }, csrfToken: 'storybook-csrf', idleExpiresAt: '2026-10-06T20:00:00.000Z', absoluteExpiresAt: '2026-10-07T12:00:00.000Z' };
 const fixtureAgent = { profileId: 'fixture-agent', revisionId: 'fixture-agent-r1', revision: 1, displayName: 'Fixture agent', status: 'active' as const, newerRevisionAvailable: false };
 const now = '2026-10-06T12:00:00.000Z';
+function assertConversationRunLineage(run: Run): asserts run is Run & { readonly conversationId: string; readonly userMessageId: string } {
+  if (run.conversationId === null || run.userMessageId === null) throw new Error('Conversation fixture run is missing conversation lineage.');
+}
 
 function fixtureRun(state: FixtureState): Run | null {
   if (!['working', 'thinking', 'tool-activity', 'interrupted', 'recoverable-error', 'run-inspector'].includes(state)) return null;
@@ -124,6 +127,7 @@ function fixtureApi(state: FixtureState): ConversationApi {
 
   function acceptedRun(conversationId: string, message: string, modelId: string): ConversationRunAccepted {
     const run: Run = { id: `run-${conversationId}`, conversationId, userMessageId: `user-${conversationId}`, assistantMessageId: null, status: 'running', agentRevisionId: fixtureAgent.revisionId, modelPolicyRevisionId: 'fixture-policy', provider: 'fake', modelId, retryOfRunId: null, createdAt: now, startedAt: now, finishedAt: null, error: null };
+    assertConversationRunLineage(run);
     const summary: ConversationSummary = { ...fixtureSummary('working'), id: conversationId, currentRun: run, modelId };
     const userMessage: Message = { id: run.userMessageId, conversationId, role: 'user', content: message, state: 'complete', runId: run.id, createdAt: now, updatedAt: now };
     return { conversation: summary, userMessage, run };

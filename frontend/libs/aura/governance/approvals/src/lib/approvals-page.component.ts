@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, ChangeDetectorRef, Component, HostListener, In
 import { A11yModule } from '@angular/cdk/a11y';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ApprovalStore } from './approval-store';
-import { approvalActionLabel, approvalLeadCopy, isReminderCommandProposal, reminderCommandConsequence, type ApprovalDetail, type ApprovalProposal, type ApprovalSummary, type ReminderCommandProposalDetail } from './approval-models';
+import { approvalActionLabel, approvalLeadCopy, approvalOriginLabel, isReminderCommandProposal, isWorkflowApprovalDetail, reminderCommandConsequence, workflowApprovalProposal, type ApprovalDetail, type ApprovalProposal, type ApprovalSummary, type ReminderCommandProposalDetail, type ReminderProposalDetail, type WorkflowApprovalProposal } from './approval-models';
 
 type ReturnFocusState = { readonly returnFocusRequested?: boolean; readonly returnFocusId?: string | null };
 function boundedFocusId(value: unknown): string | null { return typeof value === 'string' && value.startsWith('approval-') && value.length <= 160 && /^[A-Za-z0-9_-]+$/.test(value) ? value : null; }
@@ -43,6 +43,11 @@ export class ApprovalsPageComponent {
   executionLabel(status: ApprovalSummary['executionStatus']): string { return this.store.executionLabel(status); }
   actionLabel(approval: ApprovalSummary | ApprovalDetail): string { return approvalActionLabel(approval); }
   leadCopy(approval: ApprovalSummary): string { return approvalLeadCopy(approval); }
+  isWorkflow(approval: ApprovalSummary | ApprovalDetail): boolean { return 'origin' in approval && approval.origin === 'manual_workflow_instance'; }
+  originLabel(approval: ApprovalSummary | ApprovalDetail): string { return approvalOriginLabel(approval); }
+  workflowProposal(approval: ApprovalDetail): WorkflowApprovalProposal | null { return workflowApprovalProposal(approval); }
+  reminderProposal(approval: ApprovalDetail): ReminderProposalDetail | ReminderCommandProposalDetail | null { return isWorkflowApprovalDetail(approval) ? null : approval.proposal; }
+  isReminderProposal(proposal: ApprovalProposal): proposal is ReminderProposalDetail | ReminderCommandProposalDetail { return !('workflowDisplayName' in proposal); }
   isCommandProposal(proposal: ApprovalProposal): proposal is ReminderCommandProposalDetail { return isReminderCommandProposal(proposal); }
   commandSummary(_approval: ApprovalDetail, proposal: ReminderCommandProposalDetail): string { return proposal.summary; }
   commandConsequence(proposal: ReminderCommandProposalDetail): string { return reminderCommandConsequence(proposal); }

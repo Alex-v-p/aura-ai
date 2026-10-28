@@ -1,10 +1,26 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { AuraApprovalsApi } from './approvals-api';
-import { ApprovalApiError, approvalSummaryFromDetail, collectApprovalHistory, decisionFailureNotice, emptyApprovalCollection, isTerminalApproval, shouldPreserveReviewedApproval, type ApprovalCollection, type ApprovalDetail, type ApprovalStatus, type ApprovalStream, type ApprovalStreamEvent, type ApprovalSummary, type ApprovalView, type ApprovalsApi } from './approval-models';
+import { ApprovalApiError, approvalSummaryFromDetail, collectApprovalHistory, decisionFailureNotice, emptyApprovalCollection, isTerminalApproval, isWorkflowApproval, isWorkflowApprovalDetail, shouldPreserveReviewedApproval, type ApprovalCollection, type ApprovalDetail, type ApprovalStatus, type ApprovalStream, type ApprovalStreamEvent, type ApprovalSummary, type ApprovalView, type ApprovalsApi } from './approval-models';
 
 const retryDelaysMs = [500, 1_000, 2_000, 4_000, 8_000, 15_000] as const;
 function statusOf(error: unknown): number | null { const status = (error as { readonly status?: unknown })?.status; return typeof status === 'number' ? status : null; }
 function safeMessage(error: unknown, fallback: string): string { const status = statusOf(error); if (status === 401) return 'Your session has expired. Sign in again to view approvals.'; if (status === 403) return 'You do not have permission to view these approvals.'; if (status === 404) return 'That approval is no longer available.'; if (status === 409) return 'This approval changed elsewhere. Refresh before deciding again.'; if (status === 410) return 'The live approval cursor expired. Aura is catching up safely.'; return fallback; }
+
+/** Apply the server decision without allowing a summary to erase detail's discriminant or proposal. */
+function mergeDecisionIntoDetail(detail: ApprovalDetail, updated: ApprovalSummary): ApprovalDetail {
+  const detailIsWorkflow = isWorkflowApprovalDetail(detail);
+  const updateIsWorkflow = isWorkflowApproval(updated);
+  if (detailIsWorkflow !== updateIsWorkflow) return detail;
+  return {
+    ...detail,
+    status: updated.status,
+    executionStatus: updated.executionStatus,
+    version: updated.version,
+    expiresAt: updated.expiresAt,
+    updatedAt: updated.updatedAt,
+    decidedAt: updated.decidedAt,
+  };
+}
 
 @Injectable({ providedIn: 'root' })
 export class ApprovalStore {
@@ -159,7 +175,7 @@ export class ApprovalStore {
       if (session !== this.sessionGeneration || mutation !== this.mutationGeneration) return false;
       if (listGeneration === this.listGeneration) this.collection.update((current) => ({ ...current, items: current.items.map((item) => item.id === updated.id ? updated : item), pendingCount: current.items.filter((item) => item.id !== updated.id && item.status === 'pending').length }));
       this.pendingCollection.update((current) => ({ ...current, items: current.items.filter((item) => item.id !== updated.id), pendingCount: Math.max(0, current.pendingCount - 1) }));
-      if (sameContext() && this.selected()?.id === updated.id) { this.selected.update((detail) => detail ? { ...detail, ...updated } : detail); this.reviewedId = updated.id; }
+      if (sameContext() && this.selected()?.id === updated.id) { this.selected.update((detail) => detail ? mergeDecisionIntoDetail(detail, updated) : detail); this.reviewedId = updated.id; }
       const reconciled = await this.refresh(); return reconciled && session === this.sessionGeneration && mutation === this.mutationGeneration;
     } catch (error: unknown) {
       const status = statusOf(error);

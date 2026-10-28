@@ -1,0 +1,131 @@
+agent: frontend_worker
+work_item: AURA-0136
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0136_frontend
+  worktree: shared
+scope:
+  ownership_zone: frontend.aura-web.approval-and-notification-workflow-compatibility
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/aura/governance/approvals/src/lib/approval-models.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approval-workspace.spec.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approval-store.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-page.component.html
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-page.component.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notification-models.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notification-workspace.spec.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notifications-page.component.html
+  - frontend/libs/aura/automation/notifications/src/lib/notifications-page.component.ts
+  - frontend/apps/storybook/src/approval-inbox.stories.ts
+  - frontend/apps/storybook/src/notification-centre.stories.ts
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+  - frontend/apps/aura-web-e2e/src/approvals.spec.ts
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+contracts:
+  changed: false
+  notes: >-
+    The frontend consumes the generated approval and notification unions and
+    does not add handwritten transport DTOs or alter OpenAPI/event contracts.
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      cd frontend && pnpm exec eslint libs/aura/governance/approvals
+      libs/aura/automation/notifications
+      libs/aura/interaction/conversations/src/lib/conversation-store.ts
+      libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+      apps/storybook/src/approval-inbox.stories.ts
+      apps/storybook/src/notification-centre.stories.ts
+      apps/aura-web-e2e/src/approvals.spec.ts
+      apps/aura-web-e2e/src/notifications.spec.ts
+      apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      vitest.workspace.ts (0 errors; existing warnings only)
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/governance/approvals libs/aura/automation/notifications
+      (39 tests passed)
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/automation/notifications (22 tests passed after exact workflow
+      lifecycle UUID, ordinal, mixed-source, and exact-key validation was
+      tightened)
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+      (106 tests passed)
+    - >-
+      cd frontend && pnpm exec nx build aura-web --configuration=production
+      (passed)
+    - >-
+      cd frontend && pnpm exec nx run storybook:build-storybook
+      (passed; the conversation-panel fixture now fails closed when required
+      conversation lineage is absent)
+    - >-
+      cd frontend && AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test
+      apps/aura-web-e2e/src/notifications.spec.ts --project=desktop
+      (15 tests passed, including malformed workflow lifecycle SSE fixtures)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0136.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Focused Playwright approvals and Storybook accessibility checks were not
+      run because no Aura Web or Storybook server was available in this worker
+      session.
+decisions:
+  - >-
+    Approval summaries and details use generated reminder/workflow unions;
+    workflow-origin records are identified by their typed manual-workflow
+    origin and never fabricate conversation, run, or tool-call lineage.
+  - >-
+    Workflow approval detail renders only the generated immutable
+    consequenceCopy, next step kind, workflow display name, and exact ordinal;
+    legacy conversation links and reminder proposal rendering remain unchanged.
+  - >-
+    Workflow notification cards and detail remain content-free and expose no
+    workflow deep link before AURA-0138; reminder and briefing behavior,
+    acknowledgement, SSE reconciliation, and focus semantics remain intact.
+  - >-
+    Browser and Storybook fixtures use typed workflow lineage and explicitly
+    assert absence of private result content and workflow navigation.
+  - >-
+    Conversation hydration, accepted-run/reconciliation paths, SSE event
+    application, and historical tool replay now reject runs/events without a
+    real conversation id; no id is fabricated for workflow-origin records.
+  - >-
+    Decision reconciliation updates only generated status fields and preserves
+    the selected ApprovalDetail discriminant and proposal payload.
+  - >-
+    The conversation Storybook fixture uses an explicit assertion for required
+    conversation and user-message lineage; invalid nullable workflow lineage
+    fails closed rather than fabricating an id.
+  - >-
+    Notification lifecycle validation follows the generated workflow SSE union:
+    complete workflow lineage is required and the transport event contains no
+    invented `kind` field; the internal source projection may still expose its
+    own closed-union discriminator.
+  - >-
+    Workflow notification detail remains content-free and exposes only
+    Acknowledge, with capability-accurate copy: "This update is recorded
+    privately. Workflow details aren’t available in this version." No step
+    ordinal or unavailable workflow route is presented.
+  - >-
+    Workflow lifecycle events require UUID-form workflowId,
+    workflowRevisionId, workflowInstanceId, workflowStepExecutionId, and
+    workflowResultId values, a workflowStepOrdinal from 1 through 8, and the
+    exact generated workflow key set; mixed reminder fields, transport kind,
+    and extra fields are rejected at the notification boundary.
+risks: []
+unresolved: []

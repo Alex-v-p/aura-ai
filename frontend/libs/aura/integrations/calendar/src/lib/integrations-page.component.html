@@ -1,0 +1,13 @@
+<main class="calendar-page integrations-page" aria-labelledby="integrations-heading">
+  <header class="calendar-header">
+    <p class="eyebrow">Aura · connections</p>
+    <h1 id="integrations-heading" tabindex="-1">Connect</h1>
+    <p class="lede">Manage the private services Aura is allowed to use for your daily view.</p>
+  </header>
+  @if (store.requestState() === 'loading') { <p class="status" role="status">Loading calendar connection…</p> }
+  @if (store.error(); as error) { <p class="recovery" role="alert"><strong>{{ error.message }}</strong><span>{{ error.recovery === 'reauthorize' ? 'Reauthorize Calendar from the management page.' : 'Your other Today sections remain available.' }}</span></p> }
+  <section class="integration-card" aria-labelledby="calendar-card-heading">
+    <div class="integration-card-copy"><span class="integration-icon" aria-hidden="true">◷</span><div><h2 id="calendar-card-heading">Google Calendar</h2><p>Read-only agenda planning with your explicit calendar selection.</p><p class="muted">{{ statusLabel(store.connection()?.status ?? 'disconnected') }} · Reads {{ store.connection()?.readsEnabled ? 'enabled' : 'disabled' }}</p><p class="muted">Available actions: {{ store.connection()?.availableActions?.join(', ') || 'none' }}</p>@if (store.connection()?.lastError; as lastError) { <p class="recovery" role="status"><strong>{{ lastError.message }}</strong><span>{{ connectionRecoveryGuidance(lastError.recoveryAction) }}</span></p> }</div></div>
+    <a class="primary-action" routerLink="/integrations/calendar">Manage calendar <span aria-hidden="true">→</span></a>
+  </section>
+</main>

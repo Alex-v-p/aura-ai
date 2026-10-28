@@ -1,0 +1,90 @@
+agent: integration_maintainer
+work_item: AURA-0134
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0134-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0134-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0134-security-privacy.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0134-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs:
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - work-items/archived/AURA-0134.yaml
+  - work-items/integration/AURA-0134.yaml
+checks:
+  passed:
+    - >-
+      All five implementation handoffs are complete, schema-valid, within
+      their authorized ownership zones, and contain no unresolved items after
+      integration reconciliation.
+    - >-
+      All four required review artifacts are schema-valid PASS verdicts with
+      no findings; the final reviews cover the complete current tree and all
+      prior correctness, architecture, security/privacy, and UX findings.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0134.yaml passed before archival.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0134.yaml passed for 49 authorized changed paths
+      before archival.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0134.yaml passed with the declared additive
+      contract changes.
+    - python3 tooling/architecture/validate-generated-sync.py passed.
+    - python3 tooling/architecture/validate-import-boundaries.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0134.yaml passed with no protected baseline or
+      threshold changes; the result was skipped as not applicable.
+    - >-
+      The corresponding post-archive work-item, changed-path, contract-change,
+      generated-sync, boundary, registry, repository-shape, and baseline
+      validators all passed against work-items/archived/AURA-0134.yaml.
+    - >-
+      Scoped Ruff validation passed for the Core briefing implementation,
+      route, contract test, and briefing API test paths.
+    - >-
+      Scoped Pyright validation passed with 0 errors, warnings, or
+      informations.
+    - >-
+      The required contract and Core aggregate suite passed with 44 tests
+      passed.
+    - cd frontend && pnpm exec nx run aura-api-client:generate passed.
+    - cd frontend && pnpm exec nx lint aura-web passed.
+    - cd frontend && pnpm exec nx test aura-web passed with 11 tests.
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/automation/briefings libs/aura/automation/notifications
+      libs/aura/daily-action passed with 46 tests.
+    - cd frontend && pnpm exec nx build aura-web --configuration=production passed.
+    - cd frontend && pnpm exec nx run storybook:build-storybook passed.
+    - >-
+      The final required Playwright matrix passed with 447 tests, 489 expected
+      skips, and 0 failures across desktop, tablet, and mobile projects.
+    - git diff --check passed.
+    - >-
+      No semantic conflicts, unauthorized paths, dependency changes,
+      protected baselines, migrations, provider behavior, deployment changes,
+      service-worker changes, runtime telemetry, memory behavior,
+      Observatory exposure, or unrelated product changes were introduced.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    This is a local integration checkpoint only; no remote push was performed.

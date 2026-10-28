@@ -1,0 +1,40 @@
+agent: general_reviewer
+work_item: AURA-0133
+verdict: PASS
+checked:
+  - >-
+    Reverified the active work item, architecture and ADR sources, all implementation
+    handoffs, the complete current diff, and every finding from the prior BLOCK review.
+  - >-
+    Confirmed BriefingRunCancellationAdapter, RunCoordinator.cancel_briefing,
+    BriefingRunStateAdapter.cancel_briefing_run, AppState, worker composition, and
+    SqlBriefingRepository.delete_schedule now use typed briefing lineage, avoid the
+    conversation-run cancellation path and row-lock inversion, and preserve the
+    repository's authoritative terminal result when completion and cancellation race.
+  - >-
+    Confirmed BriefingExecutionApplication.fail_command,
+    BriefingRunStateAdapter.settle_unknown_occurrence, worker.run_once, and both
+    repositories now terminate exhausted pre-admission failures and stale claims with
+    one deterministic durable UNKNOWN result and occurrence settlement.
+  - >-
+    Confirmed BriefingAdmissionRevalidator and BriefingExecutionService fail closed on
+    current owner, source, active agent, prompt, model, tool, and canonical execution
+    policy references; RunCoordinator.execute_briefing propagates provider token limits
+    and enforces bounded Unicode-safe fallback output, deadlines, and in-flight
+    cancellation without enabling memory or tools.
+  - >-
+    Confirmed SqlBriefingRepository.delete_history removes only terminal history,
+    as_result_payload matches the unchanged OpenAPI BriefingResult shape, and result
+    content deletion preserves content-free lineage and original terminal truth.
+  - >-
+    Confirmed briefing product behavior resides in the domain application rather than
+    the scheduler/worker entrypoints, and SqlBriefingLifecycleEventStage plus
+    OutboxCommand.from_record and NatsOutbox preserve schema-exact metadata-only
+    lifecycle facts on a subject distinct from identifier-only worker wakeups.
+  - >-
+    Independently reran the focused cancellation, lifecycle-outbox, execution, and
+    repository regression set: 29 passed. Final aggregate evidence reports all required
+    governance validators, Ruff, and Pyright passing; the required focused suite passed
+    200 tests with 7 environment-dependent skips and the full Core suite passed 1521
+    tests with 109 environment-dependent skips.
+findings: []

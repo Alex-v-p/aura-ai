@@ -85,12 +85,14 @@ const recurringReminderStories = [
 ] as const;
 const notificationStories = [
   'inbox',
+  'briefing',
   'history',
   'detail',
   'loading',
   'empty',
   'recovery',
   'mobile',
+  'workflow',
 ] as const;
 const approvalStories = [
   'pending',
@@ -106,7 +108,37 @@ const approvalStories = [
   'unavailable-stream',
   'recovery',
   'mobile',
+  'workflow-detail',
 ] as const;
+const todayStories = [
+  'action-center',
+  'calm-empty',
+  'loading',
+  'partial-failure',
+  'permission-denied',
+  'offline',
+  'reconnecting',
+  'unauthenticated',
+  'calendar-connected',
+  'calendar-partial',
+  'calendar-stale',
+  'calendar-rate-limited',
+  'calendar-permission-denied',
+  'calendar-offline',
+] as const;
+const calendarStories = [
+  'connected',
+  'loading',
+  'disconnected',
+  'reauthorization-required',
+  'revocation-uncertain',
+  'partial-read',
+  'stale-snapshot',
+  'rate-limited',
+  'empty-selection',
+  'long-titles',
+] as const;
+const briefingStories = ['management'] as const;
 const applyStoryTheme = (theme: 'light' | 'dark'): void => {
   document.documentElement.dataset['theme'] = theme;
   document.documentElement.style.colorScheme = theme;
@@ -146,6 +178,100 @@ const watchRuntimeErrors = (page: import('@playwright/test').Page): (() => void)
   page.on('pageerror', (error) => errors.push(error.message));
   return () => expect(errors).toEqual([]);
 };
+
+for (const story of todayStories) {
+  for (const theme of themes) {
+    test(`Today Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
+      test.skip(
+        testInfo.project.name !== 'desktop',
+        'Today Storybook axe coverage runs once in the desktop project.',
+      );
+      const assertNoRuntimeErrors = watchRuntimeErrors(page);
+      await page.goto(
+        `${storybookBaseUrl}/iframe.html?id=aura-today-action-center--${story}&viewMode=story`,
+      );
+      // A full matrix can cold-start Storybook's preview bundle. Keep this
+      // readiness wait bounded, while leaving the state assertions, Axe scan,
+      // and runtime-error checks unchanged.
+      await expect(page.locator('.daily-action').first()).toBeVisible({ timeout: 30_000 });
+      await applyAndSettleStoryTheme(page, theme);
+      if (story === 'action-center') {
+        await expect(
+          page.getByRole('heading', { name: 'Needs attention', exact: true }),
+        ).toBeVisible();
+        await expect(page.getByText('Bring the library books back', { exact: true })).toBeVisible();
+      } else if (story === 'calm-empty') {
+        await expect(page.getByText('All clear for now.', { exact: true })).toBeVisible();
+      } else if (story === 'loading') {
+        await expect(
+          page
+            .getByRole('status')
+            .filter({ hasText: /Loading/ })
+            .first(),
+        ).toBeVisible();
+        await expect(page.getByText('All clear for now.', { exact: true })).toHaveCount(0);
+      } else if (story === 'partial-failure') {
+        await expect(
+          page.locator('.section-status').filter({ hasText: /notifications/i }),
+        ).toBeVisible();
+      } else if (story === 'permission-denied') {
+        await expect(
+          page.getByText(/Today access is unavailable|permission/i).first(),
+        ).toBeVisible();
+        await expect(page.getByText('All clear for now.', { exact: true })).toHaveCount(0);
+      } else if (story === 'offline') {
+        await expect(page.getByText(/offline|unavailable/i).first()).toBeVisible();
+      } else if (story === 'reconnecting') {
+        await expect(page.getByText(/out of date|reconnect/i).first()).toBeVisible();
+      } else if (story === 'calendar-connected') {
+        await expect(page.getByRole('heading', { name: 'Calendar agenda' })).toBeVisible();
+        await expect(page.getByText('Planning day', { exact: true })).toBeVisible();
+        await expect(page.getByText(/America\/New_York.*Europe\/Brussels/)).toBeVisible();
+      } else if (story.startsWith('calendar-')) {
+        await expect(page.getByRole('heading', { name: 'Calendar agenda' })).toBeVisible();
+        await expect(page.getByText(/calendar|offline|permission|rate-limited|snapshot/i).first()).toBeVisible();
+      } else {
+        await expect(page.getByText(/Sign in to see your private Today view/i)).toBeVisible();
+        await expect(page.getByText('All clear for now.', { exact: true })).toHaveCount(0);
+      }
+      const results = await new AxeBuilder({ page }).include('.daily-action').analyze();
+      expect(results.violations).toEqual([]);
+      assertNoRuntimeErrors();
+    });
+  }
+}
+
+for (const story of calendarStories) {
+  for (const theme of themes) {
+    test(`Calendar Storybook ${story} is accessible in ${theme} theme`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop', 'Calendar Storybook axe coverage runs once in the desktop project.');
+      const assertNoRuntimeErrors = watchRuntimeErrors(page);
+      await page.goto(`${storybookBaseUrl}/iframe.html?id=aura-calendar-planning--${story}&viewMode=story`);
+      await expect(page.locator('.calendar-page').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      if (story === 'connected') {
+        await expect(page.getByRole('heading', { name: 'Readable calendars' })).toBeVisible();
+        await expect(page.getByText('Planning day', { exact: true })).toBeVisible();
+        await expect(page.getByText('Focus block', { exact: true })).toBeVisible();
+      }
+      if (story === 'partial-read') {
+        await expect(page.locator('.calendar-page .notice')).toContainText(/Some calendars could not be read/i);
+      }
+      if (story === 'stale-snapshot') await expect(page.getByRole('alert')).toBeVisible();
+      if (story === 'empty-selection') {
+        await expect(page.locator('.calendar-page .notice')).toContainText(/Empty selection is allowed/i);
+      }
+      if (story === 'long-titles') {
+        await expect(page.getByText(/deliberately long multi-day planning title/i)).toBeVisible();
+        await page.evaluate(() => { document.documentElement.style.zoom = '2'; });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      }
+      const results = await new AxeBuilder({ page }).include('.calendar-page').analyze();
+      expect(results.violations).toEqual([]);
+      assertNoRuntimeErrors();
+    });
+  }
+}
 
 for (const story of stories) {
   for (const theme of themes) {
@@ -192,7 +318,9 @@ for (const story of stories) {
         await expect(page.getByRole('alert')).toContainText(/verified vision model/i);
       }
       if (story === 'attachment-tombstone') {
-        await expect(page.getByText('Attachment unavailable is unavailable', { exact: true })).toHaveCount(2);
+        await expect(
+          page.getByText('Attachment unavailable is unavailable', { exact: true }),
+        ).toHaveCount(2);
         await expect(page.getByText('Unavailable', { exact: true })).toHaveCount(2);
         await expect(page.getByText('application/pdf', { exact: true })).toHaveCount(0);
       }
@@ -218,6 +346,40 @@ for (const story of managementStories) {
       await applyAndSettleStoryTheme(page, theme);
       const results = await new AxeBuilder({ page }).include('[data-feature-root]').analyze();
       expect(results.violations).toEqual([]);
+    });
+  }
+}
+
+for (const story of briefingStories) {
+  for (const theme of themes) {
+    test(`Briefing Storybook ${story} is accessible in ${theme} theme`, async ({
+      page,
+    }, testInfo) => {
+      test.skip(
+        testInfo.project.name !== 'desktop',
+        'Briefing Storybook axe coverage runs once in the desktop project.',
+      );
+      const assertNoRuntimeErrors = watchRuntimeErrors(page);
+      await page.goto(
+        `${storybookBaseUrl}/iframe.html?id=aura-automate-briefings--${story}&viewMode=story`,
+      );
+      await expect(page.locator('.briefing-page').first()).toBeVisible();
+      await applyAndSettleStoryTheme(page, theme);
+      await expect(page.getByRole('heading', { name: /briefing/i }).first()).toBeVisible();
+      if (story === 'responsive-and-private') {
+        await expect(page.getByText(/private result|metadata only/i).first()).toBeVisible();
+        await page.evaluate(() => {
+          document.documentElement.style.zoom = '2';
+        });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          ),
+        ).toBe(true);
+      }
+      const results = await new AxeBuilder({ page }).include('.briefing-page').analyze();
+      expect(results.violations).toEqual([]);
+      assertNoRuntimeErrors();
     });
   }
 }
@@ -295,6 +457,14 @@ for (const story of reminderStories) {
         await page.getByRole('button', { name: /History/ }).click();
         await expect(page.getByRole('heading', { name: 'History', exact: true })).toBeVisible();
         await expect(page.getByText('Call the dentist', { exact: true })).toBeVisible();
+      }
+      if (story === 'briefing') {
+        const detail = page.getByRole('dialog', { name: 'Your daily briefing is ready.' });
+        await expect(detail).toBeVisible();
+        await expect(detail.getByRole('heading', { name: 'Dedicated briefing result', exact: true })).toBeVisible();
+        await expect(detail.getByRole('button', { name: /Open dedicated briefing result/ })).toBeDisabled();
+        await expect(page).toHaveURL(/aura-notifications-centre--briefing/);
+        await expect(page).not.toHaveURL(/briefing-result-story/);
       }
       if (story === 'composer') {
         await page.getByRole('button', { name: 'New reminder', exact: true }).click();

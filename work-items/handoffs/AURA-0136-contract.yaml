@@ -1,0 +1,254 @@
+agent: contract_steward
+work_item: AURA-0136
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: deep
+  agent_thread_id: /root/aura0136_contracts
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: contracts.aura-api.workflows-and-lineage
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/automation/v1/workflow-events.schema.json
+  - contracts/events/automation/v1/notification-events.schema.json
+  - contracts/events/runs/v1/run-events.schema.json
+  - contracts/tests/test_aura0136_workflow_contract.py
+  - contracts/tests/test_aura0132_briefing_contract.py
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_reminder_api.py
+  - work-items/handoffs/AURA-0136-contract.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward after AURA-0136 explicitly
+    authorized the Aura v1 OpenAPI, automation workflow and notification event
+    schemas, run event schema, contract tests, generated client, and mechanical
+    version assertions. No Core business behavior was added to schemas or the
+    generated transport client.
+  compatibility: backward_compatible
+  definitions:
+    - id: aura-v1
+      version: 1.22.0
+      source: contracts/openapi/aura-v1.yaml
+      changes:
+        - >-
+          Added owner-scoped manual workflow definitions, editable drafts,
+          immutable revisions, manual instance admission, inspection,
+          cancellation, closed recovery commands, and seven explicit
+          non-cascading deletion resources. Every mutation retains owner
+          session, CSRF, UUID idempotency, and optimistic-version semantics.
+          Every deletion body requires expectedVersion and every deletion
+          operation requires the established UUID Idempotency-Key header.
+        - >-
+          Added the closed four-kind sequential step catalogue, exact typed
+          selector and value/result algebra, one-to-eight-step and one-agent-run
+          bounds, fixed tools-disabled and memory-disabled execution limits,
+          immutable revision and checkpoint metadata, separated instance,
+          terminal, step, effect, completed-effect, and recovery vocabularies.
+        - >-
+          Evolved Approval, ApprovalDetail, and ApprovalEvent into typed legacy
+          reminder and manual-workflow unions. Workflow approvals use null
+          legacy run, conversation, and tool-call lineage only with complete
+          exact workflow origin and immutable system-derived proposal fields.
+        - >-
+          Added the workflow notification source and creation command with only
+          opaque workflow, revision, instance, step execution, and result
+          lineage while preserving reminder and briefing notification shapes.
+        - >-
+          Added a closed run-lineage union to Run and RunEventBase: ordinary
+          records require existing conversation lineage (and Run user-message
+          lineage) with workflowOrigin absent; workflow records require null
+          conversation lineage (and null Run user-message lineage) with one
+          complete exact workflow origin. Mixed origins are invalid.
+    - id: automation-workflow-events
+      version: 1
+      source: contracts/events/automation/v1/workflow-events.schema.json
+      changes:
+        - >-
+          Added closed metadata-only definition, instance, step, reconciliation,
+          terminal, and retention lifecycle event variants with bounded ordinals,
+          statuses, outcomes, recovery capabilities, versions, timestamps, and
+          opaque lineage only.
+    - id: automation-notification-events
+      version: 1
+      source: contracts/events/automation/v1/notification-events.schema.json
+      changes:
+        - >-
+          Additively added delivered and acknowledged workflow-source variants;
+          existing reminder and briefing payloads remain accepted unchanged.
+    - id: run-events
+      version: 1
+      source: contracts/events/runs/v1/run-events.schema.json
+      changes:
+        - >-
+          Additively added complete metadata-only workflowOrigin and a closed
+          ordinary-or-workflow lineage union to run snapshots and lifecycle
+          events; absent and mixed origins are rejected.
+  compatibility_notes:
+    - >-
+      Aura v1 advances additively from 1.21.0 to 1.22.0. Existing reminder,
+      briefing, calendar, conversation, ordinary run, approval, and notification
+      paths and legacy source variants remain available.
+    - >-
+      Published workflow revisions are immutable; manual instance admission pins
+      one revision. Schedules, triggers, provider selection, expressions,
+      templates, loops, branches, parallel execution, recursion, tools, memory,
+      dynamic grants, executor concepts, and arbitrary code are unrepresentable.
+    - >-
+      Workflow lifecycle and notification events contain no workflow values,
+      names, instructions, mappings, approval presentation, notification
+      content, owner identity, credentials, prompts, responses, or executor state.
+    - >-
+      The generated TypeScript client is transport-only and contains no
+      authorization, transition, retry, persistence, or orchestration behavior.
+  producers:
+    - Aura Core workflow definition and deterministic state application
+    - Aura Core approval application
+    - Aura Core notification application
+    - Aura Core Run Coordinator
+  consumers:
+    - Aura Web generated API transport
+    - Aura Web approval inbox compatibility consumer
+    - Aura Web notification centre compatibility consumer
+    - Future AURA-0137 Core workflow execution through public application APIs
+    - Future AURA-0138 Aura Web workflow management
+    - Core contract, event, migration, and API drift tests
+  rollout:
+    - >-
+      Apply the single forward-only Core 0027 migration, then deploy additive
+      Core approval, notification, run-lineage, and workflow-state producers
+      before enabling any future AURA-0137 execution producer.
+    - >-
+      Deploy the regenerated Aura client and typed approval/notification
+      consumers with or after Core. Older clients remain compatible because
+      legacy union members and operations are preserved.
+    - >-
+      AURA-0136 exposes contract and deterministic state only. Workflow HTTP
+      route implementation, execution orchestration, scheduler, worker, and
+      workflow management UI remain disabled and are owned by later work items.
+    - >-
+      Rollback disables future publication and admission while preserving
+      truthful immutable revisions, instances, completed or unknown effects,
+      metadata-only events, and manually retained lineage; no automatic rerun
+      or reinterpretation is permitted.
+  generated_outputs:
+    - source: contracts/openapi/aura-v1.yaml
+      generator: frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+migrations:
+  changed: false
+  notes: >-
+    This contract zone did not author migration 0027. The Core workflow-state
+    worker owns the one authorized forward migration and its rollout checks.
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0136.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0136.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0136.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - cd frontend && node libs/platform/aura-api-client/tools/generate-client.mjs > libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated
+    - cd frontend && pnpm exec nx run aura-api-client:lint
+    - >-
+      Generated-client regression assertions confirm Run and RunEventBase remain
+      object types with nullable lineage and typed workflowOrigin fields when
+      OpenAPI 3.1 uses generator-safe object-level if/then/else (covered by the
+      29-test focused contract run). All seven generated deletion request types
+      remain object-shaped and expose required numeric expectedVersion.
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check contracts/tests/test_aura0136_workflow_contract.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0136_workflow_contract.py
+      contracts/tests/test_aura0132_briefing_contract.py
+      contracts/tests/test_aura0128_calendar_contract.py -q (29 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_workflow_state_machine.py
+      services/aura-core/tests/test_workflow_repository.py
+      services/aura-core/tests/test_workflow_contract_state_evaluation.py
+      services/aura-core/tests/system/test_contract_and_deployment.py -q
+      (37 passed after deletion concurrency and idempotency contract alignment)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0136_workflow_contract.py
+      contracts/tests/test_aura0132_briefing_contract.py
+      contracts/tests/test_aura0128_calendar_contract.py
+      services/aura-core/tests/system/test_contract_and_deployment.py
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/test_document_contract.py
+      services/aura-core/tests/test_memory_product_api.py
+      services/aura-core/tests/test_reminder_api.py
+      services/aura-core/tests/test_notification_api.py -q
+      (111 passed, 3 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0136_workflow_contract.py
+      services/aura-core/tests/test_approvals.py
+      services/aura-core/tests/test_approval_stream.py
+      services/aura-core/tests/test_notifications.py
+      services/aura-core/tests/test_notification_api.py
+      services/aura-core/tests/test_notification_stream.py
+      services/aura-core/tests/test_run_events.py -q
+      (76 passed, 16 skipped after closed-lineage Core compatibility
+      corrections)
+    - >-
+      Cross-zone frontend evidence after deletion request regeneration:
+      cd frontend && pnpm exec nx build aura-web --configuration=production
+      (passed).
+    - >-
+      Cross-zone frontend evidence after the closed lineage union regeneration:
+      cd frontend && pnpm exec nx run storybook:build-storybook (passed).
+    - >-
+      Cross-zone frontend evidence after consumer compatibility corrections:
+      145 focused frontend tests passed.
+    - >-
+      Cross-zone browser evidence after consumer compatibility corrections:
+      335 Playwright tests passed.
+    - tooling.architecture.common.validate_document against implementation-handoff.schema.json
+    - git diff --check
+  failed: []
+  not_run:
+    - Full AURA-0136 Core and migration aggregate checks remain assigned to the Delivery Lead and Integration Maintainer after all ownership zones converge.
+decisions:
+  - >-
+    Kept workflow routes contract-only and manual-start-only in this slice. No
+    route implementation, schedule resource, trigger, executor, worker, or
+    orchestration promise was introduced.
+  - >-
+    Used closed origin-specific unions instead of weakening legacy approval and
+    notification fields globally. A workflow approval cannot omit legacy
+    lineage unless its complete typed workflow origin is present.
+  - >-
+    Kept ordinary run-event envelopes compatible while closing lineage to two
+    exact variants: UUID conversation lineage with no workflowOrigin, or null
+    conversation lineage with one workflowOrigin containing exactly revision,
+    instance, and step-execution identifiers. Run user-message lineage follows
+    the same ordinary/non-conversation split.
+  - >-
+    Represented private values only in authenticated no-store detail resources;
+    list summaries, lifecycle events, notification events, and run lineage stay
+    content-free.
+  - >-
+    Encoded resource policy as closed constants and enums while leaving
+    transition and authorization business behavior in Core rather than schemas
+    or the generated client.
+  - >-
+    Kept deletion idempotency in the established required UUID
+    Idempotency-Key header and optimistic concurrency in each closed deletion
+    body as expectedVersion >= 1; no duplicate JSON idempotency field or
+    deletion behavior was added.
+risks: []
+unresolved: []

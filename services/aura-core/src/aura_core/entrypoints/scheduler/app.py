@@ -12,11 +12,22 @@ import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from time import monotonic
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
+from aura_core.domains.automation.briefings.scheduler import (
+    BriefingDueRepository,
+    BriefingPollingApplication,
+    BriefingScheduler,
+    BriefingSchedulerApplication,
+    BriefingScheduleScanResult,
+)
+from aura_core.domains.automation.briefings.scheduler import (
+    run_once as run_briefing_once,
+)
 from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
+from aura_core.platform.outbox import SqlOutboxRepository
 from aura_core.platform.telemetry import (
     MetadataMetrics,
     TelemetryLifecycle,
@@ -197,6 +208,7 @@ class ReminderScheduler:
 async def run_scheduler(settings: Settings | None = None) -> None:
     """Compose the database-only production scheduler and run it forever."""
 
+    from aura_core.bootstrap.briefing_uow import briefing_repository
     from aura_core.bootstrap.notification_uow import notification_repository, notification_service
 
     effective = settings or Settings(role="scheduler")
@@ -204,12 +216,30 @@ async def run_scheduler(settings: Settings | None = None) -> None:
     sessions = session_factory(engine)
     metrics, telemetry = make_scheduler_telemetry(effective)
     delivery = notification_service(notification_repository(sessions, metrics=metrics))
+    briefing_repo = briefing_repository(sessions, metrics=metrics)
+    briefing_application = BriefingPollingApplication(
+        cast(BriefingDueRepository, briefing_repo), SqlOutboxRepository(), metrics=metrics
+    )
     await telemetry.start()
     try:
-        await ReminderScheduler(delivery, metrics=metrics).run()
+        await asyncio.gather(
+            ReminderScheduler(delivery, metrics=metrics).run(),
+            BriefingScheduler(briefing_application, metrics=metrics).run(),
+        )
     finally:
         await telemetry.stop()
         await engine.dispose()
+
+
+async def run_briefing_scan(
+    application: BriefingSchedulerApplication,
+    *,
+    metrics: MetadataMetrics | None = None,
+    batch_size: int = 100,
+) -> BriefingScheduleScanResult:
+    """Run one bounded briefing poll through the shared application port."""
+
+    return await run_briefing_once(application, metrics=metrics, batch_size=batch_size)
 
 
 def make_scheduler_telemetry(
@@ -243,9 +273,11 @@ def main() -> None:
 
 
 __all__ = [
+    "BriefingScheduler",
     "ReminderScheduler",
     "main",
     "make_scheduler_telemetry",
+    "run_briefing_scan",
     "run_once",
     "run_scheduler",
 ]

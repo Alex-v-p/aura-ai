@@ -1,0 +1,14 @@
+agent: security_privacy_reviewer
+work_item: AURA-0132
+verdict: PASS
+checked:
+  - Reverified the three previously blocking findings against the corrected Core and frontend diff and their focused regressions.
+  - PostgreSQL acknowledgement now copies briefing schedule, occurrence, and result identifiers from BriefingNotificationSource into NotificationEventRow while preserving the legacy reminder shape, satisfying ck_notification_events_source and complete content-free replay.
+  - Briefing creation now acquires both owner-scoped idempotency-key and result-identity advisory locks in a deterministic lexical order before lookup and creation, preserving changed-payload NotificationIdempotencyConflict behavior and duplicate-result convergence.
+  - Added PostgreSQL regressions cover briefing create-acknowledge-replay lineage and concurrent same-key changed payloads plus same-result distinct-key deduplication; they remain environment-gated and were skipped locally because AURA_0055_DATABASE_URL is unset.
+  - The browser lifecycle validator now accepts only the canonical reminder shape or the complete three-identifier briefing shape, enforces event/status pairing, and rejects partial, mixed, extra, and handwritten source-envelope forms before advancing the replay cursor.
+  - Owner filtering remains applied to get, acknowledge, list, cursor authorization, and replay; notification audit and outbox metadata remain content-free, and no briefing content, source values, credentials, owner identity, or provider payload enters SSE or telemetry.
+  - Briefing API mutations remain session-authenticated, CSRF-protected, idempotent, scope-named, optimistic-versioned, and no-store; manual-only retention and independent schedule, history, and result deletion scopes remain intact.
+  - Aura Web continues to render neutral briefing labels without fetching result content, exposing source identifiers in URLs, or writing owner-private briefing data to browser persistence or service-worker caches.
+  - Focused verification passed with 16 Core tests passed and 8 PostgreSQL-dependent skips, 15 notification frontend tests passed, Ruff clean, Pyright clean, and git diff checks clean.
+findings: []

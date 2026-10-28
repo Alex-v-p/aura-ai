@@ -5,6 +5,32 @@ const componentSource = readFileSync('apps/aura-web/src/app/shell/aura-shell.com
 const templateSource = readFileSync('apps/aura-web/src/app/shell/aura-shell.component.html', 'utf8');
 
 describe('AuraShellComponent conversation library controls', () => {
+  it('makes Today the first destination and keeps Aura home links on Today', () => {
+    expect(templateSource).toContain('routerLink="/today"');
+    expect(templateSource.indexOf('nav-group-today')).toBeLessThan(templateSource.indexOf('nav-group-conversations'));
+    expect(templateSource).not.toContain('routerLink="/conversation" aria-label="Aura home"');
+  });
+
+  it('exposes calendar connection under an accessible Connect group', () => {
+    expect(templateSource).toContain('nav-group-connect');
+    expect(templateSource).toContain('>Connect</h2>');
+    expect(templateSource).toContain('routerLink="/integrations"');
+    expect(templateSource).toContain('[routerLinkActiveOptions]="{ exact: false }"');
+    expect(templateSource).toContain('aria-label="Calendar integrations"');
+  });
+
+  it('keeps closed mobile navigation out of the accessibility tree and makes the page inert while open', () => {
+    expect(templateSource).toContain("[attr.aria-hidden]=\"isMobileViewport() && !mobileOpen ? 'true' : null\"");
+    expect(templateSource).toContain("[attr.inert]=\"isMobileViewport() && !mobileOpen ? '' : null\"");
+    expect(templateSource).toContain("[attr.inert]=\"mobileOpen && isMobileViewport() ? '' : null\"");
+    expect(templateSource).toContain('<header class="mobile-header" [attr.aria-hidden]="mobileOpen && isMobileViewport() ? \'true\' : null"');
+    expect(templateSource).toContain('<div class="scrim" role="presentation" aria-hidden="true"');
+  });
+
+  it('closes mobile navigation after a route completes', () => {
+    expect(componentSource).toContain('if (this.mobileOpen) this.closeMobileNavigation(this.isMobileViewport());');
+  });
+
   it('keeps the connected overlay focus lifecycle explicit', () => {
     expect(componentSource).toContain('this.filterPanelOpen.set(true)');
     expect(componentSource).toContain('queueMicrotask(() => this.focusFilterPanel())');

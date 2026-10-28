@@ -1,0 +1,234 @@
+id: AURA-0132
+title: Define scheduled briefing contracts and evolve notification sources
+status: integrated
+change_class: repository_governance
+intent: >
+  Define the additive owner-scoped scheduled-briefing state and transport
+  contracts, evolve Notifications from a reminder-only source to a closed
+  reminder-or-briefing source model, and update its persistence and existing
+  browser consumers without implementing briefing scheduling or execution.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - work-items/archived/AURA-0131.yaml
+    - On 2026-10-27 the owner approved calendar events reminders and explicitly owner-selected documents as the closed initial briefing source set; memory is excluded.
+    - On 2026-10-27 the owner approved one daily local-time cadence with an explicit validated IANA timezone.
+    - On 2026-10-27 the owner approved delivery through an owner-private notification linking to a dedicated durable briefing result rather than any conversation.
+    - On 2026-10-27 the owner approved manual-only retention for briefing schedules occurrences and results; no automatic expiry is introduced.
+    - Schedule deletion stops future admission and tombstones the schedule but does not silently delete occurrence history or results; those require an explicit owner deletion scope.
+    - The briefing contract pins selected document identifiers and source grants but document ownership readiness and current authorization are revalidated at admission; deleted unauthorized or unavailable selected documents fail closed or produce an explicitly contracted partial result.
+    - The notification domain continues to own inbox records delivery acknowledgement replay and source-neutral idempotency; Briefings will own schedule occurrence result and lineage records in AURA-0133.
+    - Notification and briefing events remain bounded metadata-only invalidations and lifecycle facts. Briefing output document text reminder content calendar values prompts owner identity and provider material are excluded.
+    - This is Stage 3 slice 1 only. Briefing tables schedule claiming context assembly execution result persistence notification handoff routes and management UI remain sequential later work items.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/automation/v1/notification-events.schema.json
+feature_references:
+  - AUT-004
+  - AUT-011
+  - AUT-013
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUT-020
+ownership_zones:
+  - contracts.aura-api.briefings
+  - contracts.automation.briefing-events
+  - contracts.automation.notification-events
+  - services.aura-core.domains.automation.notifications
+  - services.aura-core.notification-source-migration
+  - frontend.aura-api-client.generated
+  - frontend.aura-web.notifications
+  - frontend.aura-web.notification-consumers
+  - frontend.aura-web.shell-navigation-recovery
+  - repository.module-registry
+  - evaluation.scheduled-briefing-contracts
+  - delivery.aura0132
+allowed_paths:
+  - work-items/active/AURA-0132.yaml
+  - work-items/archived/AURA-0132.yaml
+  - work-items/handoffs/AURA-0132-*.yaml
+  - work-items/reviews/AURA-0132-*.yaml
+  - work-items/integration/AURA-0132.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/automation/v1/notification-events.schema.json
+  - contracts/events/automation/v1/briefing-events.schema.json
+  - contracts/tests/test_aura0132_briefing_contract.py
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - services/aura-core/migrations/versions/0025_notification_briefing_source.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/**
+  - services/aura-core/src/aura_core/entrypoints/api/routes/notifications.py
+  - services/aura-core/resources/component-manifests/notification-delivery.yaml
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_notification_delivery.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_migration_0025_notification_briefing_source.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_notification_evaluation.py
+  - services/aura-core/tests/test_notification_stream.py
+  - services/aura-core/tests/test_notifications.py
+  - services/aura-core/tests/test_reminder_api.py
+  - frontend/libs/aura/automation/notifications/**
+  - frontend/libs/aura/daily-action/**
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.spec.ts
+  - frontend/apps/storybook/src/notification-centre.stories.ts
+  - frontend/apps/storybook/src/daily-action.stories.ts
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/today.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/events/runs/**
+  - contracts/telemetry/**
+  - services/aura-core/src/aura_core/domains/automation/reminders/**
+  - services/aura-core/src/aura_core/domains/integrations/calendar/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/**
+  - services/aura-core/src/aura_core/domains/memory/**
+  - services/aura-core/src/aura_core/domains/execution/**
+  - services/aura-core/src/aura_core/entrypoints/scheduler/**
+  - services/aura-core/src/aura_core/entrypoints/worker/**
+  - services/aura-core/src/aura_core/entrypoints/api/routes/calendar.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/documents.py
+  - services/aura-observatory/**
+  - frontend/libs/aura/briefings/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - aura-v1 scheduled briefing resources and notification source union
+    - automation briefing lifecycle events v1
+    - automation notification events v1 additive source evolution
+    - generated Aura TypeScript transport client
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: automation.notifications
+observability:
+  applicable: true
+  affected_components:
+    - aura.automation.notification_delivery
+  required_metrics:
+    - notification_sse_connection_count
+    - notification_sse_replay_count
+    - notification_acknowledgement_outcome
+    - notification_failure_count
+  required_evaluators:
+    - notification_owner_authorization
+    - notification_replay_recovery
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Briefing contracts and events must not expose source content document text calendar values reminder content prompts output credentials provider payloads owner identity or executor-specific state.
+    - Selected document identifiers are private owner-scoped grants and must be bounded validated and reauthorized at admission without becoming ambient background authority.
+    - Calendar reminder and document content is untrusted evidence and cannot modify instructions permissions grants policies tools confirmation requirements or execution flow.
+    - Notification source evolution must preserve owner isolation acknowledgement idempotency replay and legacy reminder behavior without inventing reminder identifiers for briefing notifications.
+    - Schedule occurrence and result deletion must be explicit owner-authorized CSRF-protected idempotent and scope-named; automatic expiry and implicit cascade deletion are prohibited.
+    - Briefing result content and notification source metadata must not enter URLs query strings logs telemetry SSE browser persistence service-worker caches Storybook artifacts or committed screenshots.
+    - The browser must use generated transport types and must not infer schedule lifecycle source completeness run authority or delivery truth.
+  data_classes:
+    - owner-private briefing definitions and source grants
+    - owner-private briefing occurrence and result lineage
+    - owner-private briefing result content excluded from notification payloads
+    - owner-private notification source metadata
+    - metadata-only briefing and notification lifecycle events
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 7
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura API additively defines owner-scoped briefing schedules occurrences results and explicit deletion resources without exposing scheduler worker executor checkpoint provider or model-backend concepts.
+  - A schedule supports exactly one daily local-time cadence with a validated IANA timezone explicit calendar and document grants reminder inclusion pinned agent revision and bounded immutable execution-policy references; memory is unrepresentable as a source.
+  - Occurrence and result state machines use closed bounded statuses stable identities optimistic versions schedule and run lineage deterministic due-time representations source-completeness outcomes and explicit partial failed canceled skipped and unknown outcomes.
+  - "Manual-only retention is explicit: schedules occurrences and results have no automatic expiry; deleting a schedule prevents future admission while result or history deletion requires a separate scope-named owner command and preserves content-free audit truth."
+  - Briefing lifecycle events are closed versioned metadata-only schemas containing bounded identifiers statuses versions lineage and timestamps only, with no briefing source or result content owner identity prompt credentials or provider payload.
+  - Notification contracts evolve from reminder-only fields to a closed typed reminder-or-briefing source while preserving existing reminder payload compatibility acknowledgement behavior and metadata-only replay.
+  - The notification migration additively preserves all existing reminder rows and uniqueness semantics while supporting source-neutral idempotent briefing notification creation in the later execution slice; it introduces no briefing-owned tables.
+  - Notification Core APIs repositories persistence replay and SSE serialize typed source metadata without cross-domain table access content leakage or weakened owner authorization CSRF optimistic-version or idempotency rules.
+  - The regenerated Aura client and notification frontend consume the typed source union without handwritten transport DTOs; existing reminder notifications and Today remain functional and briefing notifications have a safe dedicated-result destination representation for the later route slice.
+  - Mobile shell navigation closes after route completion so the drawer cannot intercept notification or reminder actions reached through the updated notification consumers.
+  - Contract migration Core frontend Storybook and browser tests cover legacy reminder compatibility typed briefing sources owner isolation source-neutral acknowledgement persisted replay duplicate delivery manual retention privacy exclusions and graceful handling before the briefing detail route exists.
+  - Existing notification metrics spans finite dimensions evaluators and metadata-only capture remain valid; no briefing content source labels document identifiers or owner data enters telemetry or SSE.
+  - No briefing scheduler execution context assembly result persistence notification producer route management UI deployment Observatory protected baseline dependency or framework change occurs.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0132.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0132.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0132.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0132.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0132.yaml
+  - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0132_briefing_contract.py contracts/tests/test_aura0128_calendar_contract.py services/aura-core/tests/system/test_contract_and_deployment.py services/aura-core/tests/system/test_notification_delivery.py services/aura-core/tests/test_conversation_attachments.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/test_migration_0025_notification_briefing_source.py services/aura-core/tests/test_migrations.py services/aura-core/tests/test_notification_api.py services/aura-core/tests/test_notification_evaluation.py services/aura-core/tests/test_notification_stream.py services/aura-core/tests/test_notifications.py services/aura-core/tests/test_reminder_api.py -q
+  - cd frontend && pnpm exec nx run aura-api-client:generate
+  - cd frontend && pnpm exec nx run aura-api-client:check-generated
+  - cd frontend && pnpm exec nx run aura-api-client:lint
+  - cd frontend && pnpm exec nx lint aura-web
+  - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/automation/notifications libs/aura/daily-action
+  - cd frontend && pnpm exec nx build aura-web --configuration=production
+  - cd frontend && pnpm exec nx run storybook:build-storybook
+  - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

@@ -39,6 +39,8 @@ from aura_core.domains.governance.approvals.public import (
     ApprovalStatus,
     ApprovalTransitionError,
     ApprovalVersionConflict,
+    CreateWorkflowApproval,
+    WorkflowApprovalOrigin,
     as_payload,
     decode_cursor,
     detail_payload,
@@ -54,6 +56,155 @@ ISSUER = "https://authentik.example"
 OWNER = "owner"
 OTHER_OWNER = "other-owner"
 CREATED = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+
+
+def test_workflow_approval_payload_preserves_one_based_step_ordinal() -> None:
+    origin = WorkflowApprovalOrigin(
+        "manual_workflow_instance",
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        8,
+        uuid4(),
+    )
+    approval = Approval(
+        id=uuid4(),
+        issuer=ISSUER,
+        subject=OWNER,
+        proposal_id=uuid4(),
+        run_id=None,
+        conversation_id=None,
+        tool_call_id=None,
+        tool_id="workflow.owner_approval",
+        tool_version=1,
+        status=ApprovalStatus.PENDING,
+        execution_status=ApprovalExecutionStatus.NOT_STARTED,
+        version=1,
+        created_at=CREATED,
+        updated_at=CREATED,
+        expires_at=CREATED + timedelta(hours=1),
+        origin=origin,
+    )
+
+    assert as_payload(approval)["workflowStepOrdinal"] == 8
+
+
+def _workflow_approval_command(
+    *,
+    expires_at: datetime = CREATED + timedelta(hours=1),
+    instance_deadline: datetime = CREATED + timedelta(days=1),
+    next_step_kind: str = "owner_notification",
+    consequence: str = "continue_to_owner_notification",
+    consequence_copy: str = "Approve this step to continue to the private notification.",
+    idempotency_key: str = "workflow-approval",
+) -> CreateWorkflowApproval:
+    return CreateWorkflowApproval(
+        issuer=ISSUER,
+        subject=OWNER,
+        workflow_id=uuid4(),
+        workflow_revision_id=uuid4(),
+        workflow_instance_id=uuid4(),
+        workflow_step_ordinal=2,
+        workflow_step_execution_id=uuid4(),
+        workflow_display_name="Morning plan",
+        next_step_kind=next_step_kind,
+        consequence=consequence,
+        consequence_copy=consequence_copy,
+        owner_scope_id="owner-scope",
+        workspace_scope_id="workspace-scope",
+        expires_at=expires_at,
+        idempotency_key=idempotency_key,
+        instance_deadline=instance_deadline,
+    )
+
+
+def test_workflow_approval_command_accepts_only_closed_system_derived_presentation() -> None:
+    with pytest.raises(ValueError):
+        _workflow_approval_command(
+            consequence_copy="Approve this step to leak private output."
+        )
+    with pytest.raises(ValueError):
+        _workflow_approval_command(
+            expires_at=CREATED + timedelta(hours=2),
+            instance_deadline=CREATED + timedelta(hours=1),
+        )
+
+
+@pytest.mark.asyncio
+async def test_memory_workflow_approval_expiry_is_limited_from_creation() -> None:
+    repository = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: CREATED), clock=lambda: CREATED
+    )
+    with pytest.raises(ValueError):
+        await repository.create_workflow_pending(
+            _workflow_approval_command(
+                expires_at=CREATED + timedelta(days=8),
+                instance_deadline=CREATED + timedelta(days=9),
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_memory_workflow_approval_decisions_preserve_origin_and_replay() -> None:
+    repository = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: CREATED), clock=lambda: CREATED
+    )
+    command = _workflow_approval_command()
+    detail = await repository.create_workflow_pending(command)
+    retried_create = await repository.create_workflow_pending(command)
+    assert retried_create == detail
+    with pytest.raises(ApprovalIdempotencyConflict):
+        await repository.create_workflow_pending(
+            replace(command, workflow_display_name="Different label")
+        )
+    approved = await repository.approve(
+        ISSUER,
+        OWNER,
+        detail.approval.id,
+        expected_version=1,
+        idempotency_key="workflow-approve",
+    )
+    replayed = await repository.approve(
+        ISSUER,
+        OWNER,
+        detail.approval.id,
+        expected_version=1,
+        idempotency_key="workflow-approve",
+    )
+    events = await repository.replay(ISSUER, OWNER)
+    assert approved.origin == detail.approval.origin
+    assert replayed == approved
+    assert all(event.origin == detail.approval.origin for event in events)
+    assert all(event.run_id is None and event.conversation_id is None for event in events)
+
+
+@pytest.mark.asyncio
+async def test_memory_workflow_approval_reject_cancel_and_expiry_preserve_origin() -> None:
+    clock = [CREATED]
+    repository = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: clock[0]), clock=lambda: clock[0]
+    )
+    rejected = await repository.create_workflow_pending(
+        _workflow_approval_command(idempotency_key="workflow-reject")
+    )
+    rejected_result = await repository.reject(
+        ISSUER, OWNER, rejected.approval.id, expected_version=1, idempotency_key="reject"
+    )
+    canceled = await repository.create_workflow_pending(
+        _workflow_approval_command(idempotency_key="workflow-cancel")
+    )
+    canceled_result = await repository.cancel(
+        ISSUER, OWNER, canceled.approval.id, expected_version=1, idempotency_key="cancel"
+    )
+    expiring = await repository.create_workflow_pending(
+        _workflow_approval_command(idempotency_key="workflow-expire")
+    )
+    clock[0] = expiring.approval.expires_at
+    expired = await repository.expire_due(now=clock[0])
+    assert rejected_result.origin == rejected.approval.origin
+    assert canceled_result.origin == canceled.approval.origin
+    assert expired[0].origin == expiring.approval.origin
+    assert all(event.origin is not None for event in await repository.replay(ISSUER, OWNER))
 
 
 @pytest.mark.asyncio
@@ -1140,6 +1291,89 @@ async def test_postgresql_approval_create_is_atomic_and_metadata_only() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_postgresql_workflow_approval_lifecycle_is_origin_bound_and_not_run_resumed() -> None:
+    from sqlalchemy import text
+
+    async with sql_approval_repository() as (_, sessions, repository, clock, prefix):
+        issuer = ISSUER
+        subject = f"{prefix}owner"
+
+        def command(key: str, **changes: object) -> CreateWorkflowApproval:
+            return replace(
+                _workflow_approval_command(idempotency_key=key),
+                issuer=issuer,
+                subject=subject,
+                **changes,
+            )
+
+        approved_detail = await repository.create_workflow_pending(command("workflow-approve"))
+        approved = await repository.approve(
+            issuer,
+            subject,
+            approved_detail.approval.id,
+            expected_version=1,
+            idempotency_key="decision-approve",
+        )
+        replayed = await repository.approve(
+            issuer,
+            subject,
+            approved_detail.approval.id,
+            expected_version=1,
+            idempotency_key="decision-approve",
+        )
+        rejected_detail = await repository.create_workflow_pending(command("workflow-reject"))
+        rejected = await repository.reject(
+            issuer,
+            subject,
+            rejected_detail.approval.id,
+            expected_version=1,
+            idempotency_key="decision-reject",
+        )
+        canceled_detail = await repository.create_workflow_pending(command("workflow-cancel"))
+        canceled = await repository.cancel(
+            issuer,
+            subject,
+            canceled_detail.approval.id,
+            expected_version=1,
+            idempotency_key="decision-cancel",
+        )
+        expiring_detail = await repository.create_workflow_pending(command("workflow-expire"))
+        clock[0] = expiring_detail.approval.expires_at
+        expired = await repository.expire_due(now=clock[0])
+        events = await repository.replay(issuer, subject)
+
+        async with sessions() as session:
+            outbox_rows = list(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT aggregate_type, payload FROM outbox "
+                            "WHERE aggregate_type = 'governance.approval' "
+                            "AND aggregate_id IN (:approved, :rejected, :canceled, :expired)"
+                        ),
+                        {
+                            "approved": approved_detail.approval.id,
+                            "rejected": rejected_detail.approval.id,
+                            "canceled": canceled_detail.approval.id,
+                            "expired": expiring_detail.approval.id,
+                        },
+                    )
+                ).all()
+            )
+        assert approved.origin == approved_detail.approval.origin
+        assert replayed == approved
+        assert rejected.origin == rejected_detail.approval.origin
+        assert canceled.origin == canceled_detail.approval.origin
+        assert expired[0].origin == expiring_detail.approval.origin
+        assert all(event.origin is not None for event in events)
+        assert all(event.run_id is None and event.conversation_id is None for event in events)
+        assert all(row[0] == "governance.approval" for row in outbox_rows)
+        assert all(
+            not {"content", "prompt", "response", "consequenceCopy"}
+            & set(str(row[1]).split('"'))
+            for row in outbox_rows
+        )
 @pytest.mark.asyncio
 async def test_postgresql_every_decision_attempt_emits_one_bounded_telemetry_record() -> None:
     async with sql_approval_repository() as (_, _, repository, _, prefix):

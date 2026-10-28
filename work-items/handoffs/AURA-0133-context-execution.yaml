@@ -1,0 +1,82 @@
+agent: core_worker
+work_item: AURA-0133
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0133_context_execution
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-core.briefing-context and services.aura-core.execution.briefing-run-seam
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/automation/briefings/context.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/execution.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/application.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/tests/test_aura0133_execution.py
+  - services/aura-core/tests/test_aura0133_observability.py
+  - services/aura-core/tests/test_aura0133_cancellation_authority.py
+  - work-items/handoffs/AURA-0133-context-execution.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.execution.briefing_context
+    - aura.execution.briefing_admission
+  metrics_added:
+    - briefing_context_assembly_duration_ms
+    - briefing_admission_duration_ms
+    - briefing_outcome_count
+    - briefing_budget_exhaustion_count
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0133.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0133.yaml
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/briefings/context.py services/aura-core/src/aura_core/domains/automation/briefings/execution.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings/context.py services/aura-core/src/aura_core/domains/automation/briefings/execution.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/execution/runs/service.py (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run python -m py_compile services/aura-core/src/aura_core/domains/automation/briefings/context.py services/aura-core/src/aura_core/domains/automation/briefings/execution.py services/aura-core/src/aura_core/domains/execution/runs/service.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_observability.py -k 'evidence_adapter or adr0017_serializer or run_coordinator_fallback' -q (4 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_observability.py::test_run_coordinator_fallback_enforces_token_budget -q (1 passed)
+    - AURA_WORK_ITEM=AURA-0133 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_observability.py -k 'context_indeterminate_revalidation or run_coordinator_briefing_cancellation_is_typed_and_idempotent or briefing_cancellation_preserves_authoritative_completion_result or fallback_enforces_token_budget or context_revalidation_fails_closed_before_reading_sources' (5 passed)
+    - AURA_WORK_ITEM=AURA-0133 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/briefings/context.py services/aura-core/src/aura_core/domains/automation/briefings/execution.py services/aura-core/src/aura_core/domains/execution/runs/service.py services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_observability.py (passed)
+    - AURA_WORK_ITEM=AURA-0133 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings/context.py services/aura-core/src/aura_core/domains/automation/briefings/execution.py services/aura-core/src/aura_core/domains/execution/runs/service.py (0 errors)
+    - AURA_WORK_ITEM=AURA-0133 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_observability.py services/aura-core/tests/test_aura0133_cancellation_authority.py -k 'not process_command_positive_supported_policy_reaches_provider_and_delivery' (44 passed, 1 deselected)
+    - AURA_WORK_ITEM=AURA-0133 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-core/tests/test_aura0133_observability.py -k 'fallback_enforces_token_budget or fallback_rejects_dense_unicode_bytes' (2 passed)
+    - git diff --check
+  failed: []
+  not_run:
+    - aggregate architecture, migration, service-isolation, observability, and full Core checks remain assigned to Delivery Lead integration
+decisions:
+  - Context assembly consumes only the public calendar, reminder, and document application seams and revalidates the owner/source admission port before any read.
+  - Calendar and explicitly selected document values are bounded per item and in total; reminders are read through owner-scoped application pages and filtered to the occurrence-local day.
+  - Source values are serialized as JSON records inside a closed AURA_UNTRUSTED_EVIDENCE section; delimiter-shaped source text is fence-safe and cannot manufacture the closing boundary.
+  - Briefing execution is an additive run-lineage seam outside conversation history. It derives a stable run identifier from schedule and occurrence identity, pins policy references, and requires zero memory access and zero tool calls.
+  - Direct model injection is rejected; BriefingExecutionService can execute only through RunCoordinatorBriefingAdapter and the public RunCoordinator.execute_briefing/cancel_briefing seam.
+  - The existing RunCoordinator now owns the provider-neutral briefing stream guard for deadlines/cancellation, while briefing execution owns stable occurrence/run lineage and terminal settlement.
+  - PublicBriefingRunRepository delegates admission, terminal result persistence, cancellation, and recovery to the state owner's public BriefingRunStatePort without importing SQL or persistence internals.
+  - Active-operation spans are emitted in finally blocks for both successful and failed context/admission paths; metadata is trace-only and span recorder failures are nonblocking.
+  - Optional ADR-0017 briefing boundary evidence is fixed-field, metadata-only, whole-item validated, and nonblocking on rejection/outage.
+  - BriefingRunEvidenceAdapter now converts fixed briefing metadata to the existing public RunEvidenceItem and execution_outcome variant accepted by BoundedRunEvidenceRecorder; no custom item reaches the platform recorder.
+  - BriefingRunEvidenceAdapter normalizes domain outcomes to ADR-0017 execution_outcome values and exposes record_phase for context, admission, execution, persistence, and delivery composition; recorder failures remain nonblocking.
+  - Context, admission, and RunCoordinator briefing spans share the context trace ID and parent-child span IDs; all identifiers remain trace-only.
+  - BriefingRunRequest now fails closed unless agent, model, tool, prompt-bundle, and execution-policy revision references are all resolved UUIDs; the worker must pass the pinned schedule values rather than defaults.
+  - RunCoordinator forwards max_output_tokens to providers exposing stream_briefing and applies deterministic conservative UTF-8 byte and character ceilings to generic streams; overrun records briefing_budget_exhaustion_count and terminates the stream.
+  - Platform telemetry receives bounded span outcomes (ok/partial/rejected/error/canceled); source completeness remains a domain/evidence value and cannot be emitted as an unregistered span outcome. Context active spans retain the registered operation metric name while duration is recorded by the required duration metric.
+  - Briefing cancellation is a typed in-flight signal keyed by fully validated schedule/occurrence/run lineage in RunCoordinator. It is idempotent, never invokes the legacy generic cancellation callback, and leaves durable CANCELED settlement to the briefing state owner.
+  - Context authorization now requires an exact ``True`` decision; an indeterminate validator result fails closed before any calendar, reminder, or document read.
+  - BRIEFING_EXECUTION_POLICY_ID is the deterministic binding for the fixed v1 deadline, output-character/token, zero-tool, and no-memory policy. Admission rejects any other execution-policy UUID after owner authorization and before durable admission.
+  - Admission duration spans/metrics close immediately after revalidation and durable admission, before model generation. Rejection and terminal-duplicate paths still close an admission span; successful admission and post-settlement execution evidence are separate phases.
+  - briefing_phase_span_id deterministically derives metadata-only phase IDs. Context is a trace root, admission uses the context span as parent, and persistence/delivery composition can reuse the same public helper.
+  - The phase-span helper lives only in the briefing public API and accepts UUIDs or validated 32-hex trace IDs; context, admission, persistence, delivery, and tests all consume that single identity function.
+risks:
+  - Production composition must attach the provider to RunCoordinator.set_briefing_provider and supply state-owner methods implementing BriefingRunStatePort plus concrete owner/source/policy revalidators.
+  - The current state grant DTO intentionally has no reminder identifier list; an empty reminder selection means the owner-scoped reminder application day view, while calendar and document grants remain explicit.
+unresolved: []

@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { ReminderStore } from '@aura/aura/automation/reminders';
 import { AuraNotificationsApi } from './notifications-api';
-import { appendNotificationPage, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection, type NotificationRecord, type NotificationsApi, type NotificationStream, type NotificationStatus, type NotificationView, type NotificationApiError } from './notification-models';
+import { appendNotificationPage, loadUnreadProjection, NotificationMutationGuard, reconcileAcknowledged, type NotificationCollection, type NotificationRecord, type NotificationsApi, type NotificationStream, type NotificationStatus, type NotificationView, type NotificationApiError } from './notification-models';
 
 const emptyCollection = (): NotificationCollection => ({ items: [], nextCursor: null, unacknowledgedCount: 0 });
 const retryDelaysMs = [500, 1_000, 2_000, 4_000, 8_000, 15_000] as const;
@@ -23,6 +23,13 @@ export class NotificationStore {
   readonly connectionState = signal<'offline' | 'connecting' | 'reconnecting' | 'live' | 'unavailable'>('offline');
   readonly view = signal<NotificationView>('unread');
   readonly loadedView = signal<NotificationView | null>(null);
+  /** Stable unread projection for cross-surface consumers such as Today. */
+  readonly unreadCollection = signal<NotificationCollection | null>(null);
+  readonly unreadLoaded = computed(() => this.unreadCollection() !== null);
+  /** Recovery for Today must not mutate the active History/SSE workspace. */
+  readonly unreadProjectionLoading = signal(false);
+  readonly unreadProjectionErrorStatus = signal<number | null>(null);
+  readonly unreadProjectionNotice = signal<string | null>(null);
   /** Kept as a compatibility projection for existing consumers. */
   readonly filter = signal<'all' | NotificationStatus>('delivered');
   readonly unreadCount = computed(() => this.collection().unacknowledgedCount);
@@ -35,6 +42,7 @@ export class NotificationStore {
   private lastEventId: string | undefined;
   private sessionGeneration = 0;
   private listGeneration = 0;
+  private unreadProjectionGeneration = 0;
   private streamGeneration = 0;
   private detailGeneration = 0;
   private detailKey = '';
@@ -52,6 +60,10 @@ export class NotificationStore {
       const page = await this.api.list(undefined, this.selectedStatus());
       if (session !== this.sessionGeneration || generation !== this.listGeneration || view !== this.view()) return false;
       this.collection.set(page); this.loadedView.set(view);
+      if (view === 'unread') {
+        this.unreadCollection.set(page);
+        this.clearUnreadProjectionError();
+      }
       return true;
     } catch (error: unknown) {
       if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) { this.collection.set(emptyCollection()); this.loadedView.set(null); this.setError(error, 'Notifications are temporarily unavailable.'); }
@@ -62,7 +74,17 @@ export class NotificationStore {
   async loadMore(): Promise<void> {
     const current = this.collection(); if (!current.nextCursor || this.loading()) return;
     const session = this.sessionGeneration; const generation = this.listGeneration; const view = this.view(); this.loading.set(true);
-    try { const page = await this.api.list(current.nextCursor, this.selectedStatus()); if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) this.collection.set(appendNotificationPage(current, page)); }
+    try {
+      const page = await this.api.list(current.nextCursor, this.selectedStatus());
+      if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) {
+        const merged = appendNotificationPage(current, page);
+        this.collection.set(merged);
+        if (view === 'unread') {
+          this.unreadCollection.set(merged);
+          this.clearUnreadProjectionError();
+        }
+      }
+    }
     catch (error: unknown) { if (session === this.sessionGeneration && generation === this.listGeneration && view === this.view()) this.setError(error, 'More notifications could not be loaded.'); }
     finally { if (session === this.sessionGeneration && generation === this.listGeneration) this.loading.set(false); }
   }
@@ -88,7 +110,10 @@ export class NotificationStore {
       // Do not apply an optimistic decrement onto a collection that was
       // replaced by an intervening authoritative refresh (for example, SSE).
       // The accepted mutation still performs its own authoritative refresh.
-      if (listGeneration === this.listGeneration) this.collection.update((current) => reconcileAcknowledged(current, updated, currentView));
+      if (listGeneration === this.listGeneration) {
+        this.collection.update((current) => reconcileAcknowledged(current, updated, currentView));
+        this.unreadCollection.update((current) => current ? reconcileAcknowledged(current, updated, 'unread') : current);
+      }
       if (sameRoute()) this.selected.set(updated);
       if (this.acknowledgeGuard.isSessionMutationCurrent(token)) await this.refresh();
       return this.acknowledgeGuard.isSessionMutationCurrent(token);
@@ -101,7 +126,7 @@ export class NotificationStore {
   async setView(view: NotificationView): Promise<void> { if (this.view() === view) return; this.view.set(view); this.filter.set(view === 'unread' ? 'delivered' : 'acknowledged'); this.loadedView.set(null); this.collection.set(emptyCollection()); await this.refresh(); }
   async setFilter(filter: 'all' | NotificationStatus): Promise<void> { this.filter.set(filter); this.view.set(filter === 'acknowledged' ? 'history' : 'unread'); this.loadedView.set(null); this.collection.set(emptyCollection()); await this.refresh(); }
 
-  resetSessionState(): void { ++this.sessionGeneration; ++this.listGeneration; ++this.detailGeneration; this.detailKey = ''; this.acknowledgeGuard.resetSession(); this.api.clearSession?.(); this.stop(); this.collection.set(emptyCollection()); this.loadedView.set(null); this.clearDetail(); this.loading.set(false); this.saving.set(false); this.notice.set(null); this.errorStatus.set(null); this.lastEventId = undefined; this.retryAttempt = 0; this.resetEpoch.update((value) => value + 1); }
+  resetSessionState(): void { ++this.sessionGeneration; ++this.listGeneration; ++this.detailGeneration; ++this.unreadProjectionGeneration; this.detailKey = ''; this.acknowledgeGuard.resetSession(); this.api.clearSession?.(); this.stop(); this.collection.set(emptyCollection()); this.unreadCollection.set(null); this.loadedView.set(null); this.clearDetail(); this.loading.set(false); this.unreadProjectionLoading.set(false); this.saving.set(false); this.notice.set(null); this.errorStatus.set(null); this.clearUnreadProjectionError(); this.lastEventId = undefined; this.retryAttempt = 0; this.resetEpoch.update((value) => value + 1); }
   /** Reconnect only after the application has accepted a new session. */
   resumeAfterAcceptedSession(): void { void this.start(); }
 
@@ -111,7 +136,7 @@ export class NotificationStore {
     this.connectionState.set(this.retryAttempt > 0 ? 'reconnecting' : 'connecting');
     this.stream = this.api.stream(this.lastEventId, (event) => {
       if (session !== this.sessionGeneration || streamGeneration !== this.streamGeneration || this.stopped) return;
-      this.lastEventId = event.eventId; this.retryAttempt = 0; this.connectionState.set('live'); void this.refresh(); void this.reminders.load();
+      this.lastEventId = event.eventId; this.retryAttempt = 0; this.connectionState.set('live'); void this.refresh(); if (this.view() === 'history') void this.refreshUnreadProjection(); void this.reminders.load();
     }, (error) => { if (session === this.sessionGeneration && streamGeneration === this.streamGeneration) void this.handleStreamError(error, session, streamGeneration); });
   }
 
@@ -141,6 +166,34 @@ export class NotificationStore {
   }
 
   private selectedStatus(): NotificationStatus | undefined { const filter = this.filter(); return filter === 'all' ? undefined : filter; }
+  /** Refresh Today’s unread projection without changing the active inbox view. */
+  async refreshUnreadProjection(): Promise<boolean> {
+    const session = this.sessionGeneration; const generation = ++this.unreadProjectionGeneration;
+    this.unreadProjectionLoading.set(true); this.clearUnreadProjectionError();
+    try {
+      const unread = await loadUnreadProjection(this.api);
+      if (session !== this.sessionGeneration || generation !== this.unreadProjectionGeneration) return false;
+      this.unreadCollection.set(unread);
+      return true;
+    } catch (error: unknown) {
+      if (session === this.sessionGeneration && generation === this.unreadProjectionGeneration) {
+        const status = statusOf(error);
+        if (status === 401 || status === 403) {
+          const message = status === 401 ? 'Your session has expired. Sign in again to view notifications.' : 'You do not have permission to view notifications.';
+          this.resetSessionState();
+          this.sessionResetHandler?.(status);
+          this.unreadProjectionErrorStatus.set(status);
+          this.unreadProjectionNotice.set(message);
+        } else {
+          this.unreadProjectionErrorStatus.set(status);
+          this.unreadProjectionNotice.set(safeMessage(error, 'Unread notifications are temporarily unavailable.'));
+        }
+      }
+      return false;
+    } finally { if (session === this.sessionGeneration && generation === this.unreadProjectionGeneration) this.unreadProjectionLoading.set(false); }
+  }
+  retryUnreadProjection(): void { void this.refreshUnreadProjection(); }
+  private clearUnreadProjectionError(): void { this.unreadProjectionErrorStatus.set(null); this.unreadProjectionNotice.set(null); }
   private setError(error: unknown, fallback: string): void {
     const status = statusOf(error);
     if (status === 401 || status === 403) { const message = status === 401 ? 'Your session has expired. Sign in again to view notifications.' : 'You do not have permission to view notifications.'; this.resetSessionState(); this.sessionResetHandler?.(status); this.errorStatus.set(status); this.notice.set(message); return; }

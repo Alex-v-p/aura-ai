@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/automation/v1/workflow-events.schema.json",
+  "title": "Aura workflow lifecycle events v1",
+  "description": "Closed metadata-only durable workflow lifecycle events. Workflow names, definitions, inputs, outputs, instructions, mappings, approval presentation, notification content, owner identity, credentials, provider material, executor state, prompts, responses and hidden reasoning are prohibited.",
+  "oneOf": [
+    { "$ref": "#/$defs/WorkflowDefinitionLifecycleEvent" },
+    { "$ref": "#/$defs/WorkflowInstanceLifecycleEvent" },
+    { "$ref": "#/$defs/WorkflowStepLifecycleEvent" },
+    { "$ref": "#/$defs/WorkflowRetentionLifecycleEvent" }
+  ],
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "WorkflowStepKind": { "type": "string", "enum": ["agent_run", "owner_approval", "owner_notification", "wait_until"] },
+    "WorkflowInstanceStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_time", "waiting_for_approval", "waiting_for_resolution", "resolution_required", "cancel_requested", "terminal"] },
+    "WorkflowTerminalOutcome": { "type": ["string", "null"], "enum": ["completed", "canceled", "failed", null] },
+    "WorkflowStepStatus": { "type": "string", "enum": ["pending", "running", "waiting_for_time", "waiting_for_approval", "failed_replayable", "resolution_required", "completed", "rejected", "expired", "canceled", "failed"] },
+    "WorkflowEffectOutcome": { "type": "string", "enum": ["not_attempted", "completed", "definitively_failed", "unknown"] },
+    "WorkflowRecoveryCapability": { "type": "string", "enum": ["request_replay", "settle_failed", "reconcile", "cancel"] },
+    "WorkflowDeletionScope": { "type": "string", "enum": ["draft", "retired_definition", "published_revision", "terminal_instance_state", "terminal_instance_history", "terminal_instance_result", "terminal_instance_checkpoints"] },
+    "WorkflowDefinitionLifecycleEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "workflowId", "revisionId", "version", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["workflow.revision.published", "workflow.definition.retired"] },
+        "workflowId": { "$ref": "#/$defs/Uuid" }, "revisionId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "version": { "type": "integer", "minimum": 1 }, "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "WorkflowInstanceLifecycleEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "workflowId", "revisionId", "instanceId", "instanceStatus", "terminalOutcome", "currentStepOrdinal", "version", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["workflow.instance.admitted", "workflow.instance.status_changed", "workflow.instance.terminal"] },
+        "workflowId": { "$ref": "#/$defs/Uuid" }, "revisionId": { "$ref": "#/$defs/Uuid" }, "instanceId": { "$ref": "#/$defs/Uuid" },
+        "instanceStatus": { "$ref": "#/$defs/WorkflowInstanceStatus" }, "terminalOutcome": { "$ref": "#/$defs/WorkflowTerminalOutcome" },
+        "currentStepOrdinal": { "type": ["integer", "null"], "minimum": 1, "maximum": 8 }, "version": { "type": "integer", "minimum": 1 },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "WorkflowStepLifecycleEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "workflowId", "revisionId", "instanceId", "stepExecutionId", "stepOrdinal", "stepKind", "stepStatus", "effectOutcome", "recoveryCapabilities", "instanceVersion", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["workflow.step.status_changed", "workflow.step.reconciled"] },
+        "workflowId": { "$ref": "#/$defs/Uuid" }, "revisionId": { "$ref": "#/$defs/Uuid" }, "instanceId": { "$ref": "#/$defs/Uuid" }, "stepExecutionId": { "$ref": "#/$defs/Uuid" },
+        "stepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "stepKind": { "$ref": "#/$defs/WorkflowStepKind" }, "stepStatus": { "$ref": "#/$defs/WorkflowStepStatus" },
+        "effectOutcome": { "$ref": "#/$defs/WorkflowEffectOutcome" }, "recoveryCapabilities": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/$defs/WorkflowRecoveryCapability" } },
+        "instanceVersion": { "type": "integer", "minimum": 1 }, "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "WorkflowRetentionLifecycleEvent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "workflowId", "revisionId", "instanceId", "deletionScope", "tombstoneRetained", "version", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "eventType": { "const": "workflow.retention.deleted" },
+        "workflowId": { "$ref": "#/$defs/Uuid" }, "revisionId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "instanceId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "deletionScope": { "$ref": "#/$defs/WorkflowDeletionScope" }, "tombstoneRetained": { "type": "boolean" }, "version": { "type": "integer", "minimum": 1 }, "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    }
+  }
+}

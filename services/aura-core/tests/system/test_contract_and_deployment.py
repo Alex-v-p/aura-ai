@@ -92,7 +92,7 @@ def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.18.0"
+    assert contract["info"]["version"] == "1.22.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutation_operations = {
         ("/api/v1/memories", "post"),
@@ -254,7 +254,7 @@ def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.18.0"
+    assert contract["info"]["version"] == "1.22.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     mutations = {
         ("/api/v1/reminders", "post"),
@@ -324,7 +324,7 @@ def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.18.0"
+    assert contract["info"]["version"] == "1.22.0"
     paths = cast(dict[str, dict[str, Any]], contract["paths"])
     expected_paths = {
         "/api/v1/approvals",
@@ -366,7 +366,11 @@ def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
         "reminder.series.resume",
         "reminder.cancel",
     ]
-    approval = schemas["Approval"]
+    assert schemas["Approval"]["oneOf"] == [
+        {"$ref": "#/components/schemas/ReminderApproval"},
+        {"$ref": "#/components/schemas/WorkflowApproval"},
+    ]
+    approval = schemas["ReminderApproval"]
     assert {"id", "proposalId", "runId", "status", "version", "expiresAt"} <= set(
         approval["required"]
     )
@@ -383,14 +387,16 @@ def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
     assert command_detail["properties"]["summary"]["minLength"] == 1
     assert command_detail["properties"]["summary"]["maxLength"] == 120
     assert command_detail["additionalProperties"] is False
-    proposal_schema = schemas["ApprovalDetail"]["allOf"][1]["properties"]["proposal"]
+    proposal_schema = schemas["ReminderApprovalDetail"]["allOf"][1]["properties"][
+        "proposal"
+    ]
     assert {
         "#/components/schemas/ReminderProposalDetail",
         "#/components/schemas/ReminderCommandProposalDetail",
     } == {item["$ref"] for item in proposal_schema["oneOf"]}
     stream = paths["/api/v1/approvals/stream"]["get"]
     assert stream["operationId"] == "streamApprovals"
-    event = schemas.get("ApprovalEvent") or schemas["ApprovalLifecycleEvent"]
+    event = schemas["ReminderApprovalEvent"]
     event_properties = event.get("properties", {})
     assert not {
         "content",
@@ -413,7 +419,7 @@ def test_notification_contract_is_owner_scoped_replayable_and_content_free() -> 
     contract = cast(
         dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
     )
-    assert contract["info"]["version"] == "1.18.0"
+    assert contract["info"]["version"] == "1.22.0"
     paths = contract["paths"]
     assert "/api/v1/notifications/stream" in paths
     acknowledge = paths["/api/v1/notifications/{notification_id}/acknowledge"]["post"]
@@ -425,8 +431,27 @@ def test_notification_contract_is_owner_scoped_replayable_and_content_free() -> 
     schemas = contract["components"]["schemas"]
     assert schemas["NotificationStatus"]["enum"] == ["delivered", "acknowledged"]
     assert "unacknowledgedCount" in schemas["NotificationPage"]["required"]
-    stream_event = schemas["NotificationLifecycleEvent"]["properties"]
-    assert not {"content", "prompt", "response", "ownerSubject"} & set(stream_event)
+    lifecycle_refs = schemas["NotificationLifecycleEvent"]["oneOf"]
+    assert lifecycle_refs[:2] == [
+        {"$ref": "#/components/schemas/ReminderNotificationLifecycleEvent"},
+        {"$ref": "#/components/schemas/BriefingNotificationLifecycleEvent"},
+    ]
+    assert lifecycle_refs[2] == {
+        "$ref": "#/components/schemas/WorkflowNotificationLifecycleEvent"
+    }
+    for schema_name in (
+        "ReminderNotificationLifecycleEvent",
+        "BriefingNotificationLifecycleEvent",
+    ):
+        stream_event = schemas[schema_name]["properties"]
+        assert not {
+            "content",
+            "prompt",
+            "response",
+            "ownerSubject",
+            "documentId",
+            "calendarId",
+        } & set(stream_event)
 
 
 def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
@@ -439,7 +464,7 @@ def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
     event_types: set[str] = {
         cast(str, definition["allOf"][1]["properties"]["eventType"]["const"])
         for definition in definitions.values()
-        if "allOf" in definition
+        if len(definition.get("allOf", [])) > 1
     }
     assert event_types == {
         "run.snapshot",

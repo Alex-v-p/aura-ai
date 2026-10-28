@@ -626,4 +626,28 @@ test.describe('approval decision inbox', () => {
     await expect(page.getByRole('alert').filter({ hasText: 'Live approvals stopped after several attempts' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Retry live updates', exact: true })).toBeVisible();
   });
+
+  test('renders a workflow approval with the immutable exact-step consequence and no conversation link', async ({ page }) => {
+    const workflow = {
+      id: '00000000-0000-4000-8000-000000000041', proposalId: '00000000-0000-4000-8000-000000000042', origin: 'manual_workflow_instance', runId: null, conversationId: null, toolCallId: null, toolId: 'workflow.owner_approval', toolVersion: 1,
+      workflowId: '00000000-0000-4000-8000-000000000043', workflowRevisionId: '00000000-0000-4000-8000-000000000044', workflowInstanceId: '00000000-0000-4000-8000-000000000045', workflowStepOrdinal: 2, workflowStepExecutionId: '00000000-0000-4000-8000-000000000046', status: 'pending', executionStatus: 'not_started', version: 1, expiresAt: now, createdAt: now, updatedAt: now, decidedAt: null,
+    };
+    const detail = { ...workflow, proposal: { workflowId: workflow.workflowId, workflowRevisionId: workflow.workflowRevisionId, workflowInstanceId: workflow.workflowInstanceId, workflowDisplayName: 'Morning plan', stepOrdinal: 2, stepExecutionId: workflow.workflowStepExecutionId, nextStepKind: 'owner_notification', consequence: 'continue_to_owner_notification', consequenceCopy: 'Approve this step to continue to the private notification.', ownerScopeId: 'owner-scope', workspaceScopeId: 'workspace-scope', origin: 'manual_workflow_instance', expiresAt: now } };
+    await page.route('**/api/v1/**', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname.endsWith('/auth/session')) return route.fulfill({ json: { principal: { issuer: 'https://issuer', subject: 'owner' }, csrfToken: 'csrf', idleExpiresAt: now, absoluteExpiresAt: now } });
+      if (url.pathname.endsWith('/approvals/stream')) return route.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: 'event: heartbeat\ndata: {"schemaVersion":1,"eventType":"heartbeat","occurredAt":"2026-10-10T09:00:00Z"}\n\n' });
+      if (url.pathname === '/api/v1/approvals' && request.method() === 'GET') return route.fulfill({ json: { items: [workflow], nextCursor: null } });
+      if (url.pathname.endsWith(`/approvals/${workflow.id}`) && request.method() === 'GET') return route.fulfill({ json: detail });
+      return route.fulfill({ status: 404, json: { detail: 'fixture endpoint not implemented' } });
+    });
+    await page.goto('/approvals');
+    await expect(page.getByRole('button', { name: 'Review approval: Approve workflow step 2', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Review approval: Approve workflow step 2', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Approve Morning plan · step 2', exact: true })).toBeVisible();
+    await expect(dialog.getByText('Approve this step to continue to the private notification.', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('link', { name: 'Open originating conversation', exact: true })).toHaveCount(0);
+  });
 });

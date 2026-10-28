@@ -30,6 +30,7 @@ from aura_core.domains.governance.approvals.public import (
     ApprovalStatus,
     ApprovalTransitionError,
     ApprovalVersionConflict,
+    CreateWorkflowApproval,
 )
 from aura_core.domains.governance.approvals.repository import MemoryApprovalRepository
 from aura_core.domains.interaction.agents.public import AgentCatalog, ToolGrant, ToolPolicy
@@ -293,6 +294,100 @@ async def _approved_run_fixture() -> tuple[bool, bool, bool, MetadataMetrics]:
     except Exception:
         pass
     return no_preapproval_mutation, exactly_once, tools_disabled, metrics
+
+
+async def _workflow_approval_fixture() -> dict[str, bool]:
+    """Exercise workflow approval lineage, replay, authorization, and expiry."""
+
+    clock = [NOW]
+    approvals = MemoryApprovalRepository(
+        MemoryReminderProposalRepository(clock=lambda: clock[0]), clock=lambda: clock[0]
+    )
+
+    def command(
+        key: str, *, subject: str = OWNER, expires_at: datetime | None = None
+    ) -> CreateWorkflowApproval:
+        return CreateWorkflowApproval(
+            ISSUER,
+            subject,
+            uuid4(),
+            uuid4(),
+            uuid4(),
+            2,
+            uuid4(),
+            "Daily plan",
+            "owner_notification",
+            "continue_to_owner_notification",
+            "Approve this step to continue to the private notification.",
+            "owner-scope",
+            "workspace-scope",
+            expires_at or NOW + timedelta(hours=1),
+            key,
+            NOW + timedelta(days=1),
+        )
+
+    approved_detail = await approvals.create_workflow_pending(command("workflow-approve"))
+    foreign_denied = False
+    try:
+        await approvals.get(ISSUER, "foreign-owner", approved_detail.approval.id)
+    except ApprovalNotFound:
+        foreign_denied = True
+    created_events = await approvals.replay(ISSUER, OWNER)
+    approved = await approvals.approve(
+        ISSUER,
+        OWNER,
+        approved_detail.approval.id,
+        expected_version=1,
+        idempotency_key="workflow-decision",
+    )
+    replayed = await approvals.approve(
+        ISSUER,
+        OWNER,
+        approved_detail.approval.id,
+        expected_version=1,
+        idempotency_key="workflow-decision",
+    )
+    rejected_detail = await approvals.create_workflow_pending(command("workflow-reject"))
+    rejected = await approvals.reject(
+        ISSUER,
+        OWNER,
+        rejected_detail.approval.id,
+        expected_version=1,
+        idempotency_key="workflow-reject-decision",
+    )
+    canceled_detail = await approvals.create_workflow_pending(command("workflow-cancel"))
+    canceled = await approvals.cancel(
+        ISSUER,
+        OWNER,
+        canceled_detail.approval.id,
+        expected_version=1,
+        idempotency_key="workflow-cancel-decision",
+    )
+    expiring_detail = await approvals.create_workflow_pending(command("workflow-expire"))
+    clock[0] = expiring_detail.approval.expires_at
+    expired = (await approvals.expire_due(now=clock[0]))[0]
+    events = await approvals.replay(ISSUER, OWNER)
+    owner_cursor = await approvals.cursor_is_authorized(ISSUER, OWNER, created_events[0].id)
+    foreign_cursor = await approvals.cursor_is_authorized(
+        ISSUER, "foreign-owner", created_events[0].id
+    )
+    payloads = [event.payload() for event in events]
+    return {
+        "owner": foreign_denied and owner_cursor and not foreign_cursor,
+        "decision": approved.origin == approved_detail.approval.origin
+        and replayed == approved
+        and rejected.origin == rejected_detail.approval.origin
+        and canceled.origin == canceled_detail.approval.origin,
+        "expiry": expired.origin == expiring_detail.approval.origin,
+        "replay": len(events) == 8 and all(event.origin is not None for event in events),
+        "metadata": all(
+            not any(
+                forbidden in repr(payload).lower()
+                for forbidden in ("content", "prompt", "response", "private")
+            )
+            for payload in payloads
+        ),
+    }
 
 
 async def _authenticated_sse_reconnect_fixture() -> bool:
@@ -576,6 +671,7 @@ async def _results() -> tuple[EvaluationResult, ...]:
         await _approved_run_fixture()
     )
     reconnect = await _authenticated_sse_reconnect_fixture()
+    workflow = await _workflow_approval_fixture()
     timezone_telemetry = await _timezone_telemetry_fixture()
     measurements = runtime_metrics.snapshot()
     metric_names = {measurement.metric for measurement in measurements}
@@ -640,9 +736,21 @@ async def _results() -> tuple[EvaluationResult, ...]:
         _result("reminder_tool_selection_and_arguments", selection.allowed and arguments_valid),
         _result("reminder_tool_permission_enforcement", not denied.allowed),
         _result("confirmation_side_effect_prevention", run_no_preapproval),
-        _result("approval_owner_authorization", foreign_denied),
-        _result("approval_expiry_correctness", expiry_correct),
-        _result("approval_race_exactly_once", race_exactly_once),
+        _result(
+            "approval_owner_authorization",
+            foreign_denied and workflow["owner"],
+            workflow_owner_isolation=str(workflow["owner"]).lower(),
+        ),
+        _result(
+            "approval_expiry_correctness",
+            expiry_correct and workflow["expiry"],
+            workflow_expiry=str(workflow["expiry"]).lower(),
+        ),
+        _result(
+            "approval_race_exactly_once",
+            race_exactly_once and workflow["decision"],
+            workflow_decision=str(workflow["decision"]).lower(),
+        ),
         _result(
             "reminder_creation_exactly_once",
             run_creation_exactly_once and telemetry_contract,
@@ -650,7 +758,12 @@ async def _results() -> tuple[EvaluationResult, ...]:
             tools_disabled_synthesis=str(tools_disabled_synthesis).lower(),
             telemetry_contract=str(telemetry_contract).lower(),
         ),
-        _result("approval_reconnect_reconciliation", reconnect, last_event_id="authorized"),
+        _result(
+            "approval_reconnect_reconciliation",
+            reconnect and workflow["replay"],
+            last_event_id="authorized",
+            workflow_cursor_replay=str(workflow["replay"]).lower(),
+        ),
         _result(
             "timezone_interpretation_and_clarification",
             timezone_schema_valid
@@ -677,6 +790,7 @@ async def _results() -> tuple[EvaluationResult, ...]:
             metadata_only_capture,
             telemetry="metadata_only",
             rejected=str(runtime_metrics.stats().rejected),
+            workflow_metadata_only=str(workflow["metadata"]).lower(),
         ),
     )
 

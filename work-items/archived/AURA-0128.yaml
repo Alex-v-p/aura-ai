@@ -1,0 +1,159 @@
+id: AURA-0128
+title: Define read-only calendar integration contracts
+status: integrated
+change_class: contract
+intent: >
+  Define the additive provider-neutral Aura API contract for an owner-scoped,
+  read-only calendar connection, explicit calendar selection, bounded event
+  retrieval, and deterministic conflict results without implementing provider,
+  persistence, deployment, or product UI behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+  decisions:
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - work-items/archived/AURA-0126.yaml
+    - work-items/archived/AURA-0127.yaml
+    - On 2026-10-26 the owner approved server-held encrypted OAuth credentials, revocation before removal when reachable, disabled reads with a recoverable state when revocation is uncertain, and reauthorization after expiry.
+    - On 2026-10-26 the owner approved on-demand event retrieval with no durable event-content cache.
+    - On 2026-10-26 the owner approved explicit calendar selection with no calendar enabled implicitly and explicit opt-in for newly discovered calendars.
+    - Fixed Google HTTPS endpoints are enforced by configuration and application validation in later platform and provider slices; this stage does not introduce a proxy, firewall, or new trust boundary.
+    - Calendar read requests carry an explicit validated IANA display timezone until a separately authorized owner-profile preference becomes the source of that value.
+    - This is Stage 2 slice 1 only; platform OAuth, Core persistence and provider behavior, deployment, and Aura Web implementation remain sequential later work items.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AUT-014
+  - AUT-016
+  - GOV-007
+  - GOV-024
+  - INT-007
+ownership_zones:
+  - contracts.aura-api.calendar
+  - frontend.aura-api-client.generated
+  - evaluation.calendar-contract
+  - delivery.aura0128
+allowed_paths:
+  - work-items/active/AURA-0128.yaml
+  - work-items/archived/AURA-0128.yaml
+  - work-items/handoffs/AURA-0128-*.yaml
+  - work-items/reviews/AURA-0128-*.yaml
+  - work-items/integration/AURA-0128.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_reminder_api.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/events/**
+  - services/aura-core/src/**
+  - services/aura-core/migrations/**
+  - services/aura-observatory/**
+  - frontend/apps/**
+  - frontend/libs/aura/**
+  - frontend/libs/observatory/**
+  - frontend/libs/platform/aura-api-client/tools/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - aura-v1 calendar integration resources
+    - generated Aura TypeScript transport client
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Browser contracts must never expose access tokens refresh tokens client secrets authorization codes internal credential references or raw provider errors.
+    - Calendar names event titles descriptions attendees locations provider identifiers and owner identity are private and must not enter ordinary logs telemetry SSE invalidations URLs or browser persistence.
+    - Connection and selection mutations require authenticated owner authorization origin-aware CSRF validation and idempotency semantics.
+    - Event reads must be bounded by validated range page size cursor selected-calendar allowlists deadlines and cancellation.
+    - Provider-specific lifecycle and error detail must map to closed Aura-owned states and categories.
+  data_classes:
+    - encrypted OAuth credential metadata excluded from public API
+    - owner-private calendar metadata
+    - owner-private calendar event content
+    - provider-neutral connection and conflict status
+required_agents:
+  implementation:
+    - contract_steward
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura API version 1.19.0 additively defines provider-neutral connection status and lifecycle operations for start connect callback completion reauthorization and disconnect without exposing provider credentials or codes to the browser contract.
+  - The lifecycle contract distinguishes disconnected connecting connected reauthorization-required revocation-uncertain disabled and unavailable states with bounded Aura-owned error categories and actionable owner-safe recovery metadata.
+  - The API lists bounded owner-authorized selectable calendars and changes the selected set explicitly; no calendar is selected by discovery and newly discovered calendars remain unselected.
+  - Event retrieval requires a bounded instant range explicit validated IANA display timezone selected-calendar allowlist page limit and opaque cursor and returns normalized timed all-day and multi-day events with timezone provenance.
+  - Conflict results are server-authoritative deterministic and provider-neutral and identify bounded relationships without requiring the browser or a model to calculate overlaps.
+  - Calendar lifecycle and selection commands use the existing authenticated cookie CSRF and idempotency contract conventions; read responses use no-store semantics.
+  - Contract descriptions prohibit calendar or credential content in URLs logs telemetry SSE browser persistence and service-worker caches and prohibit calendar writes RSVP attendee mutation background synchronization memory writes and model-facing tools.
+  - The generated TypeScript client is regenerated from the contract without handwritten transport types and exposes every new operation and schema.
+  - Focused contract tests prove closed states categories limits privacy exclusions additive compatibility local references operation uniqueness and generated-client synchronization.
+  - No Core source migration provider deployment frontend product Observatory event contract or protected baseline changes occur.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0128.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0128.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0128.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0128.yaml
+  - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0128_calendar_contract.py services/aura-core/tests/system/test_contract_and_deployment.py services/aura-core/tests/test_conversation_attachments.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/test_notification_api.py services/aura-core/tests/test_reminder_api.py -q
+  - cd frontend && pnpm exec nx run aura-api-client:generate
+  - cd frontend && pnpm exec nx run aura-api-client:check-generated
+  - cd frontend && pnpm exec nx run aura-api-client:lint
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - AURA-0129 must select the existing-runtime-compatible credential encryption and key delivery mechanism before any durable provider credential implementation.
+  - Network-enforced provider destination allowlisting would introduce a new trust boundary and remains out of scope unless separately authorized through an ADR; later slices use fixed validated application endpoints only.

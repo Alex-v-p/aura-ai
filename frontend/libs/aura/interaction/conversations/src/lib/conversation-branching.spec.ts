@@ -128,7 +128,7 @@ describe('conversation branching web contract', () => {
   it('gates send and configuration while branch state is loading without disabling drafting', () => {
     expect(storeSource).toContain('!this.selectedBranch().loading');
     expect(panelSource).toContain('selectedBranch().loading');
-    expect(template).toContain('[value]="store.draft()"');
+    expect(template).toContain('[value]="composerDraft()"');
     expect(template).not.toContain('[disabled]="store.selectedBranch().loading" (input)');
   });
 

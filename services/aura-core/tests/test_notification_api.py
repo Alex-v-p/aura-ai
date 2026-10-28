@@ -15,7 +15,7 @@ def _contract() -> dict[str, Any]:
 
 def test_notification_api_is_owner_scoped_and_mutations_are_csrf_idempotent() -> None:
     contract = _contract()
-    assert contract["info"]["version"] == "1.18.0"
+    assert contract["info"]["version"] == "1.22.0"
     paths = contract["paths"]
     assert {
         "/api/v1/notifications",
@@ -36,9 +36,45 @@ def test_notification_api_is_owner_scoped_and_mutations_are_csrf_idempotent() ->
 def test_notification_schemas_exclude_private_content_from_event_shapes() -> None:
     schemas = _contract()["components"]["schemas"]
     notification = schemas["Notification"]
+    assert [item["$ref"] for item in notification["oneOf"][:2]] == [
+        "#/components/schemas/ReminderNotification",
+        "#/components/schemas/BriefingNotification",
+    ]
+    assert notification["oneOf"][2]["$ref"] == "#/components/schemas/WorkflowNotification"
+    reminder = schemas["ReminderNotification"]
+    briefing = schemas["BriefingNotification"]
     assert {"id", "reminderId", "status", "version", "createdAt"} <= set(
-        notification["properties"]
+        reminder["properties"]
     )
-    event = schemas.get("NotificationEvent", {})
-    assert not {"content", "prompt", "response"} & set(event.get("properties", {}))
+    assert {
+        "id",
+        "briefingScheduleId",
+        "briefingOccurrenceId",
+        "briefingResultId",
+        "status",
+        "version",
+        "createdAt",
+    } <= set(briefing["properties"])
+    lifecycle = schemas["NotificationLifecycleEvent"]
+    assert [item["$ref"] for item in lifecycle["oneOf"][:2]] == [
+        "#/components/schemas/ReminderNotificationLifecycleEvent",
+        "#/components/schemas/BriefingNotificationLifecycleEvent",
+    ]
+    assert (
+        lifecycle["oneOf"][2]["$ref"]
+        == "#/components/schemas/WorkflowNotificationLifecycleEvent"
+    )
+    for event_name in (
+        "ReminderNotificationLifecycleEvent",
+        "BriefingNotificationLifecycleEvent",
+    ):
+        event = schemas[event_name]
+        assert not {
+            "content",
+            "prompt",
+            "response",
+            "ownerIdentity",
+            "credentials",
+            "providerPayload",
+        } & set(event["properties"])
     assert "unacknowledgedCount" in schemas["NotificationPage"]["required"]

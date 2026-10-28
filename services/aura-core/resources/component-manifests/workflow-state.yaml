@@ -1,0 +1,78 @@
+component:
+  id: aura.automation.workflow_state
+  version: 1.0.0
+  owner: automation.workflows
+  category: state_machine
+input:
+  schema: aura-workflow-state-command-v1
+  replayable: true
+  replay_reason: Durable workflow versions, idempotency records, and transition history make state commands safely replayable by identifier and expected version.
+output:
+  schema: aura-workflow-lifecycle-events-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - application_validation
+  - postgresql
+  - transactional_outbox
+metrics:
+  - workflow_transition_outcome
+  - workflow_command_outcome
+  - workflow_repository_outcome
+  - workflow_transition_duration_ms
+  - workflow_command_duration_ms
+  - workflow_repository_duration_ms
+metric_semantics:
+  workflow_transition_outcome: Metadata-only outcome of a bounded workflow state transition.
+  workflow_command_outcome: Metadata-only accepted, rejected, replayed, conflict, or terminal outcome for an idempotent workflow command.
+  workflow_repository_outcome: Metadata-only persistence, optimistic-version, or idempotency outcome for workflow state.
+  workflow_transition_duration_ms: Bounded workflow state transition latency in milliseconds.
+  workflow_command_duration_ms: Bounded workflow command handling latency in milliseconds.
+  workflow_repository_duration_ms: Bounded workflow state persistence latency in milliseconds.
+capture_policy: metadata_only
+evaluators:
+  - workflow_state_transition_correctness
+  - workflow_idempotency_and_race_correctness
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, status]
+  trace_only:
+    - trace_id
+    - span_id
+    - parent_span_id
+    - workflow_id
+    - revision_id
+    - instance_id
+    - step_execution_id
+    - command_id
+    - event_id
+    - expected_version
+    - result_version
+    - event_type
+    - event_status
+    - event_version
+  prohibited:
+    - content
+    - prompt
+    - response
+    - instructions
+    - mappings
+    - input
+    - output
+    - result
+    - payload
+    - token
+    - credential
+    - owner_identity
+    - owner_subject
+    - endpoint
+    - url
+    - executor_state
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

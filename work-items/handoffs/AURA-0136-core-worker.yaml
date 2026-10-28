@@ -1,0 +1,141 @@
+agent: core_worker
+work_item: AURA-0136
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: shared
+scope:
+  ownership_zone: services.aura-core.workflow-state-machine-and-persistence
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/automation/workflows/__init__.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/public.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/state.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/models.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/repository.py
+  - services/aura-core/migrations/versions/0027_workflow_contract_state.py
+  - services/aura-core/tests/test_workflow_state_machine.py
+  - services/aura-core/tests/test_workflow_repository.py
+  - services/aura-core/tests/test_workflow_contract_state_evaluation.py
+  - services/aura-core/tests/test_migration_0027_workflow_contract_state.py
+contracts:
+  changed: false
+migrations:
+  changed: true
+  revision: 0027_workflow_contract_state
+  down_revision: 0026_briefing_execution
+observability:
+  components:
+    - aura.automation.workflow_state@1.0.0
+  metrics_added:
+    - workflow_transition_outcome
+    - workflow_transition_duration_ms
+    - workflow_command_outcome
+    - workflow_command_duration_ms
+    - workflow_repository_outcome
+    - workflow_repository_duration_ms
+  notes:
+    - >-
+      State transitions and owner commands emit bounded operation/outcome
+      metadata plus component-local workflow.transition and workflow.command
+      spans; repositories emit workflow.repository spans. Identifiers remain
+      trace-only and private values are excluded. Command spans retain the
+      external parent and are the exact parent of their repository children;
+      composed transitions accept that command context explicitly.
+    - >-
+      Memory repository spans use the registered application_validation
+      dependency for in-process validation/lock work, while SQL repository
+      spans truthfully use postgresql.
+verification:
+  passed:
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/workflows services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/workflows services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py
+    - >-
+      ../../.venv/bin/pyright services/aura-core/src/aura_core/domains/automation/workflows
+      services/aura-core/tests/test_workflow_repository.py
+      services/aura-core/tests/test_workflow_state_machine.py
+      (0 errors, 0 warnings, 0 informations)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/migrations/versions/0027_workflow_contract_state.py services/aura-core/tests/test_migration_0027_workflow_contract_state.py
+    - PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache uv run pytest -q services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py services/aura-core/tests/test_migration_0027_workflow_contract_state.py
+    - PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache uv run pytest -q services/aura-core/tests/test_workflow_contract_state_evaluation.py services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py services/aura-core/tests/test_migration_0027_workflow_contract_state.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/workflows services/aura-core/tests/test_workflow_contract_state_evaluation.py services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py services/aura-core/tests/test_migration_0027_workflow_contract_state.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/workflows services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0136.yaml
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -q services/aura-core/tests/test_telemetry.py -k workflow_state
+    - >-
+      ../../.venv/bin/pytest -q services/aura-core/tests/test_workflow_state_machine.py
+      services/aura-core/tests/test_workflow_repository.py
+      services/aura-core/tests/test_workflow_contract_state_evaluation.py
+      services/aura-core/tests/test_migration_0027_workflow_contract_state.py
+      (35 passed; production telemetry records were accepted with zero
+      rejection, including concurrent trace-isolation, composed-command
+      parent topology, and memory-versus-SQL dependency cases)
+    - >-
+      python3 tooling/architecture/validate-observability.py
+      --work-item work-items/active/AURA-0136.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0136.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Full AURA-0136 aggregate checks (owned by delivery lead after all zones converge)
+decisions:
+  - Workflow state transitions are pure functions; persistence is only a transaction and optimistic-version boundary.
+  - Workflow retention uses independent tables and explicit tombstones without database cascades.
+  - >-
+    Closed per-step result algebra is validated before persistence; agent_run
+    failures are never replayable, and the aggregate canonical input/output
+    budget is rechecked at the repository save boundary.
+  - >-
+    Repository owner context is compared under the lock, and all seven
+    deletion scopes are distinct with terminal-only instance-scope retention;
+    published-revision deletion requires RETIRED status, with a status/scope
+    matrix protecting DRAFT and PUBLISHED parity.
+  - >-
+    Mutating workflow repository commands require an explicit issuer and
+    subject, and instance construction/database persistence reject deadlines
+    beyond the closed 30-day lifetime.
+  - >-
+    Retire and all terminal-only deletion paths emit accepted command and
+    repository outcomes with bounded lineage metadata, including idempotent
+    tombstone replays.
+  - >-
+    Every deletion scope carries the owner-scoped optimistic version through
+    live rows and tombstones; same-key replay returns the original result,
+    while payload conflicts and stale versions are rejected under the lock.
+  - >-
+    Test-only dynamic telemetry kwargs and intentional missing-owner calls use
+    narrowly scoped Any casts; production method signatures remain mandatory
+    and statically checked.
+  - >-
+    Migration 0027 now mirrors Core compatibility's closed ordinary-versus-
+    workflow run and run-event lineage union, including user-message nullness,
+    and adds closed approval status/execution enums alongside the exact legacy
+    versus manual-workflow origin branches.
+  - SQLAlchemy history and lifecycle metadata attributes are named event_metadata to avoid overriding DeclarativeBase.metadata while preserving the metadata column name.
+  - >-
+    Revision, instance, and definition tombstone persistence retains the
+    optimistic version used by deletion commands, so SQL rows have parity
+    with the memory repository's stale-command and replay semantics.
+risks:
+  - Migration 0027 owns the additive approval origin/proposal columns, workflow notification source union, and conditional run/run-event lineage columns, with legacy-preserving checks and owner-scoped indexes; aggregate PostgreSQL upgrade testing remains a delivery-lead responsibility.
+  - The state module deliberately does not expose executor, scheduler, route, provider, or cross-domain calls; AURA-0137 must compose those through public APIs.
+  - Tombstoned history, result, and checkpoint deletion now verifies the tombstone owner before returning an idempotent success; foreign owners receive a not-found result and cannot alter retained scopes.
+  - The platform telemetry registry owns the finite workflow operation/error vocabularies; the current shared registry exposes workflow.transition, workflow.command, and workflow.repository operations.
+  - >-
+      Pure transition spans use application_validation as their truthful finite
+      dependency; the shared platform registry now accepts it and production
+      telemetry tests report zero rejection.
+  - >-
+    Trace IDs and parent span IDs are explicit WorkflowTraceContext inputs;
+    repository instances retain no mutable trace state, so concurrent owners
+    cannot cross-parent. Command spans retain the external parent and become
+    the exact parent of repository children; transitions share that command
+    context when explicitly composed.
+unresolved: []

@@ -20,6 +20,17 @@
     "Timestamp": { "type": "string", "format": "date-time" },
     "RunStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_confirmation", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
     "ClientTimeZone": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$", "description": "IANA timezone identifier validated by the producer against its deployed timezone database." },
+    "WorkflowRunOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Complete immutable metadata-only lineage for a workflow-admitted run. Workflow values, instructions, mappings, owner identity, executor state, prompts, responses and results are prohibited.",
+      "required": ["workflowRevisionId", "workflowInstanceId", "workflowStepExecutionId"],
+      "properties": {
+        "workflowRevisionId": { "$ref": "#/$defs/Uuid" },
+        "workflowInstanceId": { "$ref": "#/$defs/Uuid" },
+        "workflowStepExecutionId": { "$ref": "#/$defs/Uuid" }
+      }
+    },
     "DocumentCitation": {
       "type": "object",
       "additionalProperties": false,
@@ -84,9 +95,16 @@
         "sequence": { "type": "integer", "minimum": 0 },
         "eventType": { "type": "string" },
         "runId": { "$ref": "#/$defs/Uuid" },
-        "conversationId": { "$ref": "#/$defs/Uuid" },
+        "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" },
         "occurredAt": { "$ref": "#/$defs/Timestamp" }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "conversationId": { "type": "null" } }, "required": ["conversationId"] },
+          "then": { "required": ["workflowOrigin"] },
+          "else": { "not": { "required": ["workflowOrigin"] } }
+        }
+      ]
     },
     "Run": {
       "type": "object",
@@ -94,8 +112,8 @@
       "required": ["id", "conversationId", "userMessageId", "assistantMessageId", "status", "agentRevisionId", "modelPolicyRevisionId", "provider", "modelId", "retryOfRunId", "createdAt", "startedAt", "finishedAt", "error"],
       "properties": {
         "id": { "$ref": "#/$defs/Uuid" },
-        "conversationId": { "$ref": "#/$defs/Uuid" },
-        "userMessageId": { "$ref": "#/$defs/Uuid" },
+        "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" },
+        "userMessageId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
         "assistantMessageId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
         "status": { "$ref": "#/$defs/RunStatus" },
         "agentRevisionId": { "$ref": "#/$defs/Uuid" },
@@ -118,7 +136,8 @@
         "startedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
         "finishedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
         "error": { "oneOf": [{ "$ref": "#/$defs/RunError" }, { "type": "null" }] }
-      }
+      },
+      "allOf": [{ "if": { "properties": { "conversationId": { "type": "null" } }, "required": ["conversationId"] }, "then": { "properties": { "userMessageId": { "type": "null" } }, "required": ["workflowOrigin"] }, "else": { "properties": { "userMessageId": { "$ref": "#/$defs/Uuid" } }, "not": { "required": ["workflowOrigin"] } } }]
     },
     "Message": {
       "type": "object",
@@ -154,7 +173,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.snapshot" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.snapshot" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
           "data": { "type": "object", "additionalProperties": false, "required": ["run", "assistantMessage"], "properties": { "run": { "$ref": "#/$defs/Run" }, "assistantMessage": { "oneOf": [{ "$ref": "#/$defs/Message" }, { "type": "null" }] } } }
         } }
       ]
@@ -163,7 +182,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
           "data": { "type": "object", "additionalProperties": false, "required": ["status", "startedAt", "finishedAt"], "properties": { "status": { "$ref": "#/$defs/RunStatus" }, "startedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] }, "finishedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] } } }
         } }
       ]
@@ -172,7 +191,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "assistant.delta" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "assistant.delta" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
           "data": { "type": "object", "additionalProperties": false, "required": ["messageId", "offset", "text"], "properties": { "messageId": { "$ref": "#/$defs/Uuid" }, "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1 } } }
         } }
       ]
@@ -182,7 +201,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "model.thinking.delta" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "model.thinking.delta" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
           "data": { "type": "object", "additionalProperties": false, "required": ["offset", "text"], "properties": { "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1, "maxLength": 4096 } } }
         } }
       ]
@@ -191,7 +210,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "assistant.snapshot" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "assistant.snapshot" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
           "data": { "type": "object", "additionalProperties": false, "required": ["message"], "properties": { "message": { "$ref": "#/$defs/Message" } } }
         } }
       ]
@@ -200,7 +219,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.error" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/RunError" }
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.error" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/RunError" }
         } }
       ]
     },
@@ -246,7 +265,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "memory.activity" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/MemoryActivity" }
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "memory.activity" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/MemoryActivity" }
         } }
       ]
     },
@@ -277,7 +296,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "tool.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/ToolStatusData" }
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "tool.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/ToolStatusData" }
         } }
       ]
     },
@@ -308,7 +327,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "approval.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/ApprovalStatusData" }
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "approval.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/ApprovalStatusData" }
         } }
       ]
     },
@@ -316,7 +335,7 @@
       "allOf": [
         { "$ref": "#/$defs/BaseProperties" },
         { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
-          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "heartbeat" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "$ref": "#/$defs/Uuid" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "heartbeat" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
           "data": { "type": "object", "additionalProperties": false, "required": ["serverTime"], "properties": { "serverTime": { "$ref": "#/$defs/Timestamp" } } }
         } }
       ]

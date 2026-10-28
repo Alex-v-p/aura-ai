@@ -24,9 +24,9 @@ class ApprovalRow(Base):
     principal_issuer: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
     principal_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     proposal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    tool_call_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    tool_call_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
     tool_version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
@@ -36,6 +36,18 @@ class ApprovalRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    origin: Mapped[str | None] = mapped_column(String(64))
+    workflow_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    workflow_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workflow_instance_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    workflow_step_ordinal: Mapped[int | None] = mapped_column(Integer)
+    workflow_step_execution_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workflow_display_name: Mapped[str | None] = mapped_column(String(512))
+    next_step_kind: Mapped[str | None] = mapped_column(String(32))
+    consequence: Mapped[str | None] = mapped_column(String(64))
+    consequence_copy: Mapped[str | None] = mapped_column(String(128))
+    owner_scope_id: Mapped[str | None] = mapped_column(String(128))
+    workspace_scope_id: Mapped[str | None] = mapped_column(String(128))
 
 
 class ApprovalEventRow(Base):
@@ -54,8 +66,8 @@ class ApprovalEventRow(Base):
     principal_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     approval_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     proposal_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     tool_id: Mapped[str] = mapped_column(String(128), nullable=False)
     tool_version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -68,6 +80,12 @@ class ApprovalEventRow(Base):
         nullable=False,
     )
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    origin: Mapped[str | None] = mapped_column(String(64))
+    workflow_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workflow_revision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workflow_instance_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    workflow_step_ordinal: Mapped[int | None] = mapped_column(Integer)
+    workflow_step_execution_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
 
 class ApprovalIdempotencyRow(Base):

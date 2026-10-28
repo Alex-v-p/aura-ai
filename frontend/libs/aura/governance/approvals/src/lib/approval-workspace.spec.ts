@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { APPROVAL_TOOL_IDS, approvalActionLabel, approvalLeadCopy, appendApprovalPage, approvalStreamBlockWithinBounds, approvalStreamBufferWithinBounds, approvalSummaryFromDetail, collectApprovalHistory, createUuidV4, decisionFailureNotice, emptyApprovalCollection, isReminderCommandProposal, isValidApprovalEvent, reminderCommandConsequence, shouldPreserveReviewedApproval, type ApprovalDetail, type ApprovalSummary } from './approval-models';
+import { APPROVAL_TOOL_IDS, approvalActionLabel, approvalLeadCopy, approvalOriginLabel, appendApprovalPage, approvalStreamBlockWithinBounds, approvalStreamBufferWithinBounds, approvalSummaryFromDetail, collectApprovalHistory, createUuidV4, decisionFailureNotice, emptyApprovalCollection, isReminderCommandProposal, isValidApprovalEvent, isWorkflowApproval, reminderCommandConsequence, shouldPreserveReviewedApproval, type ApprovalDetail, type ApprovalSummary } from './approval-models';
 import { ApprovalApiError } from './approval-models';
 import { ApprovalSessionHydrator } from './approval-session-hydration';
 
@@ -151,5 +151,20 @@ describe('approval workspace', () => {
     const hydrator = new ApprovalSessionHydrator(() => new Promise<string>((resolve) => { if (!resolveOld) resolveOld = resolve; else resolveNew = resolve; }), () => new ApprovalApiError(401, 'Session changed.'));
     const old = hydrator.ensure(); hydrator.clearSession(); const replacement = hydrator.ensure(); resolveNew('new-token'); await replacement; resolveOld('old-token');
     await expect(old).rejects.toMatchObject({ status: 401 }); expect(hydrator.currentToken()).toBe('new-token');
+  });
+
+  it('renders a workflow approval from generated lineage and keeps the consequence system-derived', () => {
+    const workflow: ApprovalSummary = { id: 'approval-workflow', proposalId: 'proposal-workflow', origin: 'manual_workflow_instance', runId: null, conversationId: null, toolCallId: null, toolId: 'workflow.owner_approval', toolVersion: 1, workflowId: '550e8400-e29b-41d4-a716-446655440010', workflowRevisionId: '550e8400-e29b-41d4-a716-446655440011', workflowInstanceId: '550e8400-e29b-41d4-a716-446655440012', workflowStepOrdinal: 2, workflowStepExecutionId: '550e8400-e29b-41d4-a716-446655440013', status: 'pending', executionStatus: 'not_started', version: 1, expiresAt: '2026-10-10T10:00:00.000Z', createdAt: '2026-10-10T09:00:00.000Z', updatedAt: '2026-10-10T09:00:00.000Z', decidedAt: null };
+    expect(isWorkflowApproval(workflow)).toBe(true);
+    expect(approvalActionLabel(workflow)).toBe('Approve workflow step 2');
+    expect(approvalOriginLabel(workflow)).toBe('Manual workflow instance');
+    const detail = { ...workflow, proposal: { workflowId: workflow.workflowId, workflowRevisionId: workflow.workflowRevisionId, workflowInstanceId: workflow.workflowInstanceId, workflowDisplayName: 'Morning plan', stepOrdinal: 2, stepExecutionId: workflow.workflowStepExecutionId, nextStepKind: 'owner_notification' as const, consequence: 'continue_to_owner_notification' as const, consequenceCopy: 'Approve this step to continue to the private notification.' as const, ownerScopeId: 'owner-scope', workspaceScopeId: 'workspace-scope', origin: 'manual_workflow_instance' as const, expiresAt: workflow.expiresAt } } as ApprovalDetail;
+    expect(approvalActionLabel(detail)).toBe('Approve Morning plan · step 2');
+  });
+
+  it('accepts workflow approval replay metadata but rejects fabricated conversation lineage', () => {
+    const event = { schemaVersion: 1, eventId: '550e8400-e29b-41d4-a716-446655440000', eventType: 'approval.pending', approvalId: '550e8400-e29b-41d4-a716-446655440001', proposalId: '550e8400-e29b-41d4-a716-446655440002', origin: 'manual_workflow_instance', runId: null, conversationId: null, toolId: 'workflow.owner_approval', toolVersion: 1, workflowId: '550e8400-e29b-41d4-a716-446655440010', workflowRevisionId: '550e8400-e29b-41d4-a716-446655440011', workflowInstanceId: '550e8400-e29b-41d4-a716-446655440012', workflowStepOrdinal: 2, workflowStepExecutionId: '550e8400-e29b-41d4-a716-446655440013', status: 'pending', executionStatus: 'not_started', version: 1, occurredAt: '2026-10-10T09:00:00Z' };
+    expect(isValidApprovalEvent(event)).toBe(true);
+    expect(isValidApprovalEvent({ ...event, conversationId: '550e8400-e29b-41d4-a716-446655440004' })).toBe(false);
   });
 });

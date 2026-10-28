@@ -1,0 +1,75 @@
+agent: integration_maintainer
+work_item: AURA-0130
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0130-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0130-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0130-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0130-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0130.yaml
+  - work-items/integration/AURA-0130.yaml
+checks:
+  passed:
+    - >-
+      All four implementation handoffs and all four required review artifacts
+      are schema-valid; the exact-tree general, architecture, security/privacy,
+      and observability reviews are PASS with no findings.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0130.yaml passed before archival.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/archived/AURA-0130.yaml passed after archival with status
+      integrated.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0130.yaml passed for 45 paths before archival;
+      final validation against the archived work item passed for all 45
+      authorized paths.
+    - >-
+      Contract-change, generated-sync, import-boundary, service-isolation,
+      frontend-boundary, module-registry, repository-shape, and observability
+      validators passed; contract-change and baseline-protection checks had no
+      applicable changes.
+    - >-
+      python3 -m unittest tooling.architecture.tests.test_common
+      tooling.architecture.tests.test_modules
+      tooling.architecture.tests.test_observability -v passed (37 tests).
+    - UV_CACHE_DIR=.local-state/uv-cache uv lock --check passed.
+    - >-
+      Scoped Ruff validation passed for all changed Core implementation and
+      test paths.
+    - >-
+      Scoped Pyright validation passed with 0 errors, warnings, or
+      informations.
+    - >-
+      The focused AURA-0130 acceptance suite passed with 188 tests passed and
+      1 environment-dependent test skipped.
+    - >-
+      The full services/aura-core test suite passed with 1,448 tests passed,
+      107 skipped, and one pre-existing Authlib deprecation warning.
+    - git diff --check passed.
+    - Active work-item copy was removed after archival.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The reviewed integration is staged in the shared worktree for the focused
+    local Git checkpoint; no push was performed.
+  - >-
+    Two worker handoffs retain historical pre-correction failed/not-run or
+    unresolved narrative entries. The later exact-tree PASS reviews and the
+    aggregate checks above verify the corrected shared implementation; no
+    production behavior was added or weakened during integration.

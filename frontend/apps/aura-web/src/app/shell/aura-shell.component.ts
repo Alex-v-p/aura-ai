@@ -99,6 +99,7 @@ export class AuraShellComponent implements OnDestroy {
     this.conversationContext.set(event.urlAfterRedirects.split('?')[0].startsWith('/conversation'));
     // A contextual library is detached from the rail. Preserve a predictable
     // focus return when a row navigates to a conversation and closes it.
+    if (this.mobileOpen) this.closeMobileNavigation(this.isMobileViewport());
     this.closeLibraryPanel(this.libraryPanelOpen() && this.isCompactSidebar());
     this.closeFilterPanel(false);
   });
@@ -138,7 +139,11 @@ export class AuraShellComponent implements OnDestroy {
     if (this.libraryPanelOpen()) this.closeLibraryPanel(false);
     if (this.preferencesOpen() && this.isCompactSidebar()) this.closePreferences(false);
     this.mobileOpenChange.emit(false);
-    if (restoreFocus && this.isMobileViewport()) queueMicrotask(() => this.mobileTrigger?.nativeElement.focus());
+    if (restoreFocus && this.isMobileViewport()) {
+      const restore = (): void => this.mobileTrigger?.nativeElement.focus();
+      queueMicrotask(restore);
+      setTimeout(restore, 0);
+    }
   }
 
   isCompactSidebar(): boolean { return !this.isWideDesktopViewport() || this.collapsed; }

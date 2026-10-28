@@ -1,0 +1,292 @@
+id: AURA-0136
+title: Define workflow contracts and deterministic state
+status: integrated
+change_class: repository_governance
+intent: >
+  Add backward-compatible manual workflow, workflow-approval, workflow-
+  notification, and run-lineage contracts; persist the closed workflow state;
+  and implement its deterministic Aura-owned transition model without adding
+  workflow execution, scheduling, worker orchestration, or management UI.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - work-items/archived/AURA-0135.yaml
+    - The first workflow contract is manual-start only and contains no schedule trigger cadence timezone overlap missed-run pause resume or schedule-deletion behavior.
+    - Workflow approval lineage is represented as a typed additive origin and proposal rather than fabricated reminder conversation or tool-call identifiers. Legacy reminder approval payloads remain compatible; workflow approvals may carry null conversation run and tool-call lineage only when their complete workflow origin is present.
+    - A workflow-admitted Aura run may carry null conversation lineage only when exact workflow instance revision and step-execution lineage is present; ordinary conversation and briefing run behavior remains unchanged.
+    - Workflow lifecycle events are metadata-only and contain bounded identifiers statuses versions ordinal timestamps recovery capabilities and lineage only. Inputs outputs instructions mappings approval presentation notification content owner identity credentials provider material and executor state are excluded.
+    - One forward-only Core migration owns workflow tables plus the additive approval and notification source evolution to prevent competing Alembic heads.
+    - The deterministic workflow package owns validation immutable revision instance step checkpoint result tombstone idempotency and transition truth but does not call Runs Approvals or Notifications or expose HTTP scheduler worker or model-facing entrypoints in this slice.
+    - Existing Approval and Notification applications continue to own their records decisions acknowledgement replay events and SSE. Workflow integration uses only their public APIs in AURA-0137.
+    - Existing approval and notification frontend consumers add typed compatibility only. Workflow authoring instance routes and management UI remain AURA-0138.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+    - contracts/events/automation/v1/notification-events.schema.json
+feature_references:
+  - RUN-012
+  - RUN-014
+  - RUN-015
+  - RUN-016
+  - RUN-018
+  - AUT-005
+  - AUT-008
+  - AUT-009
+  - AUT-010
+  - AUT-014
+  - AUT-016
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUI-020
+  - AUI-023
+ownership_zones:
+  - contracts.aura-api.workflows
+  - contracts.events.automation.workflows
+  - contracts.events.runs.workflow-lineage
+  - services.aura-core.workflow-state-machine
+  - services.aura-core.workflow-persistence
+  - services.aura-core.workflow-migration
+  - services.aura-core.workflow-approval-contract
+  - services.aura-core.workflow-notification-contract
+  - frontend.aura-web.approval-workflow-compatibility
+  - frontend.aura-web.notification-workflow-compatibility
+  - frontend.aura-web.conversation-run-lineage-compatibility
+  - frontend.aura-api-client.generated
+  - repository.frontend-module-registry
+  - evaluation.workflow-contract-state
+  - delivery.aura0136
+allowed_paths:
+  - work-items/active/AURA-0136.yaml
+  - work-items/archived/AURA-0136.yaml
+  - work-items/handoffs/AURA-0136-*.yaml
+  - work-items/reviews/AURA-0136-*.yaml
+  - work-items/integration/AURA-0136.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/automation/v1/notification-events.schema.json
+  - contracts/events/automation/v1/workflow-events.schema.json
+  - contracts/events/runs/v1/run-events.schema.json
+  - contracts/tests/test_aura0136_workflow_contract.py
+  - contracts/tests/test_aura0132_briefing_contract.py
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/governance/approvals/**
+  - frontend/libs/aura/automation/notifications/**
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/apps/storybook/src/approval-inbox.stories.ts
+  - frontend/apps/storybook/src/notification-centre.stories.ts
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+  - frontend/apps/aura-web-e2e/src/approvals.spec.ts
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/vitest.workspace.ts
+  - services/aura-core/migrations/versions/0027_workflow_contract_state.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/**
+  - services/aura-core/src/aura_core/domains/automation/notifications/**
+  - services/aura-core/src/aura_core/domains/governance/approvals/**
+  - services/aura-core/src/aura_core/domains/execution/runs/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/models.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  - services/aura-core/src/aura_core/domains/execution/runs/events.py
+  - services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/approvals.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/notifications.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/approval-workflow.yaml
+  - services/aura-core/resources/component-manifests/notification-delivery.yaml
+  - services/aura-core/resources/component-manifests/workflow-state.yaml
+  - services/aura-core/tests/test_workflow_state_machine.py
+  - services/aura-core/tests/test_workflow_repository.py
+  - services/aura-core/tests/test_workflow_contract_state_evaluation.py
+  - services/aura-core/tests/test_migration_0027_workflow_contract_state.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_approvals.py
+  - services/aura-core/tests/test_approval_stream.py
+  - services/aura-core/tests/test_approval_evaluation.py
+  - services/aura-core/tests/test_notifications.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_notification_stream.py
+  - services/aura-core/tests/test_notification_evaluation.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_approval_backed_reminder.py
+  - services/aura-core/tests/system/test_notification_delivery.py
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/telemetry/**
+  - services/aura-core/src/aura_core/entrypoints/api/routes/workflows.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/**
+  - services/aura-core/src/aura_core/entrypoints/worker/**
+  - services/aura-core/src/aura_core/providers/**
+  - services/aura-observatory/**
+  - frontend/libs/aura/automation/workflows/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/**
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - Aura v1 manual workflow definition revision instance transition recovery and explicit deletion resources
+    - Aura v1 additive workflow approval origin and proposal union
+    - Aura v1 additive workflow notification source union
+    - Aura run and run-event additive workflow lineage with conditional nullable conversation lineage
+    - automation workflow lifecycle events v1
+    - automation notification events v1 additive workflow source
+    - generated Aura TypeScript transport client
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: automation.workflows
+observability:
+  applicable: true
+  affected_components:
+    - aura.governance.approval_workflow
+    - aura.automation.notification_delivery
+    - aura.automation.workflow_state
+  required_metrics:
+    - approval_creation_outcome
+    - approval_decision_outcome
+    - approval_expiry_count
+    - notification_sse_connection_count
+    - notification_sse_replay_count
+    - notification_acknowledgement_outcome
+    - notification_failure_count
+    - workflow_transition_outcome
+    - workflow_command_outcome
+    - workflow_repository_outcome
+    - workflow_transition_duration_ms
+    - workflow_command_duration_ms
+    - workflow_repository_duration_ms
+  required_evaluators:
+    - approval_owner_authorization
+    - approval_expiry_correctness
+    - approval_race_exactly_once
+    - approval_reconnect_reconciliation
+    - notification_owner_authorization
+    - notification_replay_recovery
+    - workflow_state_transition_correctness
+    - workflow_idempotency_and_race_correctness
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Workflow definitions inputs outputs instructions mappings approval context notification content checkpoints and results are owner-private and cannot enter URLs ordinary events outbox wake payloads SSE telemetry logs browser persistence service-worker caches Storybook snapshots screenshots or Observatory through Aura Web.
+    - Workflow and run contracts may permit absent conversation lineage only with complete exact workflow lineage; no caller may omit both or fabricate a conversation.
+    - Workflow approval presentation is immutable system-derived exact-step-bound and cannot contain prior output author-controlled consequence copy or grant expansion.
+    - Workflow notification sources contain only opaque workflow instance and step-execution lineage and no input output instruction result approval or owner content.
+    - Typed selectors reject expressions interpolation coercion dynamic paths fallbacks unknown fields and future step references; instance input and prior output remain delimited untrusted evidence.
+    - At-least-once delivery duplicate requests stale expected versions replay limits unknown outcomes cancellation races and terminal settlement must never duplicate effects or reopen terminal state.
+    - Deletion is owner-authorized CSRF-protected idempotent scope-specific and non-cascading; active state and pinned revisions cannot be deleted and content-free tombstones preserve authorization and lineage for surviving scopes.
+    - Existing reminder briefing conversation approval notification and run rows and payloads must remain compatible and owner-isolated after migration.
+    - Public contracts and persisted checkpoints must not expose LangGraph node graph or private executor state.
+  data_classes:
+    - owner-private workflow definitions drafts immutable revisions and typed mappings
+    - owner-private workflow instance inputs step outputs results checkpoints and history
+    - owner-private workflow approval and notification lineage
+    - metadata-only workflow approval notification run and lifecycle events
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 7
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura v1 additively defines manual-only owner-scoped workflow definitions drafts immutable revisions instances steps checkpoints results histories recovery capabilities optimistic versions idempotent commands and seven explicit non-cascading deletion scopes, with no schedule or executor concepts.
+  - Published revisions contain one through eight closed typed sequential steps, at most one five-minute tools-disabled memory-disabled agent run, exact selectors and value algebra, RFC 8785 byte limits, immutable configuration, manual admission only, and no arbitrary expressions templates branches loops parallelism recursion providers tools memory or dynamic grants.
+  - Workflow instance, terminal, step, effect, checkpoint, replay, resolution, cancellation and deletion transitions implement the AURA-0135 closed state model, reject invalid or stale commands, preserve completed and unknown effects, enforce one replay only where safe, and never reopen terminal truth.
+  - PostgreSQL persistence additively owns definitions drafts revisions instances steps checkpoints results histories tombstones idempotency and lifecycle events with owner indexes bounded columns closed checks positive versions and no cross-domain cascade deletes.
+  - A typed workflow approval proposal and origin additively preserve reminder approvals while permitting null run conversation and tool-call lineage only with complete workflow revision instance step and execution lineage; approval decisions remain exact owner/version/expiry bound and replay events remain metadata-only.
+  - A typed workflow notification source and creation command additively preserve reminder and briefing notifications while using only opaque workflow instance step-execution and result lineage, source-neutral idempotency, owner isolation, acknowledgement and metadata-only replay.
+  - Aura run and run-event contracts add optional workflow revision instance and step-execution lineage and conditionally permit null conversation lineage only for a complete workflow origin; ordinary conversation briefing retry branch tool confirmation and evidence contracts remain compatible.
+  - Workflow lifecycle events are closed versioned metadata-only schemas containing only bounded identifiers ordinals kinds statuses outcomes versions timestamps recovery capabilities and lineage; private values and executor state are unrepresentable.
+  - Existing approval and notification Core repositories persistence public APIs HTTP serializers replay SSE metrics and evaluators handle their typed workflow variants without cross-domain table access data leakage or weakened legacy authorization CSRF version idempotency and expiry behavior.
+  - The generated Aura client and existing approval and notification frontend libraries consume typed workflow unions without handwritten transport DTOs; approval detail renders the immutable system-derived proposal, while compact notification surfaces remain content-free and expose no workflow deep link before AURA-0138 owns the route.
+  - Migration and compatibility tests prove forward upgrade from the current head, preservation of reminder briefing conversation run approval and notification rows, exact new constraints uniqueness tombstones no cascades and downgrade or rollback posture consistent with repository migration policy.
+  - Model-based and table-driven tests cover every valid and invalid state transition definition bound selector injection duplicate command expected-version conflict replay race approval race cancellation reconciliation late evidence deadline restart deletion order owner substitution and terminal immutability.
+  - Existing approval and notification manifests metrics finite dimensions replay behavior and evaluators remain metadata-only and compatible; the new deterministic workflow evaluators use synthetic values and create no production capture or protected baseline change.
+  - No workflow HTTP route implementation scheduler worker Run Coordinator admission step handler approval resume notification producer management UI provider dependency deployment Observatory service-worker protected baseline framework or package change occurs.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0136.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0136.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0136.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0136.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0136.yaml
+  - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v
+  - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/workflows services/aura-core/src/aura_core/domains/automation/notifications services/aura-core/src/aura_core/domains/governance/approvals services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py services/aura-core/tests/test_workflow_contract_state_evaluation.py services/aura-core/tests/test_migration_0027_workflow_contract_state.py contracts/tests/test_aura0136_workflow_contract.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/workflows services/aura-core/src/aura_core/domains/automation/notifications services/aura-core/src/aura_core/domains/governance/approvals services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0136_workflow_contract.py contracts/tests/test_aura0132_briefing_contract.py contracts/tests/test_aura0128_calendar_contract.py services/aura-core/tests/test_workflow_state_machine.py services/aura-core/tests/test_workflow_repository.py services/aura-core/tests/test_workflow_contract_state_evaluation.py services/aura-core/tests/test_migration_0027_workflow_contract_state.py services/aura-core/tests/test_migrations.py services/aura-core/tests/test_approvals.py services/aura-core/tests/test_approval_stream.py services/aura-core/tests/test_approval_evaluation.py services/aura-core/tests/test_notifications.py services/aura-core/tests/test_notification_api.py services/aura-core/tests/test_notification_stream.py services/aura-core/tests/test_notification_evaluation.py services/aura-core/tests/system/test_contract_and_deployment.py services/aura-core/tests/system/test_approval_backed_reminder.py services/aura-core/tests/system/test_notification_delivery.py -q
+  - cd frontend && pnpm exec nx run aura-api-client:generate
+  - cd frontend && pnpm exec nx run aura-api-client:check-generated
+  - cd frontend && pnpm exec nx run aura-api-client:lint
+  - cd frontend && pnpm exec nx lint aura-web
+  - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/governance/approvals libs/aura/automation/notifications
+  - cd frontend && pnpm exec nx build aura-web --configuration=production
+  - cd frontend && pnpm exec nx run storybook:build-storybook
+  - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/approvals.spec.ts apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

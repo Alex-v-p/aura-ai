@@ -11,7 +11,7 @@
 .new-conversation { align-items: center; background: var(--accent); border: 0; border-radius: .75rem; color: var(--on-accent); cursor: pointer; display: flex; flex: 0 0 auto; font: inherit; font-size: .875rem; font-weight: 650; gap: .5rem; justify-content: center; min-height: 2.75rem; padding: .5rem .8rem; width: 100%; }
 .new-conversation:hover { background: var(--accent-hover); }
 .sidebar.is-collapsed .new-conversation { border-radius: .65rem; font-size: 1.2rem; width: 2.75rem; }
-.sidebar-scroll-region { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; width: 100%; }
+.sidebar-scroll-region { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; width: 100%; }
 .product-nav { display: flex; flex: 0 0 auto; flex-direction: column; gap: .8rem; margin-top: 1.25rem; width: 100%; }
 .nav-group { display: grid; gap: .15rem; }
 .nav-group-heading { color: var(--text-muted); font-size: .7rem; font-weight: 750; letter-spacing: .1em; margin: 0 .7rem .25rem; text-transform: uppercase; }
@@ -23,7 +23,7 @@
 .product-current-marker { background: var(--accent); border-radius: 999px; display: none; height: .45rem; margin-left: auto; width: .45rem; }
 .product-link.is-active .product-current-marker, .product-link[aria-current='page'] .product-current-marker { display: block; }
 .notification-badge { align-items: center; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border)); border-radius: 999px; color: var(--text); display: inline-flex; font-size: .72rem; font-weight: 750; height: 1.35rem; justify-content: center; line-height: 1; margin-left: auto; min-width: 1.35rem; padding: 0 .3rem; }
-.conversation-nav { display: flex; flex: 1 1 auto; flex-direction: column; margin-top: 1rem; min-height: 0; overflow: auto; }
+.conversation-nav { display: flex; flex: 1 1 auto; flex-direction: column; margin-top: 1rem; min-height: 0; overflow: visible; }
 .library-heading { align-items: center; display: flex; justify-content: space-between; margin: 0 .6rem .45rem; }
 .library-heading .nav-label { margin: 0; }
 .library-filter-toggle, .load-more { background: transparent; border: 1px solid var(--control-border); border-radius: .45rem; color: var(--text-muted); cursor: pointer; font: inherit; font-size: .75rem; min-height: 2.75rem; padding: .35rem .55rem; }
@@ -69,7 +69,7 @@
 .context-panel-heading { align-items: center; display: flex; justify-content: space-between; padding: .1rem .1rem .7rem .25rem; }
 .context-panel-heading h2 { font-size: .95rem; margin: 0; }
 .conversation-library-context { background: var(--surface); border: 1px solid var(--border); border-radius: .75rem; box-shadow: 0 1rem 3rem rgb(0 0 0 / .2); max-height: min(72vh, 42rem); min-width: min(22rem, calc(100vw - 1.5rem)); overflow: hidden; padding: .7rem; }
-.conversation-library-context .conversation-nav { margin-top: 0; max-height: calc(min(72vh, 42rem) - 3.5rem); }
+.conversation-library-context .conversation-nav { margin-top: 0; max-height: calc(min(72vh, 42rem) - 3.5rem); overflow: auto; }
 .sidebar.is-collapsed .wordmark-text, .sidebar.is-collapsed .label { min-width: 0; opacity: 0; visibility: hidden; width: 0; }
 .sidebar.is-collapsed .sidebar-top { flex-direction: column; gap: .65rem; justify-content: flex-start; }
 .sidebar.is-collapsed .sidebar-top, .sidebar.is-collapsed .product-nav, .sidebar.is-collapsed .sidebar-bottom { width: 2.75rem; }

@@ -1,0 +1,14 @@
+agent: general_reviewer
+work_item: AURA-0135
+verdict: PASS
+checked:
+  - Re-reviewed the corrected decision and threat-model diff against the work item and authoritative sources.
+  - Verified unknown effects use a durable nonterminal resolution state and cancellation or deadline preserves unknown step history without reopening terminal truth.
+  - Verified replay-safe failure has explicit preterminal states, one owner-requested replay, deterministic decline and deadline settlement, and no terminal reopen.
+  - Verified all step shapes, outputs, selectors, statuses, outcomes, recovery capabilities, checkpoint status, unknown-field rejection, and RFC 8785 UTF-8 limits are closed.
+  - Verified seven non-cascading manual deletion scopes and content-free tombstones preserve authorization and lineage for surviving records.
+  - Confirmed the first implementation slice is consistently manual-only and schedules remain separately gated.
+  - Confirmed approval presentation, typed selector authoring, focus recovery, compound-state presentation, and contextual deletion UX are explicit.
+  - Confirmed PostgreSQL and outbox authority, public application boundaries, executor independence, Core and Observatory isolation, and generated-client direction remain preserved.
+  - Work-item, changed-path, repository-shape, observability, and diff checks passed.
+findings: []

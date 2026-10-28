@@ -1,5 +1,10 @@
 """Transactional outbox and transport interfaces."""
 
+from aura_core.platform.outbox.nats import (
+    BRIEFING_EVENT_SUBJECT,
+    BRIEFING_WAKE_SUBJECT,
+    NatsBriefingConsumer,
+)
 from aura_core.platform.outbox.repository import SqlOutboxRepository
 from aura_core.platform.outbox.service import (
     APPROVAL_EVENT_TOPIC,
@@ -22,6 +27,8 @@ __all__ = [
     "InMemoryOutbox",
     "APPROVAL_EVENT_TOPIC",
     "ATTACHMENT_EVENT_TOPIC",
+    "BRIEFING_EVENT_SUBJECT",
+    "BRIEFING_WAKE_SUBJECT",
     "OutboxCommand",
     "make_event_command",
     "OutboxTransport",
@@ -34,4 +41,5 @@ __all__ = [
     "make_approval_resume_command",
     "make_identifier_command",
     "make_run_command",
+    "NatsBriefingConsumer",
 ]

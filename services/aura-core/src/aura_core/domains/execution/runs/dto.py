@@ -42,8 +42,8 @@ class RunError:
 
 @dataclass(slots=True)
 class Run:
-    conversation_id: UUID
-    user_message_id: UUID
+    conversation_id: UUID | None
+    user_message_id: UUID | None
     agent_revision_id: UUID
     model_policy_revision_id: UUID
     provider: str
@@ -91,6 +91,45 @@ class Run:
     regenerated_from_run_id: UUID | None = None
     # Immutable resource summaries admitted with the source user message.
     attachments: tuple[AttachmentSummary, ...] = ()
+    # Workflow lineage is complete only for manual workflow-admitted runs;
+    # ordinary runs retain conversation lineage and leave these fields null.
+    workflow_id: UUID | None = None
+    workflow_revision_id: UUID | None = None
+    workflow_instance_id: UUID | None = None
+    workflow_step_ordinal: int | None = None
+    workflow_step_execution_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        lineage = (
+            self.workflow_id,
+            self.workflow_revision_id,
+            self.workflow_instance_id,
+            self.workflow_step_ordinal,
+            self.workflow_step_execution_id,
+        )
+        has_workflow = any(value is not None for value in lineage)
+        ordinary = self.conversation_id is not None and self.user_message_id is not None
+        workflow = self.conversation_id is None and self.user_message_id is None and all(
+            value is not None for value in lineage
+        )
+        if not ordinary and not workflow:
+            raise ValueError(
+                "run lineage must be either complete conversation/user-message or complete workflow"
+            )
+        if ordinary and has_workflow:
+            raise ValueError("ordinary runs cannot carry workflow lineage")
+        if workflow and any(
+            type(value) is not UUID
+            for value in (
+                self.workflow_id,
+                self.workflow_revision_id,
+                self.workflow_instance_id,
+                self.workflow_step_execution_id,
+            )
+        ):
+            raise ValueError("workflow run lineage must use UUIDs")
+        if self.workflow_step_ordinal is not None and not 1 <= self.workflow_step_ordinal <= 8:
+            raise ValueError("workflow step ordinal is out of bounds")
 
 
 class RunClaim(NamedTuple):

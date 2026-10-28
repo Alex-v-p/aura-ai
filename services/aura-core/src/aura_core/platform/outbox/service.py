@@ -13,6 +13,7 @@ RUN_COMMAND_TOPIC = "aura.runs.execute.v1"
 APPROVAL_EVENT_TOPIC = "aura.approvals.events.v1"
 RUN_RESUME_TOPIC = "aura.runs.resume.v1"
 ATTACHMENT_EVENT_TOPIC = "aura.artifacts.attachment.events.v1"
+BRIEFING_EVENT_TOPIC = "aura.automation.briefings.events.v1"
 _IDENTIFIER_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,63}$")
 _IDENTIFIER_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,254}$")
 _IDENTIFIER_SUFFIXES = (
@@ -47,6 +48,177 @@ _CONTENT_KEY_PARTS = (
 )
 _AGGREGATE_TYPE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 IdentifierValue = str | int
+
+_BRIEFING_SCHEDULE_EVENTS = {
+    "briefing.schedule.created": "active",
+    "briefing.schedule.paused": "paused",
+    "briefing.schedule.resumed": "active",
+    "briefing.schedule.deleted": "deleted",
+}
+_BRIEFING_OCCURRENCE_STATUSES = {
+    "scheduled",
+    "admitted",
+    "running",
+    "completed",
+    "partial",
+    "failed",
+    "canceled",
+    "skipped",
+    "unknown",
+}
+_BRIEFING_RESULT_STATUSES = {"completed", "partial", "failed", "canceled", "unknown", "deleted"}
+_BRIEFING_SOURCE_COMPLETENESS = {"complete", "partial", "unavailable", "unknown"}
+_BRIEFING_EVENT_FIELDS = {
+    "schedule": {
+        "schemaVersion",
+        "eventId",
+        "eventType",
+        "scheduleId",
+        "scheduleStatus",
+        "scheduleVersion",
+        "occurredAt",
+    },
+    "occurrence": {
+        "schemaVersion",
+        "eventId",
+        "eventType",
+        "scheduleId",
+        "occurrenceId",
+        "occurrenceStatus",
+        "occurrenceVersion",
+        "dueAt",
+        "sourceCompleteness",
+        "runId",
+        "resultId",
+        "occurredAt",
+    },
+    "result": {
+        "schemaVersion",
+        "eventId",
+        "eventType",
+        "scheduleId",
+        "occurrenceId",
+        "resultId",
+        "runId",
+        "resultStatus",
+        "resultVersion",
+        "sourceCompleteness",
+        "occurredAt",
+    },
+    "deletion": {
+        "schemaVersion",
+        "eventId",
+        "eventType",
+        "deletionId",
+        "scope",
+        "scheduleId",
+        "occurrenceId",
+        "resultId",
+        "occurredAt",
+    },
+}
+
+
+def _briefing_timestamp(value: object, field: str) -> datetime:
+    if type(value) is not str:
+        raise ValueError(f"briefing lifecycle event has an invalid {field}")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"briefing lifecycle event has an invalid {field}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"briefing lifecycle event has an invalid {field}")
+    return parsed
+
+
+def _briefing_uuid(
+    payload: Mapping[str, object], field: str, *, nullable: bool = False
+) -> UUID | None:
+    value = payload[field]
+    if value is None and nullable:
+        return None
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"briefing lifecycle event has an invalid {field}") from exc
+
+
+def _briefing_version(payload: Mapping[str, object], field: str) -> int:
+    value = payload[field]
+    if type(value) is not int or not 1 <= value <= 2_147_483_647:
+        raise ValueError(f"briefing lifecycle event has an invalid {field}")
+    return value
+
+
+def validate_briefing_lifecycle_event(payload: Mapping[str, object]) -> dict[str, object]:
+    """Validate and copy the closed metadata-only briefing lifecycle contract."""
+
+    event_type = payload.get("eventType")
+    if type(event_type) is not str:
+        raise ValueError("briefing lifecycle event has an invalid event type")
+    if event_type.startswith("briefing.schedule."):
+        kind = "schedule"
+    elif event_type.startswith("briefing.occurrence."):
+        kind = "occurrence"
+    elif event_type.startswith("briefing.result."):
+        kind = "result"
+    elif event_type in {"briefing.history.deleted", "briefing.result-content.deleted"}:
+        kind = "deletion"
+    else:
+        raise ValueError("briefing lifecycle event has an invalid event type")
+    if set(payload) != _BRIEFING_EVENT_FIELDS[kind] or payload.get("schemaVersion") != 1:
+        raise ValueError("briefing lifecycle event payload is not schema exact")
+    event_id = _briefing_uuid(payload, "eventId")
+    _briefing_timestamp(payload["occurredAt"], "occurredAt")
+    assert event_id is not None
+    schedule_id = _briefing_uuid(payload, "scheduleId")
+    assert schedule_id is not None
+    if kind == "schedule":
+        expected_status = _BRIEFING_SCHEDULE_EVENTS.get(event_type)
+        if expected_status is None:
+            raise ValueError("briefing lifecycle event has an invalid event type")
+        if payload["scheduleStatus"] != expected_status:
+            raise ValueError("briefing lifecycle event has an invalid schedule status")
+        _briefing_version(payload, "scheduleVersion")
+    elif kind == "occurrence":
+        status = event_type.removeprefix("briefing.occurrence.")
+        if status not in _BRIEFING_OCCURRENCE_STATUSES or payload["occurrenceStatus"] != status:
+            raise ValueError("briefing lifecycle event has an invalid occurrence status")
+        _briefing_uuid(payload, "occurrenceId")
+        _briefing_version(payload, "occurrenceVersion")
+        _briefing_timestamp(payload["dueAt"], "dueAt")
+        if (
+            type(payload["sourceCompleteness"]) is not str
+            or payload["sourceCompleteness"] not in _BRIEFING_SOURCE_COMPLETENESS
+        ):
+            raise ValueError("briefing lifecycle event has an invalid source completeness")
+        _briefing_uuid(payload, "runId", nullable=True)
+        _briefing_uuid(payload, "resultId", nullable=True)
+    elif kind == "result":
+        status = event_type.removeprefix("briefing.result.")
+        if status not in _BRIEFING_RESULT_STATUSES or payload["resultStatus"] != status:
+            raise ValueError("briefing lifecycle event has an invalid result status")
+        _briefing_uuid(payload, "occurrenceId")
+        _briefing_uuid(payload, "resultId")
+        _briefing_uuid(payload, "runId", nullable=True)
+        _briefing_version(payload, "resultVersion")
+        if (
+            type(payload["sourceCompleteness"]) is not str
+            or payload["sourceCompleteness"] not in _BRIEFING_SOURCE_COMPLETENESS
+        ):
+            raise ValueError("briefing lifecycle event has an invalid source completeness")
+    else:
+        expected_scope = (
+            "occurrence_history"
+            if event_type == "briefing.history.deleted"
+            else "result_content"
+        )
+        if payload["scope"] != expected_scope:
+            raise ValueError("briefing lifecycle event has an invalid deletion scope")
+        _briefing_uuid(payload, "deletionId")
+        _briefing_uuid(payload, "occurrenceId", nullable=True)
+        _briefing_uuid(payload, "resultId", nullable=True)
+    return dict(payload)
 
 
 def _valid_identifier_value(
@@ -154,6 +326,24 @@ class OutboxCommand:
         schema_version = payload.get("schemaVersion")
         if type(schema_version) is not int:
             raise ValueError("outbox command has an invalid schema version")
+        if topic == BRIEFING_EVENT_TOPIC:
+            event = validate_briefing_lifecycle_event(payload)
+            schedule_id = _briefing_uuid(event, "scheduleId")
+            event_id = _briefing_uuid(event, "eventId")
+            assert schedule_id is not None and event_id is not None
+            return cls(
+                command_id,
+                topic,
+                None,
+                None,
+                created_at,
+                event_id,
+                event_id,
+                schema_version=1,
+                aggregate_type="automation.briefing",
+                aggregate_id=schedule_id,
+                event_payload=event,
+            )
         if topic in {"aura.knowledge.documents.events.v1", ATTACHMENT_EVENT_TOPIC}:
             if topic == ATTACHMENT_EVENT_TOPIC:
                 required = {

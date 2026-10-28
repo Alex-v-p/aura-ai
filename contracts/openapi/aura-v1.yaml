@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aura Core API",
-    "version": "1.18.0",
-    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, image attachment, reminder, notification, approval, and governed tool transport contract. Provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, image bytes outside authorized no-store streams, content hashes, and embedding vectors are never exposed by this API."
+    "version": "1.22.0",
+    "description": "Owner-authenticated agent, persona, conversation, run, memory, document, image attachment, reminder, notification, approval, read-only calendar integration, scheduled briefing, bounded manual workflow, and governed tool transport contract. Provider tokens, client secrets, authorization codes, internal credential references, provider-native tool calls, provider endpoints, object-store keys and credentials, tool arguments and results, document queries and excerpts, image bytes outside authorized no-store streams, content hashes, and embedding vectors are never exposed by this API. Calendar names, event titles, descriptions, attendees, locations, provider identifiers, and owner identity are private and are never placed in URLs, ordinary logs, telemetry, SSE invalidations, browser persistence, or service-worker caches. Briefing and workflow definitions, inputs, mappings, outputs, checkpoints, and results are owner-private and have manual-only retention. Workflow lifecycle events are metadata-only. Events are retrieved on demand without a durable calendar-event cache. Calendar mutation, automatic rescheduling, background content synchronization, calendar-to-memory writes, workflow schedules, arbitrary expressions, provider selection, executor internals, and model-facing calendar tools are intentionally excluded."
   },
   "servers": [{ "url": "/", "description": "Same-origin Aura BFF" }],
   "security": [{ "sessionCookie": [] }],
@@ -21,6 +21,9 @@
     { "name": "Reminders" },
     { "name": "Notifications" },
     { "name": "Approvals" },
+    { "name": "Calendar" },
+    { "name": "Briefings" },
+    { "name": "Workflows" },
     { "name": "Health" }
   ],
   "paths": {
@@ -1199,6 +1202,239 @@
         }
       }
     },
+    "/api/v1/workflows": {
+      "get": {
+        "operationId": "listWorkflows", "tags": ["Workflows"],
+        "responses": { "200": { "description": "Owner-scoped workflow definitions", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDefinitionPage" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      },
+      "post": {
+        "operationId": "createWorkflowDraft", "tags": ["Workflows"],
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateWorkflowDraftRequest" } } } },
+        "responses": { "201": { "description": "Workflow definition and first editable draft created", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDraft" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } }
+      }
+    },
+    "/api/v1/workflows/{workflow_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }],
+      "get": { "operationId": "getWorkflow", "tags": ["Workflows"], "responses": { "200": { "description": "Owner-scoped workflow definition", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDefinition" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/drafts": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }],
+      "post": { "operationId": "cloneWorkflowDraft", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CloneWorkflowDraftRequest" } } } }, "responses": { "201": { "description": "Fresh editable draft cloned from immutable revision", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDraft" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/drafts/{draft_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowDraftId" }],
+      "get": { "operationId": "getWorkflowDraft", "tags": ["Workflows"], "responses": { "200": { "description": "Owner-private editable workflow draft", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDraft" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } },
+      "patch": { "operationId": "updateWorkflowDraft", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateWorkflowDraftRequest" } } } }, "responses": { "200": { "description": "Draft updated after complete graph validation", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDraft" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/drafts/{draft_id}/validate": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowDraftId" }],
+      "post": { "operationId": "validateWorkflowDraft", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowVersionCommand" } } } }, "responses": { "200": { "description": "Deterministic closed-schema and selector-graph validation result", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowValidationResult" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/drafts/{draft_id}/publish": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowDraftId" }],
+      "post": { "operationId": "publishWorkflowDraft", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowVersionCommand" } } } }, "responses": { "201": { "description": "Immutable validated workflow revision published", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowRevision" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/revisions/{revision_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowRevisionId" }],
+      "get": { "operationId": "getWorkflowRevision", "tags": ["Workflows"], "responses": { "200": { "description": "Owner-private immutable workflow revision", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowRevision" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/instances": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }],
+      "get": { "operationId": "listWorkflowInstances", "tags": ["Workflows"], "responses": { "200": { "description": "Owner-scoped workflow instance summaries", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowInstancePage" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } },
+      "post": { "operationId": "startWorkflowInstance", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StartWorkflowInstanceRequest" } } } }, "responses": { "202": { "description": "Manual workflow instance durably admitted", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowInstance" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/instances/{instance_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowInstanceId" }],
+      "get": { "operationId": "getWorkflowInstance", "tags": ["Workflows"], "responses": { "200": { "description": "Owner-private workflow instance, history, result and recovery snapshot", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowInstance" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/instances/{instance_id}/cancel": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowInstanceId" }],
+      "post": { "operationId": "cancelWorkflowInstance", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowVersionCommand" } } } }, "responses": { "202": { "description": "Cancellation requested without claiming reversal of completed or unknown effects", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowInstance" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/instances/{instance_id}/resolve": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowInstanceId" }],
+      "post": { "operationId": "resolveWorkflowInstance", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResolveWorkflowInstanceRequest" } } } }, "responses": { "200": { "description": "One closed recovery command applied with optimistic concurrency", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowInstance" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/drafts/{draft_id}/deletions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowDraftId" }],
+      "post": { "operationId": "deleteWorkflowDraft", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteWorkflowDraftRequest" } } } }, "responses": { "200": { "description": "Exactly one draft deleted without cascade", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDeletionReceipt" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/deletions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }],
+      "post": { "operationId": "deleteWorkflowDefinition", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteWorkflowDefinitionRequest" } } } }, "responses": { "200": { "description": "Exactly one retired definition deleted without cascade", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDeletionReceipt" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/revisions/{revision_id}/deletions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowRevisionId" }],
+      "post": { "operationId": "deleteWorkflowRevision", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteWorkflowRevisionRequest" } } } }, "responses": { "200": { "description": "Exactly one unpinned published revision deleted without cascade", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDeletionReceipt" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/instances/{instance_id}/deletions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowInstanceId" }],
+      "post": { "operationId": "deleteWorkflowInstanceState", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteWorkflowInstanceStateRequest" } } } }, "responses": { "200": { "description": "Terminal instance identity and private state deleted; content-free lineage tombstone retained when needed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDeletionReceipt" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/instances/{instance_id}/history-deletions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowInstanceId" }],
+      "post": { "operationId": "deleteWorkflowInstanceHistory", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteWorkflowInstanceHistoryRequest" } } } }, "responses": { "200": { "description": "Terminal instance history deleted without cascade", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDeletionReceipt" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/instances/{instance_id}/result-deletions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowInstanceId" }],
+      "post": { "operationId": "deleteWorkflowInstanceResult", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteWorkflowInstanceResultRequest" } } } }, "responses": { "200": { "description": "Terminal instance result deleted without cascade", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDeletionReceipt" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/workflows/{workflow_id}/instances/{instance_id}/checkpoint-deletions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkflowId" }, { "$ref": "#/components/parameters/WorkflowInstanceId" }],
+      "post": { "operationId": "deleteWorkflowInstanceCheckpoints", "tags": ["Workflows"], "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteWorkflowInstanceCheckpointsRequest" } } } }, "responses": { "200": { "description": "Terminal instance checkpoints deleted without cascade", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkflowDeletionReceipt" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" } } }
+    },
+    "/api/v1/briefing-capabilities": {
+      "get": {
+        "operationId": "getBriefingCapabilities",
+        "tags": ["Briefings"],
+        "description": "Returns the one Aura-owned scheduled-briefing execution capability needed to construct a create request. Provider, model, prompt, tool-grant, owner, source, and private runtime state are intentionally excluded.",
+        "responses": {
+          "200": { "description": "Fixed public briefing capability metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingCapabilities" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules": {
+      "get": {
+        "operationId": "listBriefingSchedules",
+        "tags": ["Briefings"],
+        "parameters": [
+          { "name": "status", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/BriefingScheduleStatus" } },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Owner-scoped schedules with manual-only retention", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedulePage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      },
+      "post": {
+        "operationId": "createBriefingSchedule",
+        "tags": ["Briefings"],
+        "description": "Creates one owner-scoped daily schedule. Calendar, reminder, and explicitly selected document content is untrusted evidence and cannot alter policies, grants, permissions, or execution flow.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateBriefingScheduleRequest" } } } },
+        "responses": {
+          "201": { "description": "Schedule created", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedule" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}": {
+      "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }],
+      "get": {
+        "operationId": "getBriefingSchedule",
+        "tags": ["Briefings"],
+        "responses": {
+          "200": { "description": "Owner-scoped schedule", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedule" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/pause": {
+      "post": {
+        "operationId": "pauseBriefingSchedule",
+        "tags": ["Briefings"],
+        "description": "Pauses future admission without canceling an occurrence already admitted.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingVersionCommand" } } } },
+        "responses": {
+          "200": { "description": "Schedule paused", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedule" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/resume": {
+      "post": {
+        "operationId": "resumeBriefingSchedule",
+        "tags": ["Briefings"],
+        "description": "Resumes the original daily local-time cadence without catch-up beyond the bounded missed-occurrence policy.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingVersionCommand" } } } },
+        "responses": {
+          "200": { "description": "Schedule resumed", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingSchedule" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/deletions": {
+      "post": {
+        "operationId": "deleteBriefingSchedule",
+        "tags": ["Briefings"],
+        "description": "Stops future admission and tombstones only the schedule. Occurrence history and results remain until their separate explicit owner commands.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteBriefingScheduleRequest" } } } },
+        "responses": {
+          "200": { "description": "Schedule-only deletion receipt", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingDeletionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/occurrences": {
+      "get": {
+        "operationId": "listBriefingOccurrences",
+        "tags": ["Briefings"],
+        "parameters": [
+          { "$ref": "#/components/parameters/BriefingScheduleId" },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } }
+        ],
+        "responses": {
+          "200": { "description": "Manually retained owner-scoped occurrence history", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingOccurrencePage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/occurrences/{occurrence_id}": {
+      "get": {
+        "operationId": "getBriefingOccurrence",
+        "tags": ["Briefings"],
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/BriefingOccurrenceId" }],
+        "responses": {
+          "200": { "description": "Owner-scoped occurrence and lineage", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingOccurrence" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/briefing-schedules/{schedule_id}/history-deletions": {
+      "post": {
+        "operationId": "deleteBriefingOccurrenceHistory",
+        "tags": ["Briefings"],
+        "description": "Explicitly removes retained occurrence detail while preserving content-free audit truth and independently retained results.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingScheduleId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteBriefingHistoryRequest" } } } },
+        "responses": {
+          "200": { "description": "Occurrence-history deletion receipt", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingDeletionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
+    "/api/v1/briefing-results/{result_id}": {
+      "get": {
+        "operationId": "getBriefingResult",
+        "tags": ["Briefings"],
+        "parameters": [{ "$ref": "#/components/parameters/BriefingResultId" }],
+        "responses": {
+          "200": { "description": "Owner-private durable briefing result", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingResult" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/briefing-results/{result_id}/deletions": {
+      "post": {
+        "operationId": "deleteBriefingResult",
+        "tags": ["Briefings"],
+        "description": "Explicitly removes one result's private content while preserving content-free audit truth and occurrence lineage.",
+        "parameters": [{ "$ref": "#/components/parameters/BriefingResultId" }, { "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeleteBriefingResultRequest" } } } },
+        "responses": {
+          "200": { "description": "Result-content deletion receipt", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BriefingDeletionReceipt" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }, "422": { "$ref": "#/components/responses/UnprocessableEntity" }
+        }
+      }
+    },
     "/api/v1/attachments/uploads": {
       "post": {
         "operationId": "createAttachmentUpload",
@@ -1487,6 +1723,153 @@
         }
       }
     },
+    "/api/v1/integrations/calendar/connection": {
+      "get": {
+        "operationId": "getCalendarConnection",
+        "tags": ["Calendar"],
+        "description": "Returns the owner-scoped provider-neutral connection state. Credentials, authorization codes, provider account identity, internal credential references, and raw provider errors are excluded.",
+        "responses": {
+          "200": { "description": "Current calendar connection state", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConnection" } } } },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/connection/start": {
+      "post": {
+        "operationId": "startCalendarConnection",
+        "tags": ["Calendar"],
+        "description": "Starts one bounded owner-authorized read-only calendar connection attempt. The returned authorizationPath is a high-entropy opaque handle and MUST be navigated only as an authenticated same-origin owner action from the initiating session. It is bound to that owner, session, and exact attempt, is single-use until expiresAt, fails closed at expiry, rejects replay and prefetch, and is invalidated when a newer attempt starts. It must not be logged, measured, persisted, prefetched, or service-worker cached.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "202": { "description": "Connection attempt started", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarAuthorizationStart" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/connection/complete": {
+      "post": {
+        "operationId": "completeCalendarConnectionCallback",
+        "tags": ["Calendar"],
+        "description": "Consumes exactly once the server-held result of the fixed provider callback bound to the authenticated owner, initiating session, and exact non-expired connection attempt after exact state, nonce, callback origin, and least-privilege read-only scope validation. Missing, expired, superseded, prefetched, replayed, owner-mismatched, session-mismatched, or attempt-mismatched results fail closed. The browser sends no provider authorization code, state, token, credential reference, or raw provider payload.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "200": { "description": "Sanitized callback result committed", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConnection" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "422": { "$ref": "#/components/responses/CalendarUnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/connection/reauthorize": {
+      "post": {
+        "operationId": "reauthorizeCalendarConnection",
+        "tags": ["Calendar"],
+        "description": "Starts a new bounded authorization attempt for a connection that requires owner reauthorization. The same authenticated same-origin owner, initiating-session, exact-attempt, high-entropy, single-use, expiry, replay, prefetch, fail-closed, and newer-attempt-invalidates-prior requirements as startCalendarConnection apply. Existing reads remain disabled until completion succeeds.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "202": { "description": "Reauthorization attempt started", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarAuthorizationStart" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/connection/disconnect": {
+      "post": {
+        "operationId": "disconnectCalendarConnection",
+        "tags": ["Calendar"],
+        "description": "Immediately disables new reads, then attempts provider revocation before server-held credential removal. An uncertain revocation returns revocation_uncertain with reads disabled and owner-safe recovery metadata.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "responses": {
+          "200": { "description": "Connection disconnected or disabled with uncertain revocation", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConnection" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/calendars": {
+      "get": {
+        "operationId": "listSelectableCalendars",
+        "tags": ["Calendar"],
+        "description": "Lists only calendars readable by the authenticated owner. Discovery never selects a calendar; every newly discovered calendar is returned with selected=false until an explicit selection replacement succeeds.",
+        "parameters": [
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 1024 }, "description": "Opaque owner-bound discovery cursor." },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } }
+        ],
+        "responses": {
+          "200": { "description": "Bounded owner-private selectable calendar page", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SelectableCalendarPage" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/calendars/selection": {
+      "put": {
+        "operationId": "replaceCalendarSelection",
+        "tags": ["Calendar"],
+        "description": "Atomically replaces the selected readable-calendar set. The explicit empty set is valid; omitted, undiscovered, unauthorized, or unreadable calendars are never enabled implicitly.",
+        "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReplaceCalendarSelectionRequest" } } } },
+        "responses": {
+          "200": { "description": "Explicit selected set replaced", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarSelection" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "422": { "$ref": "#/components/responses/CalendarUnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/events/query": {
+      "post": {
+        "operationId": "queryCalendarEvents",
+        "tags": ["Calendar"],
+        "description": "Retrieves owner-private normalized events on demand without a durable event-content cache. A POST body keeps private calendar selection and range inputs out of URLs. The request is read-only, cancellation-aware, and bounded by a maximum 31-day half-open instant range, selected-calendar allowlist, page size, opaque cursor, and server deadline.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarEventQuery" } } } },
+        "responses": {
+          "200": { "description": "Bounded normalized event page; event content remains untrusted private data", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarEventPage" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "422": { "$ref": "#/components/responses/CalendarUnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/integrations/calendar/conflicts/query": {
+      "post": {
+        "operationId": "queryCalendarConflicts",
+        "tags": ["Calendar"],
+        "description": "Returns server-authoritative deterministic positive-duration overlap relationships for the same bounded selected-calendar range query. The browser and models must not calculate or reinterpret conflicts.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConflictQuery" } } } },
+        "responses": {
+          "200": { "description": "Bounded deterministic conflict relationship page", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CalendarConflictPage" } } } },
+          "400": { "$ref": "#/components/responses/CalendarBadRequest" },
+          "401": { "$ref": "#/components/responses/CalendarUnauthorized" },
+          "403": { "$ref": "#/components/responses/CalendarForbidden" },
+          "409": { "$ref": "#/components/responses/CalendarConflictResponse" },
+          "422": { "$ref": "#/components/responses/CalendarUnprocessableEntity" },
+          "503": { "$ref": "#/components/responses/CalendarServiceUnavailable" }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "getLiveness",
@@ -1524,6 +1907,13 @@
       "ReminderId": { "name": "reminder_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "ReminderSeriesId": { "name": "series_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "NotificationId": { "name": "notification_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+      "BriefingScheduleId": { "name": "schedule_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped briefing schedule identifier." },
+      "BriefingOccurrenceId": { "name": "occurrence_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped briefing occurrence identifier." },
+      "BriefingResultId": { "name": "result_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped briefing result identifier." },
+      "WorkflowId": { "name": "workflow_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped workflow definition identifier." },
+      "WorkflowDraftId": { "name": "draft_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped editable workflow draft identifier." },
+      "WorkflowRevisionId": { "name": "revision_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped immutable workflow revision identifier." },
+      "WorkflowInstanceId": { "name": "instance_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Opaque owner-scoped workflow instance identifier." },
       "ApprovalId": { "name": "approval_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "DocumentId": { "name": "document_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
       "DocumentUploadId": { "name": "upload_id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
@@ -1545,7 +1935,13 @@
       "Conflict": { "description": "Version conflict, active run conflict, or idempotency-key payload conflict", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
       "RunAdmissionConflict": { "description": "Run admission conflict. model_vision_required is returned when the explicit attachment set contains an image and the selected model lacks a fresh digest-identified vision capability; Aura does not change the selected model or persist the message or run.", "content": { "application/problem+json": { "schema": { "oneOf": [{ "$ref": "#/components/schemas/ErrorEnvelope" }, { "$ref": "#/components/schemas/ModelVisionRequiredError" }] } } } },
       "UnprocessableEntity": { "description": "Semantically invalid command", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
-      "ServiceUnavailable": { "description": "Required dependency unavailable", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } }
+      "ServiceUnavailable": { "description": "Required dependency unavailable", "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } } },
+      "CalendarBadRequest": { "description": "Malformed calendar request with sanitized Aura-owned recovery metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarUnauthorized": { "description": "No valid Aura owner session; no private or provider diagnostic value is returned", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarForbidden": { "description": "Owner authorization, origin-aware CSRF, or attempt binding rejected with sanitized Aura-owned recovery metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarConflictResponse": { "description": "Lifecycle, optimistic-version, idempotency, or single-use attempt conflict with sanitized Aura-owned recovery metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarUnprocessableEntity": { "description": "Semantically invalid calendar command or read query with sanitized Aura-owned recovery metadata", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } },
+      "CalendarServiceUnavailable": { "description": "Calendar dependency unavailable with a closed Aura-owned category and no provider diagnostic value", "headers": { "Cache-Control": { "required": true, "schema": { "type": "string", "const": "no-store" } } }, "content": { "application/problem+json": { "schema": { "$ref": "#/components/schemas/CalendarErrorEnvelope" } } } }
     },
     "schemas": {
       "Session": {
@@ -2599,11 +2995,12 @@
       },
       "Run": {
         "type": "object", "additionalProperties": false,
+        "description": "Closed lineage union: an ordinary run has UUID conversation and user-message lineage with no workflow origin; a workflow-admitted run has null conversation and user-message lineage with one complete immutable workflow revision, instance, and step-execution origin. Mixed origins are invalid.",
         "required": ["id", "conversationId", "userMessageId", "assistantMessageId", "status", "agentRevisionId", "modelPolicyRevisionId", "provider", "modelId", "retryOfRunId", "createdAt", "startedAt", "finishedAt", "error"],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
-          "conversationId": { "type": "string", "format": "uuid" },
-          "userMessageId": { "type": "string", "format": "uuid" },
+          "conversationId": { "type": ["string", "null"], "format": "uuid" },
+          "userMessageId": { "type": ["string", "null"], "format": "uuid" },
           "assistantMessageId": { "type": ["string", "null"], "format": "uuid" },
           "status": { "$ref": "#/components/schemas/RunStatus" },
           "agentRevisionId": { "type": "string", "format": "uuid" },
@@ -2625,11 +3022,15 @@
           "retryOfRunId": { "type": ["string", "null"], "format": "uuid" },
           "branchId": { "type": ["string", "null"], "format": "uuid", "description": "Opaque branch containing this run. Optional or null for backward compatibility with pre-1.17 producers." },
           "regeneratedFromRunId": { "type": ["string", "null"], "format": "uuid", "description": "Source run for a user-requested regeneration, or null for ordinary and failed-run retry executions. Optional for backward compatibility with pre-1.17 producers." },
+          "workflowOrigin": { "$ref": "#/components/schemas/WorkflowRunOrigin", "description": "Complete exact workflow lineage. Present only for a workflow-admitted run." },
           "createdAt": { "type": "string", "format": "date-time" },
           "startedAt": { "type": ["string", "null"], "format": "date-time" },
           "finishedAt": { "type": ["string", "null"], "format": "date-time" },
           "error": { "oneOf": [{ "$ref": "#/components/schemas/RunError" }, { "type": "null" }] }
-        }
+        },
+        "if": { "properties": { "conversationId": { "type": "null" } }, "required": ["conversationId"] },
+        "then": { "properties": { "userMessageId": { "type": "null" } }, "required": ["workflowOrigin"] },
+        "else": { "properties": { "userMessageId": { "type": "string", "format": "uuid" } }, "not": { "required": ["workflowOrigin"] } }
       },
       "RunStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_confirmation", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
       "ClientTimeZone": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$", "description": "IANA timezone identifier. Producers validate membership in the deployed IANA timezone database." },
@@ -2672,6 +3073,7 @@
       },
       "RunEventBase": {
         "type": "object",
+        "description": "Closed metadata-only lineage union: an ordinary event has UUID conversation lineage with no workflow origin; a workflow event has null conversation lineage with one complete exact workflow origin. Mixed origins are invalid.",
         "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt"],
         "properties": {
           "schemaVersion": { "type": "integer", "const": 1 },
@@ -2679,9 +3081,19 @@
           "sequence": { "type": "integer", "minimum": 0 },
           "eventType": { "type": "string" },
           "runId": { "type": "string", "format": "uuid" },
-          "conversationId": { "type": "string", "format": "uuid" },
+          "conversationId": { "type": ["string", "null"], "format": "uuid" },
+          "workflowOrigin": { "$ref": "#/components/schemas/WorkflowRunOrigin" },
           "occurredAt": { "type": "string", "format": "date-time" }
-        }
+        },
+        "if": { "properties": { "conversationId": { "type": "null" } }, "required": ["conversationId"] },
+        "then": { "required": ["workflowOrigin"] },
+        "else": { "not": { "required": ["workflowOrigin"] } }
+      },
+      "WorkflowRunOrigin": {
+        "type": "object", "additionalProperties": false,
+        "required": ["workflowRevisionId", "workflowInstanceId", "workflowStepExecutionId"],
+        "properties": { "workflowRevisionId": { "type": "string", "format": "uuid" }, "workflowInstanceId": { "type": "string", "format": "uuid" }, "workflowStepExecutionId": { "type": "string", "format": "uuid" } },
+        "description": "Complete exact metadata-only workflow lineage. Inputs, outputs, instructions, mappings, owner identity and executor state are excluded."
       },
       "RunSnapshotEvent": {
         "allOf": [{ "$ref": "#/components/schemas/RunEventBase" }, { "type": "object", "required": ["eventType", "data"], "properties": { "eventType": { "const": "run.snapshot" }, "data": { "$ref": "#/components/schemas/RunSnapshotData" } } }]
@@ -2943,6 +3355,13 @@
         "enum": ["reminder.create", "reminder.series.create", "reminder.reschedule", "reminder.series.update", "reminder.series.pause", "reminder.series.resume", "reminder.cancel"]
       },
       "Approval": {
+        "description": "Closed origin-typed owner-authorized approval metadata. Existing reminder approvals retain their required run, conversation and tool-call lineage; workflow approvals use complete exact workflow lineage and never fabricate conversation lineage.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/ReminderApproval" },
+          { "$ref": "#/components/schemas/WorkflowApproval" }
+        ]
+      },
+      "ReminderApproval": {
         "type": "object", "additionalProperties": false,
         "description": "Owner-authorized durable approval metadata. Legacy proposal content and requested due time or a bounded typed command summary are available only from ApprovalDetail.",
         "required": ["id", "proposalId", "runId", "conversationId", "toolCallId", "toolId", "toolVersion", "status", "executionStatus", "version", "expiresAt", "createdAt", "updatedAt", "decidedAt"],
@@ -2954,6 +3373,33 @@
           "toolCallId": { "type": "string", "format": "uuid" },
           "toolId": { "$ref": "#/components/schemas/ReminderApprovalToolId" },
           "toolVersion": { "type": "integer", "const": 1 },
+          "status": { "$ref": "#/components/schemas/ApprovalStatus" },
+          "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "decidedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "WorkflowApproval": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized exact workflow-step approval metadata. Private workflow values and author-authored consequence text are excluded.",
+        "required": ["id", "proposalId", "origin", "runId", "conversationId", "toolCallId", "toolId", "toolVersion", "workflowId", "workflowRevisionId", "workflowInstanceId", "workflowStepOrdinal", "workflowStepExecutionId", "status", "executionStatus", "version", "expiresAt", "createdAt", "updatedAt", "decidedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "proposalId": { "type": "string", "format": "uuid" },
+          "origin": { "type": "string", "const": "manual_workflow_instance" },
+          "runId": { "type": "null" },
+          "conversationId": { "type": "null" },
+          "toolCallId": { "type": "null" },
+          "toolId": { "type": "string", "const": "workflow.owner_approval" },
+          "toolVersion": { "type": "integer", "const": 1 },
+          "workflowId": { "type": "string", "format": "uuid" },
+          "workflowRevisionId": { "type": "string", "format": "uuid" },
+          "workflowInstanceId": { "type": "string", "format": "uuid" },
+          "workflowStepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 },
+          "workflowStepExecutionId": { "type": "string", "format": "uuid" },
           "status": { "$ref": "#/components/schemas/ApprovalStatus" },
           "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" },
           "version": { "type": "integer", "minimum": 1 },
@@ -2987,9 +3433,38 @@
         }
       },
       "ApprovalDetail": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/ReminderApprovalDetail" },
+          { "$ref": "#/components/schemas/WorkflowApprovalDetail" }
+        ]
+      },
+      "ReminderApprovalDetail": {
         "allOf": [
-          { "$ref": "#/components/schemas/Approval" },
+          { "$ref": "#/components/schemas/ReminderApproval" },
           { "type": "object", "required": ["proposal"], "properties": { "proposal": { "oneOf": [{ "$ref": "#/components/schemas/ReminderProposalDetail" }, { "$ref": "#/components/schemas/ReminderCommandProposalDetail" }] } } }
+        ]
+      },
+      "WorkflowApprovalNextStepKind": { "type": "string", "enum": ["agent_run", "owner_approval", "owner_notification", "wait_until", "complete"] },
+      "WorkflowApprovalConsequence": { "type": "string", "enum": ["continue_to_agent_run", "continue_to_owner_approval", "continue_to_owner_notification", "continue_to_wait_until", "complete_workflow"] },
+      "WorkflowApprovalConsequenceCopy": { "type": "string", "enum": ["Approve this step to continue to the agent run.", "Approve this step to continue to the next approval.", "Approve this step to continue to the private notification.", "Approve this step to continue to the wait.", "Approve this step to complete the workflow."] },
+      "WorkflowApprovalProposal": {
+        "type": "object", "additionalProperties": false,
+        "description": "Immutable system-derived exact-step presentation. workflowDisplayName is rendered separately as inert owner-authored label; consequenceCopy is selected by Core from the closed next-step triple.",
+        "required": ["workflowId", "workflowRevisionId", "workflowInstanceId", "workflowDisplayName", "stepOrdinal", "stepExecutionId", "nextStepKind", "consequence", "consequenceCopy", "ownerScopeId", "workspaceScopeId", "origin", "expiresAt"],
+        "properties": {
+          "workflowId": { "type": "string", "format": "uuid" }, "workflowRevisionId": { "type": "string", "format": "uuid" }, "workflowInstanceId": { "type": "string", "format": "uuid" },
+          "workflowDisplayName": { "type": "string", "minLength": 1, "maxLength": 160, "description": "NFC text additionally limited by the producer to 512 UTF-8 bytes." },
+          "stepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "stepExecutionId": { "type": "string", "format": "uuid" },
+          "nextStepKind": { "$ref": "#/components/schemas/WorkflowApprovalNextStepKind" }, "consequence": { "$ref": "#/components/schemas/WorkflowApprovalConsequence" },
+          "consequenceCopy": { "$ref": "#/components/schemas/WorkflowApprovalConsequenceCopy" },
+          "ownerScopeId": { "$ref": "#/components/schemas/OpaqueWorkflowIdentifier" }, "workspaceScopeId": { "$ref": "#/components/schemas/OpaqueWorkflowIdentifier" },
+          "origin": { "type": "string", "const": "manual_workflow_instance" }, "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "WorkflowApprovalDetail": {
+        "allOf": [
+          { "$ref": "#/components/schemas/WorkflowApproval" },
+          { "type": "object", "required": ["proposal"], "properties": { "proposal": { "$ref": "#/components/schemas/WorkflowApprovalProposal" } } }
         ]
       },
       "ApprovalPage": {
@@ -3014,6 +3489,10 @@
         "discriminator": { "propertyName": "eventType" }
       },
       "ApprovalEvent": {
+        "description": "Closed origin-typed metadata-only approval lifecycle event.",
+        "oneOf": [{ "$ref": "#/components/schemas/ReminderApprovalEvent" }, { "$ref": "#/components/schemas/WorkflowApprovalEvent" }]
+      },
+      "ReminderApprovalEvent": {
         "type": "object", "additionalProperties": false,
         "required": ["schemaVersion", "eventId", "eventType", "approvalId", "proposalId", "runId", "conversationId", "toolId", "toolVersion", "status", "executionStatus", "version", "occurredAt"],
         "properties": {
@@ -3032,6 +3511,20 @@
           "occurredAt": { "type": "string", "format": "date-time" }
         }
       },
+      "WorkflowApprovalEvent": {
+        "type": "object", "additionalProperties": false,
+        "description": "Metadata-only workflow approval lifecycle. Workflow values, display names, proposal copy and owner identity are prohibited.",
+        "required": ["schemaVersion", "eventId", "eventType", "approvalId", "proposalId", "origin", "runId", "conversationId", "toolId", "toolVersion", "workflowId", "workflowRevisionId", "workflowInstanceId", "workflowStepOrdinal", "workflowStepExecutionId", "status", "executionStatus", "version", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "type": "string", "format": "uuid" },
+          "eventType": { "type": "string", "enum": ["approval.pending", "approval.approved", "approval.rejected", "approval.expired", "approval.canceled"] },
+          "approvalId": { "type": "string", "format": "uuid" }, "proposalId": { "type": "string", "format": "uuid" }, "origin": { "type": "string", "const": "manual_workflow_instance" },
+          "runId": { "type": "null" }, "conversationId": { "type": "null" }, "toolId": { "type": "string", "const": "workflow.owner_approval" }, "toolVersion": { "type": "integer", "const": 1 },
+          "workflowId": { "type": "string", "format": "uuid" }, "workflowRevisionId": { "type": "string", "format": "uuid" }, "workflowInstanceId": { "type": "string", "format": "uuid" },
+          "workflowStepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "workflowStepExecutionId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/ApprovalStatus" }, "executionStatus": { "$ref": "#/components/schemas/ApprovalExecutionStatus" }, "version": { "type": "integer", "minimum": 1 }, "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
       "ApprovalHeartbeatEvent": {
         "type": "object", "additionalProperties": false,
         "required": ["schemaVersion", "eventType", "occurredAt"],
@@ -3043,6 +3536,14 @@
       },
       "NotificationStatus": { "type": "string", "enum": ["delivered", "acknowledged"] },
       "Notification": {
+        "description": "Closed owner-authorized reminder, briefing, or workflow inbox source union. Existing reminder and briefing payloads remain valid byte-for-byte.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/ReminderNotification" },
+          { "$ref": "#/components/schemas/BriefingNotification" },
+          { "$ref": "#/components/schemas/WorkflowNotification" }
+        ]
+      },
+      "ReminderNotification": {
         "type": "object", "additionalProperties": false,
         "description": "Owner-authorized durable inbox record. Reminder content is retrieved separately through the reminder API.",
         "required": ["id", "reminderId", "status", "version", "createdAt", "updatedAt", "deliveredAt", "acknowledgedAt"],
@@ -3055,6 +3556,35 @@
           "updatedAt": { "type": "string", "format": "date-time" },
           "deliveredAt": { "type": "string", "format": "date-time" },
           "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "BriefingNotification": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized durable inbox record linking only by opaque identifiers to a dedicated briefing result. Briefing output and source content are excluded.",
+        "required": ["id", "briefingScheduleId", "briefingOccurrenceId", "briefingResultId", "status", "version", "createdAt", "updatedAt", "deliveredAt", "acknowledgedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "briefingScheduleId": { "type": "string", "format": "uuid" },
+          "briefingOccurrenceId": { "type": "string", "format": "uuid" },
+          "briefingResultId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "deliveredAt": { "type": "string", "format": "date-time" },
+          "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "WorkflowNotification": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-private inbox record containing only opaque workflow lineage. Workflow input, output, instructions, mappings, result content and approval presentation are excluded.",
+        "required": ["id", "workflowId", "workflowRevisionId", "workflowInstanceId", "workflowStepOrdinal", "workflowStepExecutionId", "workflowResultId", "status", "version", "createdAt", "updatedAt", "deliveredAt", "acknowledgedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" }, "workflowId": { "type": "string", "format": "uuid" }, "workflowRevisionId": { "type": "string", "format": "uuid" },
+          "workflowInstanceId": { "type": "string", "format": "uuid" }, "workflowStepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 },
+          "workflowStepExecutionId": { "type": "string", "format": "uuid" }, "workflowResultId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" }, "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "deliveredAt": { "type": "string", "format": "date-time" }, "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" }
         }
       },
       "NotificationPage": {
@@ -3072,14 +3602,23 @@
         "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
       },
       "NotificationStreamEvent": {
-        "description": "Metadata-only notification stream envelope. Reminder content, notification content, owner identity, prompts, responses, credentials, and hidden reasoning are prohibited.",
+        "description": "Metadata-only notification stream envelope. Reminder content, briefing output and source content, notification content, owner identity, prompts, responses, credentials, provider material, and hidden reasoning are prohibited.",
         "oneOf": [
-          { "$ref": "#/components/schemas/NotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/ReminderNotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/BriefingNotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/WorkflowNotificationLifecycleEvent" },
           { "$ref": "#/components/schemas/NotificationHeartbeatEvent" }
-        ],
-        "discriminator": { "propertyName": "eventType" }
+        ]
       },
       "NotificationLifecycleEvent": {
+        "description": "Closed source-typed lifecycle union preserving the legacy reminder event shape.",
+        "oneOf": [
+          { "$ref": "#/components/schemas/ReminderNotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/BriefingNotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/WorkflowNotificationLifecycleEvent" }
+        ]
+      },
+      "ReminderNotificationLifecycleEvent": {
         "type": "object", "additionalProperties": false,
         "required": ["schemaVersion", "eventId", "eventType", "notificationId", "reminderId", "status", "notificationVersion", "occurredAt"],
         "properties": {
@@ -3093,6 +3632,34 @@
           "occurredAt": { "type": "string", "format": "date-time" }
         }
       },
+      "BriefingNotificationLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "notificationId", "briefingScheduleId", "briefingOccurrenceId", "briefingResultId", "status", "notificationVersion", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventId": { "type": "string", "format": "uuid" },
+          "eventType": { "type": "string", "enum": ["notification.delivered", "notification.acknowledged"] },
+          "notificationId": { "type": "string", "format": "uuid" },
+          "briefingScheduleId": { "type": "string", "format": "uuid" },
+          "briefingOccurrenceId": { "type": "string", "format": "uuid" },
+          "briefingResultId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "notificationVersion": { "type": "integer", "minimum": 1 },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "WorkflowNotificationLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "description": "Metadata-only workflow notification lifecycle. Private notification or workflow content and owner identity are prohibited.",
+        "required": ["schemaVersion", "eventId", "eventType", "notificationId", "workflowId", "workflowRevisionId", "workflowInstanceId", "workflowStepOrdinal", "workflowStepExecutionId", "workflowResultId", "status", "notificationVersion", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 }, "eventId": { "type": "string", "format": "uuid" }, "eventType": { "type": "string", "enum": ["notification.delivered", "notification.acknowledged"] },
+          "notificationId": { "type": "string", "format": "uuid" }, "workflowId": { "type": "string", "format": "uuid" }, "workflowRevisionId": { "type": "string", "format": "uuid" },
+          "workflowInstanceId": { "type": "string", "format": "uuid" }, "workflowStepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 },
+          "workflowStepExecutionId": { "type": "string", "format": "uuid" }, "workflowResultId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" }, "notificationVersion": { "type": "integer", "minimum": 1 }, "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
       "NotificationHeartbeatEvent": {
         "type": "object", "additionalProperties": false,
         "required": ["schemaVersion", "eventType", "occurredAt"],
@@ -3100,6 +3667,299 @@
           "schemaVersion": { "type": "integer", "const": 1 },
           "eventType": { "type": "string", "const": "heartbeat" },
           "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BoundedWorkflowText": { "type": "string", "maxLength": 8192, "description": "NFC-normalized valid UTF-8 text limited by the producer to 8192 UTF-8 bytes after normalization." },
+      "OpaqueWorkflowIdentifier": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$", "description": "Opaque identifier carrying no user-authored meaning." },
+      "WorkflowInputType": { "type": "string", "enum": ["bounded_text", "instant"] },
+      "WorkflowInputFieldDefinition": {
+        "type": "object", "additionalProperties": false, "required": ["name", "valueType"],
+        "properties": { "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "valueType": { "$ref": "#/components/schemas/WorkflowInputType" } }
+      },
+      "WorkflowInstanceInputSelector": {
+        "type": "object", "additionalProperties": false, "required": ["source", "field"],
+        "properties": { "source": { "type": "string", "const": "instance_input" }, "field": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" } }
+      },
+      "WorkflowStepOutputSelector": {
+        "type": "object", "additionalProperties": false, "required": ["source", "stepOrdinal", "field"],
+        "properties": { "source": { "type": "string", "const": "step_output" }, "stepOrdinal": { "type": "integer", "minimum": 1, "maximum": 7 }, "field": { "type": "string", "enum": ["output", "decision", "decided_at", "notification_id", "status", "resumed_at"] } }
+      },
+      "WorkflowSelector": {
+        "description": "Exact typed selector. Producers validate exact slot type and require step_output to reference an earlier ordinal; expressions, literals, templates, coercion, fallback and dynamic paths are unrepresentable.",
+        "oneOf": [{ "$ref": "#/components/schemas/WorkflowInstanceInputSelector" }, { "$ref": "#/components/schemas/WorkflowStepOutputSelector" }]
+      },
+      "WorkflowAgentRunStep": {
+        "type": "object", "additionalProperties": false, "required": ["kind", "agentRevisionId", "instructions", "input"],
+        "properties": { "kind": { "type": "string", "const": "agent_run" }, "agentRevisionId": { "$ref": "#/components/schemas/OpaqueWorkflowIdentifier" }, "instructions": { "$ref": "#/components/schemas/BoundedWorkflowText" }, "input": { "$ref": "#/components/schemas/WorkflowSelector" } }
+      },
+      "WorkflowOwnerApprovalStep": { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "type": "string", "const": "owner_approval" } } },
+      "WorkflowOwnerNotificationStep": { "type": "object", "additionalProperties": false, "required": ["kind", "content"], "properties": { "kind": { "type": "string", "const": "owner_notification" }, "content": { "$ref": "#/components/schemas/WorkflowSelector" } } },
+      "WorkflowWaitUntilStep": { "type": "object", "additionalProperties": false, "required": ["kind", "dueAt"], "properties": { "kind": { "type": "string", "const": "wait_until" }, "dueAt": { "$ref": "#/components/schemas/WorkflowSelector" } } },
+      "WorkflowStep": {
+        "description": "Closed strictly sequential step catalogue. A revision has at most one agent_run; publication validates selector types and order.",
+        "oneOf": [{ "$ref": "#/components/schemas/WorkflowAgentRunStep" }, { "$ref": "#/components/schemas/WorkflowOwnerApprovalStep" }, { "$ref": "#/components/schemas/WorkflowOwnerNotificationStep" }, { "$ref": "#/components/schemas/WorkflowWaitUntilStep" }]
+      },
+      "WorkflowLimits": {
+        "type": "object", "additionalProperties": false,
+        "required": ["maxSteps", "maxAgentRuns", "agentRunDeadlineSeconds", "approvalLifetimeSeconds", "waitHorizonSeconds", "instanceLifetimeSeconds", "maxDefinitionBytes", "maxInstanceInputBytes", "maxStepRecordBytes", "maxCombinedValueBytes", "maxCheckpointBytes", "maxCheckpoints", "toolsEnabled", "memoryEnabled", "delegationEnabled", "agentRunReplayEnabled"],
+        "properties": {
+          "maxSteps": { "type": "integer", "const": 8 }, "maxAgentRuns": { "type": "integer", "const": 1 }, "agentRunDeadlineSeconds": { "type": "integer", "const": 300 },
+          "approvalLifetimeSeconds": { "type": "integer", "const": 604800 }, "waitHorizonSeconds": { "type": "integer", "const": 2592000 }, "instanceLifetimeSeconds": { "type": "integer", "const": 2592000 },
+          "maxDefinitionBytes": { "type": "integer", "const": 65536 }, "maxInstanceInputBytes": { "type": "integer", "const": 32768 }, "maxStepRecordBytes": { "type": "integer", "const": 32768 },
+          "maxCombinedValueBytes": { "type": "integer", "const": 65536 }, "maxCheckpointBytes": { "type": "integer", "const": 8192 }, "maxCheckpoints": { "type": "integer", "const": 9 },
+          "toolsEnabled": { "type": "boolean", "const": false }, "memoryEnabled": { "type": "boolean", "const": false }, "delegationEnabled": { "type": "boolean", "const": false }, "agentRunReplayEnabled": { "type": "boolean", "const": false }
+        }
+      },
+      "WorkflowDefinitionStatus": { "type": "string", "enum": ["active", "retired", "deleted"] },
+      "WorkflowDefinition": {
+        "type": "object", "additionalProperties": false, "required": ["id", "displayName", "status", "latestRevisionId", "version", "createdAt", "updatedAt", "retiredAt"],
+        "properties": { "id": { "type": "string", "format": "uuid" }, "displayName": { "type": "string", "minLength": 1, "maxLength": 160, "description": "NFC text additionally limited to 512 UTF-8 bytes." }, "status": { "$ref": "#/components/schemas/WorkflowDefinitionStatus" }, "latestRevisionId": { "type": ["string", "null"], "format": "uuid" }, "version": { "type": "integer", "minimum": 1 }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "retiredAt": { "type": ["string", "null"], "format": "date-time" } }
+      },
+      "WorkflowDefinitionPage": { "type": "object", "additionalProperties": false, "required": ["items", "nextCursor"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/WorkflowDefinition" } }, "nextCursor": { "type": ["string", "null"], "maxLength": 1024 } } },
+      "WorkflowDraft": {
+        "type": "object", "additionalProperties": false, "description": "Owner-private mutable draft. JSON byte limits use RFC 8785 canonical JSON.",
+        "required": ["id", "workflowId", "displayName", "inputFields", "steps", "version", "createdAt", "updatedAt"],
+        "properties": { "id": { "type": "string", "format": "uuid" }, "workflowId": { "type": "string", "format": "uuid" }, "displayName": { "type": "string", "minLength": 1, "maxLength": 160 }, "inputFields": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowInputFieldDefinition" } }, "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowStep" } }, "version": { "type": "integer", "minimum": 1 }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" } }
+      },
+      "WorkflowRevision": {
+        "type": "object", "additionalProperties": false, "description": "Immutable published revision, limited to 65536 bytes as RFC 8785 canonical JSON and pinned unchanged for every admitted instance.",
+        "required": ["id", "workflowId", "revision", "displayName", "inputFields", "steps", "limits", "publishedAt"],
+        "properties": { "id": { "type": "string", "format": "uuid" }, "workflowId": { "type": "string", "format": "uuid" }, "revision": { "type": "integer", "minimum": 1 }, "displayName": { "type": "string", "minLength": 1, "maxLength": 160 }, "inputFields": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowInputFieldDefinition" } }, "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowStep" } }, "limits": { "$ref": "#/components/schemas/WorkflowLimits" }, "publishedAt": { "type": "string", "format": "date-time" } }
+      },
+      "CreateWorkflowDraftRequest": { "type": "object", "additionalProperties": false, "required": ["displayName", "inputFields", "steps"], "properties": { "displayName": { "type": "string", "minLength": 1, "maxLength": 160 }, "inputFields": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowInputFieldDefinition" } }, "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowStep" } } } },
+      "UpdateWorkflowDraftRequest": { "type": "object", "additionalProperties": false, "required": ["displayName", "inputFields", "steps", "expectedVersion"], "properties": { "displayName": { "type": "string", "minLength": 1, "maxLength": 160 }, "inputFields": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowInputFieldDefinition" } }, "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowStep" } }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "CloneWorkflowDraftRequest": { "type": "object", "additionalProperties": false, "required": ["revisionId", "expectedDefinitionVersion"], "properties": { "revisionId": { "type": "string", "format": "uuid" }, "expectedDefinitionVersion": { "type": "integer", "minimum": 1 } } },
+      "WorkflowVersionCommand": { "type": "object", "additionalProperties": false, "required": ["expectedVersion"], "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "WorkflowValidationIssue": { "type": "object", "additionalProperties": false, "required": ["code", "path"], "properties": { "code": { "type": "string", "enum": ["invalid_value", "invalid_selector", "forward_reference", "type_mismatch", "resource_limit", "agent_run_limit"] }, "path": { "type": "string", "pattern": "^/[A-Za-z0-9_/-]*$", "maxLength": 256 } } },
+      "WorkflowValidationResult": { "type": "object", "additionalProperties": false, "required": ["valid", "issues", "validatedVersion"], "properties": { "valid": { "type": "boolean" }, "issues": { "type": "array", "maxItems": 64, "items": { "$ref": "#/components/schemas/WorkflowValidationIssue" } }, "validatedVersion": { "type": "integer", "minimum": 1 } } },
+      "WorkflowInputValue": { "oneOf": [{ "$ref": "#/components/schemas/BoundedWorkflowText" }, { "type": "string", "format": "date-time", "description": "Offset-aware RFC 3339 instant normalized to UTC." }] },
+      "WorkflowInstanceInput": { "type": "object", "maxProperties": 16, "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "additionalProperties": { "$ref": "#/components/schemas/WorkflowInputValue" }, "description": "Closed against the selected revision's declared fields and limited to 32768 bytes as RFC 8785 canonical JSON." },
+      "StartWorkflowInstanceRequest": { "type": "object", "additionalProperties": false, "required": ["revisionId", "input"], "properties": { "revisionId": { "type": "string", "format": "uuid" }, "input": { "$ref": "#/components/schemas/WorkflowInstanceInput" } } },
+      "WorkflowAgentResult": { "type": "object", "additionalProperties": false, "required": ["status", "output"], "properties": { "status": { "type": "string", "const": "completed" }, "output": { "$ref": "#/components/schemas/BoundedWorkflowText" } } },
+      "WorkflowApprovalResult": { "type": "object", "additionalProperties": false, "required": ["decision", "decidedAt"], "properties": { "decision": { "type": "string", "enum": ["approved", "rejected", "expired"] }, "decidedAt": { "type": "string", "format": "date-time" } } },
+      "WorkflowNotificationReceipt": { "type": "object", "additionalProperties": false, "required": ["notificationId", "status"], "properties": { "notificationId": { "$ref": "#/components/schemas/OpaqueWorkflowIdentifier" }, "status": { "type": "string", "const": "inbox_available" } } },
+      "WorkflowWaitResult": { "type": "object", "additionalProperties": false, "required": ["resumedAt"], "properties": { "resumedAt": { "type": "string", "format": "date-time" } } },
+      "WorkflowStepResult": { "description": "Closed private result algebra, available only from the owner-authorized no-store instance detail.", "oneOf": [{ "$ref": "#/components/schemas/WorkflowAgentResult" }, { "$ref": "#/components/schemas/WorkflowApprovalResult" }, { "$ref": "#/components/schemas/WorkflowNotificationReceipt" }, { "$ref": "#/components/schemas/WorkflowWaitResult" }] },
+      "CreateWorkflowApproval": {
+        "type": "object", "additionalProperties": false, "description": "Internal public application command for an immutable system-derived exact-step approval. It is not an HTTP request body.",
+        "required": ["workflowId", "workflowRevisionId", "workflowInstanceId", "workflowStepOrdinal", "workflowStepExecutionId", "workflowDisplayName", "nextStepKind", "consequence", "consequenceCopy", "ownerScopeId", "workspaceScopeId", "expiresAt"],
+        "properties": { "workflowId": { "type": "string", "format": "uuid" }, "workflowRevisionId": { "type": "string", "format": "uuid" }, "workflowInstanceId": { "type": "string", "format": "uuid" }, "workflowStepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "workflowStepExecutionId": { "type": "string", "format": "uuid" }, "workflowDisplayName": { "type": "string", "minLength": 1, "maxLength": 160 }, "nextStepKind": { "$ref": "#/components/schemas/WorkflowApprovalNextStepKind" }, "consequence": { "$ref": "#/components/schemas/WorkflowApprovalConsequence" }, "consequenceCopy": { "$ref": "#/components/schemas/WorkflowApprovalConsequenceCopy" }, "ownerScopeId": { "$ref": "#/components/schemas/OpaqueWorkflowIdentifier" }, "workspaceScopeId": { "$ref": "#/components/schemas/OpaqueWorkflowIdentifier" }, "expiresAt": { "type": "string", "format": "date-time" } }
+      },
+      "CreateWorkflowNotification": {
+        "type": "object", "additionalProperties": false, "description": "Internal public application command containing only opaque workflow lineage. It is not an HTTP request body and contains no notification or workflow content.",
+        "required": ["workflowId", "workflowRevisionId", "workflowInstanceId", "workflowStepOrdinal", "workflowStepExecutionId", "workflowResultId"],
+        "properties": { "workflowId": { "type": "string", "format": "uuid" }, "workflowRevisionId": { "type": "string", "format": "uuid" }, "workflowInstanceId": { "type": "string", "format": "uuid" }, "workflowStepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "workflowStepExecutionId": { "type": "string", "format": "uuid" }, "workflowResultId": { "type": "string", "format": "uuid" } }
+      },
+      "WorkflowInstanceStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_time", "waiting_for_approval", "waiting_for_resolution", "resolution_required", "cancel_requested", "terminal"] },
+      "WorkflowTerminalOutcome": { "type": "string", "enum": ["completed", "canceled", "failed"] },
+      "WorkflowStepStatus": { "type": "string", "enum": ["pending", "running", "waiting_for_time", "waiting_for_approval", "failed_replayable", "resolution_required", "completed", "rejected", "expired", "canceled", "failed"] },
+      "WorkflowEffectOutcome": { "type": "string", "enum": ["not_attempted", "completed", "definitively_failed", "unknown"] },
+      "WorkflowRecoveryCapability": { "type": "string", "enum": ["request_replay", "settle_failed", "reconcile", "cancel"] },
+      "WorkflowStepKind": { "type": "string", "enum": ["agent_run", "owner_approval", "owner_notification", "wait_until"] },
+      "WorkflowStepState": {
+        "type": "object", "additionalProperties": false, "description": "Content-bounded exact step state; any private output is available only in this owner-authorized no-store snapshot.",
+        "required": ["ordinal", "kind", "stepExecutionId", "status", "effectOutcome", "recoveryCapabilities", "replayUsed", "result", "startedAt", "settledAt"],
+        "properties": { "ordinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "kind": { "$ref": "#/components/schemas/WorkflowStepKind" }, "stepExecutionId": { "type": "string", "format": "uuid" }, "status": { "$ref": "#/components/schemas/WorkflowStepStatus" }, "effectOutcome": { "$ref": "#/components/schemas/WorkflowEffectOutcome" }, "recoveryCapabilities": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/components/schemas/WorkflowRecoveryCapability" } }, "replayUsed": { "type": "boolean" }, "result": { "oneOf": [{ "$ref": "#/components/schemas/WorkflowStepResult" }, { "type": "null" }] }, "startedAt": { "type": ["string", "null"], "format": "date-time" }, "settledAt": { "type": ["string", "null"], "format": "date-time" } }
+      },
+      "WorkflowCompletedEffect": { "type": "object", "additionalProperties": false, "required": ["stepOrdinal", "stepKind"], "properties": { "stepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "stepKind": { "$ref": "#/components/schemas/WorkflowStepKind" } } },
+      "WorkflowCheckpointStatus": { "type": "string", "enum": ["current", "settled"] },
+      "WorkflowCheckpointSummary": { "type": "object", "additionalProperties": false, "description": "Content-free public checkpoint reference; private coordinator payload and executor state are excluded.", "required": ["id", "stepOrdinal", "status", "version", "createdAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "stepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 }, "status": { "$ref": "#/components/schemas/WorkflowCheckpointStatus" }, "version": { "type": "integer", "minimum": 1 }, "createdAt": { "type": "string", "format": "date-time" } } },
+      "WorkflowInstance": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "workflowId", "revisionId", "input", "status", "terminalOutcome", "currentStepOrdinal", "steps", "completedEffects", "checkpoints", "result", "version", "admittedAt", "deadlineAt", "updatedAt", "terminalAt"],
+        "properties": { "id": { "type": "string", "format": "uuid" }, "workflowId": { "type": "string", "format": "uuid" }, "revisionId": { "type": "string", "format": "uuid" }, "input": { "$ref": "#/components/schemas/WorkflowInstanceInput" }, "status": { "$ref": "#/components/schemas/WorkflowInstanceStatus" }, "terminalOutcome": { "oneOf": [{ "$ref": "#/components/schemas/WorkflowTerminalOutcome" }, { "type": "null" }] }, "currentStepOrdinal": { "type": ["integer", "null"], "minimum": 1, "maximum": 8 }, "steps": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowStepState" } }, "completedEffects": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowCompletedEffect" } }, "checkpoints": { "type": "array", "maxItems": 9, "items": { "$ref": "#/components/schemas/WorkflowCheckpointSummary" } }, "result": { "oneOf": [{ "$ref": "#/components/schemas/WorkflowStepResult" }, { "type": "null" }] }, "version": { "type": "integer", "minimum": 1 }, "admittedAt": { "type": "string", "format": "date-time" }, "deadlineAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "terminalAt": { "type": ["string", "null"], "format": "date-time" } }
+      },
+      "WorkflowInstanceSummary": { "type": "object", "additionalProperties": false, "description": "Content-free compact workflow instance summary.", "required": ["id", "workflowId", "revisionId", "status", "terminalOutcome", "currentStepOrdinal", "completedEffects", "version", "admittedAt", "deadlineAt", "updatedAt", "terminalAt"], "properties": { "id": { "type": "string", "format": "uuid" }, "workflowId": { "type": "string", "format": "uuid" }, "revisionId": { "type": "string", "format": "uuid" }, "status": { "$ref": "#/components/schemas/WorkflowInstanceStatus" }, "terminalOutcome": { "oneOf": [{ "$ref": "#/components/schemas/WorkflowTerminalOutcome" }, { "type": "null" }] }, "currentStepOrdinal": { "type": ["integer", "null"], "minimum": 1, "maximum": 8 }, "completedEffects": { "type": "array", "maxItems": 8, "items": { "$ref": "#/components/schemas/WorkflowCompletedEffect" } }, "version": { "type": "integer", "minimum": 1 }, "admittedAt": { "type": "string", "format": "date-time" }, "deadlineAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "terminalAt": { "type": ["string", "null"], "format": "date-time" } } },
+      "WorkflowInstancePage": { "type": "object", "additionalProperties": false, "required": ["items", "nextCursor"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/WorkflowInstanceSummary" } }, "nextCursor": { "type": ["string", "null"], "maxLength": 1024 } } },
+      "WorkflowResolutionAction": { "type": "string", "enum": ["request_replay", "settle_failed", "reconcile_completed", "reconcile_failed"] },
+      "ResolveWorkflowInstanceRequest": { "type": "object", "additionalProperties": false, "required": ["action", "stepExecutionId", "expectedVersion"], "properties": { "action": { "$ref": "#/components/schemas/WorkflowResolutionAction" }, "stepExecutionId": { "type": "string", "format": "uuid" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "WorkflowDeletionScope": { "type": "string", "enum": ["draft", "retired_definition", "published_revision", "terminal_instance_state", "terminal_instance_history", "terminal_instance_result", "terminal_instance_checkpoints"] },
+      "DeleteWorkflowDraftRequest": { "type": "object", "additionalProperties": false, "required": ["scope", "expectedVersion"], "properties": { "scope": { "type": "string", "const": "draft" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "DeleteWorkflowDefinitionRequest": { "type": "object", "additionalProperties": false, "required": ["scope", "expectedVersion"], "properties": { "scope": { "type": "string", "const": "retired_definition" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "DeleteWorkflowRevisionRequest": { "type": "object", "additionalProperties": false, "required": ["scope", "expectedVersion"], "properties": { "scope": { "type": "string", "const": "published_revision" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "DeleteWorkflowInstanceStateRequest": { "type": "object", "additionalProperties": false, "required": ["scope", "expectedVersion"], "properties": { "scope": { "type": "string", "const": "terminal_instance_state" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "DeleteWorkflowInstanceHistoryRequest": { "type": "object", "additionalProperties": false, "required": ["scope", "expectedVersion"], "properties": { "scope": { "type": "string", "const": "terminal_instance_history" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "DeleteWorkflowInstanceResultRequest": { "type": "object", "additionalProperties": false, "required": ["scope", "expectedVersion"], "properties": { "scope": { "type": "string", "const": "terminal_instance_result" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "DeleteWorkflowInstanceCheckpointsRequest": { "type": "object", "additionalProperties": false, "required": ["scope", "expectedVersion"], "properties": { "scope": { "type": "string", "const": "terminal_instance_checkpoints" }, "expectedVersion": { "type": "integer", "minimum": 1 } } },
+      "WorkflowDeletionReceipt": { "type": "object", "additionalProperties": false, "required": ["scope", "deleted", "tombstoneRetained", "deletedAt"], "properties": { "scope": { "$ref": "#/components/schemas/WorkflowDeletionScope" }, "deleted": { "type": "boolean" }, "tombstoneRetained": { "type": "boolean" }, "deletedAt": { "type": "string", "format": "date-time" } } },
+      "BriefingScheduleStatus": { "type": "string", "enum": ["active", "paused", "deleted"] },
+      "BriefingOccurrenceStatus": { "type": "string", "enum": ["scheduled", "admitted", "running", "completed", "partial", "failed", "canceled", "skipped", "unknown"] },
+      "BriefingResultStatus": { "type": "string", "enum": ["completed", "partial", "failed", "canceled", "unknown", "deleted"] },
+      "BriefingSourceCompleteness": { "type": "string", "enum": ["complete", "partial", "unavailable", "unknown"] },
+      "BriefingDeletionScope": { "type": "string", "enum": ["schedule", "occurrence_history", "result_content"] },
+      "BriefingCapabilities": {
+        "type": "object", "additionalProperties": false,
+        "description": "Fixed public metadata for the one supported Aura-owned briefing execution policy. This capability contains no provider, model, prompt, tool-grant, owner, source, or private runtime state.",
+        "required": ["executionPolicyRevisionId", "executionPolicyRevision", "deadlineSeconds", "maxOutputTokens", "maxOutputChars", "cadenceKind", "memoryEnabled", "toolsEnabled"],
+        "properties": {
+          "executionPolicyRevisionId": { "type": "string", "format": "uuid", "const": "e80e8c61-575a-5a8c-862e-0c7cc91baa61" },
+          "executionPolicyRevision": { "type": "string", "const": "briefing-execution-v1" },
+          "deadlineSeconds": { "type": "integer", "const": 300 },
+          "maxOutputTokens": { "type": "integer", "const": 16384 },
+          "maxOutputChars": { "type": "integer", "const": 32768 },
+          "cadenceKind": { "type": "string", "const": "daily" },
+          "memoryEnabled": { "type": "boolean", "const": false },
+          "toolsEnabled": { "type": "boolean", "const": false }
+        }
+      },
+      "BriefingDailyCadence": {
+        "type": "object", "additionalProperties": false,
+        "description": "Exactly one daily local wall-clock cadence. Core validates timeZone against its supported IANA timezone database and computes due instants; clients do not calculate occurrences.",
+        "required": ["kind", "localTime", "timeZone"],
+        "properties": {
+          "kind": { "type": "string", "const": "daily" },
+          "localTime": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$" },
+          "timeZone": { "$ref": "#/components/schemas/ClientTimeZone" }
+        }
+      },
+      "BriefingSourceGrants": {
+        "type": "object", "additionalProperties": false,
+        "description": "Closed owner-selected source set. Identifiers are private grants reauthorized at admission. Calendar, reminder, and document values are untrusted evidence. Memory is intentionally unrepresentable.",
+        "required": ["includeReminders", "calendarIds", "documentIds"],
+        "properties": {
+          "includeReminders": { "type": "boolean", "const": true },
+          "calendarIds": { "type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" }, "description": "Explicitly selected readable Aura calendar identifiers." },
+          "documentIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" }, "description": "Explicitly owner-selected ready documents. Ownership, readiness, and current authorization are revalidated at admission." }
+        }
+      },
+      "BriefingExecutionPolicyReferences": {
+        "type": "object", "additionalProperties": false,
+        "description": "Immutable policy references pinned by the schedule. The referenced policies own deadlines and bounded model, tool, and resource budgets; provider and executor configuration is not exposed.",
+        "required": ["executionPolicyRevisionId", "promptBundleRevisionId", "modelPolicyRevisionId", "toolPolicyRevisionId"],
+        "properties": {
+          "executionPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "promptBundleRevisionId": { "type": "string", "format": "uuid" },
+          "modelPolicyRevisionId": { "type": "string", "format": "uuid" },
+          "toolPolicyRevisionId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "CreateBriefingScheduleRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["displayName", "cadence", "sources", "agentRevisionId", "executionPolicies"],
+        "properties": {
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "cadence": { "$ref": "#/components/schemas/BriefingDailyCadence" },
+          "sources": { "$ref": "#/components/schemas/BriefingSourceGrants" },
+          "agentRevisionId": { "type": "string", "format": "uuid" },
+          "executionPolicies": { "$ref": "#/components/schemas/BriefingExecutionPolicyReferences" }
+        }
+      },
+      "BriefingSchedule": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-private versioned schedule retained until explicit deletion. deleted tombstones prevent future admission without implicitly deleting history or results.",
+        "required": ["id", "displayName", "status", "version", "cadence", "sources", "agentRevisionId", "executionPolicies", "nextDueAt", "createdAt", "updatedAt", "deletedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "status": { "$ref": "#/components/schemas/BriefingScheduleStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "cadence": { "$ref": "#/components/schemas/BriefingDailyCadence" },
+          "sources": { "$ref": "#/components/schemas/BriefingSourceGrants" },
+          "agentRevisionId": { "type": "string", "format": "uuid" },
+          "executionPolicies": { "$ref": "#/components/schemas/BriefingExecutionPolicyReferences" },
+          "nextDueAt": { "type": ["string", "null"], "format": "date-time", "description": "Server-calculated next due instant; null when paused or deleted." },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "deletedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "BriefingSchedulePage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/BriefingSchedule" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "BriefingVersionCommand": {
+        "type": "object", "additionalProperties": false,
+        "required": ["expectedVersion"],
+        "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
+      },
+      "BriefingOccurrence": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-scoped occurrence with deterministic due-time and run/result lineage. No source content, provider material, prompt, or hidden execution state is exposed.",
+        "required": ["id", "scheduleId", "sequence", "status", "version", "dueAt", "dueLocalDate", "dueLocalTime", "timeZone", "sourceCompleteness", "runId", "resultId", "createdAt", "updatedAt", "startedAt", "finishedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "scheduleId": { "type": "string", "format": "uuid" },
+          "sequence": { "type": "integer", "minimum": 1 },
+          "status": { "$ref": "#/components/schemas/BriefingOccurrenceStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "dueAt": { "type": "string", "format": "date-time", "description": "Server-authoritative due instant." },
+          "dueLocalDate": { "type": "string", "format": "date" },
+          "dueLocalTime": { "type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$" },
+          "timeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "sourceCompleteness": { "$ref": "#/components/schemas/BriefingSourceCompleteness" },
+          "runId": { "type": ["string", "null"], "format": "uuid", "description": "At most one admitted Aura run identifier." },
+          "resultId": { "type": ["string", "null"], "format": "uuid" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "startedAt": { "type": ["string", "null"], "format": "date-time" },
+          "finishedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "BriefingOccurrencePage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/BriefingOccurrence" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 }
+        }
+      },
+      "BriefingResult": {
+        "type": "object", "additionalProperties": false,
+        "description": "Dedicated owner-private durable result with manual-only retention. content is untrusted generated output and never appears in notifications, URLs, logs, telemetry, or lifecycle events.",
+        "required": ["id", "scheduleId", "occurrenceId", "runId", "status", "version", "sourceCompleteness", "content", "createdAt", "updatedAt", "deletedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "scheduleId": { "type": "string", "format": "uuid" },
+          "occurrenceId": { "type": "string", "format": "uuid" },
+          "runId": { "type": ["string", "null"], "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/BriefingResultStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "sourceCompleteness": { "$ref": "#/components/schemas/BriefingSourceCompleteness" },
+          "content": { "type": ["string", "null"], "maxLength": 100000, "description": "Private result text, null for failed, canceled, unknown, or deleted outcomes." },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "deletedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "DeleteBriefingScheduleRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["scope", "expectedVersion"],
+        "properties": {
+          "scope": { "type": "string", "const": "schedule" },
+          "expectedVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "DeleteBriefingHistoryRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["scope", "expectedScheduleVersion"],
+        "properties": {
+          "scope": { "type": "string", "const": "occurrence_history" },
+          "expectedScheduleVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "DeleteBriefingResultRequest": {
+        "type": "object", "additionalProperties": false,
+        "required": ["scope", "expectedVersion"],
+        "properties": {
+          "scope": { "type": "string", "const": "result_content" },
+          "expectedVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "BriefingDeletionReceipt": {
+        "type": "object", "additionalProperties": false,
+        "description": "Content-free idempotent deletion receipt. Audit truth and unaffected resources remain retained.",
+        "required": ["deletionId", "scope", "scheduleId", "occurrenceId", "resultId", "deletedAt"],
+        "properties": {
+          "deletionId": { "type": "string", "format": "uuid" },
+          "scope": { "$ref": "#/components/schemas/BriefingDeletionScope" },
+          "scheduleId": { "type": "string", "format": "uuid" },
+          "occurrenceId": { "type": ["string", "null"], "format": "uuid" },
+          "resultId": { "type": ["string", "null"], "format": "uuid" },
+          "deletedAt": { "type": "string", "format": "date-time" }
         }
       },
       "DocumentAttachmentReference": {
@@ -3440,6 +4300,253 @@
           "status": { "type": "string", "const": "deleting" },
           "version": { "type": "integer", "minimum": 1 },
           "acceptedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarConnectionStatus": {
+        "type": "string",
+        "enum": ["disconnected", "connecting", "connected", "reauthorization_required", "revocation_uncertain", "disabled", "unavailable"],
+        "description": "Closed provider-neutral lifecycle state. revocation_uncertain, disabled, unavailable, and reauthorization_required always disable calendar reads."
+      },
+      "CalendarRecoveryAction": {
+        "type": "string",
+        "enum": ["connect", "complete_connection", "retry", "reauthorize", "disconnect", "wait", "contact_administrator"]
+      },
+      "CalendarFailureCategory": {
+        "type": "string",
+        "enum": ["authorization", "validation", "callback_rejected", "provider_auth", "provider_rate_limit", "provider_unavailable", "calendar_unavailable", "dependency_unavailable", "deadline_exceeded", "revocation_uncertain"],
+        "description": "Closed Aura-owned failure category. Raw provider status, payloads, identifiers, URLs, and diagnostics are never copied into this value."
+      },
+      "CalendarErrorEnvelope": {
+        "type": "object", "additionalProperties": false,
+        "description": "Calendar-scoped problem response containing only closed Aura-owned classification and bounded owner-safe recovery metadata. title and detail are server-authored from fixed templates. Calendar names, event content, owner identity, request fields or values, provider identifiers, endpoints, status text, payloads and diagnostics, credentials, codes, tokens, internal references, resource identifiers, and arbitrary field-error data are prohibited.",
+        "required": ["type", "title", "status", "category", "detail", "retryable", "recoveryAction", "traceId"],
+        "properties": {
+          "type": { "type": "string", "format": "uri", "description": "Stable Aura-owned problem type; never a provider URL." },
+          "title": { "type": "string", "minLength": 1, "maxLength": 120, "description": "Fixed Aura-owned owner-safe title." },
+          "status": { "type": "integer", "minimum": 400, "maximum": 599 },
+          "category": { "$ref": "#/components/schemas/CalendarFailureCategory" },
+          "detail": { "type": "string", "minLength": 1, "maxLength": 500, "description": "Fixed-template recovery guidance with no private request, calendar, owner, credential, resource, field, or provider diagnostic value." },
+          "retryable": { "type": "boolean" },
+          "recoveryAction": { "$ref": "#/components/schemas/CalendarRecoveryAction" },
+          "traceId": { "type": "string", "pattern": "^[0-9a-f]{32}$", "description": "Content-free correlation identifier." }
+        }
+      },
+      "CalendarConnectionError": {
+        "type": "object", "additionalProperties": false,
+        "description": "Bounded owner-safe recovery metadata. It contains no provider error text, owner identity, credentials, codes, calendar content, or internal references.",
+        "required": ["category", "message", "retryable", "recoveryAction", "occurredAt"],
+        "properties": {
+          "category": { "$ref": "#/components/schemas/CalendarFailureCategory" },
+          "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "retryable": { "type": "boolean" },
+          "recoveryAction": { "$ref": "#/components/schemas/CalendarRecoveryAction" },
+          "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarConnectionAction": {
+        "type": "string",
+        "enum": ["connect", "complete_connection", "reauthorize", "disconnect"],
+        "description": "Server-authoritative owner actions valid for the current connection state. Every value maps unambiguously to one public lifecycle operation; transient read recovery is represented by CalendarRecoveryAction and is not a connection action."
+      },
+      "CalendarConnection": {
+        "type": "object", "additionalProperties": false,
+        "description": "Provider-neutral owner-scoped connection projection. Provider account identity, tokens, authorization codes, credential metadata and references, scopes, endpoints, and raw errors are excluded.",
+        "required": ["status", "readsEnabled", "selectedCalendarCount", "connectedAt", "updatedAt", "lastError", "availableActions"],
+        "properties": {
+          "status": { "$ref": "#/components/schemas/CalendarConnectionStatus" },
+          "readsEnabled": { "type": "boolean", "description": "True only while connected and authorized; false for every other lifecycle state." },
+          "selectedCalendarCount": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "connectedAt": { "type": ["string", "null"], "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "lastError": { "oneOf": [{ "$ref": "#/components/schemas/CalendarConnectionError" }, { "type": "null" }] },
+          "availableActions": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "$ref": "#/components/schemas/CalendarConnectionAction" } }
+        }
+      },
+      "CalendarAuthorizationStart": {
+        "type": "object", "additionalProperties": false,
+        "description": "Short-lived navigation result for one owner-initiated connection attempt. authorizationPath is an authenticated same-origin navigation handle bound exactly to the owner, initiating session, and connection attempt. The high-entropy opaque handle is single-use, expires exactly at expiresAt, and MUST fail closed when missing, expired, superseded, replayed, prefetched, owner-mismatched, session-mismatched, or attempt-mismatched. Starting a newer connect or reauthorization attempt invalidates the prior handle and server-held callback result. The path is never persisted, logged, measured, prefetched, placed in SSE, or cached and contains no provider code, state, token, client secret, credential reference, calendar content, or owner identity.",
+        "required": ["connection", "authorizationPath", "expiresAt"],
+        "properties": {
+          "connection": { "$ref": "#/components/schemas/CalendarConnection" },
+          "authorizationPath": { "type": "string", "pattern": "^/api/v1/integrations/calendar/authorize/[A-Za-z0-9_-]{43,128}$", "maxLength": 192, "description": "Authenticated same-origin navigation containing a minimum 256-bit base64url opaque handle. The server, not the path value, owns the exact owner, initiating-session, attempt, single-use, supersession, and expiry binding." },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SelectableCalendar": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-private readable calendar metadata. id is an Aura-owned opaque identifier, not a provider identifier. Names and timezone values must not enter URLs, ordinary logs, telemetry, SSE, browser persistence, or service-worker caches.",
+        "required": ["id", "displayName", "timeZone", "selected", "discoveredAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "timeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "selected": { "type": "boolean", "description": "False on first discovery and until an explicit selection replacement includes this calendar." },
+          "discoveredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SelectableCalendarPage": {
+        "type": "object", "additionalProperties": false,
+        "required": ["items", "nextCursor", "selectionVersion", "observedAt"],
+        "properties": {
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/SelectableCalendar" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 },
+          "selectionVersion": { "type": "integer", "minimum": 1 },
+          "observedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ReplaceCalendarSelectionRequest": {
+        "type": "object", "additionalProperties": false,
+        "description": "Complete explicit replacement set. An empty list selects none. Every identifier must be owner-authorized, currently discovered, and readable; newly discovered identifiers are never appended by the server.",
+        "required": ["calendarIds", "expectedVersion"],
+        "properties": {
+          "calendarIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+          "expectedVersion": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "CalendarSelection": {
+        "type": "object", "additionalProperties": false,
+        "required": ["calendarIds", "version", "updatedAt"],
+        "properties": {
+          "calendarIds": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+          "version": { "type": "integer", "minimum": 1 },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarEventQuery": {
+        "type": "object", "additionalProperties": false,
+        "description": "Private read-only query. rangeStart is inclusive, rangeEnd is exclusive, rangeStart must precede rangeEnd by no more than 31 days, every calendarId must be in the explicit selected set, and a cursor is bound to the owner and every normalized query field. Producers validate displayTimeZone against the deployed IANA database. The server applies a deadline no greater than timeoutMs and stops provider work when the request is cancelled.",
+        "required": ["rangeStart", "rangeEnd", "displayTimeZone", "calendarIds"],
+        "properties": {
+          "rangeStart": { "type": "string", "format": "date-time" },
+          "rangeEnd": { "type": "string", "format": "date-time" },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "calendarIds": { "type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 },
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 1024, "description": "Opaque owner-, selected-calendar-, range-, timezone-, and limit-bound cursor." },
+          "timeoutMs": { "type": "integer", "minimum": 500, "maximum": 10000, "default": 5000 }
+        }
+      },
+      "CalendarEventAvailability": { "type": "string", "enum": ["busy", "free"] },
+      "TimedCalendarEvent": {
+        "type": "object", "additionalProperties": false,
+        "description": "Normalized owner-private timed event. Text is untrusted provider content for escaped display only and must not grant instruction or policy authority or enter logs, telemetry, SSE, URLs, browser persistence, service-worker caches, memory, or model-facing tools.",
+        "required": ["kind", "id", "calendarId", "title", "description", "location", "availability", "startInstant", "endInstant", "eventTimeZone", "displayTimeZone", "spansMultipleDays"],
+        "properties": {
+          "kind": { "type": "string", "const": "timed" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 512, "description": "Opaque owner-bound event identity. It must not be placed in URLs, logs, telemetry, or browser persistence." },
+          "calendarId": { "type": "string", "format": "uuid" },
+          "title": { "type": "string", "maxLength": 1000 },
+          "description": { "type": ["string", "null"], "maxLength": 10000 },
+          "location": { "type": ["string", "null"], "maxLength": 1000 },
+          "availability": { "$ref": "#/components/schemas/CalendarEventAvailability" },
+          "startInstant": { "type": "string", "format": "date-time" },
+          "endInstant": { "type": "string", "format": "date-time" },
+          "eventTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "IANA timezone provenance supplied by or deterministically resolved for the source event." },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "spansMultipleDays": { "type": "boolean", "description": "Server-computed against displayTimeZone; clients do not infer this classification." }
+        }
+      },
+      "AllDayCalendarEvent": {
+        "type": "object", "additionalProperties": false,
+        "description": "Normalized owner-private all-day event using a half-open local-date interval. Text is untrusted provider content and has the same no-log, no-telemetry, no-SSE, no-persistence, no-memory, and no-model-tool restrictions as timed events.",
+        "required": ["kind", "id", "calendarId", "title", "description", "location", "availability", "startDate", "endDateExclusive", "eventTimeZone", "displayTimeZone", "spansMultipleDays"],
+        "properties": {
+          "kind": { "type": "string", "const": "all_day" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 512, "description": "Opaque owner-bound event identity. It must not be placed in URLs, logs, telemetry, or browser persistence." },
+          "calendarId": { "type": "string", "format": "uuid" },
+          "title": { "type": "string", "maxLength": 1000 },
+          "description": { "type": ["string", "null"], "maxLength": 10000 },
+          "location": { "type": ["string", "null"], "maxLength": 1000 },
+          "availability": { "$ref": "#/components/schemas/CalendarEventAvailability" },
+          "startDate": { "type": "string", "format": "date" },
+          "endDateExclusive": { "type": "string", "format": "date" },
+          "eventTimeZone": { "$ref": "#/components/schemas/ClientTimeZone", "description": "IANA timezone used to interpret all-day boundaries." },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "spansMultipleDays": { "type": "boolean", "description": "True when the half-open local-date interval spans more than one day." }
+        }
+      },
+      "CalendarEvent": {
+        "oneOf": [{ "$ref": "#/components/schemas/TimedCalendarEvent" }, { "$ref": "#/components/schemas/AllDayCalendarEvent" }],
+        "discriminator": { "propertyName": "kind" }
+      },
+      "CalendarReadWarning": {
+        "type": "object", "additionalProperties": false,
+        "description": "Bounded owner-safe partial-read metadata. Raw provider errors and provider identifiers are excluded.",
+        "required": ["calendarId", "category", "retryable", "recoveryAction"],
+        "properties": {
+          "calendarId": { "type": "string", "format": "uuid" },
+          "category": { "$ref": "#/components/schemas/CalendarFailureCategory" },
+          "retryable": { "type": "boolean" },
+          "recoveryAction": { "$ref": "#/components/schemas/CalendarRecoveryAction" }
+        }
+      },
+      "CalendarEventPage": {
+        "type": "object", "additionalProperties": false,
+        "description": "On-demand normalized event page. The result is never a durable event cache and is not eligible for browser or service-worker persistence.",
+        "required": ["rangeStart", "rangeEnd", "displayTimeZone", "items", "nextCursor", "partial", "warnings", "retrievedAt"],
+        "properties": {
+          "rangeStart": { "type": "string", "format": "date-time" },
+          "rangeEnd": { "type": "string", "format": "date-time" },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/components/schemas/CalendarEvent" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 },
+          "partial": { "type": "boolean" },
+          "warnings": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/CalendarReadWarning" } },
+          "retrievedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarConflictQuery": {
+        "type": "object", "additionalProperties": false,
+        "description": "Private deterministic conflict query. It uses the same 31-day range, selected-calendar allowlist, cursor binding, IANA timezone validation, deadline, and cancellation rules as CalendarEventQuery. conflictLimit bounds relationship expansion independently of source event count.",
+        "required": ["rangeStart", "rangeEnd", "displayTimeZone", "calendarIds"],
+        "properties": {
+          "rangeStart": { "type": "string", "format": "date-time" },
+          "rangeEnd": { "type": "string", "format": "date-time" },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "calendarIds": { "type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+          "conflictLimit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 100 },
+          "cursor": { "type": "string", "minLength": 1, "maxLength": 1024, "description": "Opaque owner-, selected-calendar-, range-, timezone-, and limit-bound relationship cursor." },
+          "timeoutMs": { "type": "integer", "minimum": 500, "maximum": 10000, "default": 5000 }
+        }
+      },
+      "CalendarConflictEventReference": {
+        "type": "object", "additionalProperties": false,
+        "required": ["eventId", "calendarId"],
+        "properties": {
+          "eventId": { "type": "string", "minLength": 1, "maxLength": 512, "description": "Opaque owner-bound private event identity; never placed in URLs, logs, telemetry, or persistence." },
+          "calendarId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "CalendarConflictRelationship": {
+        "type": "string",
+        "enum": ["overlaps", "contains", "contained_by", "same_interval"],
+        "description": "Deterministic interval relationship from left to right. Adjacent zero-duration boundaries and availability=free events are not conflicts. All-day boundaries are resolved in eventTimeZone before comparison."
+      },
+      "CalendarConflict": {
+        "type": "object", "additionalProperties": false,
+        "description": "One canonical unordered event pair. left precedes right by start instant, then end instant, then event ID; each pair appears once. Relationship and overlap bounds are server-computed.",
+        "required": ["left", "right", "relationship", "overlapStart", "overlapEnd"],
+        "properties": {
+          "left": { "$ref": "#/components/schemas/CalendarConflictEventReference" },
+          "right": { "$ref": "#/components/schemas/CalendarConflictEventReference" },
+          "relationship": { "$ref": "#/components/schemas/CalendarConflictRelationship" },
+          "overlapStart": { "type": "string", "format": "date-time" },
+          "overlapEnd": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CalendarConflictPage": {
+        "type": "object", "additionalProperties": false,
+        "description": "Server-authoritative deterministic relationships ordered by overlapStart, overlapEnd, left event ID, and right event ID. Models and clients must not recalculate or broaden them.",
+        "required": ["rangeStart", "rangeEnd", "displayTimeZone", "items", "nextCursor", "partial", "warnings", "evaluatedAt"],
+        "properties": {
+          "rangeStart": { "type": "string", "format": "date-time" },
+          "rangeEnd": { "type": "string", "format": "date-time" },
+          "displayTimeZone": { "$ref": "#/components/schemas/ClientTimeZone" },
+          "items": { "type": "array", "maxItems": 200, "items": { "$ref": "#/components/schemas/CalendarConflict" } },
+          "nextCursor": { "type": ["string", "null"], "maxLength": 1024 },
+          "partial": { "type": "boolean" },
+          "warnings": { "type": "array", "maxItems": 50, "items": { "$ref": "#/components/schemas/CalendarReadWarning" } },
+          "evaluatedAt": { "type": "string", "format": "date-time" }
         }
       },
       "ModelVisionRequiredError": {

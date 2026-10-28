@@ -202,7 +202,7 @@ def _property_names(schema: Any) -> set[str]:
 
 def test_memory_product_resources_are_versioned_and_owner_authenticated() -> None:
     spec = _openapi()
-    assert spec["info"]["version"] == "1.18.0"
+    assert spec["info"]["version"] == "1.22.0"
     assert spec["security"] == [{"sessionCookie": []}]
 
     expected = {

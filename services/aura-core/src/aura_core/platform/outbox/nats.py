@@ -22,10 +22,12 @@ from aura_core.platform.evaluation_transport import (
 )
 from aura_core.platform.outbox.service import (
     APPROVAL_EVENT_TOPIC,
+    BRIEFING_EVENT_TOPIC,
     RUN_COMMAND_TOPIC,
     RUN_RESUME_TOPIC,
     OutboxCommand,
     identifier_trace_metadata,
+    validate_briefing_lifecycle_event,
 )
 from aura_core.platform.telemetry import Stopwatch, new_span_id
 
@@ -35,6 +37,8 @@ ApprovalEventHandler = Callable[[UUID], Awaitable[None]]
 ResumptionEventHandler = Callable[[UUID], Awaitable[None]]
 ThinkingEventHandler = Callable[[UUID, UUID, int, str], Awaitable[None]]
 NOTIFICATION_EVENT_SUBJECT = "aura.notifications.events.v1"
+BRIEFING_EVENT_SUBJECT = BRIEFING_EVENT_TOPIC
+BRIEFING_WAKE_SUBJECT = "aura.automation.briefings.wake.v1"
 APPROVAL_EVENT_SUBJECT = "aura.approvals.events.v1"
 RESUMPTION_EVENT_SUBJECT = "aura.runs.resume.v1"
 # Deliberately plain Core NATS: this subject is live-only and must never be
@@ -320,10 +324,24 @@ class NatsOutbox:
     async def publish(self, command: OutboxCommand) -> bool:
         if self._jetstream is None:
             raise RuntimeError("NATS transport is not connected")
-        subject = self.subject if command.topic == RUN_COMMAND_TOPIC else command.topic
+        if command.topic == BRIEFING_EVENT_SUBJECT:
+            if command.event_payload is None:
+                raise ValueError("briefing lifecycle publish requires an event payload")
+            payload = validate_briefing_lifecycle_event(command.event_payload)
+            schedule_id = UUID(str(payload["scheduleId"]))
+            if (
+                command.aggregate_type != "automation.briefing"
+                or command.aggregate_id != schedule_id
+            ):
+                raise ValueError("briefing lifecycle publish has an invalid aggregate")
+            encoded_payload = json.dumps(payload, separators=(",", ":")).encode()
+            subject = BRIEFING_EVENT_SUBJECT
+        else:
+            encoded_payload = command.wire_payload()
+            subject = self.subject if command.topic == RUN_COMMAND_TOPIC else command.topic
         acknowledgment = await self._jetstream.publish(
             subject,
-            command.wire_payload(),
+            encoded_payload,
             headers={"Nats-Msg-Id": str(command.id)},
         )
         duplicate = bool(getattr(acknowledgment, "duplicate", False))
@@ -776,11 +794,6 @@ class NatsRunConsumer:
         if delivery_count > 1:
             self.metrics.increment(
                 self.component,
-                "consumer_redelivered",
-                **_command_metric_metadata(command, delivery_count),
-            )
-            self.metrics.increment(
-                self.component,
                 "outbox_duplicates",
                 **_command_metric_metadata(command, delivery_count),
             )
@@ -903,6 +916,7 @@ class NatsIdentifierConsumer(NatsRunConsumer):
     """
 
     emits_consumer_metrics = True
+    emits_redelivery_metrics = False
 
     def __init__(
         self,
@@ -956,17 +970,44 @@ class NatsIdentifierConsumer(NatsRunConsumer):
             **_command_metric_metadata(command, delivery_count),
         )
         if delivery_count > 1:
-            self.metrics.increment(
-                self.component,
-                "consumer_redelivered",
-                **_command_metric_metadata(command, delivery_count),
-            )
+            if self.emits_redelivery_metrics:
+                self.metrics.increment(
+                    self.component,
+                    "consumer_redelivered",
+                    **_command_metric_metadata(command, delivery_count),
+                )
             self.metrics.increment(
                 self.component,
                 "outbox_duplicates",
                 **_command_metric_metadata(command, delivery_count),
             )
         return command
+
+
+class NatsBriefingConsumer(NatsIdentifierConsumer):
+    """Durable identifier-only consumer for scheduled briefing wakeups."""
+
+    emits_redelivery_metrics = True
+
+    def __init__(
+        self,
+        connection_url: str,
+        subject: str = BRIEFING_WAKE_SUBJECT,
+        metrics: MetricsPort | None = None,
+        *,
+        durable: str = "aura-core-briefing-worker",
+        # The generic consumer records transport counters (receive, nack,
+        # reject, redelivery, duplicate, and parse errors).  Briefing owns
+        # those bounded wake-transport metrics; persistence owns settlement.
+        component: str = "aura.automation.briefing_scheduler",
+    ) -> None:
+        super().__init__(
+            connection_url,
+            subject,
+            metrics,
+            durable=durable,
+            component=component,
+        )
 
 
 def _stream_subjects(info: Any) -> tuple[str, ...]:
@@ -1110,13 +1151,37 @@ def _command_metric_metadata(
     """Build bounded command trace metadata for both legacy and generic envelopes."""
 
     identity = command.run_id or command.aggregate_id or command.id
+    identifiers = _optional_command_metadata(command)
+    # Generic identifier names are transport-facing; telemetry uses the
+    # closed briefing names for the two scheduled-run identifiers.  Never
+    # pass arbitrary envelope identifiers as metric attributes.
+    identifier_aliases = {
+        "schedule_id": "briefing_schedule_id",
+        "occurrence_id": "briefing_occurrence_id",
+        "result_id": "briefing_result_id",
+    }
+    identifiers = {
+        identifier_aliases.get(key, key): value
+        for key, value in identifiers.items()
+        if key
+        in {
+            "aggregate_type",
+            "aggregate_id",
+            "event_id",
+            "schedule_id",
+            "occurrence_id",
+            "result_id",
+            "attempt_id",
+            "generation_id",
+        }
+    }
     result = {
         "trace_id": (command.correlation_id or identity).hex,
         "command_id": str(command.id),
         "correlation_id": str(command.correlation_id or identity),
         "causation_id": str(command.causation_id or identity),
         "delivery_count": str(delivery_count),
-        **_optional_command_metadata(command),
+        **identifiers,
     }
     if command.run_id is not None:
         result["run_id"] = str(command.run_id)

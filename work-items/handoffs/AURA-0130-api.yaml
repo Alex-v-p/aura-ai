@@ -1,0 +1,107 @@
+agent: core_worker
+work_item: AURA-0130
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0130_api
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-core.calendar-api-bootstrap; services.aura-core.calendar-observability
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/bootstrap/calendar_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/errors.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/calendar.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - work-items/handoffs/AURA-0130-api.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.integration.calendar_connection@1.0.0
+    - aura.provider.google_calendar@1.0.0
+    - aura.integration.calendar_retrieval@1.0.0
+    - aura.automation.calendar_conflict@1.0.0
+  metrics_added:
+    - calendar_connection_command_duration_ms
+    - calendar_connection_command_outcome
+    - google_calendar_provider_request_duration_ms
+    - google_calendar_provider_request_outcome
+    - google_calendar_provider_retry_count
+    - calendar_retrieval_duration_ms
+    - calendar_retrieval_outcome
+    - calendar_returned_event_count_bucket
+    - calendar_rate_limit_state
+    - calendar_connection_health
+    - calendar_conflict_evaluation_duration_ms
+    - calendar_conflict_evaluation_outcome
+verification:
+  passed:
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check assigned API/bootstrap/telemetry Python paths
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright assigned API/bootstrap/telemetry Python paths (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0130_calendar_domain.py services/aura-core/tests/test_aura0129_calendar_oauth_platform.py -q (63 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/system/test_aura0130_calendar_api.py -q (14 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0130_calendar_composition.py services/aura-core/tests/system/test_aura0130_calendar_api.py -q (16 passed)
+    - Contract correction: all owned _calendar_error recoveryAction values are limited to retry, connect, or reauthorize.
+    - PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache uv run python app composition and OpenAPI route registration smoke check
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/bootstrap/calendar_uow.py (passed after cursor seam correction)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/bootstrap/calendar_uow.py (0 errors after cursor seam correction)
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check assigned API/bootstrap/telemetry paths after security and observability correction (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright assigned API/bootstrap/telemetry paths after security and observability correction (0 errors)
+    - Direct MetadataMetrics retention probe for calendar connection/provider outcome, health, rate-limit, retry, and child-span dimensions (passed; 0 rejected)
+    - Direct transient cursor/fallback probe for typed conflict-state round trip, bounded state rejection, one-shot replay rejection, and production missing-Valkey fail-closed behavior (passed)
+    - Direct conflict observer probe for local-only evaluation span/outcome retention and cancellation normalization (passed; 0 rejected)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0130_calendar_transient.py services/aura-core/tests/test_aura0130_observability.py -q (9 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/system/test_aura0130_calendar_api.py -q (15 passed; closed public connection payload excludes internal revocationTerminal)
+    - Direct Valkey navigation compare/delete race probe (passed; a superseding current and active marker remain intact when an older watched transaction loses the race)
+    - Direct transient parser exception-graph redaction probe (passed; malformed JSON and invalid UTF-8 retain no private payload in cause/context chains)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0130_calendar_lifecycle.py::test_interleaved_navigation_supersession_rejects_old_and_keeps_new_current -q (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0130_calendar_provider.py services/aura-core/tests/test_aura0130_calendar_retrieval.py -q (32 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0130_calendar_composition.py services/aura-core/tests/system/test_aura0130_calendar_api.py services/aura-core/tests/test_aura0130_calendar_transient.py services/aura-core/tests/test_aura0130_observability.py -q (27 passed)
+    - Direct transient-store probe for verifier persistence, remaining-expiry callback TTL, stale-supersession rejection, exact callback attempt matching, replay rejection, and owner/query-bound discovery cursor (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0130.yaml
+    - git diff --check
+    - python3 tooling/architecture/validate-module-registry.py (passed after CalendarRequestContext moved to the public calendar surface)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/system/test_aura0130_calendar_api.py services/aura-core/tests/test_aura0130_calendar_transient.py services/aura-core/tests/test_aura0130_observability.py services/aura-core/tests/test_aura0130_calendar_composition.py -q (29 passed after public request-context import correction)
+    - Direct MetadataMetrics deadline-classifier retention probe (passed; timeout/deadline provider span and outcome metric retained with zero rejected measurements)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0130.yaml (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check assigned API/bootstrap/telemetry paths after deadline allowlist and Valkey supersession correction (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright assigned API/bootstrap/telemetry paths after deadline allowlist and Valkey supersession correction (0 errors)
+    - Direct cross-client Valkey supersession race probe (passed; concurrent optimistic transactions converge current and active markers on one attempt, with no stale attempt/state payload)
+  failed:
+    - Focused observability suite currently fails only because the concurrently staged Google provider manifest declares the truthful `provider` metric dimension while the test-owned dimension allowlist has not yet been reconciled; no API-owned test or manifest was changed.
+    - Cross-client Valkey supersession test fixture currently supplies an already-expired fixed attempt timestamp (`2026-01-01`) relative to the active clock; production expiry rejection is preserved and a direct future-dated race probe passes.
+  not_run:
+    - Module-registry validation is blocked by the domain-owned `CalendarRequestContext` still residing in `calendar.internal` while API routes require the public request-context surface; import-boundary validation itself passed.
+    - Full AURA-0130 lifecycle aggregate remains with delivery lead because concurrent domain/provider changes are not yet integrated; the current shared lifecycle fakes still expose pre-translation ValueError behavior.
+    - Full observability validation remains with delivery lead until concurrent component manifests are staged/integrated.
+    - Aggregate calendar lifecycle tests remain with delivery lead because several legacy in-memory test doubles do not yet implement the domain's new `finalize_navigation_attempt` seam and retain unrelated fixed-clock/revocation assertions; the focused real transient supersession test passes.
+decisions:
+  - Kept API routes thin: authentication, CSRF, idempotency headers, DTO validation, closed errors, no-store, and public-value serialization stay at the transport boundary while calendar rules remain in the public application service.
+  - Composed CalendarApplicationService through calendar_uow using only domain public ports and provider composition; enabled settings now wire the AURA-0129 key ring, credential loader, and Aura calendar-ID resolver while disabled settings remain fail-closed.
+  - Added Valkey-backed (with deterministic test fallback) owner/session/attempt-bound authorization state, callback result state, and query-bound cursor handles with ten-minute TTL and one-shot consumption where the public port requires it.
+  - Routes call the exact CalendarApplicationService lifecycle/retrieval methods directly; reflective method-name/kwargs fallback was removed.
+  - Added fixed internal authorization navigation and callback endpoints without exposing provider code, state, credential, or provider payload values.
+  - Added four stable calendar component identities, operation spans, and metadata-only metrics to the shared telemetry registry; no event content or owner identifiers are accepted as metric dimensions.
+  - Removed the process-local provider cursor handle layer. The composed application now owns the single Valkey-backed transient cursor store; its one-shot consume returns only the server-held continuation value and binds handles to owner, scope, and normalized discovery/event query with the existing ten-minute TTL.
+  - Superseding OAuth attempts now clear prior navigation, state, active, callback, completion, and transient replay receipt keys; stored attempt verifier metadata is owner/session/attempt checked; callback records use only the remaining original attempt TTL and exact attempt-id matching.
+  - Authorization navigation requires intentional top-level document navigation evidence and rejects prefetch/scanner signals before consuming the handle. Calendar redirects and problem responses carry no-store and no-referrer policies.
+  - Calendar request spans share one metadata-only trace context and deadline; provider calls create child spans and allowlisted outcome, retry, rate-limit, retrieval-count, connection-health, and conflict metrics without private dimensions.
+  - Conflict telemetry is injected through the domain-safe observer port and records only the local evaluation duration/outcome; the route-level retrieval-inclusive span no longer owns the conflict evaluation metric.
+  - Production composition rejects a missing Valkey client before service construction; in-memory transient state is available only to explicit test composition (the internal store's direct test fixture default remains compatibility-only).
+  - Callback compare-and-write and exact active-attempt compare-and-consume use Valkey WATCH/MULTI transactions and an asyncio lock for test memory, while credential CAS loss reloads and authenticates only the active current envelope.
+  - The public dataclass serializer uses a closed exclusion for the internal `revocation_terminal` field; lifecycle logic retains the field internally while API responses remain contract-exact.
+  - Transient parser failures are converted outside JSON/UTF-8 exception handlers, preventing raw provider/private payloads from surviving in exception cause/context graphs.
+  - One shared calendar terminal classifier now constrains route, provider telemetry bridge, and conflict observer outcomes to `ok`, `partial`, `canceled`, `rejected`, `timeout`, or `error`; exact error classes and retry/rate dimensions remain separate.
+  - Discovery, authorization navigation, callback exchange, and revocation receive the route-owned deadline/cancellation context through the public application/provider request seam; disconnect cancels the in-flight API operation.
+  - Navigation consumption watches the current marker, exact attempt payload, and active attempt together; only an exact-handle transaction may delete the navigation marker, with the memory backend using the same mutation lock.
+risks:
+  - The provider adapter and domain application are concurrently converging on the provider-neutral discovery page and async Valkey cursor seam; the final aggregate must verify that adapters accept server-held continuations directly and do not reintroduce a provider-local cursor map.
+    - Full observability validation must run after the concurrent component manifests are staged/integrated.
+unresolved: []

@@ -27,10 +27,13 @@
       "@aura/aura/knowledge/documents": ["libs/aura/knowledge/documents/src/index.ts"],
       "@aura/aura/automation/reminders": ["libs/aura/automation/reminders/src/index.ts"],
       "@aura/aura/automation/notifications": ["libs/aura/automation/notifications/src/index.ts"],
+      "@aura/aura/automation/briefings": ["libs/aura/automation/briefings/src/index.ts"],
       "@aura/aura/governance/approvals": ["libs/aura/governance/approvals/src/index.ts"],
+      "@aura/aura/integrations/calendar": ["libs/aura/integrations/calendar/src/index.ts"],
+      "@aura/aura/daily-action": ["libs/aura/daily-action/src/index.ts"],
       "@aura/aura-api-client": ["libs/platform/aura-api-client/src/index.ts"],
-      "@aura/observatory-api-client": ["libs/platform/observatory-api-client/src/index.ts"]
-      ,"@aura/observatory": ["libs/observatory/src/index.ts"]
+      "@aura/observatory-api-client": ["libs/platform/observatory-api-client/src/index.ts"],
+      "@aura/observatory": ["libs/observatory/src/index.ts"]
     }
   }
 }

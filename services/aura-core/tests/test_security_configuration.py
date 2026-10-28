@@ -100,3 +100,91 @@ async def test_provider_tokens_remain_in_server_side_session() -> None:
     assert loaded.principal == created.principal
     assert loaded.provider_tokens is not None
     assert loaded.provider_tokens.refresh_token == "refresh-secret"
+
+
+def test_google_calendar_is_disabled_by_default_and_does_not_require_secret_files() -> None:
+    settings = Settings()
+
+    assert settings.google_calendar_enabled is False
+    assert settings.google_calendar_client_id == ""
+    assert settings.google_calendar_client_secret == ""
+    assert settings.google_calendar_client_secret_file == ""
+    assert settings.provider_credential_key_ring_file == ""
+
+
+def test_google_calendar_inline_secret_is_never_an_accepted_configuration() -> None:
+    with pytest.raises(ValidationError):
+        Settings(google_calendar_client_secret="plaintext-secret")
+
+
+@pytest.mark.parametrize(
+    ("configuration", "marker"),
+    [
+        (
+            {
+                "google_calendar_enabled": False,
+                "google_calendar_client_secret": "inline-secret-marker",
+            },
+            "inline-secret-marker",
+        ),
+        (
+            {
+                "google_calendar_enabled": True,
+                "google_calendar_client_id": "CLIENT-ID-MARKER",
+            },
+            "CLIENT-ID-MARKER",
+        ),
+        (
+            {
+                "google_calendar_enabled": True,
+                "google_calendar_client_secret_file": "/sensitive/SECRET-FILE-MARKER",
+            },
+            "SECRET-FILE-MARKER",
+        ),
+        (
+            {
+                "google_calendar_enabled": True,
+                "provider_credential_key_ring_file": "/sensitive/KEY-RING-MARKER",
+            },
+            "KEY-RING-MARKER",
+        ),
+    ],
+    ids=["inline-secret", "client-id", "secret-file", "key-ring-file"],
+)
+def test_calendar_validation_errors_hide_all_configuration_inputs(
+    configuration: dict[str, object], marker: str
+) -> None:
+    """Pydantic errors must not echo values supplied to calendar validation."""
+
+    with pytest.raises(ValidationError) as captured:
+        Settings.model_validate(configuration)
+
+    for rendered in (str(captured.value), repr(captured.value)):
+        assert marker not in rendered
+
+
+def test_google_calendar_enabled_configuration_fails_closed_before_readiness(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            google_calendar_enabled=True,
+            google_calendar_client_id="calendar-client-id",
+            google_calendar_client_secret_file=str(tmp_path / "missing-secret"),
+            provider_credential_key_ring_file=str(tmp_path / "missing-ring"),
+            public_origin="https://calendar.example",
+            environment="production",
+        )
+
+
+def test_google_calendar_secret_fields_are_repr_safe(tmp_path: Path) -> None:
+    settings = Settings(
+        google_calendar_client_id="calendar-client-id",
+        google_calendar_client_secret_file=str(tmp_path / "client-secret-marker"),
+        provider_credential_key_ring_file=str(tmp_path / "key-ring-marker"),
+    )
+    rendered = repr(settings)
+
+    assert "client-secret-marker" not in rendered
+    assert "key-ring-marker" not in rendered
+    assert "plaintext-secret" not in rendered

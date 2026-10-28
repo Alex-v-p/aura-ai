@@ -1,0 +1,40 @@
+agent: general_reviewer
+work_item: AURA-0136
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the final AURA-0136 implementation and all corrections against
+    the active work item, AURA-0135 decisions, architecture boundaries,
+    implementation handoffs, actual diff, and original general-review findings.
+  - >-
+    Workflow approval decisions preserve typed workflow origin in memory and SQL
+    paths, emit metadata-only workflow wake events without fabricated
+    conversation lineage, and retain idempotent owner/version/expiry behavior.
+  - >-
+    Workflow approval presentation accepts only the five exact system-derived
+    consequence triples, bounds display and scope values, and caps expiry by
+    both seven days and the pinned instance deadline.
+  - >-
+    Agent-run replay is rejected at settlement and replay boundaries; completed
+    outputs use the closed kind-specific result algebra; unknown and failed
+    effects cannot smuggle output; cumulative input and output bytes are checked
+    before settlement and repository persistence.
+  - >-
+    All seven deletion scopes are lifecycle-specific, owner-scoped,
+    expected-version-bound, independently idempotent, and non-cascading.
+    Definition, revision, and instance tombstones preserve surviving lineage,
+    while active instance state and pinned revisions remain protected.
+  - >-
+    Independently reran the prior scope-confusion counterexample: deleting a
+    draft with scope=published_revision is rejected and the draft remains
+    readable. The new table-driven matrix covers draft, published, and retired
+    revisions across both revision deletion scopes, plus stale versions,
+    idempotency-key conflicts, owner substitution, and deletion ordering.
+  - >-
+    Focused contract, migration, workflow state, repository, evaluation,
+    approval, and notification checks passed with 82 tests passed and 15
+    environment-dependent skips.
+  - >-
+    Work-item, changed-path, contract-change, generated-sync, import-boundary,
+    service-isolation, module-registry, Ruff, schema, and git diff checks passed.
+findings: []

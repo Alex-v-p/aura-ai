@@ -80,6 +80,11 @@ class SqlRunRepository:
                 if {"linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount"}
                 <= set(item)
             ),
+            workflow_id=row.workflow_id,
+            workflow_revision_id=row.workflow_revision_id,
+            workflow_instance_id=row.workflow_instance_id,
+            workflow_step_ordinal=row.workflow_step_ordinal,
+            workflow_step_execution_id=row.workflow_step_execution_id,
         )
 
     async def get(self, session: AsyncSession, run_id: UUID, *, lock: bool = False) -> Run | None:
@@ -217,6 +222,11 @@ class SqlRunRepository:
                     }
                     for item in run.attachments
                 ],
+                workflow_id=run.workflow_id,
+                workflow_revision_id=run.workflow_revision_id,
+                workflow_instance_id=run.workflow_instance_id,
+                workflow_step_ordinal=run.workflow_step_ordinal,
+                workflow_step_execution_id=run.workflow_step_execution_id,
             )
         )
 
@@ -266,6 +276,11 @@ class SqlRunRepository:
             }
             for item in run.attachments
         ]
+        row.workflow_id = run.workflow_id
+        row.workflow_revision_id = run.workflow_revision_id
+        row.workflow_instance_id = run.workflow_instance_id
+        row.workflow_step_ordinal = run.workflow_step_ordinal
+        row.workflow_step_execution_id = run.workflow_step_execution_id
 
     async def increment_tool_calls(
         self, session: AsyncSession, run_id: UUID, attempt_id: UUID
@@ -318,6 +333,11 @@ class SqlRunRepository:
                 event.occurred_at,
                 validate_tool_status(event.data),
                 event.schema_version,
+                event.workflow_id,
+                event.workflow_revision_id,
+                event.workflow_instance_id,
+                event.workflow_step_ordinal,
+                event.workflow_step_execution_id,
             )
         existing = await session.get(RunEventRow, event.event_id)
         if existing is not None:
@@ -338,6 +358,11 @@ class SqlRunRepository:
             event.occurred_at,
             event.data,
             event.schema_version,
+            event.workflow_id,
+            event.workflow_revision_id,
+            event.workflow_instance_id,
+            event.workflow_step_ordinal,
+            event.workflow_step_execution_id,
         )
         session.add(
             RunEventRow(
@@ -348,6 +373,11 @@ class SqlRunRepository:
                 event_type=persisted.event_type,
                 payload=cast(dict[str, object], persisted.payload()),
                 occurred_at=persisted.occurred_at,
+                workflow_id=persisted.workflow_id,
+                workflow_revision_id=persisted.workflow_revision_id,
+                workflow_instance_id=persisted.workflow_instance_id,
+                workflow_step_ordinal=persisted.workflow_step_ordinal,
+                workflow_step_execution_id=persisted.workflow_step_execution_id,
             )
         )
         return persisted
@@ -389,4 +419,9 @@ class SqlRunRepository:
             occurred_at=row.occurred_at,
             data=data,
             schema_version=int(cast(int | str, row.payload.get("schemaVersion", 1))),
+            workflow_id=row.workflow_id,
+            workflow_revision_id=row.workflow_revision_id,
+            workflow_instance_id=row.workflow_instance_id,
+            workflow_step_ordinal=row.workflow_step_ordinal,
+            workflow_step_execution_id=row.workflow_step_execution_id,
         )
