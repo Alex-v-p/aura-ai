@@ -46,7 +46,7 @@ The canonical handover and feature catalogue are deep references. Their presence
 
 ### Accepted architecture decisions
 
-- [ADR index](adr/README.md) — accepted decisions `0012`–`0016` for the implementation toolchain, data/coordination, execution, security, and client/voice protocols.
+- [ADR index](adr/README.md) — accepted decisions `0012`–`0018` for the implementation toolchain, data/coordination, execution, security, client/voice protocols, production run evidence, and governed web research.
 
 ## Focused product summaries
 
@@ -61,6 +61,7 @@ The canonical handover and feature catalogue are deep references. Their presence
 ## Design guidance
 
 - [Aura Web design foundation](design/README.md) — semantic themes, visual foundations, component interactions, failure recovery, accessibility, and attributed reference research.
+- [Governed research, artifacts, and Task Center](design/governed-research-artifacts-and-tasks.md) — approved provider boundaries, research/task/artifact behavior, threat model, and `AURA-0141`–`AURA-0148` delivery decomposition.
 
 Design guidance is implementation-facing visual and interaction direction. It
 does not create runtime contracts, architecture decisions, frontend packages,

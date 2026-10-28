@@ -1,0 +1,11 @@
+agent: aura_ux_ui_reviewer
+work_item: AURA-0140
+verdict: PASS
+checked:
+  - Verified navigation placement, page regions, settings placement, route-backed detail, and wide, tablet, and mobile reflow are decision-complete.
+  - Verified one stable transcript activity item transitions from attached to background without focus movement or duplicate terminal messages.
+  - Verified Task Center rows expose partial, budget-exhausted, interrupted, stale, and unknown outcomes without misleading generic failure copy.
+  - Verified artifact and research deletion provide confirmation, pending, failed, ambiguous, reconnect, and focus-recovery behavior.
+  - Verified owner-scoped memory-only drafts avoid URLs and persistent browser stores and clear on logout or identity and context changes.
+  - Verified keyboard, focus, live-region, reduced-motion, theme, zoom, authentication, permission, offline, and reconnect requirements are assigned to AURA-0147.
+findings: []

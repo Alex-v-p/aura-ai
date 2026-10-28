@@ -1,0 +1,11 @@
+agent: security_privacy_reviewer
+work_item: AURA-0140
+verdict: PASS
+checked:
+  - Verified research and evidence deletion, immediate unreadability, content-free tombstones, linked-artifact scope, citation behavior, cleanup reconciliation, and deletion tests.
+  - Verified owner authorization, immutable scope, exact tool grants, deny-by-default custom agents, and nondelegable projection authority.
+  - Verified SSRF, DNS rebinding, address-pinned connections, redirect handling, destination restrictions, parser limits, and browser isolation.
+  - Verified prompt-injection containment and exclusion of private content from URLs, ordinary events, logs, telemetry, caches, and browser persistence.
+  - Verified cancellation, deletion, duplicate delivery, unknown outcomes, kill switches, and rollback fail closed without overstating completion.
+  - Verified all required repository checks pass or produce the declared documentation-only skip.
+findings: []
