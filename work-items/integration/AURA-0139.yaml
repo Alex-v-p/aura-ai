@@ -1,0 +1,84 @@
+agent: integration_maintainer
+work_item: AURA-0139
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0139-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0139-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0139-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0139-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0139-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs:
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - work-items/archived/AURA-0139.yaml
+  - work-items/integration/AURA-0139.yaml
+checks:
+  passed:
+    - >-
+      All four implementation handoffs and all five required review verdicts
+      are complete, schema-valid, scoped to authorized paths, and have no
+      unresolved findings.
+    - >-
+      Work-item, changed-path, repository-shape, module-registry,
+      import-boundary, service-isolation, frontend-boundary, observability,
+      contract-change, generated-sync, baseline-protection, and git diff
+      validation passed; baseline protection reported no protected changes.
+    - >-
+      Contract and generated-client generation/check validation passed, and
+      the focused AURA-0139 backend and contract suite passed 22 tests.
+    - >-
+      Scoped Observatory Ruff and Pyright passed with zero errors. Observatory
+      frontend units passed 90 tests, generated API client tests passed 9,
+      and Observatory Web tests passed 2.
+    - >-
+      Observatory Web and Storybook production builds passed. Storybook runtime
+      acceptance passed 7 tests covering healthy, partial/stale, loading,
+      empty, unavailable, dark, reduced-motion, forced-colors, responsive,
+      and accessibility states.
+    - >-
+      Workflow monitoring browser acceptance passed 30 tests across desktop,
+      tablet, and mobile, including bounded live refresh, privacy/malformed
+      response handling, Core-unavailable behavior, keyboard operation,
+      responsive layout, zoom, reduced motion, and run/trace drill-down.
+    - >-
+      The full Observatory and contract aggregate completed with 1660 passed
+      and 44 skipped; no AURA-0139 test failed.
+  failed:
+    - >-
+      The aggregate suite reported eight unrelated existing/concurrent
+      failures: AURA-0080 SSE catch-up race, AURA-0080 migration rerunnable
+      assertion, two AURA-0087 full-stack script-shape assertions, one
+      AURA-0128 contract baseline comparison, and three AURA-0132 contract
+      baseline/union comparisons. These do not exercise AURA-0139 paths and
+      were not changed or weakened.
+  not_run:
+    - >-
+      bash deploy/compose/run-observatory-full-stack-e2e.sh was not run because
+      the Docker daemon is unavailable in this environment. The isolated
+      browser suite covers Core-unavailable and malformed/auth recovery paths.
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Full-stack synthetic telemetry acceptance remains environment-gated until
+    a Docker-enabled environment is available; no product or protected
+    baseline change is required for this integration.
+  - >-
+    The eight unrelated aggregate failures remain owned by AURA-0080,
+    AURA-0087, AURA-0128, and AURA-0132 and should be addressed by those
+    work items rather than folded into AURA-0139.
+  - >-
+    Per-instance workflow monitoring remains ADR_REQUIRED and was not
+    introduced; this release contains aggregate Observatory-owned telemetry
+    monitoring only.

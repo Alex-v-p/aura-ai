@@ -14,7 +14,7 @@ const FOCUS_OPTIONS: ReadonlyArray<FocusOption> = [
   { value: 'retrieval', label: 'Retrieval', description: 'Document and memory retrieval timing and outcomes' },
   { value: 'tool', label: 'Tool', description: 'Tool selection, policy, and execution measurements' },
   { value: 'memory', label: 'Memory', description: 'Memory extraction and operation measurements' },
-  { value: 'automation', label: 'Automation', description: 'Reminder and notification operational measurements' },
+  { value: 'automation', label: 'Automation', description: 'Reminder, notification, and workflow operational measurements' },
 ];
 
 const FOCUS_DEFAULTS: Readonly<Record<AnalyticsFocus, AnalyticsMetricName>> = {

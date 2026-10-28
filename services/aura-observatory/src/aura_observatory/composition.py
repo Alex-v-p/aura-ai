@@ -589,6 +589,7 @@ def build_auth(settings: Settings, *, testing: bool = False) -> ObservatoryAuth:
 def build_query_service(settings: Settings) -> ObservatoryQueryService:
     """Compose the independent PostgreSQL/ClickHouse query boundary."""
 
+    query_metrics = _production_metrics(settings)
     catalog = PostgresCatalog(lambda: postgres_connection(settings.database_url))
     result_reference = PostgresEvaluationResultReferencePort(
         lambda: postgres_connection(settings.database_url)
@@ -615,6 +616,7 @@ def build_query_service(settings: Settings) -> ObservatoryQueryService:
         experiment_projections_enabled=True,
         experiment_retention_port=experiment_retention_port,
         experiment_regression_fact_store=experiment_regression_fact_store,
+        metrics=query_metrics,
     )
     return ObservatoryQueryService(
         store,
@@ -624,7 +626,7 @@ def build_query_service(settings: Settings) -> ObservatoryQueryService:
         # Retention and health metrics are derived from Observatory-owned
         # PostgreSQL rows at API scrape time; no cross-container filesystem is
         # required for worker-to-API metric visibility.
-        metrics=_production_metrics(settings),
+        metrics=query_metrics,
     )
 
 

@@ -114,8 +114,17 @@ evaluators:
   - trace_alignment_semantics
   - correlation_marker_privacy
   - run_comparison_accessibility
+  - workflow_monitoring_contract_bounds
+  - workflow_monitoring_metric_semantics
+  - workflow_monitoring_privacy
+  - workflow_monitoring_failure_isolation
+  - workflow_monitoring_accessibility
 capture_policy: metadata_only
 retention: manual_owner_delete_only
 cardinality:
   metric_attributes: [resource, outcome, stage]
+  trace_only: [trace_id, span_id, parent_span_id, dependency, error_code]
   prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, access_token, refresh_token, id_token, credential, authorization, password, nonce, code, state, issuer, subject, owner_identity]
+export:
+  sink: otlp_http_metrics_and_traces
+  cadence: per_query

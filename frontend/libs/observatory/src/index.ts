@@ -17,5 +17,7 @@ export * from './lib/features/experiments/experiment-contract-guards';
 export * from './lib/features/evaluation/evaluation-dto-adapter';
 export * from './lib/features/operations/operations-workspace.component';
 export * from './lib/features/operations/operations-workspace.store';
+export * from './lib/features/workflows/workflow-monitoring.component';
+export * from './lib/features/workflows/workflow-monitoring.store';
 export * from './lib/presentation/observatory-presentation';
 export * from './lib/presentation/observatory-icon.component';

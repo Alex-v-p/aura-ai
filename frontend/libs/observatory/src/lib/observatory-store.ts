@@ -1,5 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { type ComponentHealth, type EvaluationLiveEvent, type RunEvidenceManifest } from '@aura/observatory-api-client';
+import { type ComponentHealth, type EvaluationLiveEvent, type RunDetail, type RunEvidenceManifest, type RunInspection, type TraceDetail } from '@aura/observatory-api-client';
 import { OBSERVATORY_GATEWAY, ObservatorySessionRequiredError, type ObservatoryGatewayPort, blankInput } from './observatory-gateway';
 import { ComponentDetailRequestGate, DEFAULT_ANALYTICS_FILTERS, hasSessionRequiredRejection, healthHistoryAfterDisconnect, inspectionEvidenceIsCurrent, isApprovedRunEvidenceMedia, isComparisonInvalidationEvent, isCurrentLoadSequence, isOverviewStale, isRunCorrelatedInvalidation, isRunProjectionInvalidation, LiveRefreshCoordinator, matchesSelectedRunInvalidation, needsRunReconciliation, needsSelectedRunReconciliation, parseAnalyticsMetricCatalogue, parseComponentDefinition, parseComponentDependencyTopology, parseOperationalAnalyticsSnapshot, parseRunComparison, RequestGenerationGate, resourceStateFor, SELECTED_RUN_LOAD_TIMEOUT_MS, selectedRunLoadError, shouldPreserveRunEvidenceDeletionState, type AnalyticsFilters, type AnalyticsResource, type ComponentCatalogueSelection, type ObservatoryAuthState, type ObservatoryComparison, type ObservatoryComparisonState, type ObservatoryHealthHistory, type ObservatoryResource, type ObservatoryResourceState, type ObservatorySnapshot, type RetentionRequest, type RetentionState, type RunFilters, type SelectedRun } from './observatory-models';
 import { parseEvaluationLiveEvent } from './features/evaluation/evaluation-dto-adapter';
@@ -12,6 +12,10 @@ const SELECTED_RUN_TRAILING_REFRESH_DELAY_MS = 500;
 const MAX_RUN_RECONCILIATION_ATTEMPTS = 30;
 const LIVE_REFRESH_CADENCE_MS = 500;
 const HEALTH_HISTORY_REFRESH_CADENCE_MS = 2_000;
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+const isRunDetailProjection = (value: unknown): value is RunDetail => isRecord(value) && typeof value['runId'] === 'string' && typeof value['status'] === 'string' && typeof value['startedAt'] === 'string' && Array.isArray(value['observations']);
+const isRunInspectionProjection = (value: unknown): value is RunInspection => isRecord(value) && Array.isArray(value['steps']) && Array.isArray(value['partialReasons']) && isRecord(value['completeness']) && Array.isArray(value['completeness']['reasons']);
+const isTraceProjection = (value: unknown): value is TraceDetail => isRecord(value) && typeof value['traceId'] === 'string' && Array.isArray(value['spans']);
 
 @Injectable({ providedIn: 'root' })
 export class ObservatoryStore {
@@ -45,6 +49,8 @@ export class ObservatoryStore {
   readonly evaluationChange = signal<EvaluationLiveEvent | null>(null);
   /** Monotonic session boundary observed by product feature stores. */
   readonly authGenerationRevision = signal(0);
+  /** Generic metadata-only invalidation for aggregate workflow monitoring. */
+  readonly workflowMonitoringRevision = signal(0);
   readonly components = computed(() => this.snapshot().components?.items ?? []);
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private runReconciliationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -255,24 +261,29 @@ export class ObservatoryStore {
       if (hasSessionRequiredRejection([detailResult, inspectionResult], (reason) => reason instanceof ObservatorySessionRequiredError)) {
         throw new ObservatorySessionRequiredError();
       }
+      const validInspection = inspectionResult.status === 'fulfilled' && isRunInspectionProjection(inspectionResult.value) ? inspectionResult.value : null;
       // Inspection is authoritative for disclosed evidence. Reconcile it as
       // soon as it is available, even when detail or trace is delayed, so a
       // captured-to-deleted transition cannot leave old bytes rendered.
-      if (inspectionResult.status === 'fulfilled') {
+      if (validInspection) {
         inspectionFresh = true;
         this.selectedRunInspectionFreshness.set('fresh');
         const current = this.selectedRun();
         const disclosedEvidence = this.selectedRunEvidence();
-        if (disclosedEvidence && !inspectionEvidenceIsCurrent(inspectionResult.value, disclosedEvidence.manifest)) this.clearRunEvidence();
-        this.selectedRun.set({ ...current, inspection: inspectionResult.value });
+        if (disclosedEvidence && !inspectionEvidenceIsCurrent(validInspection, disclosedEvidence.manifest)) this.clearRunEvidence();
+        this.selectedRun.set({ ...current, inspection: validInspection });
+      } else if (inspectionResult.status === 'fulfilled') {
+        this.selectedRunInspectionFreshness.set('unavailable');
       }
       if (detailResult.status === 'rejected') throw detailResult.reason;
       const detail = detailResult.value;
-      const inspection = inspectionResult.status === 'fulfilled' ? inspectionResult.value : this.selectedRun().inspection;
-      this.selectedRunInspectionFreshness.set(inspectionResult.status === 'fulfilled' ? 'fresh' : inspection ? 'stale' : 'unavailable');
+      if (!isRunDetailProjection(detail)) throw new Error('The selected run metadata is unavailable.');
+      const inspection = validInspection ?? this.selectedRun().inspection;
+      this.selectedRunInspectionFreshness.set(validInspection ? 'fresh' : inspection ? 'stale' : 'unavailable');
       const previousTrace = this.selectedRun().trace;
       this.selectedRun.set({ detail, trace: previousTrace, inspection });
-      const trace = detail.traceId ? await this.gateway.execute('getTrace', { ...blankInput('getTrace'), path: { trace_id: detail.traceId }, query: {} }, controller.signal) : previousTrace;
+      const traceResponse = detail.traceId ? await this.gateway.execute('getTrace', { ...blankInput('getTrace'), path: { trace_id: detail.traceId }, query: {} }, controller.signal) : previousTrace;
+      const trace = traceResponse && isTraceProjection(traceResponse) ? traceResponse : previousTrace;
       if (sequence !== this.openRunSequence) return;
       this.selectedRun.set({ detail, trace, inspection });
       if (inspectionResult.status === 'rejected') this.selectedRunError.set('The governed run inspection is unavailable; metadata remains visible.');
@@ -482,7 +493,6 @@ export class ObservatoryStore {
     this.queueAnalyticsRefresh();
   }
   refreshAnalytics(): void { this.queueAnalyticsRefresh(); }
-
   private readonly handleLiveMessage = (event: Event): void => {
     const message = event as MessageEvent<string>;
     // A native EventSource may replay the last frame after reconnecting, and
@@ -501,9 +511,8 @@ export class ObservatoryStore {
     let resourceId: string | null = null;
     try { const payload = JSON.parse(message.data || '{}') as { readonly resourceType?: unknown; readonly resourceId?: unknown }; resourceType = typeof payload.resourceType === 'string' ? payload.resourceType : null; resourceId = typeof payload.resourceId === 'string' ? payload.resourceId : null; } catch { /* metadata-only invalidation payloads are ignored safely */ }
     this.snapshot.update((value) => ({ ...value, lastEventId: event.type === 'heartbeat' ? value.lastEventId : (message.lastEventId || value.lastEventId), lastUpdatedAt: event.type === 'heartbeat' ? value.lastUpdatedAt : new Date().toISOString() }));
-    // Generic self-observations must not trigger a read of the projection that
-    // emitted them; that would create a self-sustaining telemetry loop.
     if (isRunProjectionInvalidation(event.type, resourceType)) this.queueLiveRefresh();
+    if (event.type === 'observation.changed' || event.type === 'retention.changed') this.workflowMonitoringRevision.update((value) => value + 1);
     if (this.selectedRunViewActive && matchesSelectedRunInvalidation(event.type, resourceType, resourceId, this.selectedRunId())) {
       const selectedRunId = this.selectedRunId();
       if (selectedRunId) this.queueSelectedRunReconciliation(selectedRunId, true);

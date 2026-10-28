@@ -465,6 +465,17 @@ class ObservatoryQueryPort(Protocol):
 
     async def operational_analytics_query(self, request: AnalyticsRequest) -> dict[str, object]: ...
 
+    async def workflow_monitoring_query(
+        self,
+        from_time: datetime,
+        to_time: datetime,
+        *,
+        bucket: str,
+        bucket_seconds: int,
+        series_limit: int,
+        point_limit: int,
+    ) -> dict[str, object]: ...
+
     async def run_comparison_query(
         self, left_run_id: str, right_run_id: str
     ) -> dict[str, object] | None: ...

@@ -1,6 +1,6 @@
 id: AURA-0139
 title: Add aggregate Observatory workflow monitoring
-status: in_progress
+status: integrated
 change_class: contract
 intent: >
   Give the Observatory owner a bounded, privacy-preserving workflow health
@@ -86,10 +86,14 @@ allowed_paths:
   - frontend/libs/observatory/src/lib/observatory-store.ts
   - frontend/libs/observatory/src/lib/observatory-store.spec.ts
   - frontend/libs/observatory/src/lib/features/workflows/**
+  - frontend/libs/observatory/src/lib/features/analytics/analytics.component.ts
   - frontend/apps/observatory-web/src/app/app.component.ts
   - frontend/apps/observatory-web/src/app/app.component.css
   - frontend/apps/observatory-web/src/app.component.spec.ts
   - frontend/apps/observatory-web-e2e/src/observatory-workflows.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-workflows-storybook.spec.ts
+  - frontend/apps/observatory-web-e2e/playwright.config.ts
+  - frontend/apps/observatory-web-e2e/storybook.config.ts
   - frontend/apps/storybook/src/observatory-workflows.stories.ts
 forbidden_paths:
   - AGENTS.md

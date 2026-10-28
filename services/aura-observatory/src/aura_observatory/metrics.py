@@ -50,6 +50,9 @@ COMPONENT_SPAN_COMPONENTS = frozenset(
         "aura.observatory.run_evidence_ingestion",
         "aura.observatory.run_evidence_storage",
         "aura.observatory.run_inspection_query",
+        # Query API storage spans are bounded metadata-only diagnostics for
+        # ClickHouse reads; they never carry query text or caller attributes.
+        "aura.observatory.query_api",
     }
 )
 # The legacy duration metric is an evaluation-specific compatibility surface.
@@ -97,6 +100,7 @@ COMPONENT_SPAN_OPERATIONS = frozenset(
         "execution_complete",
         "execution_fail",
         "query",
+        "workflow_monitoring",
         "collection",
         "history",
         "live_publish",
@@ -806,6 +810,7 @@ class ObservatoryMetrics:
             "events",
             "health_history",
             "analytics",
+            "workflow_monitoring",
             "run_comparison",
         },
         "outcome": {

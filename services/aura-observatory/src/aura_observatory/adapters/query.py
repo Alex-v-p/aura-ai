@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextvars
 import json
 import logging
 import math
@@ -25,6 +26,7 @@ import httpx
 import psycopg
 
 from aura_observatory.contract import MetadataObservation
+from aura_observatory.metrics import ObservatoryMetrics
 from aura_observatory.ports import (
     AnalyticsRequest,
     ExperimentRegressionFactStore,
@@ -36,25 +38,31 @@ from aura_observatory.query import (
     ANALYTICS_BUCKETS,
     ANALYTICS_EXECUTION_LIMIT_MS,
     ANALYTICS_MAX_BREAKDOWNS,
+    ANALYTICS_MAX_POINTS,
     ANALYTICS_MAX_SCANNED_ROWS,
+    ANALYTICS_MAX_SERIES,
     ANALYTICS_PERCENTILE_METHOD,
     COMPARISON_EXECUTION_TIMEOUT_MS,
     COMPARISON_MAX_OBSERVATIONS,
     COMPARISON_MAX_SCANNED_ROWS,
     COMPARISON_QUERY_ROWS,
+    WORKFLOW_METRICS,
     DeletionResult,
     RetentionAction,
     RetentionStatus,
     RunFilters,
     analytics_freshness,
     analytics_unavailable,
+    bounded_analytics_window,
     bounded_component_health_window,
     build_run_comparison,
+    build_workflow_monitoring_snapshot,
     canonical_measurement_unit,
     comparison_execution_limit_snapshot,
     decode_cursor,
     decode_run_cursor,
     encode_cursor,
+    is_workflow_monitoring_self_event,
     iso,
     retention_from_row,
     run_dict,
@@ -77,6 +85,9 @@ _RETENTION_VISIBILITY_BATCH = 65_536
 _RETENTION_VISIBILITY_MAX_BATCHES = 16
 _RETENTION_SETTLEMENT_COMPONENT = "aura.observatory.telemetry_storage"
 _RETENTION_SETTLEMENT_COMPONENT_VERSION = "1.0.0"
+_QUERY_TELEMETRY_OPERATION: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "observatory_query_telemetry_operation", default="query"
+)
 
 
 async def _advance_retention_visibility(connection: Any) -> None:
@@ -656,6 +667,7 @@ class _RetentionPersistenceAdapter:
         experiment_projections_enabled: bool = False,
         experiment_retention_port: ExperimentRetentionPort | None = None,
         experiment_regression_fact_store: ExperimentRegressionFactStore | None = None,
+        metrics: ObservatoryMetrics | None = None,
     ) -> None:
         self._connection_factory = connection_factory
         self._endpoint = clickhouse_url.rstrip("/")
@@ -670,6 +682,7 @@ class _RetentionPersistenceAdapter:
         self._experiment_projections_enabled = experiment_projections_enabled
         self._experiment_retention_port = experiment_retention_port
         self._experiment_regression_fact_store = experiment_regression_fact_store
+        self._metrics = metrics
         # PostgreSQL is authoritative for retention state and idempotency.
         # Keep only the currently attached action needed while its guarded
         # multi-store deletion is in progress; never retain a process-lifetime
@@ -918,22 +931,53 @@ class _RetentionPersistenceAdapter:
     async def _rows(
         self, query: str, *, params: dict[str, object] | None = None
     ) -> list[dict[str, Any]]:
+        started = monotonic()
+        outcome = "success"
+        error_code: str | None = None
         query_params: dict[str, str] = {"database": self._database}
         for name, value in (params or {}).items():
             # Values are sent as typed HTTP parameters.  They never become
             # SQL source text, including metacharacters and timestamps.
             query_params[f"param_{name}"] = str(value)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                self._endpoint,
-                params=query_params,
-                auth=(self._user, self._password),
-                content=query + " FORMAT JSONEachRow",
-            )
-            _raise_for_clickhouse(response)
-        self._clickhouse_progress_available = True
-        self._clickhouse_progress_read_rows = _clickhouse_progress_read_rows(response)
-        return _decode_clickhouse_rows(response)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    self._endpoint,
+                    params=query_params,
+                    auth=(self._user, self._password),
+                    content=query + " FORMAT JSONEachRow",
+                )
+                _raise_for_clickhouse(response)
+            self._clickhouse_progress_available = True
+            self._clickhouse_progress_read_rows = _clickhouse_progress_read_rows(response)
+            return _decode_clickhouse_rows(response)
+        except StorageUnavailableError:
+            outcome = "failure"
+            error_code = "validation"
+            raise
+        except httpx.HTTPStatusError:
+            outcome = "unavailable"
+            error_code = "database_unavailable"
+            raise
+        except (httpx.ConnectError, httpx.TimeoutException, OSError, TimeoutError):
+            outcome = "unavailable"
+            error_code = "database_unavailable"
+            raise
+        finally:
+            if self._metrics is not None:
+                try:
+                    self._metrics.record_component_span(
+                        component_id="aura.observatory.query_api",
+                        component_version="1.0.0",
+                        deployment_id="observatory-api",
+                        operation=_QUERY_TELEMETRY_OPERATION.get(),
+                        duration_ms=min(600_000.0, max(0.0, (monotonic() - started) * 1000.0)),
+                        outcome=outcome,
+                        dependency="clickhouse",
+                        error_code=error_code,
+                    )
+                except Exception:
+                    pass
 
     async def list_observations(self) -> list[MetadataObservation]:
         rows = await self._rows(
@@ -1796,6 +1840,9 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
     async def _query_rows(
         self, statement: str, *, params: dict[str, object] | None = None
     ) -> list[dict[str, Any]]:
+        started = monotonic()
+        outcome = "success"
+        error_code: str | None = None
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 query_params: dict[str, str] = {"database": self._database}
@@ -1810,19 +1857,51 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                 _raise_for_clickhouse(response)
                 self._clickhouse_progress_available = True
                 self._clickhouse_progress_read_rows = _clickhouse_progress_read_rows(response)
+            if not hasattr(response, "text"):
+                # Small adapter doubles may omit the body.  Mark that bounded
+                # compatibility mode explicitly; real ClickHouse responses
+                # always provide text and use the SQL-only production path.
+                self._response_body_unavailable = True
+                return []
+            return _decode_clickhouse_rows(response)
+        except StorageUnavailableError:
+            # Invalid JSONEachRow is an Observatory boundary failure, not a
+            # ClickHouse availability signal.  Preserve the existing bounded
+            # exception while classifying its component span safely.
+            outcome = "failure"
+            error_code = "validation"
+            raise
         except httpx.HTTPStatusError as exc:
+            outcome = "unavailable"
+            error_code = "database_unavailable"
             raise StorageUnavailableError(
                 "ClickHouse is unavailable", request=exc.request, response=exc.response
             ) from exc
         except (httpx.ConnectError, httpx.TimeoutException, OSError, TimeoutError) as exc:
+            outcome = "unavailable"
+            error_code = "database_unavailable"
             raise StorageUnavailableError("ClickHouse is unavailable") from exc
-        if not hasattr(response, "text"):
-            # Small adapter doubles may omit the body.  Mark that bounded
-            # compatibility mode explicitly; real ClickHouse responses always
-            # provide text and use the SQL-only production path below.
-            self._response_body_unavailable = True
-            return []
-        return _decode_clickhouse_rows(response)
+        except (ValueError, json.JSONDecodeError):
+            outcome = "failure"
+            error_code = "validation"
+            raise
+        finally:
+            if self._metrics is not None:
+                try:
+                    self._metrics.record_component_span(
+                        component_id="aura.observatory.query_api",
+                        component_version="1.0.0",
+                        deployment_id="observatory-api",
+                        operation=_QUERY_TELEMETRY_OPERATION.get(),
+                        duration_ms=min(600_000.0, max(0.0, (monotonic() - started) * 1000.0)),
+                        outcome=outcome,
+                        dependency="clickhouse",
+                        error_code=error_code,
+                    )
+                except Exception:
+                    # Telemetry must remain best effort and cannot change query
+                    # availability or leak adapter/provider details.
+                    pass
 
     async def components_query(self) -> list[dict[str, Any]]:
         collection = await self.component_collection_query()
@@ -2857,6 +2936,124 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             "capturePolicy": "metadata_only",
         }
 
+    async def workflow_monitoring_query(
+        self,
+        from_time: datetime,
+        to_time: datetime,
+        *,
+        bucket: str,
+        bucket_seconds: int,
+        series_limit: int,
+        point_limit: int,
+    ) -> dict[str, object]:
+        """Run one bounded workflow-only projection over Observatory telemetry.
+
+        This query intentionally selects only aggregate inputs and the two
+        opaque correlation columns needed for agent-run drill-down.  It does
+        not hydrate Core workflow state, manifests, definitions, or instances.
+        """
+
+        lower, upper = bounded_analytics_window(from_time, to_time)
+        if bucket not in ANALYTICS_BUCKETS:
+            raise ValueError("invalid workflow monitoring bucket")
+        if ANALYTICS_BUCKETS[bucket] != bucket_seconds:
+            raise ValueError("invalid workflow monitoring bucket size")
+        if not 1 <= series_limit <= ANALYTICS_MAX_SERIES:
+            raise ValueError("invalid workflow monitoring series limit")
+        if not 1 <= point_limit <= ANALYTICS_MAX_POINTS:
+            raise ValueError("invalid workflow monitoring point limit")
+        names = ", ".join(_sql(name) for name in WORKFLOW_METRICS)
+        source_limit = ANALYTICS_MAX_SCANNED_ROWS + 1
+        statement = (
+            "SELECT observed_at, observation_id, component_id, operation, "
+            "measurement_name, measurement_value, measurement_unit, dimensions, "
+            "run_id, trace_id, ingest_sequence FROM observations WHERE "
+            "observed_at >= {from_time:DateTime64(3, 'UTC')} AND "
+            "observed_at < {to_time:DateTime64(3, 'UTC')} AND "
+            f"measurement_name IN ({names}) ORDER BY ingest_sequence, observation_id "
+            f"LIMIT {source_limit} SETTINGS max_execution_time = "
+            f"{ANALYTICS_EXECUTION_LIMIT_MS // 1000}, max_rows_to_read = {source_limit}, "
+            "send_progress_in_http_headers = 1, read_overflow_mode = 'break'"
+        )
+        params: dict[str, object] = {
+            "from_time": lower.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "to_time": upper.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+        }
+        started = monotonic()
+        try:
+            token = _QUERY_TELEMETRY_OPERATION.set("workflow_monitoring")
+            try:
+                rows = await self._rows(statement, params=params)
+            finally:
+                _QUERY_TELEMETRY_OPERATION.reset(token)
+        except httpx.HTTPStatusError as exc:
+            if _is_clickhouse_read_limit(exc):
+                return build_workflow_monitoring_snapshot(
+                    [],
+                    lower=lower,
+                    upper=upper,
+                    bucket=bucket,
+                    bucket_seconds=bucket_seconds,
+                    series_limit=series_limit,
+                    point_limit=point_limit,
+                    scanned_rows=ANALYTICS_MAX_SCANNED_ROWS,
+                    truncated_by_storage_limit=True,
+                    execution_ms=ANALYTICS_EXECUTION_LIMIT_MS,
+                )
+            if _is_clickhouse_execution_timeout(exc):
+                return build_workflow_monitoring_snapshot(
+                    [],
+                    lower=lower,
+                    upper=upper,
+                    bucket=bucket,
+                    bucket_seconds=bucket_seconds,
+                    series_limit=series_limit,
+                    point_limit=point_limit,
+                    scanned_rows=0,
+                    truncated_by_execution_limit=True,
+                    execution_ms=ANALYTICS_EXECUTION_LIMIT_MS,
+                )
+            raise StorageUnavailableError("ClickHouse is unavailable") from exc
+        except (httpx.HTTPError, OSError, TimeoutError) as exc:
+            raise StorageUnavailableError("ClickHouse is unavailable") from exc
+        physical_rows = self._clickhouse_progress_read_rows
+        scanned_rows = max(
+            len(rows),
+            physical_rows if physical_rows is not None else 0,
+        )
+        storage_truncated = (
+            scanned_rows >= ANALYTICS_MAX_SCANNED_ROWS
+            or len(rows) > ANALYTICS_MAX_SCANNED_ROWS
+        )
+        retention_boundary = await self._analytics_retention_boundary(lower, upper)
+        execution_ms = min(
+            ANALYTICS_EXECUTION_LIMIT_MS,
+            max(0.0, (monotonic() - started) * 1000.0),
+        )
+        result = build_workflow_monitoring_snapshot(
+            rows[:ANALYTICS_MAX_SCANNED_ROWS],
+            lower=lower,
+            upper=upper,
+            bucket=bucket,
+            bucket_seconds=bucket_seconds,
+            series_limit=series_limit,
+            point_limit=point_limit,
+            scanned_rows=min(scanned_rows, ANALYTICS_MAX_SCANNED_ROWS),
+            truncated_by_storage_limit=storage_truncated,
+            execution_ms=execution_ms,
+            retention_boundary=retention_boundary,
+        )
+        latest = result.get("freshness")
+        latest_map = cast(dict[str, object], latest) if isinstance(latest, dict) else None
+        latest_at = _parse_datetime(
+            latest_map.get("latestObservedAt") if latest_map is not None else None
+        )
+        try:
+            await self._health_port.record_query_freshness(latest_at)
+        except Exception:
+            pass
+        return result
+
     async def overview_query(self) -> dict[str, Any]:
         counts = await self._overview_counts()
         ingest = await self.ingest_overview()
@@ -3412,7 +3609,8 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
         heartbeat_at = asyncio.get_running_loop().time() + 15.0
         while True:
             rows = await self._query_rows(
-                "SELECT observation_id, run_id, trace_id, component_id, ingest_sequence FROM observations "
+                "SELECT observation_id, run_id, trace_id, component_id, operation, ingest_sequence "
+                "FROM observations "
                 f"WHERE ingest_sequence > {anchor} AND ingest_sequence <= {upper} "
                 "ORDER BY ingest_sequence LIMIT 1000"
             )
@@ -3437,6 +3635,7 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
                         # the run currently being inspected.  The API SSE
                         # renderer deliberately strips this field.
                         "componentId": row.get("component_id") or None,
+                        "operation": row.get("operation") or None,
                     },
                 }
                 for row in rows
@@ -3452,6 +3651,11 @@ class ProductionObservatoryStore(_RetentionPersistenceAdapter):
             events.sort(key=lambda item: (int(cast(int, item["sequence"])), str(item["id"])))
             for event in events:
                 anchor = int(cast(int, event["sequence"]))
+                # Advance over every inspected source row before hiding the
+                # query's own invalidation.  A self-only batch must never
+                # strand the cursor and hot-loop on the same ClickHouse row.
+                if is_workflow_monitoring_self_event(event):
+                    continue
                 yield {
                     "id": event["id"],
                     "type": event["type"],
