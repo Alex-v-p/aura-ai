@@ -1,6 +1,6 @@
 id: AURA-0148
 title: Validate and integrate governed research delivery
-status: draft
+status: approved
 change_class: evaluation
 intent: >
   Independently validate governed research security quality durability privacy
@@ -24,13 +24,14 @@ sources_of_truth:
     - docs/adr/0015-authentik-bff-secrets-extensions.md
     - docs/adr/0017-governed-production-run-evidence.md
     - docs/adr/0018-governed-web-research-providers.md
-    - work-items/active/AURA-0142.yaml
-    - work-items/active/AURA-0143.yaml
-    - work-items/active/AURA-0144.yaml
-    - work-items/active/AURA-0145.yaml
-    - work-items/active/AURA-0146.yaml
-    - work-items/active/AURA-0147.yaml
-    - AURA-0148 must not enter execution until AURA-0142 through AURA-0147 have reviewed handoffs and AURA-0144 external rollout gates are closed.
+    - work-items/archived/AURA-0142.yaml
+    - work-items/archived/AURA-0143.yaml
+    - work-items/archived/AURA-0144.yaml
+    - work-items/archived/AURA-0145.yaml
+    - work-items/archived/AURA-0146.yaml
+    - work-items/archived/AURA-0147.yaml
+    - On 2026-10-30 AURA-0142 through AURA-0147 were reviewed and integrated, closing the dependency gate.
+    - Owner-approved AURA-0148 execution uses only isolated synthetic provider fixtures; real provider profiles remain disabled and no provider image, fetched artifact, or evaluation report is published.
     - Evaluations use versioned synthetic or explicitly owner-authorized controlled fixtures; production research content and fetched pages are never captured or replayed.
     - Approved thresholds are release gates and may not be lowered bypassed or rewritten to make delivery pass.
   contracts:
@@ -226,5 +227,4 @@ required_checks:
   - git diff --check
 baseline_changes_allowed: true
 human_approval_required: true
-open_decisions:
-  - Execution remains dependency-blocked until AURA-0142 through AURA-0147 have reviewed handoffs and AURA-0144 external rollout decisions are closed.
+open_decisions: []
