@@ -1,6 +1,6 @@
 id: AURA-0147
 title: Build Aura Web Research Tasks and Artifacts
-status: draft
+status: approved
 change_class: repository_governance
 intent: >
   Add dedicated Aura Web research, federated Task Center, and generated-artifact
@@ -24,12 +24,16 @@ sources_of_truth:
     - docs/adr/0015-authentik-bff-secrets-extensions.md
     - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
     - work-items/archived/AURA-0141.yaml
-    - work-items/active/AURA-0145.yaml
-    - work-items/active/AURA-0146.yaml
+    - work-items/archived/AURA-0142.yaml
+    - work-items/archived/AURA-0143.yaml
+    - work-items/archived/AURA-0144.yaml
+    - work-items/archived/AURA-0145.yaml
+    - work-items/archived/AURA-0146.yaml
     - AURA-0147 must not enter implementation until AURA-0141 through AURA-0146 are reviewed and integrated.
     - Research and Artifacts live under Knowledge; Tasks lives under Activity after Approvals and Notifications; research Advanced settings remain inline on the Research route.
     - Metadata-only SSE is an invalidation hint and every reconnect gap or mutation settles through an authorized no-store REST snapshot.
     - Client drafts are memory-only and must never be represented as durable local storage.
+    - On 2026-10-30 AURA-0141 through AURA-0146 were reviewed and integrated; the dependency gate is closed and the owner-approved initiative authorizes implementation.
   contracts:
     - contracts/openapi/aura-v1.yaml
 feature_references:
@@ -171,5 +175,4 @@ required_checks:
   - git diff --check
 baseline_changes_allowed: false
 human_approval_required: true
-open_decisions:
-  - Implementation remains dependency-blocked until AURA-0145 and AURA-0146 are integrated.
+open_decisions: []
