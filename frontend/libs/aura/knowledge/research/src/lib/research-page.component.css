@@ -1,0 +1,310 @@
+:host {
+  display: block;
+  width: 100%;
+}
+.sr-only { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+.research-page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2.5rem clamp(1rem, 4vw, 3rem) 4rem;
+  min-width: 0;
+  width: 100%;
+}
+.page-header,
+.section-heading,
+.detail-card header {
+  align-items: flex-start;
+  display: flex;
+  gap: 1.5rem;
+  justify-content: space-between;
+}
+.eyebrow {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  margin: 0 0 0.45rem;
+  text-transform: uppercase;
+}
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+h1 {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  letter-spacing: -0.05em;
+  margin-bottom: 0.7rem;
+}
+h2 {
+  font-size: 1.4rem;
+  letter-spacing: -0.03em;
+}
+.lede {
+  color: var(--text-muted);
+  line-height: 1.6;
+  max-width: 42rem;
+}
+.secondary-link,
+.back-link {
+  color: var(--accent);
+  font-weight: 650;
+  text-decoration: none;
+}
+.research-composer,
+.research-list,
+.detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  margin-top: 2rem;
+  padding: clamp(1rem, 3vw, 2rem);
+}
+.research-composer {
+  display: grid;
+  gap: 1.25rem;
+}
+label,
+fieldset {
+  display: grid;
+  gap: 0.4rem;
+}
+label > span,
+legend {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+textarea,
+input,
+select {
+  background: var(--surface-subtle);
+  border: 1px solid var(--control-border);
+  border-radius: 0.55rem;
+  color: var(--text);
+  font: inherit;
+  min-height: 2.75rem;
+  padding: 0.65rem 0.75rem;
+  width: 100%;
+}
+textarea {
+  resize: vertical;
+}
+fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.mode-grid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+.mode-option {
+  align-items: flex-start;
+  background: var(--surface-subtle);
+  border: 1px solid var(--control-border);
+  border-radius: 0.7rem;
+  cursor: pointer;
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.8rem;
+}
+.mode-option.selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.mode-option input {
+  min-height: 1rem;
+  width: auto;
+}
+.mode-option span {
+  display: grid;
+  gap: 0.25rem;
+}
+small {
+  color: var(--text-muted);
+  display: block;
+  line-height: 1.4;
+}
+details {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.advanced-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  margin-top: 1rem;
+  min-width: 0;
+}
+.primary-action,
+.secondary-button,
+.danger-button {
+  border: 0;
+  border-radius: 0.6rem;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 2.75rem;
+  padding: 0.6rem 0.9rem;
+}
+.primary-action {
+  background: var(--accent);
+  color: var(--on-accent);
+  justify-self: start;
+}
+.secondary-button {
+  background: var(--surface-subtle);
+  border: 1px solid var(--control-border);
+  color: var(--text);
+}
+.danger-button {
+  background: #8b1e2d;
+  color: #fff;
+}
+@media (forced-colors: active) { .danger-button { background: ButtonText; color: ButtonFace; border: 1px solid ButtonText; } }
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.section-heading {
+  margin-bottom: 1rem;
+}
+.status {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.status.error {
+  color: var(--danger, #a93838);
+}
+.status button {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.empty-state {
+  color: var(--text-muted);
+  padding: 2rem 0;
+  text-align: center;
+}
+.empty-state span {
+  display: block;
+  font-size: 2rem;
+}
+.research-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  min-width: 0;
+}
+.research-card {
+  align-items: center;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 0.8rem;
+  min-height: 5.5rem;
+  padding: 1rem;
+  text-align: left;
+  width: 100%;
+}
+.card-icon {
+  color: var(--accent);
+  font-size: 1.5rem;
+}
+.card-copy {
+  display: grid;
+  flex: 1;
+  gap: 0.25rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.card-copy span {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-transform: capitalize;
+}
+.detail-card {
+  display: grid;
+  gap: 1.5rem;
+}
+.state-pill {
+  background: var(--accent-soft);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  padding: 0.35rem 0.65rem;
+  text-transform: capitalize;
+}
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  margin: 0;
+}
+.detail-meta div {
+  display: grid;
+  gap: 0.25rem;
+}
+dt {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+dd {
+  margin: 0;
+}
+.evidence ul {
+  display: grid;
+  gap: 0.65rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.evidence li {
+  display: grid;
+  gap: 0.15rem;
+}
+.evidence a {
+  color: var(--accent);
+}
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+.inline-panel {
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  padding: 1rem;
+}
+.danger-panel {
+  border-color: var(--danger, #a93838);
+}
+@media (max-width: 720px) {
+  .page-header {
+    display: grid;
+  }
+  .secondary-link {
+    justify-self: start;
+  }
+  .detail-card header {
+    display: grid;
+  }
+}
+.sr-only { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+.loading-skeleton { display: grid; gap: .65rem; }
+.loading-skeleton span { animation: research-pulse 1.2s ease-in-out infinite alternate; background: var(--surface-subtle); border-radius: .5rem; display: block; height: 4rem; }
+@keyframes research-pulse { from { opacity: .55; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .loading-skeleton span { animation: none; } }

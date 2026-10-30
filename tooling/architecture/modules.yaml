@@ -2795,6 +2795,24 @@ modules:
   public_api: frontend/libs/aura/knowledge/documents/src/index.ts
   dependencies:
   - aura-web.api-client
+- id: aura-web.knowledge-research
+  root: frontend/libs/aura/knowledge/research
+  kind: frontend-feature
+  public_api: frontend/libs/aura/knowledge/research/src/index.ts
+  dependencies:
+  - aura-web.api-client
+- id: aura-web.knowledge-artifacts
+  root: frontend/libs/aura/knowledge/artifacts
+  kind: frontend-feature
+  public_api: frontend/libs/aura/knowledge/artifacts/src/index.ts
+  dependencies:
+  - aura-web.api-client
+- id: aura-web.activity-tasks
+  root: frontend/libs/aura/activity/tasks
+  kind: frontend-feature
+  public_api: frontend/libs/aura/activity/tasks/src/index.ts
+  dependencies:
+  - aura-web.api-client
 - id: aura-web.daily-action
   root: frontend/libs/aura/daily-action
   kind: frontend-feature

@@ -18,6 +18,7 @@ import { focusBranchAction } from './branch-action-focus';
 import { ATTACHMENT_MAX_IMAGES_PER_MESSAGE, ATTACHMENT_MAX_PER_MESSAGE, IMAGE_ATTACHMENT_ACCEPT, VISION_ALTERNATIVE, VISION_RECOMMENDATION, ConversationAttachmentStore, type AttachmentSelection, type AttachmentSummary } from './conversation-attachments';
 import { DocumentsStore, mediaTypeForFile } from '@aura/aura/knowledge/documents';
 import { selectedDocumentIsPending } from './conversation-attachment-readiness';
+import { ResearchActivityComponent } from './research-activity.component';
 
 export function configurationRevisionValue(reference: Readonly<{ readonly revisionId: string }> | null, useAgentDefault = false): string {
   return useAgentDefault ? '' : reference?.revisionId ?? '';
@@ -35,7 +36,7 @@ export function visibleFocusTarget(preferred: HTMLElement | null, fallback: HTML
 @Component({
   selector: 'aura-conversation-panel',
   standalone: true,
-  imports: [FormsModule, RouterLink, LoadingStateComponent, StatusMessageComponent, OverlayModule, A11yModule, DatePipe, DecimalPipe, SafeMarkdownComponent],
+  imports: [FormsModule, RouterLink, LoadingStateComponent, StatusMessageComponent, OverlayModule, A11yModule, DatePipe, DecimalPipe, SafeMarkdownComponent, ResearchActivityComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './conversation-panel.component.html',
   styleUrl: './conversation-panel.component.css',

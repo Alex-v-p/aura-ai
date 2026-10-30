@@ -1,5 +1,5 @@
 import { Inject, Injectable, InjectionToken, Optional, computed, signal } from '@angular/core';
-import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, Run, RunEvent, RunMemoryActivitySnapshot, Session, ToolStatusData } from '@aura/aura-api-client';
+import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, ResearchActivity, Run, RunEvent, RunMemoryActivitySnapshot, Session, ToolStatusData } from '@aura/aura-api-client';
 import type { AgentReference } from '@aura/aura/interaction/agents';
 import { AuraConversationApi, type ConversationApi, type ConversationApiError, type ConversationBranchDetail, type ConversationBranchPage, type ConversationBranchRunAccepted, type ConversationBranchSummary, type ConversationListFilters, type RunEventHandler, type RunEventSubscription } from './conversation-api';
 import type { AttachmentSelection, AttachmentSummary } from './conversation-attachments';
@@ -53,7 +53,7 @@ export function normalizeDocumentCitations(value: unknown): ReadonlyArray<Docume
   return result;
 }
 
-export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; readonly citations?: ReadonlyArray<DocumentCitation>; readonly attachments?: ReadonlyArray<AttachmentSummary>; }
+export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; readonly citations?: ReadonlyArray<DocumentCitation>; readonly attachments?: ReadonlyArray<AttachmentSummary>; readonly researchActivity?: ResearchActivity; }
 export function attachmentSelectionForHydration(
   switchedConversation: boolean,
   editingMessageId: string | null,
@@ -145,6 +145,7 @@ interface SessionGuard { readonly epoch: number; readonly fingerprint: string | 
 export interface ManagementSessionPort {
   readonly resetSessionState: () => void;
   readonly registerSessionResetHandler: (handler: ((status?: SessionAuthorizationStatus) => void) | null) => void;
+  readonly registerLazyResetHandler?: (handler: (() => void) | null) => () => void;
 }
 
 export const AURA_MANAGEMENT_SESSION = new InjectionToken<ManagementSessionPort>('AURA_MANAGEMENT_SESSION');
@@ -1521,7 +1522,7 @@ export class ConversationStore {
   private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); const currentRun = isConversationRun(detail.currentRun) ? detail.currentRun : null; return { ...base, turns, currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(currentRun ? [currentRun] : [])]), ...(previous?.branch ? { branch: previous.branch } : {}), ...(previous?.toolActivities ? { toolActivities: previous.toolActivities } : {}), ...(previous?.toolActivityEventIds ? { toolActivityEventIds: previous.toolActivityEventIds } : {}), ...(previous?.toolActivityCursors ? { toolActivityCursors: previous.toolActivityCursors } : {}) }; }
   private uniqueRuns(runs: ReadonlyArray<Run>): ReadonlyArray<Run> { const seen = new Set<string>(); return runs.filter(isConversationRun).filter((run) => { if (seen.has(run.id)) return false; seen.add(run.id); return true; }); }
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(isConversationRun(detail.currentRun) ? [detail.currentRun] : [])].filter(isConversationRun).filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
-  private fromMessage(message: Message): ConversationTurn { const raw = message as Message & { readonly citations?: unknown; readonly attachments?: unknown }; const citations = normalizeDocumentCitations(raw.citations); const attachments = normalizeAttachments(raw.attachments); return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId, ...(citations.length ? { citations } : {}), ...(attachments.length ? { attachments } : {}) }; }
+  private fromMessage(message: Message): ConversationTurn { const raw = message as Message & { readonly citations?: unknown; readonly attachments?: unknown; readonly researchActivity?: ResearchActivity }; const citations = normalizeDocumentCitations(raw.citations); const attachments = normalizeAttachments(raw.attachments); return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId, ...(citations.length ? { citations } : {}), ...(attachments.length ? { attachments } : {}), ...(raw.researchActivity ? { researchActivity: raw.researchActivity } : {}) }; }
   private hydrateHistoricalToolActivities(conversation: Conversation): void {
     for (const run of conversation.runs) {
       if (conversation.currentRun?.id === run.id || !this.isTerminal(run.status) || this.toolReplaySubscriptions.has(run.id)) continue;

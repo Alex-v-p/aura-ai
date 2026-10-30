@@ -1,6 +1,6 @@
 id: AURA-0147
 title: Build Aura Web Research Tasks and Artifacts
-status: approved
+status: integrated
 change_class: repository_governance
 intent: >
   Add dedicated Aura Web research, federated Task Center, and generated-artifact
@@ -53,6 +53,7 @@ ownership_zones:
   - frontend.aura.interaction.research-activity
   - frontend.aura-web.routing-navigation
   - frontend.aura-web.research-task-artifact-acceptance
+  - frontend.test-infrastructure
   - delivery.aura0147
 allowed_paths:
   - work-items/active/AURA-0147.yaml
@@ -61,12 +62,16 @@ allowed_paths:
   - work-items/reviews/AURA-0147-*.yaml
   - work-items/integration/AURA-0147.yaml
   - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
   - frontend/libs/aura/knowledge/research/**
   - frontend/libs/aura/knowledge/artifacts/**
   - frontend/libs/aura/activity/tasks/**
   - frontend/libs/aura/interaction/conversations/**
   - frontend/apps/aura-web/src/app/app.routes.ts
   - frontend/apps/aura-web/src/app/app.routes.spec.ts
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web/src/app/app.component.ts
+  - frontend/apps/aura-web/src/app/app.component.spec.ts
   - frontend/apps/aura-web/src/app/shell/aura-shell.component.ts
   - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
   - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
@@ -74,6 +79,8 @@ allowed_paths:
   - frontend/apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
   - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
   - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/aura-web-e2e/playwright.config.ts
+  - frontend/apps/aura-web-e2e/storybook.config.ts
   - frontend/apps/storybook/src/research-tasks-artifacts.stories.ts
   - tooling/architecture/modules.yaml
 forbidden_paths:
@@ -167,7 +174,7 @@ required_checks:
   - python3 tooling/architecture/validate-repository-shape.py
   - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0147.yaml
   - cd frontend && pnpm exec nx run aura-api-client:check-generated
-  - cd frontend && NX_DAEMON=false pnpm exec nx run-many -t lint test --projects=research,artifacts,tasks,conversations,aura-web
+  - cd frontend && NX_DAEMON=false pnpm exec nx run-many -t lint test --projects=aura-research,aura-artifacts,aura-tasks,aura-conversations,aura-web
   - cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production
   - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook
   - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/storybook.config.ts

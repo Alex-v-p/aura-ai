@@ -1,0 +1,325 @@
+agent: frontend_worker
+work_item: AURA-0147
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0147_frontend
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: >-
+    frontend.aura.knowledge.research, frontend.aura.knowledge.artifacts,
+    frontend.aura.activity.tasks, frontend.aura.interaction.research-activity,
+    frontend.aura-web.routing-navigation
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/tsconfig.base.json
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/app/app.component.ts
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/libs/aura/knowledge/research/project.json
+  - frontend/libs/aura/knowledge/research/tsconfig.lib.json
+  - frontend/libs/aura/knowledge/research/src/index.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-models.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-api.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-store.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.html
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.css
+  - frontend/libs/aura/knowledge/research/src/lib/research-models.spec.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-api.spec.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-store.spec.ts
+  - frontend/libs/aura/knowledge/artifacts/project.json
+  - frontend/libs/aura/knowledge/artifacts/tsconfig.lib.json
+  - frontend/libs/aura/knowledge/artifacts/src/index.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-models.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-api.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-store.spec.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-store.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.html
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.css
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-models.spec.ts
+  - frontend/libs/aura/activity/tasks/project.json
+  - frontend/libs/aura/activity/tasks/tsconfig.lib.json
+  - frontend/libs/aura/activity/tasks/src/index.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-models.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-api.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-store.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.html
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.css
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-models.spec.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-api.spec.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-store.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/index.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/research-activity.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/research-activity-lifecycle.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/research-activity-lifecycle.spec.ts
+  - frontend/vitest.workspace.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-research-activity-api.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+  notes: >-
+    The feature uses no product telemetry and keeps research questions,
+    citations, previews, and titles out of URLs, persistence, service workers,
+    and event payloads. SSE is consumed only as a metadata invalidation hint.
+verification:
+  passed:
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0147.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production
+    - >-
+      cd frontend && NX_DAEMON=false pnpm exec nx run-many -t lint test
+      --projects=aura-research,aura-artifacts,aura-tasks,aura-conversations
+      (feature suites pass; conversation suite 172 tests pass)
+    - git diff --check
+    - >-
+      Focused remediation validation: research/artifacts/tasks lint and tests
+      passed; aura-web production build passed after dialog, contrast, draft,
+      task reconciliation, and label fixes.
+    - >-
+      Task Center initialization regression passed: duplicate same-generation
+      list callers coalesce and the first response publishes; route/detail and
+      session-reset abort fences remain intact.
+    - >-
+      Third remediation validation: research, artifacts, tasks, and
+      conversations unit suites all pass; scoped lint is clean; Aura Web
+      production build, generated-sync, frontend-boundary, and diff checks pass.
+    - >-
+      Latest remediation validation: changed-paths validated 54 paths; generated
+      sync, frontend boundaries, scoped lint/test, production build, and
+      git diff --check passed after route-state, budget-envelope, stream, task
+      projection, download MIME, and conversation activity updates.
+    - >-
+      Extension accessibility follow-up passed research lint and tests plus the
+      Aura Web production build. Cumulative field errors are now rendered beside
+      each extension input with aria-describedby and aria-invalid, and invalid
+      cumulative submissions remain blocked without changing valid fields.
+    - >-
+      Responsive follow-up passed research, tasks, and artifacts lint plus the
+      Aura Web production build and diff check. Feature grids now use bounded
+      intrinsic min tracks, page containers have min-width constraints, and
+      task filters/cards wrap without global overflow clipping; this removes the
+      fixed-width 200-percent-zoom overflow path while preserving controls.
+    - >-
+      Fourth remediation validation passed scoped research, artifacts, tasks,
+      and conversations lint/tests, Aura Web production build, changed-path,
+      generated-sync, frontend-boundary, and diff checks. SSE 410 gaps now
+      reconcile and resume with bounded backoff; session reset/auth failures
+      clear private state and pending flags; artifact type/time filters and
+      confirmation focus behavior are covered in the product slice.
+    - >-
+      Final scoped rerun after signed-out-state and admission-focus updates:
+      aura-research, aura-artifacts, aura-tasks, and aura-conversations lint
+      and tests passed, followed by a successful production Aura Web build.
+    - >-
+      Acceptance-defect follow-up passed research, artifacts, and tasks lint and
+      tests (including focused page regression suites), Aura Web production
+      build, changed-paths (57 paths), generated-sync, frontend-boundaries, and
+      git diff --check. Admission draft reset now occurs immediately after the
+      accepted response; rendered activity and deletion headings use bounded
+      post-render focus retries; Task Center and Artifacts surfaces use
+      intrinsic min-width and wrapping constraints without horizontal clipping.
+    - >-
+      Final artifact detail overflow constraint rerun passed aura-artifacts
+      lint/tests and git diff --check; detail metadata, headings, preview,
+      filters, actions, and status surfaces now also bound flex children and
+      wrap long content at narrow/200-percent zoom widths.
+    - >-
+      Final admission-handoff correction passed aura-research lint/tests,
+      aura-artifacts and aura-tasks lint/tests, Aura Web production build, and
+      git diff --check. A one-shot in-memory admitted research ID handoff now
+      survives route-component destruction, is consumed only by the matching
+      detail route, expires/clears on reset, and drives the destination live
+      announcement plus post-render heading focus without carrying draft data.
+    - >-
+      Final general-review remediation passed executable direct coverage:
+      ResearchTransport and TaskTransport now clear cursor-bearing Last-Event-ID
+      values after HTTP 410 gaps and resume within bounded backoff; ResearchStore
+      admission settlement retires saving and hands off only the admitted ID;
+      TasksStore preserves same-version rejected/unknown outcomes and settles an
+      accepted command only after matching authoritative version advancement.
+      Research and Task Center scoped tests (17 tests across transport/store and
+      existing feature suites), scoped lint, and the Aura Web production build
+      pass. This remediation changed no e2e or generated contract files.
+    - >-
+      Security follow-up passed task tests and lint after authoritative command
+      settlement now retires the exact opaque mutation key, including when the
+      settling refresh is triggered later by SSE. A second same-kind command is
+      covered with a newly generated header key. Direct research/task/artifact
+      tests also cover reset and late-response fences, authorized and hostile
+      artifact downloads, and cursor-page append behavior; Aura Web production
+      build passes.
+    - >-
+      Final UX accessibility correction passed the Aura Conversations suite:
+      lifecycle live-region announcements now map every supported terminal
+      outcome and recovery state to natural, underscore-free copy, with nine
+      direct lifecycle assertions; scoped conversations lint passes.
+    - >-
+      Angular bootstrap correction restored compile-time Injectable metadata on
+      ResearchStore, ArtifactsStore, and TasksStore. The development and
+      production Aura Web builds pass. The scoped direct suites pass through the
+      existing Vitest TypeScript decorator transform extended for these three
+      stores, preserving Angular TestBed token-provider coverage.
+    - >-
+      Desktop-smoke follow-up restored compile-time Injectable metadata on
+      AuraResearchApi, AuraArtifactsApi, and AuraTasksApi as well; no runtime
+      Injectable invocation remains in the three feature libraries. Direct
+      research, artifact, and task suites, scoped lint, and both development and
+      production Aura Web builds pass after extending the same decorator
+      transform for the API files.
+  failed: []
+  not_run:
+    - Storybook and Playwright execution remain with the AURA-0147 test/evaluation owner.
+    - Full AURA-0147 aggregate checks remain with the integration owner.
+decisions:
+  - >-
+    Added REST-authoritative feature stores with monotonically guarded version
+    reconciliation. SSE subscriptions only trigger a fresh authorized GET and
+    never become a source of content or state.
+  - >-
+    Kept all draft questions, filters, selected detail, and previews in Angular
+    signals only. No localStorage, IndexedDB, URL state, service-worker cache,
+    or analytics integration was added.
+  - >-
+    Implemented transport adapters over the reviewed generated Aura API
+    operation descriptors, including same-origin credentials, no-store reads,
+    CSRF/idempotency mutation headers, and HTTP-compatible relative URLs.
+  - >-
+    Artifact previews are bounded text rendered in a preformatted inert region;
+    HTML is stripped before rendering and JSON is not evaluated.
+  - >-
+    Added separate lazy routes and public index boundaries for Research,
+    Artifacts, and Tasks, with product-neutral application-shell navigation.
+  - >-
+    Conversation API mapping preserves researchActivity and the panel renders a
+    task-linked activity card without moving fetched content into transcript state.
+  - >-
+    Session reset handlers are registered lazily by the application shell, so
+    route bundles remain lazy while logout/principal changes abort and fence all
+    research, artifact, and task requests.
+  - >-
+    Research advanced labels use a deterministic formatter with no regular
+    expression replacement callback in the Angular template. Admission clears
+    question, domains, seeds, mode, and lowered budget drafts only after a
+    successful admission; explicit discard clears the same signals.
+  - >-
+    Artifact and research destructive confirmations trap focus, close on
+    Escape, and restore the exact initiating button. Destructive controls use a
+    locally high-contrast semantic color with forced-colors handling.
+  - >-
+    Task reconciliation retains generated task identifiers/status/outcome,
+    progress, capabilities, route-key links, projected versus REST-reconciled
+    versions, time filters, cursor pagination, and command state until the
+    awaited authoritative version is reached.
+  - >-
+    Task Center uses one route-driven initial list admission; same-generation
+    duplicate list calls no longer abort the first request, while detail and
+    principal/session transitions still invalidate prior work.
+  - >-
+    Research settings are the sole budget authority: the composer is gated on
+    the settings envelope, every budget and cumulative extension field is
+    checked against admitted and maximum values, and explicit field errors are
+    shown before mutation.
+  - >-
+    Task and research streams now parse CRLF/chunked frames, surface malformed
+    and gap states, treat clean EOF as a failed connection, and use a bounded
+    reconnect backoff. Research invalidation is keyed by task and authorization
+    generation.
+  - >-
+    Conversation research activity performs a generated-client task snapshot
+    reconciliation with a generation fence, lifecycle state, and report links;
+    it never starts a second run or appends a duplicate message.
+  - >-
+    Stream gaps, including HTTP 410, are treated as resumable invalidations:
+    the store performs an authoritative REST refresh and the transport resumes
+    with bounded reconnect delay rather than permanently stopping.
+  - >-
+    Idempotency headers are opaque random values; logical request fingerprints
+    remain only as in-memory map keys and keys retire after settlement or known
+    rejection while reset clears every map. Artifact type and updated-time
+    filters stay memory-only and use the generated media-type query authority.
+  - >-
+    Destructive research/task/artifact actions use consequence-labelled dialogs,
+    safest-first controls, Escape/opener restoration, and stable status focus;
+    signed-out notices contain no private content and loading states retain
+    structural skeletons.
+  - >-
+    Session failures expose only content-free signed-out notices while preserving
+    reset fences and clearing private lists, details, previews, loading, saving,
+    and pending command state.
+  - >-
+    The successful research admission increments the store reset epoch before
+    any follow-up list/detail reconciliation, allowing the bound composer to
+    clear immediately while rejected or unknown admissions retain every draft
+    field. ViewChild setters plus bounded post-render retries focus the live
+    activity or deletion-status heading only after the corresponding DOM node
+    exists.
+  - >-
+    Task Center and Artifact list/detail, filters, preview, and confirmation
+    surfaces cap intrinsic children, wrap long evidence/status text, and use
+      responsive single-column controls at narrow widths; no global horizontal
+    overflow clipping was added.
+  - >-
+    Research admission handoff state contains only the admitted opaque research
+    ID, has explicit consume/clear semantics and a bounded expiry, and is
+    cleared by session reset. The composer clears its own signals before route
+    navigation; the detail route owns the one-shot announcement and focus
+    intent after its selected detail is rendered.
+  - >-
+    Stream authorization failures leave a content-free signed-out presentation;
+    disconnected, malformed, and gap states remain visible and politely
+    announce recovery while REST remains authoritative. Saved preset errors are
+    keyed by mode and field with associated aria-invalid/describedby feedback;
+    route-shaped skeletons and bounded post-render heading focus cover research,
+    task, and artifact detail loading. Conversation activity uses human-readable
+    detached copy and links to the durable task and report artifact.
+  - >-
+    The direct store/transport regressions use the production classes through
+    Angular TestBed and a deterministic fetch harness. Stores and API adapters
+    retain compile-time Injectable metadata for AOT; the existing Vitest
+    decorator transform covers these owned files so direct suites can execute
+    the same production classes without a test-only facade.
+  - >-
+    Artifact listing uses the generated mediaType and cursor query contract.
+    Time filtering remains explicitly memory-only because the public contract
+    has no time parameter; the UI exposes truthful loaded-page scope and a
+    cursor-driven Load more action rather than claiming a complete server-side
+    time search.
+  - >-
+    Store services and the three Aura API adapters retain compile-time Angular
+    Injectable decorators for AOT and dev bootstrap. The existing Vitest
+    legacy-decorator transform is extended only for these owned store/API files
+    so direct TestBed tests do not require JIT.
+risks:
+  - >-
+    Conversation activity hydration uses a bounded snapshot poll because the
+    conversation contract carries only the opaque task reference; stream
+    transport remains owned by Task Center.
+  - >-
+    Browser-level and full-stack acceptance depends on the separate test/evaluation
+    fixture and provider capability gates; real research providers remain disabled.
+  - >-
+    The approved responsive navigation design includes a route-context drawer /
+    overlay behavior shared with the application shell. This ownership zone
+    supplies the feature routes and focus-safe dialogs; implementing a new shared
+    drawer primitive would cross the shell/shared-UI boundary and requires an
+    owner decision or follow-up work item.
+unresolved: []

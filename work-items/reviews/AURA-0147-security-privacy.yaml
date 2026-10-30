@@ -1,0 +1,35 @@
+agent: security_privacy_reviewer
+work_item: AURA-0147
+verdict: PASS
+checked:
+  - >-
+    Re-read the approved security and privacy obligations, implementation
+    handoffs, current diff, and prior security findings before confirming the
+    corrected slice.
+  - >-
+    Verified private research questions, domains, seeds, citations, excerpts,
+    artifact previews, task details, and titles remain in authorized no-store
+    responses and rendered memory only; no URL, browser persistence,
+    service-worker cache, analytics, or telemetry path stores them.
+  - >-
+    Verified authorization-generation fences clear private state and pending
+    mutations, late responses cannot repopulate another principal, and
+    destructive actions use expected versions, CSRF/idempotency headers, and
+    capability-gated commands.
+  - >-
+    Verified artifact previews are bounded inert text, unsafe HTML and remote
+    embeds are not executable, downloads enforce server media type and
+    authorization, and deletion/cleanup states remain truthful.
+  - >-
+    Verified task and research streams carry metadata-only invalidations;
+    reconnect gaps settle through authorized REST snapshots and do not expose
+    content or owner identity.
+  - >-
+    Verified same-origin relative transports work over local HTTP; no provider
+    credential, public upload, artifact publication, or external egress change
+    was introduced.
+  - >-
+    Reviewed the direct security regressions for reset/late-response fencing,
+    hostile artifact downloads, cursor recovery, mutation-key retirement, and
+    authoritative command settlement; no material finding remains.
+findings: []

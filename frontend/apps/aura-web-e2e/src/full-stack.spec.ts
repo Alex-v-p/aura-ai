@@ -1597,4 +1597,52 @@ for (const mode of configuredModes) {
       expect(postDeleteAssistant?.['content']).not.toContain('[[');
     }
   });
+
+  test('AURA_E2E_RESEARCH_ENABLED exercises governed modes, Task Center, and artifact lineage', async ({ page }) => {
+    const config = stackConfig(mode);
+    test.skip(!config || process.env['AURA_E2E_RESEARCH_ENABLED'] !== 'true', 'set AURA_E2E_RESEARCH_ENABLED=true with a configured owner and enabled providers to run governed research acceptance');
+    if (!config) return;
+    test.setTimeout(300_000);
+    await signIn(page, config);
+    const session = await apiSession(page, config);
+    const question = `AURA_E2E_RESEARCH_${mode}_${Date.now()}`;
+    const modes = [
+      { mode: 'quick', deadlineSeconds: 90, maxSources: 6 },
+      { mode: 'auto', deadlineSeconds: 600, maxSources: 15 },
+      { mode: 'deep', deadlineSeconds: 1_800, maxSources: 30 },
+      { mode: 'agent_led', deadlineSeconds: 3_600, maxSources: 60 },
+    ] as const;
+    for (const selected of modes) {
+      const response = await page.request.post(new URL('/api/v1/research', config.baseUrl).toString(), {
+        headers: csrfHeaders(session, config.baseUrl),
+        data: { question: `${question}_${selected.mode}`, mode: selected.mode },
+      });
+      expect(response.status(), await response.text()).toBe(202);
+      const admission = await response.json() as JsonObject;
+      const researchId = admission['researchId'];
+      const taskRef = admission['taskRef'] as JsonObject | undefined;
+      expect(typeof researchId).toBe('string');
+      expect(taskRef?.['taskId']).toEqual(expect.any(String));
+      const admittedBudget = admission['admittedBudget'] as JsonObject | undefined;
+      expect(admittedBudget).toMatchObject({ deadlineSeconds: selected.deadlineSeconds, maxSources: selected.maxSources });
+      expect(new URL(response.url()).search).toBe('');
+      if (typeof researchId !== 'string') continue;
+      let detail: JsonObject = {};
+      await expect.poll(async () => {
+        const detailResponse = await page.request.get(new URL(`/api/v1/research/${researchId}`, config.baseUrl).toString());
+        if (!detailResponse.ok()) return false;
+        detail = await detailResponse.json() as JsonObject;
+        return ['completed', 'partial', 'budget_exhausted', 'failed', 'canceled', 'interrupted'].includes(String(detail['outcome'] ?? ''));
+      }, { timeout: selected.mode === 'quick' ? 120_000 : 240_000, intervals: [1_000, 2_000, 5_000] }).toBe(true);
+      expect(detail['contentState']).not.toBe('active');
+      const taskId = (taskRef as JsonObject)['taskId'];
+      const task = await page.request.get(new URL(`/api/v1/tasks/${taskId}`, config.baseUrl).toString());
+      expect(task.ok()).toBeTruthy();
+      const taskBody = await task.json() as JsonObject;
+      expect(taskBody['sourceKind']).toBe('research');
+      expect(JSON.stringify(taskBody)).not.toContain(question);
+      await page.goto(new URL('/research', config.baseUrl).toString());
+      await expect(page.getByRole('heading', { name: /research/i }).first()).toBeVisible();
+    }
+  });
 }

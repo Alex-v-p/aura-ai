@@ -7,7 +7,16 @@ export default defineConfig({
     name: 'briefing-store-legacy-decorators',
     enforce: 'pre',
     transform(code, id) {
-      if (!id.endsWith('/libs/aura/automation/briefings/src/lib/briefing-store.ts')) return undefined;
+      const decoratorFiles = [
+        '/libs/aura/automation/briefings/src/lib/briefing-store.ts',
+        '/libs/aura/activity/tasks/src/lib/tasks-store.ts',
+        '/libs/aura/activity/tasks/src/lib/tasks-api.ts',
+        '/libs/aura/knowledge/research/src/lib/research-store.ts',
+        '/libs/aura/knowledge/research/src/lib/research-api.ts',
+        '/libs/aura/knowledge/artifacts/src/lib/artifacts-store.ts',
+        '/libs/aura/knowledge/artifacts/src/lib/artifacts-api.ts',
+      ];
+      if (!decoratorFiles.some((file) => id.endsWith(file))) return undefined;
       const output = ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, experimentalDecorators: true, useDefineForClassFields: false, sourceMap: true }, fileName: id });
       return { code: output.outputText, map: output.sourceMapText ? JSON.parse(output.sourceMapText) : null };
     },

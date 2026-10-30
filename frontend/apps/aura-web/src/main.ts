@@ -88,6 +88,7 @@ bootstrapApplication(AppComponent, {
         const briefingStore = inject(BriefingStore);
         type SessionResettable = { resetSessionState: () => void };
         let workflowStore: SessionResettable | null = null;
+        const lazyResetHandlers = new Set<() => void>();
         const stores = [inject(AgentStore), inject(PersonaStore), inject(ToolPolicyStore), inject(MemoryStore), inject(DocumentsStore), inject(ReminderStore), briefingStore, notificationStore, approvalStore, calendarStore];
         const resetWorkflowStore = (): void => {
           if (workflowStore) { workflowStore.resetSessionState(); return; }
@@ -107,6 +108,7 @@ bootstrapApplication(AppComponent, {
             resetting = true;
             try {
               for (const store of stores) store.resetSessionState();
+              for (const reset of lazyResetHandlers) reset();
               resetWorkflowStore();
               // Reconnect metadata only after ConversationStore accepts the
               // replacement principal; an auth failure remains disconnected.
@@ -123,6 +125,10 @@ bootstrapApplication(AppComponent, {
               if (status === 401 || status === 403) authorizationFailure = true;
               handler?.(status);
             });
+          },
+          registerLazyResetHandler: (handler): (() => void) => {
+            if (handler) lazyResetHandlers.add(handler);
+            return () => { if (handler) lazyResetHandlers.delete(handler); };
           },
         };
       },

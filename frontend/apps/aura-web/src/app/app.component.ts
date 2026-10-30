@@ -1,8 +1,8 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, signal, untracked } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, effect, inject, signal, untracked, Injector } from '@angular/core';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { AuraShellComponent } from './shell/aura-shell.component';
 import { ThemePreference } from '@aura/shared/ui';
-import { ConversationStore, type ConversationListFilters } from '@aura/aura/interaction/conversations';
+import { AURA_MANAGEMENT_SESSION, ConversationStore, type ConversationListFilters } from '@aura/aura/interaction/conversations';
 import { AgentStore } from '@aura/aura/interaction/agents';
 import type { ShellConversationAction, ShellConversationFilters, ShellConversationSummary } from './shell/aura-shell.component';
 
@@ -17,6 +17,9 @@ export class AppComponent implements OnDestroy {
   readonly store = inject(ConversationStore);
   readonly agentStore = inject(AgentStore);
   private readonly router = inject(Router);
+  private readonly injector = inject(Injector);
+  private readonly managementSession = inject(AURA_MANAGEMENT_SESSION);
+  private readonly lazyResetDisposers = new Map<string, () => void>();
   readonly theme = signal<ThemePreference>(this.readTheme());
   readonly navCollapsed = signal(false);
   readonly mobileNavigationOpen = signal(false);
@@ -35,7 +38,7 @@ export class AppComponent implements OnDestroy {
   private readonly routedConversationId = signal<string | null | undefined>(this.conversationIdFromUrl(this.router.url));
   private readonly routeSyncReady = signal(false);
   private routeSyncSequence = 0;
-  private readonly routeSubscription = this.router.events.subscribe((event) => { if (event instanceof NavigationEnd) { this.routeSyncSequence += 1; this.routeSyncReady.set(false); this.routedConversationId.set(this.conversationIdFromUrl(event.urlAfterRedirects)); } });
+  private readonly routeSubscription = this.router.events.subscribe((event) => { if (event instanceof NavigationEnd) { this.routeSyncSequence += 1; this.routeSyncReady.set(false); this.routedConversationId.set(this.conversationIdFromUrl(event.urlAfterRedirects)); void this.registerLazyResetHandler(event.urlAfterRedirects); } });
   private readonly routeEffect = effect(() => { const routeId = this.routedConversationId(); const sequence = this.routeSyncSequence; if (routeId === undefined || this.store.loading()) return; untracked(() => { void this.syncConversationRoute(routeId, sequence); }); });
   private readonly persistedRouteEffect = effect(() => { const selectedId = this.store.selectedId(); const routeId = this.routedConversationId(); const persistedDraftId = this.store.lastPersistedDraftId(); const bareConversationRoute = routeId === null && this.router.url.split('?')[0] === '/conversation'; const matchingDraftRoute = routeId !== undefined && routeId === persistedDraftId; if (!this.routeSyncReady() || selectedId.startsWith('draft-') || (!bareConversationRoute && !matchingDraftRoute)) return; void this.router.navigate(['/conversation', selectedId], { replaceUrl: true }); });
   private readonly mediaQuery = typeof window === 'undefined' ? null : window.matchMedia('(prefers-color-scheme: dark)');
@@ -59,7 +62,7 @@ export class AppComponent implements OnDestroy {
       void this.router.navigate(['/conversation', action.id]).then(() => this.store.openRunInspector(action.id, action.focusId ?? null));
     }
   }
-  ngOnDestroy(): void { this.mediaQuery?.removeEventListener('change', this.mediaListener); this.routeSubscription.unsubscribe(); this.themeEffect.destroy(); this.routeEffect.destroy(); this.persistedRouteEffect.destroy(); }
+  ngOnDestroy(): void { this.mediaQuery?.removeEventListener('change', this.mediaListener); this.routeSubscription.unsubscribe(); this.themeEffect.destroy(); this.routeEffect.destroy(); this.persistedRouteEffect.destroy(); for (const dispose of this.lazyResetDisposers.values()) dispose(); this.lazyResetDisposers.clear(); }
   private readTheme(): ThemePreference { if (typeof localStorage === 'undefined') return 'system'; const value = localStorage.getItem('aura-theme'); return value === 'light' || value === 'dark' ? value : 'system'; }
   private applyTheme(preference: ThemePreference): void { if (typeof document === 'undefined') return; const mode = preference === 'system' ? (this.mediaQuery?.matches ? 'dark' : 'light') : preference; document.documentElement.dataset['theme'] = mode; document.documentElement.style.colorScheme = mode; }
   private async syncConversationRoute(routeId: string | null, sequence: number): Promise<void> {
@@ -79,5 +82,13 @@ export class AppComponent implements OnDestroy {
     const segments = this.router.parseUrl(url).root.children['primary']?.segments ?? [];
     if (segments[0]?.path !== 'conversation') return undefined;
     return segments[1]?.path ?? null;
+  }
+  private async registerLazyResetHandler(url: string): Promise<void> {
+    const path = url.split('?')[0];
+    const key = path.startsWith('/research') ? 'research' : path.startsWith('/artifacts') ? 'artifacts' : path.startsWith('/tasks') ? 'tasks' : null;
+    if (!key || this.lazyResetDisposers.has(key)) return;
+    if (key === 'research') { const module = await import('@aura/aura/knowledge/research'); const store = this.injector.get(module.ResearchStore); this.lazyResetDisposers.set(key, this.managementSession.registerLazyResetHandler?.(() => store.resetSessionState()) ?? (() => undefined)); }
+    if (key === 'artifacts') { const module = await import('@aura/aura/knowledge/artifacts'); const store = this.injector.get(module.ArtifactsStore); this.lazyResetDisposers.set(key, this.managementSession.registerLazyResetHandler?.(() => store.resetSessionState()) ?? (() => undefined)); }
+    if (key === 'tasks') { const module = await import('@aura/aura/activity/tasks'); const store = this.injector.get(module.TasksStore); this.lazyResetDisposers.set(key, this.managementSession.registerLazyResetHandler?.(() => store.resetSessionState()) ?? (() => undefined)); }
   }
 }

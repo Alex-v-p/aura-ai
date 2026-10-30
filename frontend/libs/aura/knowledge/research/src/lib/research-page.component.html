@@ -1,0 +1,379 @@
+<main class="research-page" aria-labelledby="research-heading">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Knowledge · governed web research</p>
+      <h1 id="research-heading">Research</h1>
+      <p class="lede">
+        Ask Aura to gather bounded, cited evidence. Drafts stay in memory until you start a task.
+      </p>
+    </div>
+    <a class="secondary-link" routerLink="/tasks"
+      >View Task Center <span aria-hidden="true">→</span></a
+    >
+  </header>
+  @if (store.signedOut()) {
+    <p class="status" role="status">Signed out. Sign in again to start or view research.</p>
+  }
+  @if (!selectedId()) {
+    @if (!store.settings()) {
+      <div class="loading-skeleton" role="status" aria-label="Loading research settings"><span></span><span></span></div>
+    } @else {
+    <section class="research-composer" aria-labelledby="new-research-heading">
+      <div>
+        <p class="eyebrow">Start a task</p>
+        <h2 id="new-research-heading">What should Aura investigate?</h2>
+      </div>
+      <label
+        ><span>Research question</span
+        ><textarea
+          rows="4"
+          maxlength="2000"
+          [ngModel]="question()"
+          (ngModelChange)="question.set($event)"
+          placeholder="Compare the latest local-first note-taking tools…"
+        ></textarea>
+      </label>
+      <fieldset>
+        <legend>Mode</legend>
+        <div class="mode-grid">
+          @for (item of modes; track item) {
+            <label class="mode-option" [class.selected]="mode() === item"
+              ><input
+                type="radio"
+                name="research-mode"
+                [value]="item"
+                [checked]="mode() === item"
+                (change)="selectMode(item)"
+              /><span
+                ><strong>{{ modeLabel(item) }}</strong
+                ><small
+                  >{{ envelope(item)!.defaults.wallTimeSeconds }} seconds default ·
+                  {{ envelope(item)!.defaults.fetchedSources }} sources · max
+                  {{ envelope(item)!.maximum.fetchedSources }}</small
+                ></span
+              ></label
+            >
+          }
+        </div>
+      </fieldset>
+      <details>
+        <summary>Advanced settings</summary>
+        <div class="advanced-grid">
+          <label
+            ><span>Domain narrowing <small>(comma separated)</small></span
+            ><input
+              [ngModel]="domains()"
+              (ngModelChange)="domains.set($event)"
+              placeholder="example.com, docs.example.org" /></label
+          ><label
+            ><span>Seed URLs <small>(public HTTPS only)</small></span
+            ><input
+              [ngModel]="seeds()"
+              (ngModelChange)="seeds.set($event)"
+              placeholder="https://example.com/report"
+          /></label>
+          @for (
+            field of [
+              'wallTimeSeconds',
+              'fetchedSources',
+              'searchRequests',
+              'browserPages',
+              'modelCalls',
+            ];
+            track field
+          ) {
+            <label
+              ><span>{{ fieldLabel(field) }}</span
+              ><input
+                type="number"
+                [min]="minimum(field)"
+                [max]="envelope()!.maximum[$any(field)]"
+                [value]="budget()![$any(field)]"
+                [attr.aria-describedby]="budgetError(field) ? 'budget-error-' + field : null"
+                [attr.aria-invalid]="budgetError(field) ? 'true' : null"
+                (input)="updateBudget($any(field), $any($event.target).value)"
+            />
+                @if (budgetError(field); as error) { <small class="field-error" [id]="'budget-error-' + field" role="alert">{{ error }}</small> }
+              </label>
+          }
+        </div>
+        <button type="button" class="text-button" (click)="settingsOpen.set(!settingsOpen())">
+          {{ settingsOpen() ? 'Hide' : 'Edit' }} saved preset defaults
+        </button>
+        @if (settingsOpen() && store.settings(); as settings) {
+          <div class="settings-panel" aria-label="Saved research defaults">
+            <p>Defaults can only be lowered below operator maxima.</p>
+            @for (item of settingsDraft(); track item.mode) {
+              <fieldset>
+                <legend>{{ modeLabel(item.mode) }} defaults</legend>
+                <div class="settings-grid">
+                  @for (
+                    field of [
+                      'wallTimeSeconds',
+                      'fetchedSources',
+                      'searchRequests',
+                      'browserPages',
+                      'modelCalls',
+                    ];
+                    track field
+                  ) {
+                    <label
+                      ><span>{{ field }}</span
+                      ><input
+                        type="number"
+                        [min]="minimum(field)"
+                        [attr.aria-describedby]="settingsError(item.mode, $any(field)) ? 'settings-error-' + item.mode + '-' + field : null"
+                        [attr.aria-invalid]="settingsError(item.mode, $any(field)) ? 'true' : null"
+                        [max]="item.maximum[$any(field)]"
+                        [value]="item.defaults[$any(field)]"
+                        (input)="updateSetting(item.mode, $any(field), $any($event.target).value)"
+                    />
+                      @if (settingsError(item.mode, $any(field)); as error) { <small class="field-error" [id]="'settings-error-' + item.mode + '-' + field" role="alert">{{ error }}</small> }
+                    </label>
+                  }
+                </div>
+              </fieldset>
+            }
+            @if (hasSettingsErrors()) { <p class="status error" role="alert">Correct the highlighted preset fields before saving.</p> }
+            <button
+              type="button"
+              class="secondary-button"
+              [disabled]="store.saving() || hasSettingsErrors()"
+              (click)="saveSettings()"
+            >
+              Save defaults
+            </button>
+          </div>
+        }
+      </details>
+      <div class="composer-actions">
+        <button
+          class="primary-action"
+          type="button"
+          [disabled]="!question().trim() || store.saving()"
+          (click)="submit()"
+        >
+          {{ store.saving() ? 'Starting…' : 'Start research' }}</button
+        ><button
+          class="secondary-button"
+          type="button"
+          [disabled]="!question() && !domains() && !seeds()"
+          (click)="discardDraft()"
+        >
+          Discard draft
+        </button>
+      </div>
+    </section>
+    <section class="research-list" aria-labelledby="recent-research-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Durable history</p>
+          <h2 id="recent-research-heading">Recent research</h2>
+        </div>
+      </div>
+      @if (store.loading()) {
+      <div class="loading-skeleton" role="status" aria-label="Loading research history"><span></span><span></span><span></span></div>
+      } @else if (store.error()) {
+        <p class="status error" role="alert">
+          {{ store.error() }} <button type="button" (click)="store.load()">Retry</button>
+        </p>
+      } @else if (!store.activeItems().length) {
+        <div class="empty-state">
+          <span aria-hidden="true">⌕</span>
+          <p>
+            <strong>No research tasks yet.</strong
+            ><span>Your completed reports and source evidence will appear here.</span>
+          </p>
+        </div>
+      } @else {
+        <div class="research-grid">
+          @for (item of store.activeItems(); track item.id) {
+            <button class="research-card" type="button" (click)="open(item.id)">
+              <span class="card-icon" aria-hidden="true">⌕</span
+              ><span class="card-copy"
+                ><strong>{{ modeLabel(item.mode) }} research</strong
+                ><span
+                  >{{ item.stage.replaceAll('_', ' ') }} ·
+                  {{ item.outcome ? outcomeLabel(item.outcome) : 'In progress' }}</span
+                ><small>{{ item.updatedAt | date: 'medium' }}</small></span
+              ><span aria-hidden="true">→</span>
+            </button>
+          }
+        </div>
+      }
+    </section>
+    }
+  } @else {
+    <button type="button" class="back-link" (click)="back()">← Back to research</button>
+    @if (store.loading() && !store.selected()) {
+      <div class="loading-skeleton" role="status" aria-label="Loading research detail"><span></span><span></span></div>
+    }
+    @if (store.error()) {
+      <p class="status error" role="alert">
+        {{ store.error() }}
+        <button type="button" (click)="store.loadDetail(selectedId()!)">Retry</button>
+      </p>
+    }
+    @if (store.selected(); as detail) {
+      <article class="detail-card">
+        <header>
+          <div>
+            <p class="eyebrow">{{ modeLabel(detail.mode) }} research</p>
+            <h2 #activityHeading tabindex="-1">{{ isActive(detail) ? detail.question : detail.tombstoneLabel }}</h2>
+          </div>
+          <span class="state-pill">{{ outcomeLabel(detail.outcome) }}</span>
+        </header>
+        @if (activityStarted()) { <p class="sr-only" role="status" aria-live="polite">Research started.</p> }
+        @if (store.streamState() === 'disconnected' || store.streamState() === 'malformed' || store.streamState() === 'gap') {
+          <p class="status" role="status" aria-live="polite">Live research updates are {{ store.streamState() === 'gap' ? 'reconciling after a cursor gap' : store.streamState() === 'malformed' ? 'recovering from an invalid event' : 'reconnecting' }}. The authoritative task state is being refreshed.</p>
+        }
+        <dl class="detail-meta">
+          <div>
+            <dt>Stage</dt>
+            <dd>{{ stageLabel(detail.stage) }}</dd>
+          </div>
+          <div>
+            <dt>Content state</dt>
+            <dd>{{ detail.contentState.replaceAll('_', ' ') }}</dd>
+          </div>
+          <div>
+            <dt>Updated</dt>
+            <dd>{{ detail.updatedAt | date: 'medium' }}</dd>
+          </div>
+          @if (isActive(detail)) {
+            <div>
+              <dt>Evidence</dt>
+              <dd>{{ sourceCount(detail) }}</dd>
+            </div>
+            <div>
+              <dt>Budget</dt>
+              <dd>
+                {{ detail.consumedBudget.fetchedSources }} /
+                {{ detail.admittedBudget.fetchedSources }} sources
+              </dd>
+            </div>
+          }
+        </dl>
+        @if (isActive(detail) && detail.citations.length) {
+          <section class="evidence" aria-labelledby="evidence-heading">
+            <h3 id="evidence-heading">Cited evidence</h3>
+            <ul>
+              @for (citation of detail.citations; track citation.sourceId) {
+                <li>
+                  <a [href]="citation.url" target="_blank" rel="noreferrer noopener">{{
+                    citation.label
+                  }}</a
+                  ><small>{{ citation.locator || 'Source evidence' }}</small>
+                </li>
+              }
+            </ul>
+          </section>
+        }
+        @if (isActive(detail) && detail.artifactRefs.length) {
+          <p class="artifact-note">
+            A report artifact is available in <a routerLink="/artifacts">Artifacts</a>.
+          </p>
+        }
+        <div class="detail-actions">
+          @if (detail.capabilities.canCancel) {
+            <button
+              class="secondary-button"
+              type="button"
+              [disabled]="store.saving()"
+              (click)="openCancel($event)"
+            >
+              Cancel research
+            </button>
+          }
+          @if (detail.capabilities.canExtend) {
+            <button class="secondary-button" type="button" (click)="openExtension(detail)">
+              Extend once
+            </button>
+          }
+          @if (detail.capabilities.canDelete) {
+            <button #deleteOpener class="danger-button" type="button" (click)="openDelete($event)">
+              Delete retained research
+            </button>
+          }
+          @if (detail.capabilities.canRetryCleanup) {
+            <button class="secondary-button" type="button" (click)="retryCleanup()">
+              Retry cleanup
+            </button>
+          }
+          @if (detail.capabilities.canReconcileCleanup) {
+            <button class="secondary-button" type="button" (click)="reconcileCleanup()">
+              Reconcile cleanup
+            </button>
+          }
+        </div>
+        @if (extensionOpen() && isActive(detail) && extensionDraft(); as extension) {
+          <section class="inline-panel" aria-label="Extend research">
+            <p>
+              Choose a cumulative budget greater than the admitted budget and within the saved
+              maximum.
+            </p>
+            <div class="settings-grid">
+              @for (
+                field of [
+                  'wallTimeSeconds',
+                  'fetchedSources',
+                  'searchRequests',
+                  'browserPages',
+                  'modelCalls',
+                ];
+                track field
+              ) {
+                <label
+                  ><span>{{ field }}</span
+                  ><input
+                    type="number"
+                    [min]="minimum(field)"
+                    [max]="envelope(detail.mode)!.maximum[$any(field)]"
+                    [value]="extension[$any(field)]"
+                    [attr.aria-describedby]="budgetError(field) ? 'extension-error-' + field : null"
+                    [attr.aria-invalid]="budgetError(field) ? 'true' : null"
+                    (input)="updateExtension($any(field), $any($event.target).value)"
+                />
+                  @if (budgetError(field); as error) {
+                    <small class="field-error" [id]="'extension-error-' + field" role="alert">{{ error }}</small>
+                  }
+                </label>
+              }
+            </div>
+            <button type="button" class="secondary-button" (click)="confirmExtension()">
+              Confirm extension</button
+            ><button type="button" class="text-button" (click)="extensionOpen.set(false)">
+              Keep current budget
+            </button>
+          </section>
+        }
+        @if (deleteOpen()) {
+          <section
+            class="inline-panel danger-panel"
+            role="alertdialog"
+            cdkTrapFocus
+            [cdkTrapFocusAutoCapture]="true"
+            (keydown.escape)="closeDelete()"
+            aria-labelledby="delete-research-heading"
+          >
+            <h3 id="delete-research-heading">Delete retained research?</h3>
+            <p>Question, source metadata, and excerpts will be removed. This cannot be undone.</p>
+            <button class="secondary-button" type="button" (click)="closeDelete()">Keep research</button>
+            <button class="danger-button" type="button" (click)="delete()">Delete</button>
+          </section>
+        }
+        @if (cancelOpen()) {
+          <section class="inline-panel" role="alertdialog" cdkTrapFocus [cdkTrapFocusAutoCapture]="true" (keydown.escape)="closeCancel()" aria-labelledby="cancel-research-heading">
+            <h3 id="cancel-research-heading">Stop this research task?</h3>
+            <p>New retrieval will stop, while already collected evidence remains available.</p>
+            <button class="secondary-button" type="button" (click)="closeCancel()">Keep running</button>
+            <button class="danger-button" type="button" (click)="confirmCancel()">Stop research</button>
+          </section>
+        }
+        @if (deletionStatus(); as status) {
+          <p #deletionStatusHeading class="status" tabindex="-1" role="status">{{ status }}</p>
+        }
+      </article>
+    }
+  }
+</main>
