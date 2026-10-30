@@ -92,6 +92,14 @@ def build_research_provider_clients(
     )
 
 
+def load_research_provider_settings() -> ResearchProviderSettings:
+    """Load the non-network provider capability snapshot for API admission."""
+    try:
+        return ResearchProviderSettings.from_environment()
+    except (OSError, ValueError):
+        return ResearchProviderSettings()
+
+
 # Composition callers use either name depending on whether they build a UoW
 # or an application worker; both are the same public seam.
 compose_research_providers = build_research_provider_clients

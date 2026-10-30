@@ -1,0 +1,73 @@
+agent: integration_maintainer
+work_item: AURA-0145
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0145-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0145-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0145-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0145-observability.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The AURA-0145 work item, three implementation handoffs, and four required
+      review verdicts are schema-valid; all handoffs are complete, all verdicts
+      are PASS, findings are empty, and changed paths remain within the approved
+      ownership boundaries.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0145.yaml passed before archival.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0145.yaml passed for all 47 changed paths.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0145.yaml reported no contract changes.
+    - python3 tooling/architecture/validate-import-boundaries.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0145.yaml passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0145.yaml reported no protected baseline changes.
+    - >-
+      Scoped Ruff validation passed for research Core, API, worker, and test
+      paths.
+    - >-
+      Scoped Pyright validation passed with 0 errors, warnings, or informations.
+    - >-
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 focused research and migration suite
+      passed 217 tests.
+    - >-
+      Full services/aura-core suite passed 2006 tests with 124 dependency-gated
+      skips and one pre-existing Authlib deprecation warning.
+    - >-
+      Fresh review evidence records 219 isolated live PostgreSQL tests passed;
+      no local database URL was available in this integration shell to rerun
+      that isolated check.
+    - git diff --check passed.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Real provider profiles and outbound research remain disabled under the
+    accepted AURA-0144 development-only decision; no provider images or
+    artifacts were published.
+  - >-
+    The isolated live PostgreSQL evidence was supplied by the reviewed worker
+    and independently considered by all four PASS reviewers; rerunning it
+    requires an isolated AURA_TEST_DATABASE_URL.

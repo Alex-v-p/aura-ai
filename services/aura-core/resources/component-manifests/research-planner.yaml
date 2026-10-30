@@ -1,0 +1,23 @@
+component:
+  id: aura.research.planner@1
+  version: 1.0.0
+  owner: knowledge.research
+  category: policy
+input: {schema: ResearchPlanInputV1, replayable: true, replay_reason: Planner output is closed and clipped to the admitted budget.}
+output: {schema: ResearchPlanResultV1, capture: {content: none, metadata: allowlisted}}
+boundaries: {accepts: [ResearchPlanInputV1], emits: [ResearchPlanResultV1], excludes: [question, query, url, owner_identity, task_id, prompt, response, payload, exception]}
+dependencies: [model_gateway, core_postgresql]
+span: {operation: research.plan, dependency: model_gateway, capture: metadata_only}
+outcomes: [success, rejected, timeout, failed, unknown]
+errors: [validation_failed, budget_exhausted, prompt_injection_detected, provider_unavailable, timeout]
+metrics: [research_plan_outcome_count, research_plan_latency_ms]
+metric_definitions:
+  - {name: research_plan_outcome_count, type: counter, unit: count, labels: [operation, outcome, error_class, dependency]}
+  - {name: research_plan_latency_ms, type: histogram, unit: milliseconds, labels: [operation, outcome, error_class, dependency]}
+metric_semantics: {research_plan_outcome_count: planner outcomes, research_plan_latency_ms: planner latency}
+capture_policy: metadata_only
+evaluators: [research_prompt_injection_resistance@1, research_budget_compliance@1]
+cardinality: {metric_attributes: [operation, outcome, status, error_class, dependency], trace_only: [trace_id, span_id, parent_span_id, link_span_ids, run_id, conversation_id], prohibited: [question, query, url, prompt, response, content, task_id, research_id, exception]}
+privacy: {capture: metadata_only, content: forbidden, owner_identity: forbidden, credentials: forbidden}
+retention: {process_buffer: bounded, overflow: drop_oldest_and_count, export_failure: retry_three_times_then_drop_and_count}
+export: {sinks: [structured_container_log, otlp], cadence: periodic_and_shutdown, health_counters: [dropped, rejected, export_failures, abandoned_batches]}

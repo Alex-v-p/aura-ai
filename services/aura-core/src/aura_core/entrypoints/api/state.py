@@ -17,6 +17,8 @@ from aura_core.bootstrap.document_uow import SqlDocumentCommandSink, document_se
 from aura_core.bootstrap.health import ReadinessService
 from aura_core.bootstrap.notification_uow import notification_repository, notification_service
 from aura_core.bootstrap.reminder_uow import reminder_repository, reminder_service
+from aura_core.bootstrap.research_providers import load_research_provider_settings
+from aura_core.bootstrap.research_uow import research_service
 from aura_core.bootstrap.task_uow import task_projection_service
 from aura_core.bootstrap.workflow_uow import (
     AdmissionGatedWorkflowApplication,
@@ -49,6 +51,8 @@ from aura_core.domains.automation.workflows.public import (
     WorkflowTaskSourceAdapter,
 )
 from aura_core.domains.execution.runs.public import RunCoordinator, SqlWorkflowAgentRunRecovery
+from aura_core.domains.execution.tasks.contracts import TaskSourceKind
+from aura_core.domains.execution.tasks.source_adapter import ApplicationTaskSourceAdapter
 from aura_core.domains.governance.approvals.public import (
     ApprovalApplicationService,
     ApprovalRepository,
@@ -81,6 +85,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryReindexTaskSourceAdapter,
     MemoryRepository,
 )
+from aura_core.domains.knowledge.research.public import ResearchApplicationService
 from aura_core.platform.auth import (
     MemoryLoginStateBackend,
     MemorySessionBackend,
@@ -301,6 +306,9 @@ class AppState:
         self.document_service: DocumentService
         self.artifact_service: Any
         self.task_projection_service: Any
+        self.research_service: ResearchApplicationService
+        self.research_coordinator: Any = None
+        self.research_providers: Any = None
         self.attachment_service: Any
         self.memory_model_service: memory_public.MemoryModelApplicationService
         self.nats: NatsOutbox | None = None
@@ -625,11 +633,20 @@ class AppState:
             metrics=self.metrics,
             testing=self.testing,
         )
+        research_provider_settings = load_research_provider_settings()
+        self.research_service = research_service(
+            self.sessions_factory,
+            artifact_service=self.artifact_service,
+            provider_settings=research_provider_settings,
+            metrics=self.metrics,
+            testing=self.testing,
+        )
         task_sources = (
             WorkflowTaskSourceAdapter(self.workflow_service),
             BriefingTaskSourceAdapter(self.briefing_service),
             DocumentTaskSourceAdapter(self.document_service),
             MemoryReindexTaskSourceAdapter(self.memory_repository),
+            ApplicationTaskSourceAdapter(TaskSourceKind.RESEARCH, self.research_service),
         )
         self.task_projection_service = task_projection_service(
             self.sessions_factory,

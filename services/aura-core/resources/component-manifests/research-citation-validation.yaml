@@ -1,0 +1,25 @@
+component:
+  id: aura.research.citation_validation@1
+  version: 1.0.0
+  owner: knowledge.research
+  category: validation
+input: {schema: CitationValidationInputV1, replayable: true, replay_reason: Citations are checked against current task-scoped evidence IDs.}
+output: {schema: CitationValidationResultV1, capture: {content: none, metadata: allowlisted}}
+boundaries: {accepts: [CitationValidationInputV1], emits: [CitationValidationResultV1], excludes: [question, query, excerpt, content, owner_identity, task_id, source_id, payload, exception]}
+dependencies: [evidence_repository, citation_validator]
+span: {operation: research.citation_validate, dependency: citation_validator, capture: metadata_only}
+outcomes: [success, rejected, timeout, failed, unknown]
+errors: [validation_failed, citation_invalid, conflict, timeout]
+metrics: [research_citation_validation_outcome_count, research_citation_validation_latency_ms, research_citation_rejected_count, research_unsupported_claim_count]
+metric_definitions:
+  - {name: research_citation_validation_outcome_count, type: counter, unit: count, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_citation_validation_latency_ms, type: histogram, unit: milliseconds, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_citation_rejected_count, type: counter, unit: count, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_unsupported_claim_count, type: counter, unit: count, labels: [operation, outcome, status, error_class, dependency]}
+metric_semantics: {research_citation_validation_outcome_count: citation validation outcomes, research_citation_validation_latency_ms: citation validation latency, research_citation_rejected_count: rejected citation count, research_unsupported_claim_count: unsupported claim count}
+capture_policy: metadata_only
+evaluators: [research_claim_support@1, research_citation_precision@1, research_unsupported_claims@1, research_privacy@1]
+cardinality: {metric_attributes: [operation, outcome, status, error_class, dependency], trace_only: [trace_id, span_id, parent_span_id, link_span_ids, run_id, conversation_id], prohibited: [question, query, excerpt, content, payload, owner_identity, task_id, research_id, source_id, exception]}
+privacy: {capture: metadata_only, content: forbidden, owner_identity: forbidden, credentials: forbidden}
+retention: {process_buffer: bounded, overflow: drop_oldest_and_count, export_failure: retry_three_times_then_drop_and_count}
+export: {sinks: [structured_container_log, otlp], cadence: periodic_and_shutdown, health_counters: [dropped, rejected, export_failures, abandoned_batches]}

@@ -1454,6 +1454,8 @@ modules:
   - aura-core.platform.database.base
   - aura-core.platform.outbox
   - aura-core.platform.outbox.persistence
+  - aura-core.domains.knowledge.research
+  - aura-core.domains.knowledge.research.persistence
 - id: aura-core.bootstrap.briefing-uow
   root: services/aura-core/src/aura_core/bootstrap/briefing_uow.py
   kind: python
@@ -2034,6 +2036,7 @@ modules:
   - aura-core.entrypoints.api.routes.notifications
   - aura-core.entrypoints.api.routes.personas
   - aura-core.entrypoints.api.routes.reminders
+  - aura-core.entrypoints.api.routes.research
   - aura-core.entrypoints.api.routes.runs
   - aura-core.entrypoints.api.routes.tools
   - aura-core.entrypoints.api.routes.workflows
@@ -2226,6 +2229,8 @@ modules:
   - aura-core.bootstrap.health
   - aura-core.bootstrap.notification_uow
   - aura-core.bootstrap.reminder_uow
+  - aura-core.bootstrap.research-providers
+  - aura-core.bootstrap.research-uow
   - aura-core.bootstrap.document-uow
   - aura-core.domains.automation.briefings
   - aura-core.domains.automation.workflows.application
@@ -2243,6 +2248,9 @@ modules:
   - aura-core.bootstrap.memory-uow
   - aura-core.domains.knowledge.memory
   - aura-core.domains.knowledge.memory.public
+  - aura-core.domains.knowledge.research.public
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.source-adapter
   - aura-core.entrypoints.worker.documents
   - aura-core.domains.knowledge.documents.public
   - aura-core.platform.auth
@@ -2341,13 +2349,18 @@ modules:
   - aura_core.entrypoints.worker.app
   dependencies:
   - aura-core.bootstrap.task-uow
+  - aura-core.bootstrap.artifact-uow
+  - aura-core.bootstrap.research-providers
+  - aura-core.bootstrap.research-uow
   - aura-core.domains.automation.briefings
   - aura-core.domains.automation.workflows
   - aura-core.domains.execution.tasks.contracts
+  - aura-core.domains.execution.tasks.source-adapter
   - aura-core.domains.execution.tasks.transport
   - aura-core.domains.knowledge.documents.public
   - aura-core.domains.knowledge.memory.public
   - aura-core.entrypoints.worker.tasks
+  - aura-core.entrypoints.worker.research
   - aura-core.domains.automation.briefings
   - aura-core.domains.automation.workflows.application
   - aura-core.bootstrap.workflow-uow
@@ -3218,3 +3231,73 @@ modules:
   python_modules: []
   source_files: []
   dependencies: []
+- id: aura-core.domains.knowledge.research
+  root: services/aura-core/src/aura_core/domains/knowledge/research
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/knowledge/research/public.py
+  python_modules:
+  - aura_core.domains.knowledge.research
+  source_files:
+  - services/aura-core/src/aura_core/domains/knowledge/research/__init__.py
+  dependencies:
+  - aura-core.domains.knowledge.research.public
+  - aura-core.domains.knowledge.research.persistence
+  - aura-core.domains.knowledge.research.repository
+- id: aura-core.domains.knowledge.research.public
+  root: services/aura-core/src/aura_core/domains/knowledge/research/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/research/public.py
+  python_modules:
+  - aura_core.domains.knowledge.research.public
+  dependencies:
+  - aura-core.domains.artifacts.generated.public
+  - aura-core.domains.execution.tasks.contracts
+- id: aura-core.domains.knowledge.research.persistence
+  root: services/aura-core/src/aura_core/domains/knowledge/research/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/research/persistence.py
+  python_modules:
+  - aura_core.domains.knowledge.research.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.knowledge.research.repository
+  root: services/aura-core/src/aura_core/domains/knowledge/research/repository.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/knowledge/research/repository.py
+  python_modules:
+  - aura_core.domains.knowledge.research.repository
+  dependencies:
+  - aura-core.domains.knowledge.research.persistence
+  - aura-core.domains.knowledge.research.public
+  - aura-core.domains.execution.tasks.contracts
+  - aura-core.platform.outbox
+- id: aura-core.bootstrap.research-uow
+  root: services/aura-core/src/aura_core/bootstrap/research_uow.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/bootstrap/research_uow.py
+  python_modules:
+  - aura_core.bootstrap.research_uow
+  dependencies:
+  - aura-core.domains.artifacts.generated.public
+  - aura-core.domains.knowledge.research.public
+  - aura-core.domains.knowledge.research.repository
+  - aura-core.domains.execution.tasks.transport
+  - aura-core.platform.research-provider-settings
+- id: aura-core.entrypoints.api.routes.research
+  root: services/aura-core/src/aura_core/entrypoints/api/routes/research.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/api/routes/research.py
+  python_modules:
+  - aura_core.entrypoints.api.routes.research
+  dependencies:
+  - aura-core.domains.knowledge.research.public
+  - aura-core.entrypoints.api.routes.dependencies
+  - aura-core.platform.auth
+- id: aura-core.entrypoints.worker.research
+  root: services/aura-core/src/aura_core/entrypoints/worker/research.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/worker/research.py
+  python_modules:
+  - aura_core.entrypoints.worker.research
+  dependencies:
+  - aura-core.domains.knowledge.research.public

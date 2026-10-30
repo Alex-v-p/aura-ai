@@ -1,0 +1,34 @@
+component:
+  id: aura.research.coordinator@1
+  version: 1.0.0
+  owner: knowledge.research
+  category: state_machine
+input: {schema: ResearchCoordinateInputV1, replayable: true, replay_reason: Identifier-only admitted work resumes from the last committed checkpoint.}
+output: {schema: ResearchCoordinateResultV1, capture: {content: none, metadata: allowlisted}}
+boundaries: {accepts: [ResearchCoordinateInputV1], emits: [ResearchCoordinateResultV1], excludes: [question, query, url, domain, excerpt, owner_identity, task_id, source_id, artifact_id, payload, exception]}
+dependencies: [core_postgresql, transactional_outbox]
+span: {operation: research.coordinate, dependency: core_postgresql, capture: metadata_only}
+outcomes: [success, rejected, partial, canceled, timeout, failed, unknown]
+errors: [validation_failed, authorization_denied, conflict, budget_exhausted, provider_disabled, provider_unavailable, queue_unavailable, settlement_unknown, timeout]
+metrics: [research_coordinate_outcome_count, research_coordinate_latency_ms, research_checkpoint_count, research_queue_lag_ms, research_budget_wall_time_consumed_ms, research_budget_sources_consumed_count, research_budget_searches_consumed_count, research_budget_browser_pages_consumed_count, research_budget_model_calls_consumed_count, research_budget_exhaustion_count, research_static_fetch_settled_count, research_static_to_browser_fallback_count, research_static_to_browser_fallback_ratio]
+metric_definitions:
+  - {name: research_coordinate_outcome_count, type: counter, unit: count, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_coordinate_latency_ms, type: histogram, unit: milliseconds, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_checkpoint_count, type: counter, unit: count, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_queue_lag_ms, type: histogram, unit: milliseconds, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_budget_wall_time_consumed_ms, type: histogram, unit: milliseconds, labels: [operation, outcome, status, error_class]}
+  - {name: research_budget_sources_consumed_count, type: counter, unit: count, labels: [operation, outcome, status, error_class]}
+  - {name: research_budget_searches_consumed_count, type: counter, unit: count, labels: [operation, outcome, status, error_class]}
+  - {name: research_budget_browser_pages_consumed_count, type: counter, unit: count, labels: [operation, outcome, status, error_class]}
+  - {name: research_budget_model_calls_consumed_count, type: counter, unit: count, labels: [operation, outcome, status, error_class]}
+  - {name: research_budget_exhaustion_count, type: counter, unit: count, labels: [operation, outcome, status, error_class]}
+  - {name: research_static_fetch_settled_count, type: counter, unit: count, labels: [operation, outcome, status, provider, degradation, error_class]}
+  - {name: research_static_to_browser_fallback_count, type: counter, unit: count, labels: [operation, outcome, status, provider, degradation, error_class]}
+  - {name: research_static_to_browser_fallback_ratio, type: gauge, unit: ratio, labels: [operation, outcome, status, provider, degradation, error_class]}
+capture_policy: metadata_only
+evaluators: [research_budget_compliance@1, research_evidence_sufficiency@1, research_failure_isolation@1, research_freshness@1, research_privacy@1, research_source_diversity@1, research_source_relevance@1]
+cardinality: {metric_attributes: [operation, outcome, status, dependency, error_class], trace_only: [trace_id, span_id, parent_span_id, link_span_ids, run_id, conversation_id], prohibited: [question, query, url, excerpt, content, payload, owner_identity, task_id, research_id, source_id, artifact_id, request_id, exception]}
+replay: synthetic_fixture_only
+privacy: {capture: metadata_only, content: forbidden, owner_identity: forbidden, credentials: forbidden}
+retention: {process_buffer: bounded, overflow: drop_oldest_and_count, export_failure: retry_three_times_then_drop_and_count}
+export: {sinks: [structured_container_log, otlp], cadence: periodic_and_shutdown, health_counters: [dropped, rejected, export_failures, abandoned_batches]}

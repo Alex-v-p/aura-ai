@@ -1,0 +1,25 @@
+agent: security_privacy_reviewer
+work_item: AURA-0145
+verdict: PASS
+checked:
+  - >-
+    Verified exact resolver correlation requires matching task and run IDs,
+    including None, and that missing, mismatched, malformed, stale, or unknown
+    resolution results fail closed without citations or artifacts.
+  - >-
+    Verified safe Paris and New Delhi claims publish only with an approving
+    independent typed resolver, while compact hostile candidates, mixed
+    instructions, invalid spans, and cross-task evidence remain rejected.
+  - >-
+    Search, static-fetch, and browser-fetch cancellation and kill-switch probes
+    prove zero dispatch after revocation; exact request IDs, bounded deadlines,
+    destination controls, and late-settlement fencing remain closed.
+  - >-
+    Crash-safe command replay keeps idempotency keys bound to one fingerprint
+    and command, and explicit deletion proves private evidence, operation
+    responses, and selected linked artifacts are absent before settlement.
+  - >-
+    Focused security verification passed, with aggregate evidence of 217
+    research tests, 2006 Core tests with 124 skipped, and 219 isolated live
+    PostgreSQL tests.
+findings: []

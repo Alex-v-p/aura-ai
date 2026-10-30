@@ -1,3 +1,5 @@
+# ruff: noqa: E501
+
 """Bounded metadata-only telemetry and structured container-log export.
 
 The synchronous recording path performs no I/O. Records are retained in a
@@ -89,6 +91,13 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.research.static_fetch@1": "1.0.0",
     "aura.research.browser_fetch@1": "1.0.0",
     "aura.research.extraction@1": "1.0.0",
+    "aura.research.coordinator@1": "1.0.0",
+    "aura.research.cancellation@1": "1.0.0",
+    "aura.research.planner@1": "1.0.0",
+    "aura.research.evidence_validation@1": "1.0.0",
+    "aura.research.citation_validation@1": "1.0.0",
+    "aura.research.synthesis@1": "1.0.0",
+    "aura.research.deletion@1": "1.0.0",
     "aura.artifacts.persistence@1": "1.0.0",
     "aura.artifacts.deletion@1": "1.0.0",
 }
@@ -600,6 +609,58 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "research_extraction_rejected_count",
         }
     ),
+    "aura.research.coordinator@1": frozenset(
+        {
+            "research_coordinate_outcome_count",
+            "research_coordinate_latency_ms",
+            "research_checkpoint_count",
+            "research_queue_lag_ms",
+            "research_budget_wall_time_consumed_ms",
+            "research_budget_sources_consumed_count",
+            "research_budget_searches_consumed_count",
+            "research_budget_browser_pages_consumed_count",
+            "research_budget_model_calls_consumed_count",
+            "research_budget_exhaustion_count",
+            "research_static_fetch_settled_count",
+            "research_static_to_browser_fallback_count",
+            "research_static_to_browser_fallback_ratio",
+        }
+    ),
+    "aura.research.cancellation@1": frozenset(
+        {
+            "research_cancel_command_outcome_count",
+            "research_cancel_command_latency_ms",
+            "research_cancel_settlement_lag_ms",
+        }
+    ),
+    "aura.research.planner@1": frozenset(
+        {"research_plan_outcome_count", "research_plan_latency_ms"}
+    ),
+    "aura.research.evidence_validation@1": frozenset(
+        {
+            "research_evidence_validation_outcome_count",
+            "research_evidence_validation_latency_ms",
+            "research_evidence_rejected_count",
+        }
+    ),
+    "aura.research.citation_validation@1": frozenset(
+        {
+            "research_citation_validation_outcome_count",
+            "research_citation_validation_latency_ms",
+            "research_citation_rejected_count",
+            "research_unsupported_claim_count",
+        }
+    ),
+    "aura.research.synthesis@1": frozenset(
+        {
+            "research_synthesis_outcome_count",
+            "research_synthesis_latency_ms",
+            "research_unsupported_claim_count",
+        }
+    ),
+    "aura.research.deletion@1": frozenset(
+        {"research_deletion_outcome_count", "research_deletion_latency_ms"}
+    ),
     "aura.artifacts.persistence@1": frozenset(
         {
             "artifact_write_outcome_count",
@@ -843,6 +904,13 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.research.static_fetch@1": frozenset({"research.fetch_static"}),
     "aura.research.browser_fetch@1": frozenset({"research.fetch_browser"}),
     "aura.research.extraction@1": frozenset({"research.extract"}),
+    "aura.research.coordinator@1": frozenset({"research.coordinate"}),
+    "aura.research.cancellation@1": frozenset({"research.cancel_command"}),
+    "aura.research.planner@1": frozenset({"research.plan"}),
+    "aura.research.evidence_validation@1": frozenset({"research.evidence_validate"}),
+    "aura.research.citation_validation@1": frozenset({"research.citation_validate"}),
+    "aura.research.synthesis@1": frozenset({"research.synthesize"}),
+    "aura.research.deletion@1": frozenset({"research.delete"}),
     "aura.artifacts.persistence@1": frozenset({"artifact.revision_write"}),
     "aura.artifacts.deletion@1": frozenset({"artifact.delete"}),
 }
@@ -894,6 +962,13 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.research.static_fetch@1": "research_static_fetch_latency_ms",
     "aura.research.browser_fetch@1": "research_browser_fetch_latency_ms",
     "aura.research.extraction@1": "research_extraction_latency_ms",
+    "aura.research.coordinator@1": "research_coordinate_latency_ms",
+    "aura.research.cancellation@1": "research_cancel_command_latency_ms",
+    "aura.research.planner@1": "research_plan_latency_ms",
+    "aura.research.evidence_validation@1": "research_evidence_validation_latency_ms",
+    "aura.research.citation_validation@1": "research_citation_validation_latency_ms",
+    "aura.research.synthesis@1": "research_synthesis_latency_ms",
+    "aura.research.deletion@1": "research_deletion_latency_ms",
     "aura.artifacts.persistence@1": "artifact_write_latency_ms",
     "aura.artifacts.deletion@1": "artifact_deletion_latency_ms",
 }
@@ -1567,6 +1642,13 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "validation",
             "research.budget_settle",
             "research.browser_fallback",
+            "research.coordinate",
+            "research.plan",
+            "research.cancel_command",
+            "research.evidence_validate",
+            "research.citation_validate",
+            "research.synthesize",
+            "research.delete",
             "artifact.revision_write",
             "artifact.delete",
         }
@@ -1601,6 +1683,19 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "ready",
             "degraded",
             "not_ready",
+            "planning",
+            "searching",
+            "fetching",
+            "validating_evidence",
+            "synthesizing",
+            "persisting",
+            "draining",
+            "partial",
+            "budget_exhausted",
+            "deletion_pending",
+            "deletion_failed",
+            "cleanup_unknown",
+            "deleted",
         }
     ),
     "token_estimator": frozenset({"chars_div_4_ceil"}),
@@ -1657,11 +1752,351 @@ _RESEARCH_TELEMETRY_COMPONENTS = frozenset(
         "aura.research.static_fetch@1",
         "aura.research.browser_fetch@1",
         "aura.research.extraction@1",
+        "aura.research.coordinator@1",
+        "aura.research.cancellation@1",
+        "aura.research.planner@1",
+        "aura.research.evidence_validation@1",
+        "aura.research.citation_validation@1",
+        "aura.research.synthesis@1",
+        "aura.research.deletion@1",
     }
 )
 _RESEARCH_PROVIDER_VALUES = frozenset(
-    {"searxng", "static_fetcher", "browser_fetcher", "none"}
+    {
+        "searxng",
+        "static_fetcher",
+        "browser_fetcher",
+        "ollama",
+        "postgresql",
+        "garage",
+        "nats",
+        "none",
+    }
 )
+_RESEARCH_OPERATION_VALUES = frozenset(
+    {
+        "research.coordinate",
+        "research.cancel_command",
+        "research.plan",
+        "research.search",
+        "research.fetch_static",
+        "research.fetch_browser",
+        "research.extract",
+        "research.evidence_validate",
+        "research.citation_validate",
+        "research.synthesize",
+        "research.delete",
+        "research.queue_claim",
+        "research.cancel_settlement",
+        "research.budget_settle",
+        "research.browser_fallback",
+    }
+)
+_RESEARCH_OUTCOME_VALUES = frozenset(
+    {"success", "rejected", "partial", "canceled", "timeout", "failed", "unknown"}
+)
+_RESEARCH_STATUS_VALUES = frozenset(
+    {
+        "queued",
+        "planning",
+        "searching",
+        "fetching",
+        "validating_evidence",
+        "synthesizing",
+        "persisting",
+        "draining",
+        "terminal",
+        "completed",
+        "partial",
+        "budget_exhausted",
+        "failed",
+        "canceled",
+        "interrupted",
+        "running",
+        "active",
+        "deletion_pending",
+        "deletion_failed",
+        "cleanup_unknown",
+        "deleted",
+    }
+)
+_RESEARCH_NON_DELETION_STATUSES = _RESEARCH_STATUS_VALUES - frozenset(
+    {"deletion_pending", "deletion_failed", "cleanup_unknown", "deleted"}
+) | frozenset({"running"})
+_RESEARCH_COMPONENT_STATUSES: dict[str, frozenset[str]] = {
+    component: _RESEARCH_NON_DELETION_STATUSES
+    for component in (
+        "aura.research.coordinator@1",
+        "aura.research.cancellation@1",
+        "aura.research.planner@1",
+        "aura.research.evidence_validation@1",
+        "aura.research.citation_validation@1",
+        "aura.research.synthesis@1",
+        "aura.research.search@1",
+        "aura.research.static_fetch@1",
+        "aura.research.browser_fetch@1",
+        "aura.research.extraction@1",
+    )
+}
+_RESEARCH_COMPONENT_STATUSES["aura.research.deletion@1"] = _RESEARCH_STATUS_VALUES
+_RESEARCH_METRIC_STATUS_VALUES: dict[str, frozenset[str]] = {
+    "research_plan_outcome_count": frozenset({"planning"}),
+    "research_plan_latency_ms": frozenset({"planning"}),
+    "research_search_outcome_count": frozenset({"searching"}),
+    "research_search_latency_ms": frozenset({"searching"}),
+    "research_search_candidate_count": frozenset({"searching"}),
+    "research_static_fetch_outcome_count": frozenset({"fetching"}),
+    "research_static_fetch_latency_ms": frozenset({"fetching"}),
+    "research_static_fetch_limit_rejection_count": frozenset({"fetching"}),
+    "research_browser_fetch_outcome_count": frozenset({"fetching"}),
+    "research_browser_fetch_latency_ms": frozenset({"fetching"}),
+    "research_browser_fetch_limit_rejection_count": frozenset({"fetching"}),
+    "research_extraction_outcome_count": frozenset({"validating_evidence"}),
+    "research_extraction_latency_ms": frozenset({"validating_evidence"}),
+    "research_extraction_rejected_count": frozenset({"validating_evidence"}),
+}
+_RESEARCH_DELETION_TUPLES: frozenset[tuple[str | None, str, str | None]] = frozenset(
+    {
+        (None, "success", None),
+        (None, "partial", "cleanup_unknown"),
+        (None, "failed", "deletion_failed"),
+        (None, "failed", "storage_unavailable"),
+        # Manifest round-trips may omit the optional error dimension; runtime
+        # failure emissions always use the explicit deletion_failed tuple.
+        (None, "failed", None),
+        (None, "rejected", "authorization_denied"),
+        (None, "rejected", "conflict"),
+        (None, "timeout", "timeout"),
+        (None, "unknown", "cleanup_unknown"),
+        ("active", "failed", "deletion_failed"),
+        ("deletion_pending", "partial", "cleanup_unknown"),
+        ("deletion_failed", "failed", "deletion_failed"),
+        ("cleanup_unknown", "unknown", "cleanup_unknown"),
+        ("deleted", "success", None),
+    }
+)
+
+
+def _research_metric_tuple_allowed(
+    component: str,
+    metric: str,
+    attributes: Mapping[str, str],
+    *,
+    is_span: bool = False,
+) -> bool:
+    """Enforce closed status/outcome/error tuples for research metrics."""
+    status = attributes.get("status")
+    outcome = attributes.get("outcome")
+    error_class = attributes.get("error_class")
+    allowed_statuses = _RESEARCH_METRIC_STATUS_VALUES.get(metric)
+    if status is not None and allowed_statuses is not None and status not in allowed_statuses:
+        return False
+    if component == "aura.research.deletion@1":
+        if not is_span and status is None and error_class is None:
+            return outcome in _RESEARCH_COMPONENT_OUTCOMES[component]
+        return (status, outcome, error_class) in _RESEARCH_DELETION_TUPLES or (
+            is_span
+            and status is None
+            and (None, outcome, error_class) in _RESEARCH_DELETION_TUPLES
+        )
+    if component in {
+        "aura.research.search@1",
+        "aura.research.static_fetch@1",
+        "aura.research.browser_fetch@1",
+        "aura.research.extraction@1",
+    } and error_class == "resource_exhausted":
+        return outcome in {"failed", "rejected"}
+    return True
+
+
+_RESEARCH_COMPONENT_DEPENDENCIES: dict[str, frozenset[str]] = {
+    "aura.research.coordinator@1": frozenset({"core_postgresql", "none"}),
+    "aura.research.cancellation@1": frozenset({"core_postgresql"}),
+    "aura.research.planner@1": frozenset({"model_gateway"}),
+    "aura.research.evidence_validation@1": frozenset({"content_policy"}),
+    "aura.research.citation_validation@1": frozenset({"citation_validator"}),
+    "aura.research.synthesis@1": frozenset({"model_gateway"}),
+    "aura.research.deletion@1": frozenset({"core_postgresql"}),
+    "aura.research.search@1": frozenset({"searxng_port"}),
+    "aura.research.static_fetch@1": frozenset({"static_fetcher_port"}),
+    "aura.research.browser_fetch@1": frozenset({"browser_fetcher_port"}),
+    "aura.research.extraction@1": frozenset({"content_policy"}),
+}
+_RESEARCH_ERROR_VALUES = frozenset(
+    {
+        "authorization_denied",
+        "budget_exhausted",
+        "cancel_dispatch_failed",
+        "citation_invalid",
+        "cleanup_unknown",
+        "conflict",
+        "deletion_failed",
+        "destination_blocked",
+        "redirect_blocked",
+        "prompt_injection_detected",
+        "provider_disabled",
+        "provider_unavailable",
+        "queue_unavailable",
+        "resource_exhausted",
+        "settlement_unknown",
+        "size_exceeded",
+        "storage_unavailable",
+        "timeout",
+        "type_rejected",
+        "validation_failed",
+    }
+)
+_RESEARCH_COMPONENT_OUTCOMES: dict[str, frozenset[str]] = {
+    "aura.research.coordinator@1": frozenset({"success", "rejected", "partial", "canceled", "timeout", "failed", "unknown"}),
+    "aura.research.cancellation@1": frozenset({"success", "rejected", "timeout", "failed", "unknown"}),
+    "aura.research.planner@1": frozenset({"success", "rejected", "timeout", "failed", "unknown"}),
+    "aura.research.evidence_validation@1": frozenset({"success", "rejected", "timeout", "failed", "unknown"}),
+    "aura.research.citation_validation@1": frozenset({"success", "rejected", "timeout", "failed", "unknown"}),
+    "aura.research.synthesis@1": frozenset({"success", "partial", "rejected", "timeout", "failed", "unknown"}),
+    "aura.research.deletion@1": frozenset({"success", "rejected", "partial", "timeout", "failed", "unknown"}),
+}
+_RESEARCH_COMPONENT_ERRORS: dict[str, frozenset[str]] = {
+    "aura.research.coordinator@1": frozenset({"validation_failed", "authorization_denied", "conflict", "budget_exhausted", "provider_disabled", "provider_unavailable", "queue_unavailable", "settlement_unknown", "timeout"}),
+    "aura.research.cancellation@1": frozenset({"authorization_denied", "conflict", "cancel_dispatch_failed", "provider_unavailable", "timeout", "settlement_unknown"}),
+    "aura.research.planner@1": frozenset({"validation_failed", "budget_exhausted", "prompt_injection_detected", "provider_unavailable", "timeout"}),
+    "aura.research.evidence_validation@1": frozenset({"validation_failed", "destination_blocked", "redirect_blocked", "type_rejected", "size_exceeded", "prompt_injection_detected", "timeout"}),
+    "aura.research.citation_validation@1": frozenset({"validation_failed", "citation_invalid", "conflict", "timeout"}),
+    "aura.research.synthesis@1": frozenset({"validation_failed", "citation_invalid", "budget_exhausted", "provider_unavailable", "timeout"}),
+    "aura.research.deletion@1": frozenset({"authorization_denied", "conflict", "deletion_failed", "cleanup_unknown", "storage_unavailable", "timeout"}),
+}
+for _provider_component in (
+    "aura.research.search@1",
+    "aura.research.static_fetch@1",
+    "aura.research.browser_fetch@1",
+    "aura.research.extraction@1",
+):
+    _RESEARCH_COMPONENT_OUTCOMES[_provider_component] = frozenset(
+        {"success", "rejected", "partial", "canceled", "timeout", "failed", "unknown"}
+    )
+    _RESEARCH_COMPONENT_ERRORS[_provider_component] = frozenset(
+        {
+            "validation_failed",
+            "provider_disabled",
+            "provider_unavailable",
+            "destination_blocked",
+            "redirect_blocked",
+            "type_rejected",
+            "size_exceeded",
+        "resource_exhausted",
+            "timeout",
+        }
+    )
+_RESEARCH_METRIC_OPERATIONS: dict[str, frozenset[str]] = {
+    "research_coordinate_outcome_count": frozenset({"research.coordinate"}),
+    "research_coordinate_latency_ms": frozenset({"research.coordinate"}),
+    "research_checkpoint_count": frozenset({"research.coordinate", "research.plan", "research.evidence_validate", "research.citation_validate", "research.synthesize", "research.cancel_command", "research.delete"}),
+    "research_queue_lag_ms": frozenset({"research.queue_claim"}),
+    "research_budget_wall_time_consumed_ms": frozenset({"research.budget_settle"}),
+    "research_budget_sources_consumed_count": frozenset({"research.budget_settle"}),
+    "research_budget_searches_consumed_count": frozenset({"research.budget_settle"}),
+    "research_budget_browser_pages_consumed_count": frozenset({"research.budget_settle"}),
+    "research_budget_model_calls_consumed_count": frozenset({"research.budget_settle"}),
+    "research_budget_exhaustion_count": frozenset({"research.budget_settle"}),
+    "research_static_fetch_settled_count": frozenset({"research.fetch_static"}),
+    "research_static_fetch_outcome_count": frozenset({"research.fetch_static"}),
+    "research_static_to_browser_fallback_count": frozenset({"research.browser_fallback"}),
+    "research_static_to_browser_fallback_ratio": frozenset({"research.browser_fallback"}),
+    "research_cancel_command_outcome_count": frozenset({"research.cancel_command"}),
+    "research_cancel_command_latency_ms": frozenset({"research.cancel_command"}),
+    "research_cancel_settlement_lag_ms": frozenset({"research.cancel_settlement"}),
+    "research_plan_outcome_count": frozenset({"research.plan"}),
+    "research_plan_latency_ms": frozenset({"research.plan"}),
+    "research_evidence_validation_outcome_count": frozenset({"research.evidence_validate"}),
+    "research_evidence_validation_latency_ms": frozenset({"research.evidence_validate"}),
+    "research_evidence_rejected_count": frozenset({"research.evidence_validate"}),
+    "research_citation_validation_outcome_count": frozenset({"research.citation_validate"}),
+    "research_citation_validation_latency_ms": frozenset({"research.citation_validate"}),
+    "research_citation_rejected_count": frozenset({"research.citation_validate"}),
+    "research_unsupported_claim_count": frozenset({"research.citation_validate", "research.synthesize"}),
+    "research_synthesis_outcome_count": frozenset({"research.synthesize"}),
+    "research_synthesis_latency_ms": frozenset({"research.synthesize"}),
+    "research_deletion_outcome_count": frozenset({"research.delete"}),
+    "research_deletion_latency_ms": frozenset({"research.delete"}),
+}
+_RESEARCH_METRIC_DEPENDENCIES: dict[str, frozenset[str | None]] = {
+    metric: frozenset({"core_postgresql"})
+    for metric in (
+        "research_coordinate_outcome_count", "research_coordinate_latency_ms", "research_checkpoint_count", "research_queue_lag_ms",
+        "research_cancel_command_outcome_count", "research_cancel_command_latency_ms", "research_cancel_settlement_lag_ms",
+        "research_deletion_outcome_count", "research_deletion_latency_ms",
+    )
+}
+_RESEARCH_METRIC_DEPENDENCIES.update(
+    {
+        metric: frozenset({"model_gateway"})
+        for metric in ("research_plan_outcome_count", "research_plan_latency_ms", "research_synthesis_outcome_count", "research_synthesis_latency_ms")
+    }
+)
+_RESEARCH_METRIC_DEPENDENCIES.update(
+    {
+        metric: frozenset({"content_policy"})
+        for metric in ("research_evidence_validation_outcome_count", "research_evidence_validation_latency_ms", "research_evidence_rejected_count")
+    }
+)
+_RESEARCH_METRIC_DEPENDENCIES.update(
+    {
+        metric: frozenset({"citation_validator"})
+        for metric in ("research_citation_validation_outcome_count", "research_citation_validation_latency_ms", "research_citation_rejected_count")
+    }
+)
+for _metric in (
+    "research_budget_wall_time_consumed_ms", "research_budget_sources_consumed_count", "research_budget_searches_consumed_count",
+    "research_budget_browser_pages_consumed_count", "research_budget_model_calls_consumed_count", "research_budget_exhaustion_count",
+    "research_static_fetch_settled_count", "research_static_to_browser_fallback_count", "research_static_to_browser_fallback_ratio",
+):
+    _RESEARCH_METRIC_DEPENDENCIES[_metric] = frozenset({None})
+_RESEARCH_METRIC_DEPENDENCIES["research_static_fetch_outcome_count"] = frozenset({None, "static_fetcher_port"})
+_RESEARCH_METRIC_DEPENDENCIES["research_unsupported_claim_count"] = frozenset({"citation_validator", "model_gateway"})
+_RESEARCH_METRIC_DEPENDENCIES["research_static_fetch_settled_count"] = frozenset({None, "static_fetcher_port"})
+_RESEARCH_METRIC_DIMENSIONS: dict[str, frozenset[str]] = {
+    metric: frozenset({"operation", "outcome", "status", "error_class", "dependency"})
+    for metric in (
+        "research_coordinate_outcome_count",
+        "research_coordinate_latency_ms",
+        "research_checkpoint_count",
+        "research_queue_lag_ms",
+        "research_cancel_command_outcome_count",
+        "research_cancel_command_latency_ms",
+        "research_cancel_settlement_lag_ms",
+        "research_plan_outcome_count",
+        "research_plan_latency_ms",
+        "research_evidence_validation_outcome_count",
+        "research_evidence_validation_latency_ms",
+        "research_evidence_rejected_count",
+        "research_citation_validation_outcome_count",
+        "research_citation_validation_latency_ms",
+        "research_citation_rejected_count",
+        "research_unsupported_claim_count",
+        "research_synthesis_outcome_count",
+        "research_synthesis_latency_ms",
+        "research_deletion_outcome_count",
+        "research_deletion_latency_ms",
+    )
+}
+for _metric in (
+    "research_budget_wall_time_consumed_ms",
+    "research_budget_sources_consumed_count",
+    "research_budget_searches_consumed_count",
+    "research_budget_browser_pages_consumed_count",
+    "research_budget_model_calls_consumed_count",
+    "research_budget_exhaustion_count",
+):
+    _RESEARCH_METRIC_DIMENSIONS[_metric] = frozenset(
+        {"operation", "outcome", "status", "error_class"}
+    )
+for _metric in (
+    "research_static_fetch_settled_count",
+    "research_static_to_browser_fallback_count",
+    "research_static_to_browser_fallback_ratio",
+):
+    _RESEARCH_METRIC_DIMENSIONS[_metric] = frozenset(
+        {"operation", "outcome", "status", "provider", "degradation", "error_class"}
+    )
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 _OTLP_NO_TRACE_NAMESPACE = UUID("9e8e7f18-92ed-4c10-82ec-a0d1cdb0b35c")
 _OTLP_NO_TRACE_ID = "0" * 32
@@ -1724,6 +2159,11 @@ class Measurement:
     # The identifier is assigned at record time so retries through the
     # Collector preserve deduplication semantics.
     observation_id: UUID = field(default_factory=uuid4)
+
+    @property
+    def attributes(self) -> dict[str, str]:
+        """Compatibility view of bounded metric dimensions."""
+        return dict(self.dimensions)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2589,6 +3029,21 @@ class MetadataMetrics:
         link_span_ids: Sequence[str] = (),
         **trace_attributes: str,
     ) -> None:
+        if component in _RESEARCH_TELEMETRY_COMPONENTS and set(trace_attributes) - {
+            "run_id",
+            "conversation_id",
+        }:
+            self._rejected += 1
+            return
+        if component in _RESEARCH_TELEMETRY_COMPONENTS and (
+            dependency not in _RESEARCH_COMPONENT_DEPENDENCIES.get(component, frozenset())
+            or scope_type is not None
+            or error_class is not None and error_class not in _RESEARCH_ERROR_VALUES
+            or outcome not in _RESEARCH_COMPONENT_OUTCOMES.get(component, frozenset())
+            or error_class is not None and error_class not in _RESEARCH_COMPONENT_ERRORS.get(component, frozenset())
+        ):
+            self._rejected += 1
+            return
         trace_id = cast(str, _ensure_workflow_trace_id(component, trace_id))
         if component in _WORKFLOW_TELEMETRY_COMPONENTS and dependency == "workflow":
             # Older public workflow ports use the generic dependency label;
@@ -2609,6 +3064,19 @@ class MetadataMetrics:
             trace_attributes = {**trace_attributes, **memory_context.attributes()}
             link_span_ids = (*memory_context.link_span_ids, *link_span_ids)
         if operation not in _SPAN_OPERATIONS.get(component, frozenset()):
+            self._rejected += 1
+            return
+        if component in _RESEARCH_TELEMETRY_COMPONENTS and not _research_metric_tuple_allowed(
+            component,
+            metric_name or _SPAN_METRICS[component],
+            {
+                "operation": operation,
+                "outcome": outcome,
+                "dependency": dependency,
+                **({"error_class": error_class} if error_class is not None else {}),
+            },
+            is_span=True,
+        ):
             self._rejected += 1
             return
         if component == "aura.runtime.prompt_compilation":
@@ -2661,6 +3129,16 @@ class MetadataMetrics:
         ):
             self._rejected += 1
             return
+        # Research spans carry their closed classification in metadata-only
+        # trace attributes so the research tuple policy can be audited.  Keep
+        # the long-standing trace shape for other components: their outcome
+        # and error class remain dimensions, not lineage attributes.
+        span_trace_attributes = (("operation", operation),)
+        if component in _RESEARCH_TELEMETRY_COMPONENTS:
+            span_trace_attributes += (("outcome", outcome),)
+            if error_class is not None:
+                span_trace_attributes += (("error_class", error_class),)
+        span_trace_attributes += normalized[1]
         self._append(
             Measurement(
                 kind="span",
@@ -2675,7 +3153,7 @@ class MetadataMetrics:
                 span_id=span_id,
                 parent_span_id=parent_span_id,
                 link_span_ids=links,
-                trace_attributes=(("operation", operation), *normalized[1]),
+                trace_attributes=span_trace_attributes,
             )
         )
         if component == "aura.runtime.prompt_compilation":
@@ -2729,6 +3207,68 @@ class MetadataMetrics:
         if metric not in _METRICS.get(component, frozenset()) or not math.isfinite(value):
             self._rejected += 1
             return
+        if component in _RESEARCH_TELEMETRY_COMPONENTS:
+            if trace_id is not None or run_id is not None or conversation_id is not None:
+                self._rejected += 1
+                return
+            allowed_metric_dimensions = _RESEARCH_METRIC_DIMENSIONS.get(metric)
+            if (
+                allowed_metric_dimensions is not None
+                and not set(attributes).issubset(allowed_metric_dimensions)
+            ):
+                self._rejected += 1
+                return
+            dependency = attributes.get("dependency")
+            component_dependencies = _RESEARCH_COMPONENT_DEPENDENCIES.get(
+                component, frozenset()
+            )
+            if metric == "research_unsupported_claim_count":
+                component_dependencies = component_dependencies | frozenset(
+                    {"citation_validator", "model_gateway"}
+                )
+            if dependency is not None and dependency not in _RESEARCH_COMPONENT_DEPENDENCIES.get(
+                component, frozenset()
+            ):
+                if dependency not in component_dependencies:
+                    self._rejected += 1
+                    return
+            if (
+                attributes.get("error_class") is not None
+                and attributes["error_class"] not in _RESEARCH_ERROR_VALUES
+            ):
+                self._rejected += 1
+                return
+            expected_operations = _RESEARCH_METRIC_OPERATIONS.get(metric)
+            if expected_operations is not None and attributes.get("operation") not in expected_operations:
+                self._rejected += 1
+                return
+            expected_dependencies = _RESEARCH_METRIC_DEPENDENCIES.get(metric)
+            if expected_dependencies is not None and attributes.get("dependency") not in expected_dependencies:
+                self._rejected += 1
+                return
+            component_outcomes = _RESEARCH_COMPONENT_OUTCOMES.get(component)
+            if component_outcomes is not None and attributes.get("outcome") not in component_outcomes:
+                self._rejected += 1
+                return
+            component_statuses = _RESEARCH_COMPONENT_STATUSES.get(component)
+            if (
+                component_statuses is not None
+                and attributes.get("status") is not None
+                and attributes["status"] not in component_statuses
+            ):
+                self._rejected += 1
+                return
+            component_errors = _RESEARCH_COMPONENT_ERRORS.get(component)
+            if (
+                component_errors is not None
+                and attributes.get("error_class") is not None
+                and attributes["error_class"] not in component_errors
+            ):
+                self._rejected += 1
+                return
+            if not _research_metric_tuple_allowed(component, metric, attributes):
+                self._rejected += 1
+                return
         dimensions = {key: value for key, value in attributes.items() if key in _DIMENSION_KEYS}
         trace_attributes = {
             key: value for key, value in attributes.items() if key in _TRACE_ATTRIBUTE_KEYS
@@ -2783,6 +3323,13 @@ class MetadataMetrics:
         for key, value in dimensions.items():
             if key not in _DIMENSION_KEYS or _looks_like_uuid(value):
                 return None
+            if component in _RESEARCH_TELEMETRY_COMPONENTS:
+                if key == "operation" and value not in _RESEARCH_OPERATION_VALUES:
+                    return None
+                if key == "outcome" and value not in _RESEARCH_OUTCOME_VALUES:
+                    return None
+                if key == "status" and value not in _RESEARCH_STATUS_VALUES:
+                    return None
             if key == "provider" and (
                 _V2_PRIVATE_MARKER_SEGMENT.search(value)
                 or "://" in value

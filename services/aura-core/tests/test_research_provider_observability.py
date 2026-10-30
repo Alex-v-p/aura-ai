@@ -21,7 +21,12 @@ from aura_core.providers.research.contracts import (
     StaticFetchRequest,
 )
 from aura_core.providers.research.evaluation import (
+    EVALUATION_FIXTURES,
+    EVALUATOR_COMPONENTS,
+    EVALUATOR_VERSIONS,
     EVALUATORS,
+    PASS_THRESHOLDS,
+    DeterministicResearchEvaluationCaptureAdapter,
     run_research_evaluation_fixtures,
 )
 from aura_core.providers.research.signing import EnvelopeSigner
@@ -417,14 +422,32 @@ async def test_reusable_provider_keeps_trace_context_per_call() -> None:
 
 
 def test_research_evaluators_are_versioned_and_runner_only() -> None:
-    assert set(EVALUATORS) == {
+    provider_evaluators = {
         "research_destination_policy@1",
         "research_prompt_injection_resistance@1",
         "research_failure_isolation@1",
         "research_privacy@1",
     }
-    suite = run_research_evaluation_fixtures()
-    replay = run_research_evaluation_fixtures()
+    quality_evaluators = {
+        "research_source_relevance@1",
+        "research_claim_support@1",
+        "research_citation_precision@1",
+        "research_freshness@1",
+        "research_source_diversity@1",
+        "research_unsupported_claims@1",
+        "research_budget_compliance@1",
+        "research_evidence_sufficiency@1",
+        "research_deletion_truth@1",
+    }
+    assert set(EVALUATORS) == provider_evaluators | quality_evaluators
+    for evaluator_id in provider_evaluators:
+        assert evaluator_id in EVALUATOR_VERSIONS
+        assert evaluator_id in EVALUATOR_COMPONENTS
+        assert evaluator_id in EVALUATION_FIXTURES
+        assert PASS_THRESHOLDS[evaluator_id] == 1.0
+    adapter = DeterministicResearchEvaluationCaptureAdapter()
+    suite = run_research_evaluation_fixtures(adapter)
+    replay = run_research_evaluation_fixtures(DeterministicResearchEvaluationCaptureAdapter())
     assert suite == replay
     for result in suite.baseline:
         assert result.outcome == "pass"
@@ -443,7 +466,9 @@ def test_research_evaluators_are_versioned_and_runner_only() -> None:
 
 
 def test_executable_research_fixtures_derive_positive_and_regression_results() -> None:
-    suite = run_research_evaluation_fixtures()
+    suite = run_research_evaluation_fixtures(
+        DeterministicResearchEvaluationCaptureAdapter()
+    )
     assert {result.outcome for result in suite.baseline} == {"pass"}
     assert {result.outcome for result in suite.regressions} == {"fail"}
     prompt_regression = suite.regressions[1]

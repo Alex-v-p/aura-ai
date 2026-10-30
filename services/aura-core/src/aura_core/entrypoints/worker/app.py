@@ -14,6 +14,8 @@ from typing import Any, Protocol, cast
 from uuid import UUID, uuid4, uuid5
 
 from aura_core.bootstrap.conversation_uow import SqlConversationStore
+from aura_core.bootstrap.research_providers import build_research_provider_clients
+from aura_core.bootstrap.research_uow import research_coordinator, research_service
 from aura_core.bootstrap.task_uow import task_projection_service
 from aura_core.domains.automation.briefings.application import (
     BriefingExecutionApplication,
@@ -40,7 +42,11 @@ from aura_core.domains.execution.runs.public import (
     RunCoordinator,
     SqlWorkflowAgentRunRecovery,
 )
-from aura_core.domains.execution.tasks.contracts import TASK_SOURCE_INVALIDATED_TOPIC
+from aura_core.domains.execution.tasks.contracts import (
+    TASK_SOURCE_INVALIDATED_TOPIC,
+    TaskSourceKind,
+)
+from aura_core.domains.execution.tasks.source_adapter import ApplicationTaskSourceAdapter
 from aura_core.domains.execution.tasks.transport import NatsTaskSourceInvalidationConsumer
 from aura_core.domains.governance.approvals.public import (
     Approval,
@@ -67,8 +73,10 @@ from aura_core.entrypoints.worker.documents import (
     DocumentWorker,
     run_document_loop,
 )
-from aura_core.entrypoints.worker.documents import (
-    run_document_once as _run_document_once,
+from aura_core.entrypoints.worker.documents import run_document_once as _run_document_once
+from aura_core.entrypoints.worker.research import (
+    RESEARCH_EXECUTE_TOPIC,
+    run_research_consumer_loop,
 )
 from aura_core.entrypoints.worker.tasks import TaskProjectionWorker
 from aura_core.platform.auth import Settings
@@ -978,6 +986,23 @@ async def run_forever(settings: Settings | None = None) -> None:
     store.agent_store = agent_store
     store.agent_service = agent_service  # type: ignore[attr-defined]
     metrics, telemetry = make_worker_telemetry(config)
+    from aura_core.bootstrap.artifact_uow import artifact_service
+
+    research_providers = build_research_provider_clients(config, telemetry=metrics)
+    research_artifacts = artifact_service(sessions, settings=config, metrics=metrics)
+    research_application = research_service(
+        sessions,
+        provider_clients=research_providers,
+        provider_settings=research_providers.settings,
+        artifact_service=research_artifacts,
+        metrics=metrics,
+    )
+    research_coordinator_instance = research_coordinator(
+        research_application,
+        provider_clients=research_providers,
+        artifact_service=research_artifacts,
+        metrics=metrics,
+    )
     run_evidence = make_run_evidence_recorder(config, metrics=metrics)
     from aura_core.bootstrap.attachment_uow import attachment_service
 
@@ -1035,6 +1060,7 @@ async def run_forever(settings: Settings | None = None) -> None:
     document_process_topic = "aura.knowledge.documents.process.v1"
     document_delete_topic = "aura.knowledge.documents.delete.v1"
     document_event_topic = "aura.knowledge.documents.events.v1"
+    research_execute_topic = RESEARCH_EXECUTE_TOPIC
     memory_consumer = NatsIdentifierConsumer(
         config.nats_url,
         memory_topic,
@@ -1063,6 +1089,13 @@ async def run_forever(settings: Settings | None = None) -> None:
         durable="aura-core-document-delete-worker",
         component="aura.knowledge.document_deletion",
     )
+    research_consumer = NatsIdentifierConsumer(
+        config.nats_url,
+        research_execute_topic,
+        metrics=metrics,
+        durable="aura-core-research-worker",
+        component="aura.research.coordinator@1",
+    )
     workflow_consumer = NatsIdentifierConsumer(
         config.nats_url,
         WORKFLOW_WAKE_TOPIC,
@@ -1083,6 +1116,7 @@ async def run_forever(settings: Settings | None = None) -> None:
             RUN_RESUME_TOPIC,
             document_process_topic,
             document_delete_topic,
+            research_execute_topic,
             document_event_topic,
             ATTACHMENT_EVENT_TOPIC,
             BRIEFING_EVENT_SUBJECT,
@@ -1122,6 +1156,7 @@ async def run_forever(settings: Settings | None = None) -> None:
     workflow_recovery_task: asyncio.Task[None] | None = None
     task_projection_task: asyncio.Task[None] | None = None
     task_projection_recovery_task: asyncio.Task[None] | None = None
+    research_task: asyncio.Task[None] | None = None
     task_projection_stop = asyncio.Event()
     await telemetry.start()
     try:
@@ -1129,6 +1164,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         await resume_consumer.connect()
         await document_process_consumer.connect()
         await document_delete_consumer.connect()
+        await research_consumer.connect()
         await briefing_consumer.connect()
         await workflow_consumer.connect()
         await task_projection_consumer.connect()
@@ -1163,6 +1199,9 @@ async def run_forever(settings: Settings | None = None) -> None:
         store.set_attachment_services(attachment_service_instance, document_worker.service)
         document_process_task = asyncio.create_task(
             run_document_loop(document_worker, document_process_consumer)
+        )
+        research_task = asyncio.create_task(
+            run_research_consumer_loop(research_coordinator_instance, research_consumer)
         )
         document_delete_task = asyncio.create_task(
             run_document_loop(document_worker, document_delete_consumer)
@@ -1310,6 +1349,7 @@ async def run_forever(settings: Settings | None = None) -> None:
                     BriefingTaskSourceAdapter(briefing_service_instance),
                     DocumentTaskSourceAdapter(document_worker.service),
                     MemoryReindexTaskSourceAdapter(task_memory_repository),
+                    ApplicationTaskSourceAdapter(TaskSourceKind.RESEARCH, research_application),
                 ),
             ),
             source_transport=task_projection_consumer,
@@ -1448,6 +1488,7 @@ async def run_forever(settings: Settings | None = None) -> None:
                 for task in (
                     document_process_task,
                     document_delete_task,
+                    research_task,
                     briefing_task,
                     briefing_recovery_task,
                 )
@@ -1464,6 +1505,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         await memory_consumer.close()
         await document_process_consumer.close()
         await document_delete_consumer.close()
+        await research_consumer.close()
         await briefing_consumer.close()
         await workflow_consumer.close()
         await task_projection_consumer.close()
@@ -1476,6 +1518,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         if callable(close_calendar):
             await cast(Callable[[], Awaitable[object]], close_calendar)()
         await engine.dispose()
+        await research_providers.aclose()
 
 
 def make_worker_telemetry(

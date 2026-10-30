@@ -17,6 +17,8 @@ span:
   operation: research.search
   dependency: searxng_port
   capture: metadata_only
+outcomes: [success, rejected, partial, canceled, timeout, failed, unknown]
+errors: [validation_failed, provider_disabled, provider_unavailable, destination_blocked, redirect_blocked, type_rejected, size_exceeded, resource_exhausted, timeout]
 metrics: [research_search_outcome_count, research_search_latency_ms, research_search_candidate_count]
 metric_definitions:
   - name: research_search_outcome_count

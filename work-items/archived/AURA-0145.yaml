@@ -1,6 +1,6 @@
 id: AURA-0145
 title: Execute durable governed web research
-status: approved
+status: integrated
 change_class: repository_governance
 intent: >
   Add a Core-owned durable research aggregate and coordinator that admits bounded
@@ -77,6 +77,7 @@ allowed_paths:
   - services/aura-core/src/aura_core/entrypoints/worker/app.py
   - services/aura-core/src/aura_core/entrypoints/worker/research.py
   - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/providers/research/evaluation.py
   - services/aura-core/resources/component-manifests/research-*.yaml
   - services/aura-core/tests/test_research_*.py
   - services/aura-core/tests/test_migration_0032_governed_research.py

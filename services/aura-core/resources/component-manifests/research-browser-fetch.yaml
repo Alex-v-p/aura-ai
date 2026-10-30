@@ -17,6 +17,8 @@ span:
   operation: research.fetch_browser
   dependency: browser_fetcher_port
   capture: metadata_only
+outcomes: [success, rejected, partial, canceled, timeout, failed, unknown]
+errors: [validation_failed, provider_disabled, provider_unavailable, destination_blocked, redirect_blocked, type_rejected, size_exceeded, resource_exhausted, timeout]
 metrics: [research_browser_fetch_outcome_count, research_browser_fetch_latency_ms, research_browser_fetch_limit_rejection_count]
 metric_definitions:
   - name: research_browser_fetch_outcome_count

@@ -1,0 +1,85 @@
+agent: test_evaluation_engineer
+work_item: AURA-0145
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: shared
+scope:
+  ownership_zone: evaluation.research-lifecycle-quality
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/providers/research/evaluation.py
+  - services/aura-core/tests/test_research_lifecycle_evaluation.py
+  - services/aura-core/tests/test_research_citation_evaluation.py
+  - services/aura-core/tests/test_research_budget_evaluation.py
+  - services/aura-core/tests/test_research_deletion_evaluation.py
+  - services/aura-core/tests/test_research_privacy_evaluation.py
+  - services/aura-core/tests/test_research_instrumentation_evaluation.py
+  - services/aura-core/tests/test_research_provider_observability.py
+  - work-items/handoffs/AURA-0145-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.research.coordinator@1
+    - aura.research.cancellation@1
+    - aura.research.planner@1
+    - aura.research.evidence_validation@1
+    - aura.research.citation_validation@1
+    - aura.research.synthesis@1
+    - aura.research.deletion@1
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0145.yaml
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/knowledge/research services/aura-core/src/aura_core/bootstrap/research_uow.py services/aura-core/src/aura_core/entrypoints/api/routes/research.py services/aura-core/src/aura_core/entrypoints/worker/research.py (0 errors, 0 warnings, 0 informations)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/providers/research/evaluation.py (0 errors, 0 warnings, 0 informations)
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/providers/research/evaluation.py services/aura-core/tests/test_research_*evaluation.py services/aura-core/tests/test_research_provider_observability.py (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/providers/research/evaluation.py (0 errors, 0 warnings, 0 informations)
+    - Python YAML handoff-shape validation for work-items/handoffs/AURA-0145-test-evaluation.yaml (passed)
+    - git diff --check (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research_lifecycle_evaluation.py services/aura-core/tests/test_research_privacy_evaluation.py -q --tb=short (93 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research_*evaluation.py services/aura-core/tests/test_research_provider_observability.py -q --tb=short (192 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research*.py -q --tb=short (216 passed)
+  failed: []
+  not_run: []
+decisions:
+  - Tests use only MemoryResearchRepository and synthetic in-process provider fixtures; no outbound provider profile is enabled.
+  - Evaluations assert public ResearchApplicationService and ResearchCoordinator behavior, including owner scoping, immutable admission, checkpoint recovery, task-scoped citations, bounded budgets, deletion tombstones, and metadata-only observations.
+  - The instrumentation suite verifies the closed coordinator metric inventory, manifest units, correlation rejection, evaluator declarations, exporter outage isolation, and runtime operation emission without adding production telemetry or changing thresholds.
+  - Black-box fault fixtures cover crash-after-fetch restart, cancel-before/during dispatch, prohibited destinations, terminal redelivery, cursor/min-version projection reads, mutation idempotency, cleanup substates, bounded excerpts, fake-clock deadlines, and telemetry sink isolation.
+  - The expanded second-cycle fixtures cover platform outbox-to-identifier-worker acknowledgement, SQL admission deadline/outbox staging, operation-barrier cancellation fencing with exact request IDs, final-URL revalidation, service-recreation idempotency, cleanup proof and linked-artifact substates, source invalidation worker composition, closed dependency/span matrices, zero-valued budget observations, five-minute fallback cohorts, and typed evaluator contracts.
+  - The authorized evaluation module now registers all twelve AURA-0145 typed lifecycle-quality evaluators while retaining the four AURA-0144 provider evaluators and runner-only private evidence constructors.
+  - Removed an unreachable destination-policy fixture helper after static analysis identified it as dead duplication; the registered AURA-0144 destination evaluator and its typed contract remain unchanged.
+  - Third-cycle black-box probes cover irrelevant and SYSTEM OVERRIDE evidence, cancellation after operation admission, exact active search/static/browser request IDs, post-claim kill-switch narrowing, immutable capability snapshots, browser operation-ledger identity, evidence-only deletion proof, operation-ledger private-field purge, non-blind cleanup reconciliation, extension deadlines, closed failure labels, shared fallback cohorts, telemetry rejection dimensions, and runtime phase span matrices.
+  - Research evaluators now return distinct typed ScoreV1 DTOs from bounded observation inputs, preserve the generic content-free envelope for compatibility, scan all retained sink fields, and map each required evaluator to a manifest that declares it.
+  - Fourth-cycle probes cover enabled admission capability snapshots with current narrowing, aggregate and cleanup-ledger deletion truth, service-recreation command replay and crash-before-receipt atomicity, route composition boundaries, cancellation and kill-switch fencing, query-token-stuffed hostile evidence, one-second request deadlines, deployment-wide fallback cohorts, runtime phase spans, and privacy scans across metrics, spans, events, logs, and browser-state observations.
+  - Quality evaluators now execute protocol-shaped positive and hostile source, claim, citation, budget, sufficiency, and deletion fixtures and derive typed score inputs from observed fixture records rather than accepting caller-provided aggregate score counts.
+  - Fifth-cycle tests inject a trusted closed synthesizer with exact evidence spans, fail closed for absent/hostile/cross-task/out-of-bounds support, require serialized typed scoreV1 payloads, and reject quality evaluation without captured execution evidence.
+  - Fifth-cycle idempotency, repository-backed fallback cohort, metadata-sample, active-span, deletion-cardinality, and post-claim cancellation probes are green.
+  - Sixth-cycle fixtures cover sufficient=false partial synthesis, valid France-capital relation support, hostile exact-span rejection, public settings kill-switches at search and browser gates, internal/cross-component telemetry rejection, exporter outage isolation, and checkpoint-excluded active phase spans.
+  - Seventh-cycle fixtures cover closed relation grammar rejection for irrelevant, multi-sentence, semicolon/conjunction, and hostile evidence; structured report rendering excludes raw hostile excerpts; unsupported question relations fail closed; child and cross-phase metric ownership is rejected; manifest ownership is exact; and fallback repository outage preserves the outcome without emitting a ratio sample.
+  - Quality capture now uses an executable `ResearchEvaluationCaptureAdapter` protocol owned by the evaluator module. The runner invokes separate baseline and regression captures and derives score inputs from bounded capture observations; missing capture fails closed, caller-provided aggregate mappings are not accepted, and privacy capture spans metrics, spans, events, logs, and browser-state sink categories.
+  - Tenth-cycle positive, partial, replay, recovery, and privacy fixtures now pass the independent typed `entity_resolver=` port explicitly. The shared resolver returns `ResearchEntityResolution` values with deterministic typed identity, provenance, task correlation, and run correlation; synthesis remains a separate port. No-resolver, hostile compact candidate, mismatch, and unknown-type cases remain fail closed.
+  - Eleventh-cycle regressions enforce exact resolver run correlation (including coordinator-only, resolver-only, matching, and both-absent cases), verify one failed/deletion_failed outcome-latency-span tuple for linked-artifact cleanup exceptions, and cover every declared deletion span tuple including success, partial/cleanup_unknown, failed/deletion_failed, rejected, timeout, and unknown outcomes.
+  - Twelfth-cycle telemetry regression covers deletion failed/storage_unavailable metric and span round-trips, rejects noncanonical success/partial/unknown storage failures, and asserts the deletion manifest error vocabulary and runtime tuple set are mutually exhaustive.
+risks:
+  - The suite intentionally fails if future Core changes allow over-budget settlement, invented or cross-task citations, post-terminal mutation, content-bearing telemetry, incomplete coordinator metric registration, lossy restart, stale Task Center snapshots, prohibited destinations, post-cancel dispatch, or unbounded cited excerpts.
+  - The second-cycle suite intentionally fails if provider-settled evidence is lost after a crash, untrusted evidence is promoted to a completed claim, mutation cleanup lacks proof, exact provider cancellation IDs are not used, the API composes providers, or typed evaluator outcomes are declaration-only.
+  - The provider observability contract now explicitly protects all four AURA-0144 evaluator IDs and metadata while requiring the approved AURA-0145 quality additions.
+  - Full PostgreSQL migration, restart, and worker-process checks are covered by the owning Core/integration validation and are not duplicated in this independent fixture slice.
+  - Fourth-cycle independent probes are green, including cumulative deadline envelopes, deployment-wide fallback cohorts, runtime phase spans, and cancellation fencing.
+  - Eighth-cycle fixtures cover imperative-prefix, title/lowercase/modal/verb hostile evidence, safe multi-token entities, complete sink capture, provider classification round-trips, manifest metric round-trips, and explicit telemetry outcome/error matrices.
+  - Eighth-cycle focused evaluation/provider suite reaches 158 passed with one intentional ownership-drift failure; the full research suite reaches 182 passed with the same failure.
+  - Offline deterministic captures are explicitly marked `offline_fixture` and are not release-evidence provenance; release adapters must return deployed Core capture provenance.
+  - Ninth-cycle fixtures cover structural entity grammar (Paris/New Delhi positives, imperative/title/lowercase/mixed-prefix and overlong proper-title negatives), canonical report DTO rendering, exact linked-deletion telemetry cardinality, and tuple-level planner/static/evidence/deletion/coordinator telemetry acceptance and rejection.
+  - Tenth-cycle fixtures add a deterministic trusted entity resolver separate from synthesis, typed identity/provenance checks for Paris and New Delhi, exact hostile compact candidates (including hyphenated and unspaced forms), no-resolver fail-closed coverage, resolver mismatch/unknown-type rejection, and an exact span tuple matrix mirroring metric ownership/error policy. All assigned suites are green.
+  - Eleventh-cycle exact correlation, deletion exception cardinality, and exhaustive deletion span tuple fixtures are green.
+  - Twelfth-cycle deletion storage-error and manifest/runtime tuple coverage is green.
+unresolved: []
