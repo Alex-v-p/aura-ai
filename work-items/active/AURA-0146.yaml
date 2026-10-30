@@ -1,6 +1,6 @@
 id: AURA-0146
 title: Integrate conversational research and completion delivery
-status: draft
+status: approved
 change_class: repository_governance
 intent: >
   Add admission-only web.research@1 conversational behavior, deny-by-default
@@ -23,7 +23,7 @@ sources_of_truth:
     - docs/adr/0017-governed-production-run-evidence.md
     - docs/adr/0018-governed-web-research-providers.md
     - work-items/archived/AURA-0141.yaml
-    - work-items/active/AURA-0145.yaml
+    - work-items/archived/AURA-0145.yaml
     - AURA-0146 must not enter implementation until AURA-0145 is reviewed and integrated.
     - The tool result is admission-only and settles within the existing thirty-second ceiling; research execution client subscription and completion delivery remain outside the originating run.
     - Completion append and notification have independent durable delivery records so notification failure never duplicates the transcript append.
