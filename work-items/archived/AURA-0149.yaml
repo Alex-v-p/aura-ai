@@ -1,6 +1,6 @@
 id: AURA-0149
 title: Make research completion migration collision-safe
-status: approved
+status: integrated
 change_class: bugfix
 intent: >
   Restore deterministic clean and supported pre-upgrade PostgreSQL upgrades by
