@@ -54,10 +54,15 @@ from aura_core.domains.governance.approvals.public import (
 )
 from aura_core.domains.interaction.agents.adapters import SqlAgentStore
 from aura_core.domains.interaction.agents.public import AgentCatalog, AgentConfigurationService
+from aura_core.domains.interaction.conversations.public import SqlConversationCompletionService
 from aura_core.domains.interaction.personas.adapters import SqlPersonaStore
 from aura_core.domains.interaction.personas.public import (
     PersonaCatalog,
     PersonaConfigurationService,
+)
+from aura_core.domains.interaction.research_delivery.public import (
+    ResearchCompletionDeliveryService,
+    SqlResearchCompletionDeliveryRepository,
 )
 from aura_core.domains.knowledge.documents.public import DocumentTaskSourceAdapter
 from aura_core.domains.knowledge.memory.public import (
@@ -74,10 +79,8 @@ from aura_core.entrypoints.worker.documents import (
     run_document_loop,
 )
 from aura_core.entrypoints.worker.documents import run_document_once as _run_document_once
-from aura_core.entrypoints.worker.research import (
-    RESEARCH_EXECUTE_TOPIC,
-    run_research_consumer_loop,
-)
+from aura_core.entrypoints.worker.research import RESEARCH_EXECUTE_TOPIC
+from aura_core.entrypoints.worker.research_delivery import run_research_consumer_loop
 from aura_core.entrypoints.worker.tasks import TaskProjectionWorker
 from aura_core.platform.auth import Settings
 from aura_core.platform.database.engine import make_engine, session_factory
@@ -997,6 +1000,7 @@ async def run_forever(settings: Settings | None = None) -> None:
         artifact_service=research_artifacts,
         metrics=metrics,
     )
+    store.set_research_query(research_application)
     research_coordinator_instance = research_coordinator(
         research_application,
         provider_clients=research_providers,
@@ -1030,6 +1034,25 @@ async def run_forever(settings: Settings | None = None) -> None:
     )
     notification_service_instance = notification_service(
         notification_repository(sessions, metrics=metrics)
+    )
+
+    async def _research_delivery_snapshot(task: Any) -> Any:
+        return await research_application.delivery_snapshot(
+            str(task.issuer),
+            str(task.subject),
+            task.id,
+            expected_version=int(task.version),
+            expected_origin=getattr(task, "origin", None),
+        )
+
+    research_completion_delivery = ResearchCompletionDeliveryService(
+        SqlResearchCompletionDeliveryRepository(sessions),
+        SqlConversationCompletionService(sessions),
+        notification_service_instance,
+        metrics=metrics,
+        snapshot_provider=_research_delivery_snapshot,
+        source_claim=research_application.claim_delivery,
+        source_settle_claim=research_application.settle_delivery_claim,
     )
     approval_repository_instance = approval_repository(
         sessions, metrics=metrics, execution_port=store
@@ -1201,7 +1224,11 @@ async def run_forever(settings: Settings | None = None) -> None:
             run_document_loop(document_worker, document_process_consumer)
         )
         research_task = asyncio.create_task(
-            run_research_consumer_loop(research_coordinator_instance, research_consumer)
+            run_research_consumer_loop(
+                research_coordinator_instance,
+                research_consumer,
+                research_completion_delivery,
+            )
         )
         document_delete_task = asyncio.create_task(
             run_document_loop(document_worker, document_delete_consumer)
@@ -1229,6 +1256,8 @@ async def run_forever(settings: Settings | None = None) -> None:
             thinking_publisher=event_transport,
             run_evidence=run_evidence,
             workflow_recovery=workflow_run_recovery,
+            research_service=research_application,
+            research_delivery=research_completion_delivery,
         )
         coordinator.set_briefing_provider(provider)
         briefing_state = BriefingRunStateAdapter(

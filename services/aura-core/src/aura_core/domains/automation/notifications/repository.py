@@ -32,6 +32,7 @@ from aura_core.domains.automation.notifications.public import (
     NOTIFICATION_TOPIC,
     BriefingNotificationSource,
     CreateBriefingNotification,
+    CreateResearchNotification,
     CreateWorkflowNotification,
     DueDeliveryResult,
     Notification,
@@ -43,6 +44,7 @@ from aura_core.domains.automation.notifications.public import (
     NotificationVersionConflict,
     NotificationView,
     ReminderNotificationSource,
+    ResearchNotificationSource,
     WorkflowNotificationSource,
     as_payload,
     decode_cursor,
@@ -145,6 +147,8 @@ def _notification(row: NotificationRow | dict[str, object]) -> Notification:
             "workflow", UUID(str(values[0])), UUID(str(values[1])), UUID(str(values[2])),
             int(str(values[3])), UUID(str(values[4])), UUID(str(values[5])),
         )
+    elif source_kind == "research":
+        source = ResearchNotificationSource("research", UUID(str(value("research_id"))))
     else:
         raise ValueError("unknown notification source")
     return Notification(
@@ -195,6 +199,8 @@ def _replay(row: NotificationEventRow | dict[str, object]) -> NotificationReplay
             "workflow", UUID(str(values[0])), UUID(str(values[1])), UUID(str(values[2])),
             int(str(values[3])), UUID(str(values[4])), UUID(str(values[5])),
         )
+    elif source_kind == "research":
+        source = ResearchNotificationSource("research", UUID(str(value("research_id"))))
     else:
         raise ValueError("unknown notification event source")
     return NotificationReplayEvent(
@@ -232,6 +238,8 @@ def _notification_from_response(
                 UUID(str(response["workflowStepExecutionId"])),
             UUID(str(response["workflowResultId"])),
             )
+        elif response.get("researchId") is not None:
+            source = ResearchNotificationSource("research", UUID(str(response["researchId"])))
         else:
             reminder_id = response.get("reminderId")
             if reminder_id is None:
@@ -255,6 +263,8 @@ def _notification_from_response(
             UUID(str(typed_source["workflowStepExecutionId"])),
             UUID(str(typed_source["workflowResultId"])),
         )
+    elif typed_source.get("kind") == "research":
+        source = ResearchNotificationSource("research", UUID(str(typed_source["researchId"])))
     else:
         raise ValueError("unknown notification response source")
     return Notification(
@@ -526,6 +536,44 @@ class MemoryNotificationRepository:
             item = Notification(uuid4(), issuer, subject, source, NotificationStatus.DELIVERED, 1, now, now, now)
             self._items[item.id] = item
             self._events.append(NotificationReplayEvent(uuid4(), item.id, source, item.status, item.version, now))
+            self._idempotency[(issuer, subject, command.idempotency_key)] = (fingerprint, item)
+            self._wake.set()
+            self._wake = asyncio.Event()
+            return item
+
+    async def create_research_notification(
+        self, command: CreateResearchNotification
+    ) -> Notification:
+        issuer, subject = _owner(command.issuer, command.subject)
+        source = ResearchNotificationSource("research", command.research_id)
+        fingerprint = hashlib.sha256(
+            json.dumps(source.payload(), sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        async with self._lock:
+            existing = self._idempotency.get((issuer, subject, command.idempotency_key))
+            if existing is not None:
+                if existing[0] != fingerprint:
+                    raise NotificationIdempotencyConflict("notification idempotency key was already used")
+                return existing[1]
+            duplicate = next(
+                (
+                    item for item in self._items.values()
+                    if item.issuer == issuer and item.subject == subject
+                    and isinstance(item.source, ResearchNotificationSource)
+                    and item.source.research_id == command.research_id
+                ),
+                None,
+            )
+            if duplicate is not None:
+                self._idempotency[(issuer, subject, command.idempotency_key)] = (fingerprint, duplicate)
+                return duplicate
+            current = self._time()
+            item = Notification(
+                uuid4(), issuer, subject, source, NotificationStatus.DELIVERED,
+                1, current, current, current,
+            )
+            self._items[item.id] = item
+            self._events.append(NotificationReplayEvent(uuid4(), item.id, source, item.status, item.version, current))
             self._idempotency[(issuer, subject, command.idempotency_key)] = (fingerprint, item)
             self._wake.set()
             self._wake = asyncio.Event()
@@ -1108,6 +1156,73 @@ class SqlNotificationRepository:
                 principal_issuer=issuer, principal_subject=subject,
                 idempotency_key=command.idempotency_key, fingerprint=fingerprint,
                 notification_id=item.id, response=as_payload(item), created_at=now,
+            ))
+            self._wake.set()
+            self._wake = asyncio.Event()
+            return item
+
+    async def create_research_notification(
+        self, command: CreateResearchNotification
+    ) -> Notification:
+        issuer, subject = _owner(command.issuer, command.subject)
+        source = ResearchNotificationSource("research", command.research_id)
+        fingerprint = hashlib.sha256(json.dumps(source.payload(), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        async with self.sessions() as session, session.begin():
+            for lock_key in sorted({
+                _idempotency_lock_key(issuer, subject, command.idempotency_key),
+                _idempotency_lock_key(issuer, subject, f"research:{command.research_id}"),
+            }):
+                await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"), {"lock_key": lock_key})
+            existing = await session.get(NotificationIdempotencyRow, (issuer, subject, command.idempotency_key))
+            if existing is not None:
+                if existing.fingerprint != fingerprint:
+                    raise NotificationIdempotencyConflict("notification idempotency key was already used")
+                return _notification_from_response(existing.response, issuer, subject)
+            row = (await session.execute(select(NotificationRow).where(
+                NotificationRow.principal_issuer == issuer,
+                NotificationRow.principal_subject == subject,
+                NotificationRow.source_kind == "research",
+                NotificationRow.research_id == command.research_id,
+            ))).scalar_one_or_none()
+            if row is not None:
+                item = _notification(row)
+                session.add(NotificationIdempotencyRow(
+                    principal_issuer=issuer, principal_subject=subject,
+                    idempotency_key=command.idempotency_key, fingerprint=fingerprint,
+                    notification_id=item.id, response=as_payload(item), created_at=self._time(),
+                ))
+                return item
+            current = self._time()
+            item = Notification(uuid4(), issuer, subject, source, NotificationStatus.DELIVERED, 1, current, current, current)
+            session.add(NotificationRow(
+                id=item.id, principal_issuer=issuer, principal_subject=subject,
+                source_kind="research", reminder_id=None, briefing_schedule_id=None,
+                briefing_occurrence_id=None, briefing_result_id=None, workflow_id=None,
+                workflow_revision_id=None, workflow_instance_id=None, workflow_step_ordinal=None,
+                workflow_step_execution_id=None, workflow_result_id=None,
+                research_id=command.research_id, status=item.status.value, version=item.version,
+                created_at=current, updated_at=current, delivered_at=current,
+            ))
+            event_id = uuid4()
+            session.add(NotificationEventRow(
+                id=event_id, principal_issuer=issuer, principal_subject=subject,
+                notification_id=item.id, source_kind="research", reminder_id=None,
+                briefing_schedule_id=None, briefing_occurrence_id=None, briefing_result_id=None,
+                workflow_id=None, workflow_revision_id=None, workflow_instance_id=None,
+                workflow_step_ordinal=None, workflow_step_execution_id=None, workflow_result_id=None,
+                research_id=command.research_id, status=item.status.value,
+                version=item.version, occurred_at=current,
+            ))
+            principal = await self._identities.resolve(session, issuer, subject)
+            self._audit.stage(session, principal.id, "notification.research_delivered", str(item.id), {"status": item.status.value, "version": item.version})
+            await self._outbox.stage_command(session, command=make_aggregate_command(
+                NOTIFICATION_TOPIC, event_id, "automation.notification", item.id,
+                identifiers=(("eventType", "notification.delivered"), ("status", item.status.value), ("version", item.version), ("eventId", event_id)),
+            ))
+            session.add(NotificationIdempotencyRow(
+                principal_issuer=issuer, principal_subject=subject,
+                idempotency_key=command.idempotency_key, fingerprint=fingerprint,
+                notification_id=item.id, response=as_payload(item), created_at=current,
             ))
             self._wake.set()
             self._wake = asyncio.Event()

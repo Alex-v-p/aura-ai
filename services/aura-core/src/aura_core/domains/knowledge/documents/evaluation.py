@@ -18,7 +18,7 @@ UPLOAD_COMPONENT_ID = "aura.knowledge.document_upload"
 PROCESSING_COMPONENT_ID = "aura.knowledge.document_processing"
 RETRIEVAL_COMPONENT_ID = "aura.knowledge.document_retrieval"
 DELETION_COMPONENT_ID = "aura.knowledge.document_deletion"
-TOOL_EXECUTION_COMPONENT_ID = "aura.runtime.tool_execution"
+TOOL_EXECUTION_COMPONENT_ID = "aura.runtime.tool_execution@1"
 TOOL_EXECUTION_COMPONENT_VERSION = "1.3.0"
 DOCUMENT_COMPONENT_VERSIONS: Mapping[str, str] = {
     UPLOAD_COMPONENT_ID: "1.0.0",

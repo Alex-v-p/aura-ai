@@ -58,6 +58,7 @@ from aura_core.domains.interaction.conversations.dto import (
     ConversationBranch,
     ConversationBranchOrigin,
     ConversationListFilters,
+    DeletedResearchCitation,
     DocumentCitation,
     Message,
     MessageRole,
@@ -66,8 +67,10 @@ from aura_core.domains.interaction.conversations.dto import (
     PersonaAssignment,
     PersonaAssignmentReason,
     PersonaAssignmentSource,
+    ResearchActivityReference,
     SeededAgent,
     TitleState,
+    WebCitation,
     now,
 )
 from aura_core.domains.interaction.conversations.titles import (
@@ -82,6 +85,10 @@ from aura_core.domains.interaction.personas.public import (
 from aura_core.domains.knowledge.documents.ports import DocumentReadPort
 from aura_core.domains.knowledge.documents.public import DocumentStatus
 from aura_core.domains.knowledge.memory.recall import MemoryRecallRequest, MemoryRecallResult
+from aura_core.domains.knowledge.research.public import (
+    ResearchCitationLifecycleQueryPort,
+    ResearchContentState,
+)
 from aura_core.platform.outbox import OutboxCommand
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
@@ -212,6 +219,7 @@ class ConversationStore:
         memory_recall: object | None = None,
         attachment_service: AttachmentReadPort | None = None,
         document_service: DocumentReadPort | None = None,
+        research_query: ResearchCitationLifecycleQueryPort | None = None,
     ) -> None:
         self.default_model = default_model
         self.agents = agents or AgentCatalog()
@@ -230,10 +238,14 @@ class ConversationStore:
         self.memory_recall = memory_recall
         self.attachment_service = attachment_service
         self.document_service = document_service
+        self.research_query = research_query
         self.model_selection: ModelSelectionPort | None = None
 
     def set_model_selection(self, model_selection: ModelSelectionPort | None) -> None:
         self.model_selection = model_selection
+
+    def set_research_query(self, query: ResearchCitationLifecycleQueryPort | None) -> None:
+        self.research_query = query
 
     async def _require_vision(
         self,
@@ -525,7 +537,11 @@ class ConversationStore:
         the durable message row remains immutable.
         """
 
-        if self.attachment_service is None and self.document_service is None:
+        if (
+            self.attachment_service is None
+            and self.document_service is None
+            and self.research_query is None
+        ):
             return conversation
 
         async def resolve_summaries(
@@ -582,6 +598,66 @@ class ConversationStore:
                 runs.append(copied_run)
             else:
                 runs.append(run)
+        if not changed:
+            return await self.resolve_research_citations(conversation)
+        projection = copy.copy(conversation)
+        projection.messages = messages
+        projection.runs = runs
+        return await self.resolve_research_citations(projection)
+
+    async def resolve_research_citations(self, conversation: Conversation) -> Conversation:
+        """Project deleted research citations to content-free tombstones."""
+
+        query = self.research_query
+        if query is None:
+            return conversation
+
+        async def deleted(owner: tuple[str, str], research_id: UUID) -> bool:
+            try:
+                state = await query.citation_lifecycle(
+                    owner[0], owner[1], research_id
+                )
+            except Exception:
+                # An owner-scoped source that can no longer be read is treated
+                # as deleted; never retain stale URL or locator metadata.
+                return True
+            return state is not ResearchContentState.ACTIVE
+
+        owner = (conversation.principal_issuer, conversation.principal_subject)
+        messages: list[Message] = []
+        changed = False
+        for message in conversation.messages:
+            research = message.research_activity
+            if (
+                research is None
+                or not message.web_citations
+                or not await deleted(owner, research.task_id)
+            ):
+                messages.append(message)
+                continue
+            copied = copy.copy(message)
+            copied.web_citations = tuple(
+                DeletedResearchCitation(item.source_id)
+                for item in message.web_citations
+            )
+            messages.append(copied)
+            changed = True
+        runs: list[Run] = []
+        for run in conversation.runs:
+            origin = run.research_origin
+            if (
+                origin is None
+                or not run.web_citations
+                or not await deleted(owner, origin.research_id)
+            ):
+                runs.append(run)
+                continue
+            copied_run = copy.copy(run)
+            copied_run.web_citations = tuple(
+                DeletedResearchCitation(item.source_id) for item in run.web_citations
+            )
+            runs.append(copied_run)
+            changed = True
         if not changed:
             return conversation
         projection = copy.copy(conversation)
@@ -1865,6 +1941,74 @@ class ConversationStore:
         conversation.updated_at = now()
         return assistant
 
+    async def append_research_completion(
+        self,
+        issuer: str,
+        subject: str,
+        conversation_id: UUID,
+        text: str,
+        *,
+        branch_id: UUID | None,
+        idempotency_key: str,
+        citations: tuple[WebCitation, ...] = (),
+        research_activity: ResearchActivityReference | None = None,
+        artifact_refs: tuple[UUID, ...] = (),
+    ) -> Message:
+        """Append one owner-scoped terminal research message idempotently."""
+
+        conversation = await self._get_raw(conversation_id, subject, issuer)
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "conversationId": str(conversation_id),
+                    "branchId": str(branch_id) if branch_id else None,
+                    "text": text,
+                    "citations": [str(item.source_id) for item in citations],
+                    "artifacts": [str(item) for item in artifact_refs],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        key = (issuer, subject, idempotency_key)
+        existing = self._idempotency.get(key)
+        if existing is not None:
+            if self._idempotency_fingerprints.get(key) != fingerprint:
+                raise IdempotencyConflict
+            existing_payload = cast(dict[str, object], existing)
+            message_id = existing_payload.get("messageId")
+            if isinstance(message_id, UUID):
+                return next(item for item in conversation.messages if item.id == message_id)
+            raise IdempotencyConflict
+        selected = next(
+            (item for item in conversation.branches if item.id == branch_id), None
+        ) if branch_id is not None else next(
+            (item for item in conversation.branches if item.parent_branch_id is None), None
+        )
+        if selected is None:
+            raise ConversationNotFound
+        created = now()
+        message = Message(
+            conversation.id,
+            MessageRole.ASSISTANT,
+            text,
+            MessageState.COMPLETE,
+            None,
+            created_at=created,
+            updated_at=created,
+            web_citations=citations,
+            research_activity=research_activity,
+            artifact_refs=artifact_refs,
+            branch_id=selected.id,
+            parent_message_id=selected.head_message_id,
+        )
+        selected.head_message_id = message.id
+        conversation.messages.append(message)
+        conversation.updated_at = created
+        self._idempotency[key] = {"messageId": message.id}
+        self._idempotency_fingerprints[key] = fingerprint
+        return message
+
     async def set_assistant_citations(
         self,
         run_id: UUID,
@@ -1899,6 +2043,18 @@ class ConversationStore:
         ):
             raise RunClaimLost
         run.document_search_used = True
+
+    async def set_research_metadata(
+        self,
+        run_id: UUID,
+        origin: object,
+        activity: object,
+    ) -> None:
+        """Persist opaque research lineage on the originating run snapshot."""
+
+        _, run = await self._find_run_any(run_id)
+        run.research_origin = origin  # type: ignore[assignment]
+        run.research_activity = activity  # type: ignore[assignment]
 
     async def finish_run(
         self,

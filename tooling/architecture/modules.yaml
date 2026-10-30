@@ -1217,6 +1217,7 @@ modules:
   - aura-core.domains.automation.notifications
   - aura-core.domains.automation.reminders
   - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.persistence
   - aura-core.domains.execution.runs.public
   - aura-core.domains.governance.identity.application
   - aura-core.domains.interaction.conversations.public
@@ -1407,6 +1408,7 @@ modules:
   - aura-core.domains.artifacts.attachments.ports
   - aura-core.domains.artifacts.attachments.public
   - aura-core.domains.execution.runs.events
+  - aura-core.domains.execution.runs.persistence
   - aura-core.domains.execution.runs.public
   - aura-core.domains.governance.audit.public
   - aura-core.domains.governance.identity.public
@@ -1417,6 +1419,7 @@ modules:
   - aura-core.domains.knowledge.documents.ports
   - aura-core.domains.knowledge.documents.public
   - aura-core.domains.knowledge.memory.recall
+  - aura-core.domains.knowledge.research.public
   - aura-core.platform.outbox
   - aura-core.platform.telemetry
   - aura-core.runtime.models.capacity
@@ -1456,6 +1459,8 @@ modules:
   - aura-core.platform.outbox.persistence
   - aura-core.domains.knowledge.research
   - aura-core.domains.knowledge.research.persistence
+  - aura-core.domains.interaction.research-delivery
+  - aura-core.domains.interaction.research-delivery.persistence
 - id: aura-core.bootstrap.briefing-uow
   root: services/aura-core/src/aura_core/bootstrap/briefing_uow.py
   kind: python
@@ -1753,6 +1758,7 @@ modules:
   - aura-core.domains.execution.runs.models
   - aura-core.domains.execution.runs.ports
   - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.interaction.research-delivery.public
   - aura-core.domains.knowledge.documents.ports
   - aura-core.runtime.models.ports
   - aura-core.runtime.tools
@@ -1988,6 +1994,7 @@ modules:
   - aura-core.domains.artifacts.attachments.public
   - aura-core.domains.interaction.conversations.dto
   - aura-core.domains.interaction.conversations.persistence
+  - aura-core.domains.governance.identity.public
 - id: aura-core.domains.interaction.conversations.store
   root: services/aura-core/src/aura_core/domains/interaction/conversations/store.py
   kind: python
@@ -2006,11 +2013,50 @@ modules:
   - aura-core.domains.interaction.conversations.titles
   - aura-core.domains.knowledge.memory.recall
   - aura-core.domains.knowledge.documents.public
+  - aura-core.domains.knowledge.research.public
   - aura-core.platform.telemetry
   - aura-core.platform.outbox
   - aura-core.runtime.models.capacity
   - aura-core.runtime.models.ports
   - aura-core.runtime.prompting.public
+- id: aura-core.domains.interaction.research-delivery
+  root: services/aura-core/src/aura_core/domains/interaction/research_delivery
+  kind: package
+  public_api: services/aura-core/src/aura_core/domains/interaction/research_delivery/public.py
+  python_modules:
+  - aura_core.domains.interaction.research_delivery
+  source_files:
+  - services/aura-core/src/aura_core/domains/interaction/research_delivery/__init__.py
+  dependencies:
+  - aura-core.domains.interaction.research-delivery.public
+  - aura-core.domains.interaction.research-delivery.persistence
+  - aura-core.domains.interaction.research-delivery.evaluation
+- id: aura-core.domains.interaction.research-delivery.persistence
+  root: services/aura-core/src/aura_core/domains/interaction/research_delivery/persistence.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/research_delivery/persistence.py
+  python_modules:
+  - aura_core.domains.interaction.research_delivery.persistence
+  dependencies:
+  - aura-core.platform.database.base
+- id: aura-core.domains.interaction.research-delivery.public
+  root: services/aura-core/src/aura_core/domains/interaction/research_delivery/public.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/research_delivery/public.py
+  python_modules:
+  - aura_core.domains.interaction.research_delivery.public
+  dependencies:
+  - aura-core.domains.automation.notifications
+  - aura-core.domains.interaction.conversations.dto
+  - aura-core.domains.interaction.research-delivery.persistence
+  - aura-core.domains.knowledge.research.public
+- id: aura-core.domains.interaction.research-delivery.evaluation
+  root: services/aura-core/src/aura_core/domains/interaction/research_delivery/evaluation.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/domains/interaction/research_delivery/evaluation.py
+  python_modules:
+  - aura_core.domains.interaction.research_delivery.evaluation
+  dependencies: []
 - id: aura-core.entrypoints.api.app
   root: services/aura-core/src/aura_core/entrypoints/api/app.py
   kind: python
@@ -2361,6 +2407,7 @@ modules:
   - aura-core.domains.knowledge.memory.public
   - aura-core.entrypoints.worker.tasks
   - aura-core.entrypoints.worker.research
+  - aura-core.entrypoints.worker.research-delivery
   - aura-core.domains.automation.briefings
   - aura-core.domains.automation.workflows.application
   - aura-core.bootstrap.workflow-uow
@@ -2380,6 +2427,8 @@ modules:
   - aura-core.domains.governance.approvals
   - aura-core.domains.interaction.agents.adapters
   - aura-core.domains.interaction.agents.public
+  - aura-core.domains.interaction.conversations.public
+  - aura-core.domains.interaction.research-delivery.public
   - aura-core.domains.interaction.personas.adapters
   - aura-core.domains.interaction.personas.public
   - aura-core.domains.knowledge.memory
@@ -3299,5 +3348,13 @@ modules:
   public_api: services/aura-core/src/aura_core/entrypoints/worker/research.py
   python_modules:
   - aura_core.entrypoints.worker.research
+  dependencies:
+  - aura-core.domains.knowledge.research.public
+- id: aura-core.entrypoints.worker.research-delivery
+  root: services/aura-core/src/aura_core/entrypoints/worker/research_delivery.py
+  kind: python
+  public_api: services/aura-core/src/aura_core/entrypoints/worker/research_delivery.py
+  python_modules:
+  - aura_core.entrypoints.worker.research_delivery
   dependencies:
   - aura-core.domains.knowledge.research.public

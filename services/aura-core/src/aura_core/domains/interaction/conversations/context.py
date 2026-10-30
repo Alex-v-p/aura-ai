@@ -364,7 +364,11 @@ def build_context_with_admission(
             None,
         )
     allowed_ids = branch_message_ids(conversation, current_run.branch_id) if current_run else None
-    current_prompt = messages.get(current_run.user_message_id) if current_run is not None else None
+    current_prompt = (
+        messages.get(current_run.user_message_id)
+        if current_run is not None and current_run.user_message_id is not None
+        else None
+    )
     if (
         current_prompt is not None
         and allowed_ids is not None
@@ -399,6 +403,8 @@ def build_context_with_admission(
     newest_first: list[tuple[Message, Message]] = []
     for run in reversed(conversation.runs):
         if run.status.value != "completed":
+            continue
+        if run.user_message_id is None:
             continue
         if allowed_ids is not None and run.user_message_id not in allowed_ids:
             continue

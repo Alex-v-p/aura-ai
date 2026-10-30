@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4, uuid5
 
@@ -38,6 +38,7 @@ from .public import (
     ResearchCitation,
     ResearchConflict,
     ResearchContentState,
+    ResearchDeliveryClaim,
     ResearchEvidence,
     ResearchMode,
     ResearchNotFound,
@@ -45,6 +46,7 @@ from .public import (
     ResearchSettings,
     ResearchStage,
     ResearchTask,
+    ResearchTerminalDeliverySnapshot,
 )
 
 
@@ -121,7 +123,7 @@ class SqlResearchRepository:
         citation_rows = (await session.scalars(select(ResearchCitationRow).where(ResearchCitationRow.research_id == research_id).order_by(ResearchCitationRow.id))).all()
         checkpoint_rows = (await session.scalars(select(ResearchCheckpointRow).where(ResearchCheckpointRow.research_id == research_id).order_by(ResearchCheckpointRow.version))).all()
         return ResearchTask(
-            row.id, row.principal_issuer, row.principal_subject, row.question, ResearchMode(row.mode), ResearchStage(row.stage), ResearchOutcome(row.outcome) if row.outcome else None, ResearchContentState(row.content_state), row.version, _utc(row.created_at), _utc(row.updated_at), _utc(row.finished_at) if row.finished_at else None, ResearchBudget(**{key: value for key, value in _budget_kwargs(row.admitted_budget).items()}), ResearchBudgetConsumption(**_consumption_kwargs(row.consumed_budget)), row.extension_accepted, row.failure_class, tuple(row.seed_urls or ()), tuple(row.domains or ()), tuple(ResearchEvidence(item.id, item.research_id, item.label, item.url, item.publisher, _utc(item.retrieved_at), item.media_type, item.extraction_method, _utc(item.freshness_at) if item.freshness_at else None, tuple(item.excerpts or ()), item.content_sha256, item.locator) for item in evidence_rows), tuple(ResearchCitation(item.source_id, item.label, item.url, _utc(item.retrieved_at), item.locator) for item in citation_rows), tuple(row.artifact_refs or ()), row.cancellation_requested, row.deletion_audit_id, tuple(ResearchCheckpoint(item.id, item.research_id, item.version, ResearchStage(item.stage), _utc(item.occurred_at), item.operation) for item in checkpoint_rows), row.cancellation_requested_at, _utc(row.deadline_at) if row.deadline_at else None, dict(row.capability_snapshot or {}), dict(row.origin or {}), row.policy_revision,
+            row.id, row.principal_issuer, row.principal_subject, row.question, ResearchMode(row.mode), ResearchStage(row.stage), ResearchOutcome(row.outcome) if row.outcome else None, ResearchContentState(row.content_state), row.version, _utc(row.created_at), _utc(row.updated_at), _utc(row.finished_at) if row.finished_at else None, ResearchBudget(**{key: value for key, value in _budget_kwargs(row.admitted_budget).items()}), ResearchBudgetConsumption(**_consumption_kwargs(row.consumed_budget)), row.extension_accepted, row.failure_class, tuple(row.seed_urls or ()), tuple(row.domains or ()), tuple(ResearchEvidence(item.id, item.research_id, item.label, item.url, item.publisher, _utc(item.retrieved_at), item.media_type, item.extraction_method, _utc(item.freshness_at) if item.freshness_at else None, tuple(item.excerpts or ()), item.content_sha256, item.locator) for item in evidence_rows), tuple(ResearchCitation(item.source_id, item.label, item.url, _utc(item.retrieved_at), item.locator) for item in citation_rows), tuple(row.artifact_refs or ()), row.cancellation_requested, row.deletion_audit_id, tuple(ResearchCheckpoint(item.id, item.research_id, item.version, ResearchStage(item.stage), _utc(item.occurred_at), item.operation) for item in checkpoint_rows), row.cancellation_requested_at, _utc(row.deadline_at) if row.deadline_at else None, dict(row.capability_snapshot or {}), dict(row.origin or {}), row.policy_revision, row.synthesized_answer, row.delivery_claim_token, row.delivery_claim_phase, _utc(row.delivery_claim_expires_at) if row.delivery_claim_expires_at else None,
         )
 
     async def admit(self, task: ResearchTask, *, idempotency_key: str | None, fingerprint: str) -> ResearchTask:
@@ -132,7 +134,7 @@ class SqlResearchRepository:
                     if prior.fingerprint != fingerprint:
                         raise ResearchConflict("idempotency key was reused")
                     return await self._load(session, task.owner, prior.research_id)
-            session.add(ResearchTaskRow(id=task.id, principal_issuer=task.issuer, principal_subject=task.subject, question=task.question, mode=task.mode.value, stage=task.stage.value, outcome=task.outcome.value if task.outcome else None, content_state=task.content_state.value, version=task.version, admitted_budget=task.admitted_budget.as_dict(), consumed_budget=task.consumed_budget.as_dict(), extension_accepted=task.extension_accepted, failure_class=task.failure_class, seed_urls=list(task.seed_urls), domains=list(task.domains), artifact_refs=list(task.artifact_refs), capability_snapshot=dict(task.capability_snapshot), origin=dict(task.origin), policy_revision=task.policy_revision, deadline_at=task.deadline_at, cancellation_requested=task.cancellation_requested, cancellation_requested_at=task.cancellation_requested_at, deletion_audit_id=task.deletion_audit_id, created_at=task.created_at, updated_at=task.updated_at, finished_at=task.finished_at))
+            session.add(ResearchTaskRow(id=task.id, principal_issuer=task.issuer, principal_subject=task.subject, question=task.question, synthesized_answer=task.synthesized_answer, delivery_claim_token=task.delivery_claim_token, delivery_claim_phase=task.delivery_claim_phase, delivery_claim_expires_at=task.delivery_claim_expires_at, mode=task.mode.value, stage=task.stage.value, outcome=task.outcome.value if task.outcome else None, content_state=task.content_state.value, version=task.version, admitted_budget=task.admitted_budget.as_dict(), consumed_budget=task.consumed_budget.as_dict(), extension_accepted=task.extension_accepted, failure_class=task.failure_class, seed_urls=list(task.seed_urls), domains=list(task.domains), artifact_refs=list(task.artifact_refs), capability_snapshot=dict(task.capability_snapshot), origin=dict(task.origin), policy_revision=task.policy_revision, deadline_at=task.deadline_at, cancellation_requested=task.cancellation_requested, cancellation_requested_at=task.cancellation_requested_at, deletion_audit_id=task.deletion_audit_id, created_at=task.created_at, updated_at=task.updated_at, finished_at=task.finished_at))
             for item in task.checkpoints:
                 session.add(ResearchCheckpointRow(id=item.id, research_id=item.research_id, version=item.version, stage=item.stage.value, operation=item.operation, occurred_at=item.occurred_at))
             await self.outbox_repository.stage_command(
@@ -168,6 +170,10 @@ class SqlResearchRepository:
             if row.version != expected_version:
                 raise ResearchConflict("research task version conflict")
             row.question = task.question
+            row.synthesized_answer = task.synthesized_answer
+            row.delivery_claim_token = task.delivery_claim_token
+            row.delivery_claim_phase = task.delivery_claim_phase
+            row.delivery_claim_expires_at = task.delivery_claim_expires_at
             row.stage = task.stage.value
             row.outcome = task.outcome.value if task.outcome else None
             row.content_state = task.content_state.value
@@ -231,8 +237,130 @@ class SqlResearchRepository:
                 raise ResearchNotFound("research task not found")
             return await self._load(session, (row.principal_issuer, row.principal_subject), research_id)
 
+    async def delivery_snapshot(self, owner: tuple[str, str], research_id: UUID, *, expected_version: int, expected_origin: Mapping[str, object] | None = None) -> ResearchTerminalDeliverySnapshot:
+        # Lock the source row while materialising the bounded snapshot.  A
+        # deletion or terminal rewrite therefore cannot pass the fence between
+        # authorization and delivery's append/notification phases.
+        async with self.sessions() as session, session.begin():
+            row = await session.get(ResearchTaskRow, research_id, with_for_update=True)
+            if row is None or (row.principal_issuer, row.principal_subject) != owner:
+                raise ResearchNotFound("research task not found")
+            task = await self._load(session, owner, research_id)
+            if task.version != expected_version or not task.terminal:
+                raise ResearchConflict("research terminal version is stale")
+            if task.content_state is not ResearchContentState.ACTIVE:
+                raise ResearchConflict("research content is no longer deliverable")
+            if expected_origin is not None and dict(task.origin) != dict(expected_origin):
+                raise ResearchConflict("research origin fence failed")
+            return ResearchTerminalDeliverySnapshot(
+                task.id, task.issuer, task.subject, task.version,
+                cast(ResearchOutcome, task.outcome), task.content_state,
+                task.failure_class, task.synthesized_answer or "Research completed without a persisted answer.",
+                tuple(task.citations[:32]), tuple(task.artifact_refs[:8]), dict(task.origin), task.mode,
+            )
+
+    async def claim_delivery(
+        self,
+        owner: tuple[str, str],
+        research_id: UUID,
+        *,
+        expected_version: int,
+        phase: str,
+        lease_seconds: float = 60.0,
+    ) -> ResearchDeliveryClaim:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(ResearchTaskRow, research_id, with_for_update=True)
+            if row is None or (row.principal_issuer, row.principal_subject) != owner:
+                raise ResearchNotFound("research task not found")
+            now_value = self.clock()
+            expires = _utc(now_value) + timedelta(seconds=lease_seconds)
+            existing_expires = _utc(row.delivery_claim_expires_at) if row.delivery_claim_expires_at else None
+            if row.version != expected_version or row.outcome is None or row.content_state != ResearchContentState.ACTIVE.value:
+                raise ResearchConflict("research content is no longer deliverable")
+            if row.delivery_claim_token and existing_expires and existing_expires > _utc(now_value):
+                raise ResearchConflict("research delivery is already claimed")
+            token = uuid4().hex
+            row.delivery_claim_token = token
+            row.delivery_claim_phase = phase
+            row.delivery_claim_expires_at = expires
+            return ResearchDeliveryClaim(research_id, expected_version, token, phase, expires)
+
+    async def settle_delivery_claim(
+        self, owner: tuple[str, str], claim: ResearchDeliveryClaim
+    ) -> None:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(ResearchTaskRow, claim.research_id, with_for_update=True)
+            if row is None or (row.principal_issuer, row.principal_subject) != owner:
+                raise ResearchNotFound("research task not found")
+            if row.delivery_claim_token != claim.token:
+                raise ResearchConflict("research delivery claim is stale")
+            row.delivery_claim_token = None
+            row.delivery_claim_phase = None
+            row.delivery_claim_expires_at = None
+
+    async def delivery_claim_active(self, research_id: UUID) -> bool:
+        async with self.sessions() as session:
+            row = await session.get(ResearchTaskRow, research_id)
+            return bool(
+                row
+                and row.delivery_claim_token
+                and row.delivery_claim_expires_at is not None
+                and _utc(row.delivery_claim_expires_at) > _utc(self.clock())
+            )
+
+    async def admit_deletion(
+        self, task: ResearchTask, *, expected_version: int
+    ) -> ResearchTask:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(ResearchTaskRow, task.id, with_for_update=True)
+            if row is None or (row.principal_issuer, row.principal_subject) != task.owner:
+                raise ResearchNotFound("research task not found")
+            if row.version != expected_version or row.outcome is None:
+                raise ResearchConflict("research content is not deletable")
+            if row.content_state != ResearchContentState.ACTIVE.value:
+                return await self._load(session, task.owner, task.id)
+            now_value = _utc(self.clock())
+            if (
+                row.delivery_claim_token
+                and row.delivery_claim_expires_at is not None
+                and _utc(row.delivery_claim_expires_at) > now_value
+            ):
+                raise ResearchConflict("research delivery is settling")
+            current = await self._load(session, task.owner, task.id)
+            tombstone = replace(
+                current,
+                question="",
+                seed_urls=(),
+                domains=(),
+                evidence=(),
+                citations=(),
+                synthesized_answer=None,
+                content_state=ResearchContentState.DELETION_PENDING,
+                deletion_audit_id=uuid4(),
+                delivery_claim_token=None,
+                delivery_claim_phase=None,
+                delivery_claim_expires_at=None,
+                version=current.version + 1,
+                updated_at=now_value,
+            )
+            row.question = ""
+            row.synthesized_answer = None
+            row.seed_urls = []
+            row.domains = []
+            row.content_state = tombstone.content_state.value
+            row.deletion_audit_id = tombstone.deletion_audit_id
+            row.version = tombstone.version
+            row.updated_at = tombstone.updated_at
+            row.delivery_claim_token = None
+            row.delivery_claim_phase = None
+            row.delivery_claim_expires_at = None
+            return tombstone
+
     async def purge_private_content(self, research_id: UUID) -> None:
         async with self.sessions() as session, session.begin():
+            task_row = await session.get(ResearchTaskRow, research_id, with_for_update=True)
+            if task_row is not None:
+                task_row.synthesized_answer = None
             await session.execute(delete(ResearchCitationRow).where(ResearchCitationRow.research_id == research_id))
             await session.execute(delete(ResearchEvidenceRow).where(ResearchEvidenceRow.research_id == research_id))
             rows = (await session.scalars(select(ResearchOperationRow).where(ResearchOperationRow.research_id == research_id))).all()
@@ -252,13 +380,14 @@ class SqlResearchRepository:
                 raise ResearchNotFound("research task not found")
             if row.version != expected_version:
                 raise ResearchConflict("research task version conflict")
-            cleaned = replace(task, question="", seed_urls=(), domains=(), evidence=(), citations=(), artifact_refs=artifact_refs, content_state=ResearchContentState.DELETED, version=task.version + 1, updated_at=task.updated_at)
+            cleaned = replace(task, question="", seed_urls=(), domains=(), evidence=(), citations=(), artifact_refs=artifact_refs, synthesized_answer=None, content_state=ResearchContentState.DELETED, version=task.version + 1, updated_at=task.updated_at)
             await session.execute(delete(ResearchCitationRow).where(ResearchCitationRow.research_id == task.id))
             await session.execute(delete(ResearchEvidenceRow).where(ResearchEvidenceRow.research_id == task.id))
             rows = (await session.scalars(select(ResearchOperationRow).where(ResearchOperationRow.research_id == task.id))).all()
             for operation in rows:
                 operation.response = {}
             row.question = ""
+            row.synthesized_answer = None
             row.stage = cleaned.stage.value
             row.outcome = cleaned.outcome.value if cleaned.outcome else None
             row.content_state = cleaned.content_state.value

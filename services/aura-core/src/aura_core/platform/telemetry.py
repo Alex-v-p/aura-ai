@@ -25,7 +25,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -34,7 +34,44 @@ from time import monotonic
 from typing import Protocol, cast
 from uuid import UUID, uuid4, uuid5
 
-COMPONENT_VERSIONS: Mapping[str, str] = {
+
+class _ComponentVersions(Mapping[str, str]):
+    """Canonical component catalogue with a legacy lookup-only alias.
+
+    Tool execution historically emitted the unversioned component identifier.
+    Keep that identifier readable by existing callers while making the
+    versioned ``@1`` identity authoritative for manifests and new telemetry.
+    The alias is deliberately absent from iteration so catalogue equality
+    checks cannot treat it as a second component contract.
+    """
+
+    _legacy_aliases = {"aura.runtime.tool_execution": "aura.runtime.tool_execution@1"}
+    _canonical: dict[str, str]
+
+    def __init__(self, canonical: Mapping[str, str]) -> None:
+        self._canonical = dict(canonical)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._canonical)
+
+    def __len__(self) -> int:
+        return len(self._canonical)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._canonical or (
+            isinstance(key, str) and key in self._legacy_aliases
+        )
+
+    def __getitem__(self, key: str) -> str:
+        try:
+            return self._canonical[key]
+        except KeyError:
+            canonical = self._legacy_aliases.get(key)
+            if canonical is None:
+                raise
+            return self._canonical[canonical]
+
+COMPONENT_VERSIONS: Mapping[str, str] = _ComponentVersions({
     "aura.platform.telemetry_export": "1.0.0",
     "aura.platform.run_evidence_export": "1.0.0",
     "aura.artifacts.attachment_upload": "1.0.0",
@@ -43,7 +80,7 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.models.inference": "1.0.0",
     "aura.runtime.tool_selection": "1.4.0",
     "aura.runtime.policy_evaluation": "1.1.0",
-    "aura.runtime.tool_execution": "1.3.0",
+    "aura.runtime.tool_execution@1": "1.3.0",
     "aura.interaction.agent_configuration": "1.2.0",
     "aura.interaction.persona_preview": "1.0.0",
     "aura.execution.run_coordinator": "1.9.0",
@@ -100,7 +137,8 @@ COMPONENT_VERSIONS: Mapping[str, str] = {
     "aura.research.deletion@1": "1.0.0",
     "aura.artifacts.persistence@1": "1.0.0",
     "aura.artifacts.deletion@1": "1.0.0",
-}
+    "aura.interaction.research_completion_delivery@1": "1.0.0",
+})
 
 _METRICS: Mapping[str, frozenset[str]] = {
     "aura.platform.run_evidence_export": frozenset(
@@ -134,6 +172,19 @@ _METRICS: Mapping[str, frozenset[str]] = {
     "aura.runtime.tool_execution": frozenset(
         {
             "tool_execution_duration_ms",
+            "tool_execution_outcome",
+            "tool_timeout_count",
+            "reminder_create_tool_outcome",
+            "reminder_tool_resolution_outcome",
+            "reminder_command_execution_outcome",
+            "document_search_tool_outcome",
+            "document_citation_validation_outcome",
+        }
+    ),
+    "aura.runtime.tool_execution@1": frozenset(
+        {
+            "tool_execution_duration_ms",
+            "tool_execution_outcomes_total",
             "tool_execution_outcome",
             "tool_timeout_count",
             "reminder_create_tool_outcome",
@@ -673,6 +724,12 @@ _METRICS: Mapping[str, frozenset[str]] = {
             "artifact_deletion_latency_ms",
         }
     ),
+    "aura.interaction.research_completion_delivery@1": frozenset(
+        {
+            "research_completion_outcome_count",
+            "research_completion_latency_ms",
+        }
+    ),
 }
 
 _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
@@ -686,6 +743,7 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.runtime.tool_selection": frozenset({"tool.select"}),
     "aura.runtime.policy_evaluation": frozenset({"tool.policy.evaluate"}),
     "aura.runtime.tool_execution": frozenset({"tool.execute"}),
+    "aura.runtime.tool_execution@1": frozenset({"tool.execute"}),
     "aura.interaction.agent_configuration": frozenset({"agent.configure"}),
     "aura.interaction.persona_preview": frozenset({"persona.preview"}),
     "aura.execution.run_coordinator": frozenset(
@@ -913,6 +971,9 @@ _SPAN_OPERATIONS: Mapping[str, frozenset[str]] = {
     "aura.research.deletion@1": frozenset({"research.delete"}),
     "aura.artifacts.persistence@1": frozenset({"artifact.revision_write"}),
     "aura.artifacts.deletion@1": frozenset({"artifact.delete"}),
+    "aura.interaction.research_completion_delivery@1": frozenset(
+        {"research_completion.deliver"}
+    ),
 }
 
 _SPAN_METRICS: Mapping[str, str] = {
@@ -920,6 +981,7 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.runtime.tool_selection": "tool_selection_duration_ms",
     "aura.runtime.policy_evaluation": "tool_policy_evaluation_duration_ms",
     "aura.runtime.tool_execution": "tool_execution_duration_ms",
+    "aura.runtime.tool_execution@1": "tool_execution_duration_ms",
     "aura.interaction.agent_configuration": "operation_duration_ms",
     "aura.interaction.persona_preview": "persona_preview_duration_ms",
     "aura.execution.run_coordinator": "operation_duration_ms",
@@ -971,6 +1033,7 @@ _SPAN_METRICS: Mapping[str, str] = {
     "aura.research.deletion@1": "research_deletion_latency_ms",
     "aura.artifacts.persistence@1": "artifact_write_latency_ms",
     "aura.artifacts.deletion@1": "artifact_deletion_latency_ms",
+    "aura.interaction.research_completion_delivery@1": "research_completion_latency_ms",
 }
 
 _OPERATION_SPAN_METRICS: Mapping[tuple[str, str], str] = {
@@ -1643,6 +1706,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
             "research.budget_settle",
             "research.browser_fallback",
             "research.coordinate",
+            "research_completion.deliver",
             "research.plan",
             "research.cancel_command",
             "research.evidence_validate",
@@ -1748,6 +1812,7 @@ _ENUM_DIMENSIONS: Mapping[str, frozenset[str]] = {
 
 _RESEARCH_TELEMETRY_COMPONENTS = frozenset(
     {
+        "aura.interaction.research_completion_delivery@1",
         "aura.research.search@1",
         "aura.research.static_fetch@1",
         "aura.research.browser_fetch@1",
@@ -1775,6 +1840,7 @@ _RESEARCH_PROVIDER_VALUES = frozenset(
 )
 _RESEARCH_OPERATION_VALUES = frozenset(
     {
+        "research_completion.deliver",
         "research.coordinate",
         "research.cancel_command",
         "research.plan",
@@ -1793,7 +1859,7 @@ _RESEARCH_OPERATION_VALUES = frozenset(
     }
 )
 _RESEARCH_OUTCOME_VALUES = frozenset(
-    {"success", "rejected", "partial", "canceled", "timeout", "failed", "unknown"}
+    {"success", "rejected", "partial", "canceled", "timeout", "failed", "unknown", "skipped"}
 )
 _RESEARCH_STATUS_VALUES = frozenset(
     {
@@ -1818,6 +1884,7 @@ _RESEARCH_STATUS_VALUES = frozenset(
         "deletion_failed",
         "cleanup_unknown",
         "deleted",
+        "skipped",
     }
 )
 _RESEARCH_NON_DELETION_STATUSES = _RESEARCH_STATUS_VALUES - frozenset(
@@ -1826,6 +1893,7 @@ _RESEARCH_NON_DELETION_STATUSES = _RESEARCH_STATUS_VALUES - frozenset(
 _RESEARCH_COMPONENT_STATUSES: dict[str, frozenset[str]] = {
     component: _RESEARCH_NON_DELETION_STATUSES
     for component in (
+        "aura.interaction.research_completion_delivery@1",
         "aura.research.coordinator@1",
         "aura.research.cancellation@1",
         "aura.research.planner@1",
@@ -1891,6 +1959,12 @@ def _research_metric_tuple_allowed(
     allowed_statuses = _RESEARCH_METRIC_STATUS_VALUES.get(metric)
     if status is not None and allowed_statuses is not None and status not in allowed_statuses:
         return False
+    if (
+        component == "aura.interaction.research_completion_delivery@1"
+        and outcome in {"success", "skipped"}
+        and error_class is not None
+    ):
+        return False
     if component == "aura.research.deletion@1":
         if not is_span and status is None and error_class is None:
             return outcome in _RESEARCH_COMPONENT_OUTCOMES[component]
@@ -1910,6 +1984,9 @@ def _research_metric_tuple_allowed(
 
 
 _RESEARCH_COMPONENT_DEPENDENCIES: dict[str, frozenset[str]] = {
+    "aura.interaction.research_completion_delivery@1": frozenset(
+        {"conversation_public_api", "notification_public_api", "core_postgresql"}
+    ),
     "aura.research.coordinator@1": frozenset({"core_postgresql", "none"}),
     "aura.research.cancellation@1": frozenset({"core_postgresql"}),
     "aura.research.planner@1": frozenset({"model_gateway"}),
@@ -1932,6 +2009,7 @@ _RESEARCH_ERROR_VALUES = frozenset(
         "conflict",
         "deletion_failed",
         "destination_blocked",
+        "delivery_failed",
         "redirect_blocked",
         "prompt_injection_detected",
         "provider_disabled",
@@ -1947,6 +2025,9 @@ _RESEARCH_ERROR_VALUES = frozenset(
     }
 )
 _RESEARCH_COMPONENT_OUTCOMES: dict[str, frozenset[str]] = {
+    "aura.interaction.research_completion_delivery@1": frozenset(
+        {"success", "partial", "failed", "unknown", "skipped"}
+    ),
     "aura.research.coordinator@1": frozenset({"success", "rejected", "partial", "canceled", "timeout", "failed", "unknown"}),
     "aura.research.cancellation@1": frozenset({"success", "rejected", "timeout", "failed", "unknown"}),
     "aura.research.planner@1": frozenset({"success", "rejected", "timeout", "failed", "unknown"}),
@@ -1956,6 +2037,17 @@ _RESEARCH_COMPONENT_OUTCOMES: dict[str, frozenset[str]] = {
     "aura.research.deletion@1": frozenset({"success", "rejected", "partial", "timeout", "failed", "unknown"}),
 }
 _RESEARCH_COMPONENT_ERRORS: dict[str, frozenset[str]] = {
+    "aura.interaction.research_completion_delivery@1": frozenset(
+        {
+            "authorization_denied",
+            "conflict",
+            "delivery_failed",
+            "queue_unavailable",
+            "settlement_unknown",
+            "storage_unavailable",
+            "validation_failed",
+        }
+    ),
     "aura.research.coordinator@1": frozenset({"validation_failed", "authorization_denied", "conflict", "budget_exhausted", "provider_disabled", "provider_unavailable", "queue_unavailable", "settlement_unknown", "timeout"}),
     "aura.research.cancellation@1": frozenset({"authorization_denied", "conflict", "cancel_dispatch_failed", "provider_unavailable", "timeout", "settlement_unknown"}),
     "aura.research.planner@1": frozenset({"validation_failed", "budget_exhausted", "prompt_injection_detected", "provider_unavailable", "timeout"}),
@@ -1987,6 +2079,8 @@ for _provider_component in (
         }
     )
 _RESEARCH_METRIC_OPERATIONS: dict[str, frozenset[str]] = {
+    "research_completion_outcome_count": frozenset({"research_completion.deliver"}),
+    "research_completion_latency_ms": frozenset({"research_completion.deliver"}),
     "research_coordinate_outcome_count": frozenset({"research.coordinate"}),
     "research_coordinate_latency_ms": frozenset({"research.coordinate"}),
     "research_checkpoint_count": frozenset({"research.coordinate", "research.plan", "research.evidence_validate", "research.citation_validate", "research.synthesize", "research.cancel_command", "research.delete"}),
@@ -2026,6 +2120,16 @@ _RESEARCH_METRIC_DEPENDENCIES: dict[str, frozenset[str | None]] = {
         "research_deletion_outcome_count", "research_deletion_latency_ms",
     )
 }
+_RESEARCH_METRIC_DEPENDENCIES.update(
+    {
+        "research_completion_outcome_count": frozenset(
+            {"conversation_public_api", "notification_public_api", "core_postgresql"}
+        ),
+        "research_completion_latency_ms": frozenset(
+            {"conversation_public_api", "notification_public_api", "core_postgresql"}
+        ),
+    }
+)
 _RESEARCH_METRIC_DEPENDENCIES.update(
     {
         metric: frozenset({"model_gateway"})
@@ -2078,6 +2182,13 @@ _RESEARCH_METRIC_DIMENSIONS: dict[str, frozenset[str]] = {
         "research_deletion_latency_ms",
     )
 }
+for _metric in (
+    "research_completion_outcome_count",
+    "research_completion_latency_ms",
+):
+    _RESEARCH_METRIC_DIMENSIONS[_metric] = frozenset(
+        {"operation", "outcome", "status", "error_class", "dependency"}
+    )
 for _metric in (
     "research_budget_wall_time_consumed_ms",
     "research_budget_sources_consumed_count",

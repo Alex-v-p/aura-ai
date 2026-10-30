@@ -33,6 +33,7 @@ class NotificationRow(Base):
     workflow_step_ordinal: Mapped[int | None] = mapped_column(Integer)
     workflow_step_execution_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     workflow_result_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    research_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="delivered")
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -72,6 +73,7 @@ class NotificationEventRow(Base):
     workflow_step_ordinal: Mapped[int | None] = mapped_column(Integer)
     workflow_step_execution_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     workflow_result_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    research_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(

@@ -1,6 +1,6 @@
 """Session-scoped PostgreSQL run repository."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
@@ -17,7 +17,15 @@ from aura_core.domains.execution.runs.models import (
     WorkflowRunLineage,
 )
 from aura_core.domains.execution.runs.persistence import RunEventRow, RunRow
-from aura_core.domains.interaction.conversations.dto import AttachmentSummary, DocumentCitation, now
+from aura_core.domains.interaction.conversations.dto import (
+    AttachmentSummary,
+    DeletedResearchCitation,
+    DocumentCitation,
+    ResearchActivityReference,
+    ResearchRunOrigin,
+    WebCitation,
+    now,
+)
 
 
 class SqlWorkflowAgentRunRecovery:
@@ -200,6 +208,44 @@ class SqlRunRepository:
             for item in (row.citations or [])
             if {"documentId", "locator"} <= set(item)
         )
+        web_citation_values = cast(
+            Sequence[Mapping[str, object]], getattr(row, "web_citations", None) or ()
+        )
+        web_citations = tuple(
+            DeletedResearchCitation(UUID(str(item["sourceId"])))
+            if item.get("kind") == "deleted_research"
+            else WebCitation(
+                UUID(str(item["sourceId"])),
+                str(item["label"]),
+                str(item["url"]),
+                datetime.fromisoformat(str(item["retrievedAt"])),
+                str(item["locator"]) if item.get("locator") is not None else None,
+            )
+            for item in web_citation_values
+            if (
+                item.get("kind") == "deleted_research"
+                and {"sourceId", "label", "kind"} <= set(item)
+            )
+            or {"sourceId", "label", "url", "retrievedAt"} <= set(item)
+        )
+        research_origin = (
+            ResearchRunOrigin(
+                UUID(str(row.research_origin["researchId"])),
+                UUID(str(row.research_origin["taskId"])),
+            )
+            if row.research_origin and {"researchId", "taskId"} <= set(row.research_origin)
+            else None
+        )
+        research_activity = (
+            ResearchActivityReference(
+                UUID(str(row.research_activity["taskId"])),
+                str(row.research_activity["mode"]),
+                str(row.research_activity["admissionState"]),
+            )
+            if row.research_activity
+            and {"taskId", "mode", "admissionState"} <= set(row.research_activity)
+            else None
+        )
         return Run(
             conversation_id=row.conversation_id,
             user_message_id=row.user_message_id,
@@ -234,6 +280,14 @@ class SqlRunRepository:
             pending_tool_call_id=row.pending_tool_call_id,
             tool_lifecycle_status=row.tool_lifecycle_status,
             citations=citations,
+            web_citations=web_citations,
+            research_origin=research_origin,
+            research_activity=research_activity,
+            artifact_refs=tuple(
+                UUID(str(item["artifactId"]))
+                for item in (row.artifact_refs or [])
+                if "artifactId" in item
+            ),
             document_search_used=row.document_search_used,
             branch_id=row.branch_id,
             regenerated_from_run_id=row.regenerated_from_run_id,
@@ -367,6 +421,43 @@ class SqlRunRepository:
                     }
                     for item in run.citations
                 ],
+                web_citations=[
+                    (
+                        {
+                            "kind": item.kind,
+                            "sourceId": str(item.source_id),
+                            "label": item.label,
+                        }
+                        if isinstance(item, DeletedResearchCitation)
+                        else {
+                            "kind": "web",
+                            "sourceId": str(item.source_id),
+                            "label": item.label,
+                            "url": item.url,
+                            "retrievedAt": item.retrieved_at.isoformat(),
+                            "locator": item.locator,
+                        }
+                    )
+                    for item in run.web_citations
+                ],
+                research_origin=(
+                    {
+                        "researchId": str(run.research_origin.research_id),
+                        "taskId": str(run.research_origin.task_id),
+                    }
+                    if run.research_origin is not None
+                    else None
+                ),
+                research_activity=(
+                    {
+                        "taskId": str(run.research_activity.task_id),
+                        "mode": run.research_activity.mode,
+                        "admissionState": run.research_activity.admission_state,
+                    }
+                    if run.research_activity is not None
+                    else None
+                ),
+                artifact_refs=[{"artifactId": str(item)} for item in run.artifact_refs],
                 document_search_used=run.document_search_used,
                 provider=run.provider,
                 model_id=run.model_id,
@@ -434,6 +525,43 @@ class SqlRunRepository:
             }
             for item in run.citations
         ]
+        row.web_citations = [
+            (
+                {
+                    "kind": item.kind,
+                    "sourceId": str(item.source_id),
+                    "label": item.label,
+                }
+                if isinstance(item, DeletedResearchCitation)
+                else {
+                    "kind": "web",
+                    "sourceId": str(item.source_id),
+                    "label": item.label,
+                    "url": item.url,
+                    "retrievedAt": item.retrieved_at.isoformat(),
+                    "locator": item.locator,
+                }
+            )
+            for item in run.web_citations
+        ]
+        row.research_origin = (
+            {
+                "researchId": str(run.research_origin.research_id),
+                "taskId": str(run.research_origin.task_id),
+            }
+            if run.research_origin is not None
+            else None
+        )
+        row.research_activity = (
+            {
+                "taskId": str(run.research_activity.task_id),
+                "mode": run.research_activity.mode,
+                "admissionState": run.research_activity.admission_state,
+            }
+            if run.research_activity is not None
+            else None
+        )
+        row.artifact_refs = [{"artifactId": str(item)} for item in run.artifact_refs]
         row.document_search_used = run.document_search_used
         row.attachments = [
             {

@@ -470,6 +470,7 @@ async def test_tool_catalog_and_agent_policies_are_owner_scoped_and_immutable(
         assert [item["id"] for item in tools] == [
             "memory.search",
             "document.search",
+            "web.research",
             "reminder.create",
             "reminder.list",
             "reminder.inspect",
@@ -492,6 +493,7 @@ async def test_tool_catalog_and_agent_policies_are_owner_scoped_and_immutable(
         assert aura_policy["items"][-1]["grants"] == [
             {"toolId": "memory.search", "toolVersion": 1},
             {"toolId": "document.search", "toolVersion": 1},
+            {"toolId": "web.research", "toolVersion": 1},
             {"toolId": "reminder.create", "toolVersion": 1},
             {"toolId": "reminder.list", "toolVersion": 1},
             {"toolId": "reminder.inspect", "toolVersion": 1},

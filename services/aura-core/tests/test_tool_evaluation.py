@@ -131,8 +131,8 @@ EVALUATOR_COMPONENTS = {
     "tool_selection_quality": ("aura.runtime.tool_selection", "1.4.0"),
     "tool_argument_accuracy": ("aura.runtime.policy_evaluation", "1.1.0"),
     "tool_permission_enforcement": ("aura.runtime.policy_evaluation", "1.1.0"),
-    "tool_execution_completion": ("aura.runtime.tool_execution", "1.3.0"),
-    "memory_scope_authorization": ("aura.runtime.tool_execution", "1.3.0"),
+    "tool_execution_completion": ("aura.runtime.tool_execution@1", "1.3.0"),
+    "memory_scope_authorization": ("aura.runtime.tool_execution@1", "1.3.0"),
 }
 CONTENT_FIELDS = frozenset(
     {"query", "arguments", "result", "content", "prompt", "response", "memoryId"}

@@ -1,5 +1,5 @@
 // Generated from contracts/openapi/aura-v1.yaml. Do not edit by hand.
-// Contract SHA-256: c166093af4b4c3c6976be00f398e27bebb4d64039c88c4387441dd2467f3db4d
+// Contract SHA-256: 757fff7ae419f29300f25ae6b79e79151fc133fc286ca30d2de819451388c143
 
 export type AuraBinaryRequestBody = Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
 
@@ -370,7 +370,7 @@ export type ApprovalHeartbeatEvent = { readonly "schemaVersion": 1; readonly "ev
 
 export type NotificationStatus = "delivered" | "acknowledged";
 
-export type Notification = ReminderNotification | BriefingNotification | WorkflowNotification;
+export type Notification = ReminderNotification | BriefingNotification | WorkflowNotification | ResearchNotification;
 
 export type ReminderNotification = { readonly "id": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
 
@@ -378,19 +378,23 @@ export type BriefingNotification = { readonly "id": string; readonly "briefingSc
 
 export type WorkflowNotification = { readonly "id": string; readonly "workflowId": string; readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowStepOrdinal": number; readonly "workflowStepExecutionId": string; readonly "workflowResultId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
 
+export type ResearchNotification = { readonly "id": string; readonly "researchId": string; readonly "status": NotificationStatus; readonly "version": number; readonly "createdAt": string; readonly "updatedAt": string; readonly "deliveredAt": string; readonly "acknowledgedAt": string | null; };
+
 export type NotificationPage = { readonly "items": ReadonlyArray<Notification>; readonly "nextCursor": string | null; readonly "unacknowledgedCount": number; };
 
 export type NotificationAcknowledgeRequest = { readonly "expectedVersion": number; };
 
-export type NotificationStreamEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent | WorkflowNotificationLifecycleEvent | NotificationHeartbeatEvent;
+export type NotificationStreamEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent | WorkflowNotificationLifecycleEvent | ResearchNotificationLifecycleEvent | NotificationHeartbeatEvent;
 
-export type NotificationLifecycleEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent | WorkflowNotificationLifecycleEvent;
+export type NotificationLifecycleEvent = ReminderNotificationLifecycleEvent | BriefingNotificationLifecycleEvent | WorkflowNotificationLifecycleEvent | ResearchNotificationLifecycleEvent;
 
 export type ReminderNotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "reminderId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
 
 export type BriefingNotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "briefingScheduleId": string; readonly "briefingOccurrenceId": string; readonly "briefingResultId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
 
 export type WorkflowNotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "workflowId": string; readonly "workflowRevisionId": string; readonly "workflowInstanceId": string; readonly "workflowStepOrdinal": number; readonly "workflowStepExecutionId": string; readonly "workflowResultId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
+
+export type ResearchNotificationLifecycleEvent = { readonly "schemaVersion": 1; readonly "eventId": string; readonly "eventType": "notification.delivered" | "notification.acknowledged"; readonly "notificationId": string; readonly "researchId": string; readonly "status": NotificationStatus; readonly "notificationVersion": number; readonly "occurredAt": string; };
 
 export type NotificationHeartbeatEvent = { readonly "schemaVersion": 1; readonly "eventType": "heartbeat"; readonly "occurredAt": string; };
 

@@ -539,6 +539,10 @@ class ResearchTask:
     capability_snapshot: Mapping[str, object] = MappingProxyType({})
     origin: Mapping[str, object] = MappingProxyType({})
     policy_revision: str = "research.v1"
+    synthesized_answer: str | None = None
+    delivery_claim_token: str | None = None
+    delivery_claim_phase: str | None = None
+    delivery_claim_expires_at: datetime | None = None
 
     @property
     def owner(self) -> tuple[str, str]:
@@ -555,6 +559,41 @@ class ResearchTask:
     @property
     def terminal(self) -> bool:
         return self.outcome is not None
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchTerminalDeliverySnapshot:
+    """Narrow, owner-authorized terminal view used by completion delivery."""
+
+    research_id: UUID
+    issuer: str
+    subject: str
+    version: int
+    outcome: ResearchOutcome
+    content_state: ResearchContentState
+    failure_class: str | None
+    synthesized_answer: str
+    citations: tuple[ResearchCitation, ...]
+    artifact_refs: tuple[Mapping[str, object], ...]
+    origin: Mapping[str, object]
+    mode: ResearchMode = ResearchMode.AUTO
+
+    def __post_init__(self) -> None:
+        if not self.synthesized_answer or len(self.synthesized_answer.encode("utf-8")) > 32 * 1024:
+            raise ResearchValidationError("terminal research answer is missing or too large")
+        if len(self.citations) > 32:
+            raise ResearchValidationError("terminal research citations exceed the delivery bound")
+        if len(self.artifact_refs) > 8:
+            raise ResearchValidationError("terminal research artifacts exceed the delivery bound")
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchDeliveryClaim:
+    research_id: UUID
+    version: int
+    token: str
+    phase: str
+    lease_expires_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,6 +640,11 @@ class ResearchRepository(Protocol):
     async def evidence(self, owner: tuple[str, str], research_id: UUID, *, limit: int = 100, offset: int = 0) -> list[ResearchEvidence]: ...
     async def projection_tasks(self) -> list[ResearchTask]: ...
     async def get_unscoped(self, research_id: UUID) -> ResearchTask: ...
+    async def delivery_snapshot(self, owner: tuple[str, str], research_id: UUID, *, expected_version: int, expected_origin: Mapping[str, object] | None = None) -> ResearchTerminalDeliverySnapshot: ...
+    async def claim_delivery(self, owner: tuple[str, str], research_id: UUID, *, expected_version: int, phase: str, lease_seconds: float = 60.0) -> ResearchDeliveryClaim: ...
+    async def settle_delivery_claim(self, owner: tuple[str, str], claim: ResearchDeliveryClaim) -> None: ...
+    async def delivery_claim_active(self, research_id: UUID) -> bool: ...
+    async def admit_deletion(self, task: ResearchTask, *, expected_version: int) -> ResearchTask: ...
     async def purge_private_content(self, research_id: UUID) -> None: ...
     async def finalize_deletion(self, task: ResearchTask, *, expected_version: int, artifact_refs: tuple[Mapping[str, object], ...], delete_linked_artifacts: bool, evidence_status: str, artifact_status: str, status: str, idempotency_key: str | None = None, fingerprint: str | None = None, command: str | None = None, result: Mapping[str, object] | None = None) -> ResearchTask: ...
     async def record_cleanup(self, research_id: UUID, audit_id: UUID, *, delete_linked_artifacts: bool, evidence_status: str, artifact_status: str, status: str, last_error: str | None = None) -> None: ...
@@ -615,6 +659,14 @@ class ResearchRepository(Protocol):
     async def save_command_receipt(self, owner: tuple[str, str], key: str, *, fingerprint: str, command: str, research_id: UUID, source_version: int, result: Mapping[str, object]) -> None: ...
     async def get_settings_command_receipt(self, owner: tuple[str, str], key: str) -> tuple[str, Mapping[str, object]] | None: ...
     async def save_settings_command_receipt(self, owner: tuple[str, str], key: str, *, fingerprint: str, result: Mapping[str, object]) -> None: ...
+
+
+class ResearchCitationLifecycleQueryPort(Protocol):
+    """Read-only owner-scoped lifecycle query for conversation projections."""
+
+    async def citation_lifecycle(
+        self, issuer: str, subject: str, research_id: UUID
+    ) -> ResearchContentState: ...
 
 
 def _utc(value: datetime) -> datetime:
@@ -788,11 +840,126 @@ class MemoryResearchRepository:
                 raise ResearchNotFound("research task not found")
             return task
 
+    async def delivery_snapshot(self, owner: tuple[str, str], research_id: UUID, *, expected_version: int, expected_origin: Mapping[str, object] | None = None) -> ResearchTerminalDeliverySnapshot:
+        async with self._lock:
+            task = self.tasks.get(research_id)
+            if task is None or task.owner != owner:
+                raise ResearchNotFound("research task not found")
+            if task.version != expected_version or not task.terminal:
+                raise ResearchConflict("research terminal version is stale")
+            if task.content_state is not ResearchContentState.ACTIVE:
+                raise ResearchConflict("research content is no longer deliverable")
+            if expected_origin is not None and dict(task.origin) != dict(expected_origin):
+                raise ResearchConflict("research origin fence failed")
+            return ResearchTerminalDeliverySnapshot(
+                task.id, task.issuer, task.subject, task.version,
+                cast(ResearchOutcome, task.outcome), task.content_state,
+                task.failure_class, task.synthesized_answer or "Research completed without a persisted answer.",
+                tuple(task.citations[:32]), tuple(task.artifact_refs[:8]), dict(task.origin), task.mode,
+            )
+
+    async def claim_delivery(
+        self,
+        owner: tuple[str, str],
+        research_id: UUID,
+        *,
+        expected_version: int,
+        phase: str,
+        lease_seconds: float = 60.0,
+    ) -> ResearchDeliveryClaim:
+        async with self._lock:
+            task = self.tasks.get(research_id)
+            if task is None or task.owner != owner:
+                raise ResearchNotFound("research task not found")
+            if task.version != expected_version or not task.terminal:
+                raise ResearchConflict("research terminal version is stale")
+            if task.content_state is not ResearchContentState.ACTIVE:
+                raise ResearchConflict("research content is no longer deliverable")
+            now_value = datetime.now(UTC)
+            if (
+                task.delivery_claim_token
+                and task.delivery_claim_expires_at is not None
+                and task.delivery_claim_expires_at > now_value
+            ):
+                raise ResearchConflict("research delivery is already claimed")
+            expires = now_value + timedelta(seconds=lease_seconds)
+            token = uuid4().hex
+            self.tasks[research_id] = replace(
+                task,
+                delivery_claim_token=token,
+                delivery_claim_phase=phase,
+                delivery_claim_expires_at=expires,
+            )
+            return ResearchDeliveryClaim(research_id, expected_version, token, phase, expires)
+
+    async def settle_delivery_claim(
+        self, owner: tuple[str, str], claim: ResearchDeliveryClaim
+    ) -> None:
+        async with self._lock:
+            task = self.tasks.get(claim.research_id)
+            if task is None or task.owner != owner:
+                raise ResearchNotFound("research task not found")
+            if task.delivery_claim_token != claim.token:
+                raise ResearchConflict("research delivery claim is stale")
+            self.tasks[claim.research_id] = replace(
+                task,
+                delivery_claim_token=None,
+                delivery_claim_phase=None,
+                delivery_claim_expires_at=None,
+            )
+
+    async def delivery_claim_active(self, research_id: UUID) -> bool:
+        async with self._lock:
+            task = self.tasks.get(research_id)
+            return bool(
+                task
+                and task.delivery_claim_token
+                and task.delivery_claim_expires_at is not None
+                and task.delivery_claim_expires_at > datetime.now(UTC)
+            )
+
+    async def admit_deletion(
+        self, task: ResearchTask, *, expected_version: int
+    ) -> ResearchTask:
+        async with self._lock:
+            current = self.tasks.get(task.id)
+            if current is None or current.owner != task.owner:
+                raise ResearchNotFound("research task not found")
+            if current.version != expected_version or not current.terminal:
+                raise ResearchConflict("research content is not deletable")
+            if current.content_state is not ResearchContentState.ACTIVE:
+                return current
+            now_value = datetime.now(UTC)
+            if (
+                current.delivery_claim_token
+                and current.delivery_claim_expires_at is not None
+                and current.delivery_claim_expires_at > now_value
+            ):
+                raise ResearchConflict("research delivery is settling")
+            tombstone = replace(
+                current,
+                question="",
+                seed_urls=(),
+                domains=(),
+                evidence=(),
+                citations=(),
+                synthesized_answer=None,
+                content_state=ResearchContentState.DELETION_PENDING,
+                deletion_audit_id=uuid4(),
+                delivery_claim_token=None,
+                delivery_claim_phase=None,
+                delivery_claim_expires_at=None,
+                version=current.version + 1,
+                updated_at=now_value,
+            )
+            self.tasks[current.id] = tombstone
+            return tombstone
+
     async def purge_private_content(self, research_id: UUID) -> None:
         async with self._lock:
             task = self.tasks.get(research_id)
             if task is not None:
-                self.tasks[research_id] = replace(task, question="", seed_urls=(), domains=(), evidence=(), citations=(), artifact_refs=())
+                self.tasks[research_id] = replace(task, question="", seed_urls=(), domains=(), evidence=(), citations=(), artifact_refs=(), synthesized_answer=None)
             for key, operation in self.operations.items():
                 if key[0] == research_id:
                     operation["response"] = {}
@@ -813,7 +980,7 @@ class MemoryResearchRepository:
                 raise ResearchNotFound("research task not found")
             if prior.version != expected_version:
                 raise ResearchConflict("research task version conflict")
-            cleaned = replace(task, question="", seed_urls=(), domains=(), evidence=(), citations=(), artifact_refs=artifact_refs, content_state=ResearchContentState.DELETED, version=task.version + 1, updated_at=task.updated_at)
+            cleaned = replace(task, question="", seed_urls=(), domains=(), evidence=(), citations=(), artifact_refs=artifact_refs, synthesized_answer=None, content_state=ResearchContentState.DELETED, version=task.version + 1, updated_at=task.updated_at)
             self.tasks[task.id] = cleaned
             for key, operation in self.operations.items():
                 if key[0] == task.id:
@@ -1141,7 +1308,7 @@ class ResearchApplicationService:
         self._remember_command(owner, idempotency_key, fingerprint, saved)
         return saved
 
-    async def admit(self, issuer: str, subject: str, *, question: str, mode: ResearchMode | str, budget: ResearchBudget | Mapping[str, object] | None = None, seed_urls: Sequence[str] = (), domains: Sequence[str] = (), idempotency_key: str | None = None) -> ResearchAdmission:
+    async def admit(self, issuer: str, subject: str, *, question: str, mode: ResearchMode | str, budget: ResearchBudget | Mapping[str, object] | None = None, seed_urls: Sequence[str] = (), domains: Sequence[str] = (), idempotency_key: str | None = None, origin: Mapping[str, object] | None = None) -> ResearchAdmission:
         owner = _owner(issuer, subject)
         if not isinstance(mode, ResearchMode):
             try:
@@ -1187,7 +1354,7 @@ class ResearchApplicationService:
                 "browserFetch": bool(provider_settings and getattr(provider_settings, "browser_fetch_enabled", False)),
                 "settings": {name: getattr(provider_settings, name, None) for name in ("search_deadline_seconds", "static_fetch_deadline_seconds", "browser_fetch_deadline_seconds", "max_candidates", "max_redirects", "max_bytes", "max_extracted_text_bytes") if provider_settings is not None and getattr(provider_settings, name, None) is not None},
             },
-            origin={"surface": "research_api", "issuer": issuer, "subject": subject},
+            origin=dict(origin or {"surface": "research_api", "issuer": issuer, "subject": subject}),
         )
         fingerprint = _fingerprint(question, mode.value, admitted_budget.as_dict(), seeds, domain_values)
         stored = await self.repository.admit(task, idempotency_key=idempotency_key, fingerprint=fingerprint)
@@ -1195,6 +1362,123 @@ class ResearchApplicationService:
 
     async def get(self, issuer: str, subject: str, research_id: UUID) -> ResearchTask:
         return await self.repository.get(_owner(issuer, subject), research_id)
+
+    async def citation_lifecycle(
+        self, issuer: str, subject: str, research_id: UUID
+    ) -> ResearchContentState:
+        task = await self.get(issuer, subject, research_id)
+        return task.content_state
+
+    async def delivery_snapshot(
+        self,
+        issuer: str,
+        subject: str,
+        research_id: UUID,
+        *,
+        expected_version: int,
+        expected_origin: Mapping[str, object] | None = None,
+    ) -> ResearchTerminalDeliverySnapshot:
+        """Authorize a terminal delivery against the source-owned version fence."""
+        method = getattr(self.repository, "delivery_snapshot", None)
+        if not callable(method):
+            task = await self.get(issuer, subject, research_id)
+            if task.version != expected_version or not task.terminal:
+                raise ResearchConflict("research terminal version is stale")
+            if task.content_state is not ResearchContentState.ACTIVE:
+                raise ResearchConflict("research content is no longer deliverable")
+            if expected_origin is not None and dict(task.origin) != dict(expected_origin):
+                raise ResearchConflict("research origin fence failed")
+            task_snapshot = ResearchTerminalDeliverySnapshot(
+                task.id, task.issuer, task.subject, task.version,
+                cast(ResearchOutcome, task.outcome), task.content_state,
+                task.failure_class, task.synthesized_answer or "Research completed without a persisted answer.",
+                tuple(task.citations[:32]), tuple(task.artifact_refs[:8]), dict(task.origin), task.mode,
+            )
+        else:
+            task_snapshot = await cast(Any, method)(
+                _owner(issuer, subject), research_id,
+                expected_version=expected_version, expected_origin=expected_origin,
+            )
+        await self._authorize_delivery_artifacts(
+            (issuer, subject), research_id, task_snapshot.artifact_refs
+        )
+        return task_snapshot
+
+    async def _authorize_delivery_artifacts(
+        self,
+        owner: tuple[str, str],
+        research_id: UUID,
+        artifact_refs: Sequence[Mapping[str, object]],
+    ) -> None:
+        """Reauthorize every report reference through the artifact boundary."""
+
+        if len(artifact_refs) > 8:
+            raise ResearchConflict("research artifact references exceed the delivery bound")
+        if not artifact_refs:
+            return
+        if self.artifact_service is None:
+            raise ResearchConflict("research artifact authorization is unavailable")
+        service = cast(Any, self.artifact_service)
+        for reference in artifact_refs:
+            try:
+                artifact_id = UUID(str(reference["artifactId"]))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ResearchConflict("research artifact reference is invalid") from exc
+            try:
+                artifact = await service.get(*owner, artifact_id)
+            except Exception as exc:
+                raise ResearchConflict("research artifact reference is not authorized") from exc
+            lifecycle = getattr(getattr(artifact, "lifecycle", None), "value", getattr(artifact, "lifecycle", None))
+            lineage = getattr(artifact, "lineage", None)
+            if (
+                getattr(artifact, "issuer", None) != owner[0]
+                or getattr(artifact, "subject", None) != owner[1]
+                or lifecycle != "active"
+                or getattr(lineage, "task_id", None) != research_id
+            ):
+                raise ResearchConflict("research artifact reference is not authorized")
+
+    async def claim_delivery(
+        self,
+        issuer: str,
+        subject: str,
+        research_id: UUID,
+        *,
+        expected_version: int,
+        phase: str = "delivery",
+        lease_seconds: float = 60.0,
+    ) -> ResearchDeliveryClaim:
+        method = getattr(self.repository, "claim_delivery", None)
+        if not callable(method):
+            raise ResearchConflict("research delivery claim boundary is unavailable")
+        return await cast(Any, method)(
+            _owner(issuer, subject), research_id,
+            expected_version=expected_version,
+            phase=phase,
+            lease_seconds=lease_seconds,
+        )
+
+    async def settle_delivery_claim(
+        self, issuer: str, subject: str, claim: ResearchDeliveryClaim
+    ) -> None:
+        method = getattr(self.repository, "settle_delivery_claim", None)
+        if not callable(method):
+            raise ResearchConflict("research delivery claim boundary is unavailable")
+        await cast(Any, method)(_owner(issuer, subject), claim)
+
+    async def admit_deletion(
+        self,
+        issuer: str,
+        subject: str,
+        research_id: UUID,
+        *,
+        expected_version: int,
+    ) -> ResearchTask:
+        method = getattr(self.repository, "admit_deletion", None)
+        if not callable(method):
+            raise ResearchConflict("research deletion admission boundary is unavailable")
+        current = await self.get(issuer, subject, research_id)
+        return await cast(Any, method)(current, expected_version=expected_version)
 
     async def list(self, issuer: str, subject: str, *, mode: ResearchMode | None = None, outcome: ResearchOutcome | None = None, limit: int = 25, offset: int = 0) -> list[ResearchTask]:
         if not 1 <= limit <= 100:
@@ -1204,7 +1488,7 @@ class ResearchApplicationService:
     async def evidence(self, issuer: str, subject: str, research_id: UUID, *, limit: int = 100, offset: int = 0) -> list[ResearchEvidence]:
         return await self.repository.evidence(_owner(issuer, subject), research_id, limit=limit, offset=offset)
 
-    async def _transition(self, task: ResearchTask, *, stage: ResearchStage | None = None, outcome: ResearchOutcome | None = None, failure_class: str | None = None, consumed: ResearchBudgetConsumption | None = None, evidence: tuple[ResearchEvidence, ...] | None = None, citations: tuple[ResearchCitation, ...] | None = None, artifact_refs: tuple[Mapping[str, object], ...] | None = None, cancellation_requested: bool | None = None, content_state: ResearchContentState | None = None, operation: str = "checkpoint", idempotency_key: str | None = None, idempotency_fingerprint: str | None = None, idempotency_command: str | None = None) -> ResearchTask:
+    async def _transition(self, task: ResearchTask, *, stage: ResearchStage | None = None, outcome: ResearchOutcome | None = None, failure_class: str | None = None, consumed: ResearchBudgetConsumption | None = None, evidence: tuple[ResearchEvidence, ...] | None = None, citations: tuple[ResearchCitation, ...] | None = None, artifact_refs: tuple[Mapping[str, object], ...] | None = None, synthesized_answer: str | None = None, cancellation_requested: bool | None = None, content_state: ResearchContentState | None = None, operation: str = "checkpoint", idempotency_key: str | None = None, idempotency_fingerprint: str | None = None, idempotency_command: str | None = None) -> ResearchTask:
         if task.terminal or task.content_state is not ResearchContentState.ACTIVE:
             raise ResearchConflict("research task is no longer mutable")
         effective_consumed = consumed or task.consumed_budget
@@ -1240,6 +1524,9 @@ class ResearchApplicationService:
         next_outcome = outcome if outcome is not None else task.outcome
         checkpoint = ResearchCheckpoint(uuid4(), task.id, task.version + 1, next_stage, now, operation)
         next_cancellation_requested = task.cancellation_requested if cancellation_requested is None else cancellation_requested
+        effective_answer = synthesized_answer if synthesized_answer is not None else task.synthesized_answer
+        if next_outcome is not None and effective_answer is None:
+            effective_answer = f"Research {next_outcome.value}."
         updated = replace(
             task,
             stage=next_stage,
@@ -1249,6 +1536,7 @@ class ResearchApplicationService:
             evidence=effective_evidence,
             citations=effective_citations,
             artifact_refs=artifact_refs if artifact_refs is not None else task.artifact_refs,
+            synthesized_answer=effective_answer,
             cancellation_requested=next_cancellation_requested,
             cancellation_requested_at=(now if next_cancellation_requested and not task.cancellation_requested_at else task.cancellation_requested_at),
             content_state=content_state or task.content_state,
@@ -1324,8 +1612,8 @@ class ResearchApplicationService:
     ) -> ResearchTask:
         return await self._transition(task, stage=stage, operation=operation, consumed=consumed, evidence=evidence)
 
-    async def settle(self, task: ResearchTask, outcome: ResearchOutcome, *, failure_class: str | None = None, consumed: ResearchBudgetConsumption | None = None, evidence: tuple[ResearchEvidence, ...] | None = None, citations: tuple[ResearchCitation, ...] | None = None, artifact_refs: tuple[Mapping[str, object], ...] | None = None) -> ResearchTask:
-        return await self._transition(task, stage=ResearchStage.TERMINAL, outcome=outcome, failure_class=failure_class, consumed=consumed, evidence=evidence, citations=citations, artifact_refs=artifact_refs, operation="settle")
+    async def settle(self, task: ResearchTask, outcome: ResearchOutcome, *, failure_class: str | None = None, consumed: ResearchBudgetConsumption | None = None, evidence: tuple[ResearchEvidence, ...] | None = None, citations: tuple[ResearchCitation, ...] | None = None, artifact_refs: tuple[Mapping[str, object], ...] | None = None, synthesized_answer: str | None = None) -> ResearchTask:
+        return await self._transition(task, stage=ResearchStage.TERMINAL, outcome=outcome, failure_class=failure_class, consumed=consumed, evidence=evidence, citations=citations, artifact_refs=artifact_refs, synthesized_answer=synthesized_answer, operation="settle")
 
     async def _record_cleanup(self, task: ResearchTask, *, delete_linked_artifacts: bool, evidence_status: str, artifact_status: str, status: str, last_error: str | None = None) -> None:
         method = getattr(self.repository, "record_cleanup", None)
@@ -1479,8 +1767,12 @@ class ResearchApplicationService:
             return task
         started = monotonic()
         try:
-            tombstone = replace(task, question="", seed_urls=(), domains=(), evidence=(), citations=(), content_state=ResearchContentState.DELETION_PENDING, deletion_audit_id=uuid4(), version=task.version + 1, updated_at=_utc(self.clock()))
-            result = await self.repository.save(tombstone, expected_version=task.version)
+            result = await self.admit_deletion(
+                issuer,
+                subject,
+                research_id,
+                expected_version=task.version,
+            )
             await self._record_cleanup(result, delete_linked_artifacts=delete_linked_artifacts, evidence_status="pending", artifact_status="pending" if delete_linked_artifacts and task.artifact_refs else "not_requested", status="pending")
             if delete_linked_artifacts and task.artifact_refs:
                 if self.artifact_service is None:
@@ -2222,7 +2514,10 @@ class ResearchCoordinator:
                 if callable(create):
                     artifact = await cast(Any, create)(task.issuer, task.subject, kind="research_report", title="Research report", media_type="text/markdown; charset=utf-8", content=report, creator_component="aura.research.synthesis@1", lineage=GeneratedArtifactLineage(task_id=task.id), idempotency_key=f"research-report:{task.id}")
                     artifact_refs = ({"artifactId": str(artifact.id), "kind": artifact.kind, "revision": artifact.current_revision},)
-            task = await self._settle(task, ResearchOutcome.COMPLETED if synthesis.sufficient else ResearchOutcome.PARTIAL, consumed=consumed, evidence=tuple(item for item in evidence if any(claim.source_id == item.source_id for claim in synthesis.claims)), citations=citations, artifact_refs=artifact_refs)
+            compact_answer = "\n".join(
+                f"- {claim.text} [source:{claim.source_id}]" for claim in synthesis.claims
+            )[:32 * 1024]
+            task = await self._settle(task, ResearchOutcome.COMPLETED if synthesis.sufficient else ResearchOutcome.PARTIAL, consumed=consumed, evidence=tuple(item for item in evidence if any(claim.source_id == item.source_id for claim in synthesis.claims)), citations=citations, artifact_refs=artifact_refs, synthesized_answer=compact_answer or "Research completed without a supported claim.")
             return task
         except ResearchConflict:
             # A concurrent owner command may win between the last reload and a
@@ -2248,5 +2543,5 @@ class ResearchCoordinator:
 
 
 __all__ = [
-    "DEFAULT_BUDGETS", "MemoryResearchRepository", "ResearchAdmission", "ResearchApplicationService", "ResearchBudget", "ResearchBudgetConsumption", "ResearchCitation", "ResearchClaim", "ResearchConflict", "ResearchContentState", "ResearchCoordinator", "ResearchEntityProvenance", "ResearchEntityResolution", "ResearchEntityResolutionPort", "ResearchEntityType", "ResearchEvidence", "ResearchError", "ResearchFailureClass", "ResearchMode", "ResearchNotFound", "ResearchOutcome", "ResearchPlan", "ResearchSettings", "ResearchStage", "ResearchSynthesis", "ResearchSynthesisPort", "ResearchTask", "ResearchValidationError",
+    "DEFAULT_BUDGETS", "MemoryResearchRepository", "ResearchAdmission", "ResearchApplicationService", "ResearchBudget", "ResearchBudgetConsumption", "ResearchCitation", "ResearchClaim", "ResearchConflict", "ResearchContentState", "ResearchCoordinator", "ResearchCitationLifecycleQueryPort", "ResearchDeliveryClaim", "ResearchEntityProvenance", "ResearchEntityResolution", "ResearchEntityResolutionPort", "ResearchEntityType", "ResearchEvidence", "ResearchError", "ResearchFailureClass", "ResearchMode", "ResearchNotFound", "ResearchOutcome", "ResearchPlan", "ResearchSettings", "ResearchStage", "ResearchSynthesis", "ResearchSynthesisPort", "ResearchTask", "ResearchTerminalDeliverySnapshot", "ResearchValidationError",
 ]

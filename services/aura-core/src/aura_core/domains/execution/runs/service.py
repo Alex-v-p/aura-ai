@@ -55,17 +55,22 @@ from aura_core.domains.interaction.conversations.public import (
     AttachmentSummary,
     Conversation,
     ConversationBranchOrigin,
+    DeletedResearchCitation,
     DocumentCitation,
     Message,
     MessageState,
     PendingTitle,
+    ResearchActivityReference,
+    ResearchRunOrigin,
     TitleState,
+    WebCitation,
     normalize_generated_title,
     pending_title_for,
     search_attached_documents,
     select_attachment_context,
     title_request_messages,
 )
+from aura_core.domains.interaction.research_delivery.public import ResearchCompletionDeliveryInput
 from aura_core.domains.knowledge.documents.ports import DocumentSearchPort
 from aura_core.runtime.models.ports import (
     ModelStreamCompleted,
@@ -92,6 +97,7 @@ from aura_core.runtime.tools import (
     validate_tool_arguments,
     validate_tool_result,
 )
+from aura_core.runtime.tools.public import RESEARCH_TOOL_ID, ResearchContext
 
 _RUN_EVIDENCE_ATTACHMENT_MAX_BYTES = 1_048_576
 
@@ -178,6 +184,8 @@ class RunCoordinator:
         briefing_provider: ChatCompletionPort | None = None,
         briefing_cancellation: Callable[[object], Awaitable[None]] | None = None,
         workflow_recovery: WorkflowAgentRunRecoveryPort | None = None,
+        research_service: object | None = None,
+        research_delivery: object | None = None,
     ) -> None:
         self.store = store
         self.publisher = publisher
@@ -210,6 +218,8 @@ class RunCoordinator:
         # performed by the briefing repository owner.
         self.briefing_cancellation = briefing_cancellation
         self.workflow_recovery = workflow_recovery
+        self.research_service = research_service
+        self.research_delivery = research_delivery
         self._briefing_cancellations: dict[UUID, asyncio.Event] = {}
         self._thinking_offsets: dict[UUID, int] = {}
         self._thinking_offset_expiry: dict[UUID, float] = {}
@@ -2250,7 +2260,7 @@ class RunCoordinator:
             **self._metadata(run),
         )
         self.metrics.increment(
-            "aura.runtime.tool_execution",
+            "aura.runtime.tool_execution@1",
             "reminder_command_execution_outcome"
             if is_command_proposal
             else "reminder_create_tool_outcome",
@@ -2272,7 +2282,7 @@ class RunCoordinator:
             }
         else:
             self._tool_span(
-                "aura.runtime.tool_execution",
+                "aura.runtime.tool_execution@1",
                 "tool.execute",
                 0.0,
                 run,
@@ -2385,7 +2395,7 @@ class RunCoordinator:
             if execution_status != "denied":
                 await self._update_approval_execution(run.approval_id, "denied")
             self.metrics.increment(
-                "aura.runtime.tool_execution",
+                "aura.runtime.tool_execution@1",
                 "reminder_command_execution_outcome"
                 if is_command_proposal
                 else "reminder_create_tool_outcome",
@@ -2393,7 +2403,7 @@ class RunCoordinator:
                 **self._metadata(run),
             )
             self._tool_span(
-                "aura.runtime.tool_execution",
+                "aura.runtime.tool_execution@1",
                 "tool.execute",
                 0.0,
                 run,
@@ -2458,7 +2468,7 @@ class RunCoordinator:
             if execution_status != "completed":
                 await self._update_approval_execution(run.approval_id, "completed")
             self.metrics.increment(
-                "aura.runtime.tool_execution",
+                "aura.runtime.tool_execution@1",
                 "reminder_command_execution_outcome"
                 if is_command_proposal
                 else "reminder_create_tool_outcome",
@@ -2509,7 +2519,7 @@ class RunCoordinator:
             **self._metadata(run),
         )
         self.metrics.increment(
-            "aura.runtime.tool_execution",
+            "aura.runtime.tool_execution@1",
             "reminder_command_execution_outcome"
             if is_command_proposal
             else "reminder_create_tool_outcome",
@@ -2607,7 +2617,7 @@ class RunCoordinator:
             )
         await self._update_approval_execution(approval_id, "completed")
         self.metrics.increment(
-            "aura.runtime.tool_execution",
+            "aura.runtime.tool_execution@1",
             "reminder_command_execution_outcome"
             if is_command_proposal
             else "reminder_create_tool_outcome",
@@ -3031,7 +3041,7 @@ class RunCoordinator:
                         if preparation_outcome != "resolved":
                             if descriptor.id != "reminder.series.create":
                                 self.metrics.increment(
-                                    "aura.runtime.tool_execution",
+                                    "aura.runtime.tool_execution@1",
                                     "reminder_tool_resolution_outcome",
                                     outcome=preparation_outcome,
                                     **self._metadata(run),
@@ -3115,7 +3125,7 @@ class RunCoordinator:
                         **self._metadata(run),
                     )
                     self._tool_span(
-                        "aura.runtime.tool_execution",
+                        "aura.runtime.tool_execution@1",
                         "tool.execute",
                         0.0,
                         run,
@@ -3177,6 +3187,8 @@ class RunCoordinator:
                 "parent_span_id": policy_span_id,
                 "dependency": (
                     "postgresql" if call.name == DOCUMENT_SEARCH_TOOL_ID else "memory_store"
+                    if call.name != RESEARCH_TOOL_ID
+                    else "core_postgresql"
                 ),
             }
             tool_context: object = MemorySearchContext(search)
@@ -3228,6 +3240,105 @@ class RunCoordinator:
                         ) from exc
 
                 tool_context = DocumentSearchContext(search_documents)
+            if call.name == RESEARCH_TOOL_ID:
+
+                async def admit_research(arguments: Mapping[str, object]) -> object:
+                    service = self.research_service
+                    if service is None:
+                        raise ToolExecutionError("capability", "TOOL_CAPABILITY_UNAVAILABLE")
+                    admit = getattr(service, "admit", None)
+                    if not callable(admit):
+                        raise ToolExecutionError("capability", "TOOL_CAPABILITY_UNAVAILABLE")
+                    try:
+                        admission = await admit(
+                            conversation.principal_issuer,
+                            conversation.principal_subject,
+                            question=str(arguments["question"]),
+                            mode=str(arguments["mode"]),
+                            budget=arguments.get("budget"),
+                            seed_urls=arguments.get("seedUrls", ()),
+                            domains=arguments.get("domains", ()),
+                            idempotency_key=f"run:{run.id}:tool:{call.call_id}",
+                            origin={
+                                "surface": "conversation",
+                                "issuer": conversation.principal_issuer,
+                                "subject": conversation.principal_subject,
+                                "conversationId": str(conversation.id),
+                                "branchId": str(run.branch_id) if run.branch_id else None,
+                                "runId": str(run.id),
+                            },
+                        )
+                    except ToolExecutionError:
+                        raise
+                    except Exception as exc:
+                        raise ToolExecutionError("capability", "TOOL_CAPABILITY_UNAVAILABLE") from exc
+                    task_id = getattr(admission, "research_id", None)
+                    mode = getattr(admission, "mode", None)
+                    state = getattr(admission, "admission_state", None)
+                    if not isinstance(task_id, UUID) or mode is None or state != "admitted":
+                        raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+                    # Re-read the source-owned admission before creating the
+                    # delivery record.  The admission transaction is the
+                    # authority for origin lineage; never reconstruct a
+                    # destination from the untrusted tool arguments or a
+                    # potentially stale local run object.
+                    reload = getattr(service, "get", None)
+                    if not callable(reload):
+                        raise ToolExecutionError("capability", "TOOL_CAPABILITY_UNAVAILABLE")
+                    persisted = await reload(
+                        conversation.principal_issuer,
+                        conversation.principal_subject,
+                        task_id,
+                    )
+                    persisted_origin = dict(getattr(persisted, "origin", {}) or {})
+                    if (
+                        persisted_origin.get("surface") != "conversation"
+                        or persisted_origin.get("issuer") != conversation.principal_issuer
+                        or persisted_origin.get("subject") != conversation.principal_subject
+                    ):
+                        raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+                    try:
+                        persisted_conversation_id = UUID(
+                            str(persisted_origin["conversationId"])
+                        )
+                        persisted_run_id = UUID(str(persisted_origin["runId"]))
+                        persisted_branch_id = (
+                            UUID(str(persisted_origin["branchId"]))
+                            if persisted_origin.get("branchId")
+                            else None
+                        )
+                    except (KeyError, TypeError, ValueError) as exc:
+                        raise ToolExecutionError("validation", "TOOL_RESULT_INVALID") from exc
+                    if (
+                        persisted_conversation_id != conversation.id
+                        or persisted_run_id != run.id
+                    ):
+                        raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+                    run.research_origin = ResearchRunOrigin(task_id, task_id)
+                    run.research_activity = ResearchActivityReference(task_id, str(getattr(mode, "value", mode)), "admitted")
+                    register = getattr(self.research_delivery, "register", None)
+                    if callable(register):
+                        await register(
+                            ResearchCompletionDeliveryInput(
+                                conversation.principal_issuer,
+                                conversation.principal_subject,
+                                task_id,
+                                persisted_conversation_id,
+                                persisted_branch_id,
+                                persisted_run_id,
+                                int(getattr(persisted, "version", getattr(admission, "version", 1))),
+                                origin=persisted_origin,
+                            )
+                        )
+                    await self.store.set_research_metadata(
+                        run.id, run.research_origin, run.research_activity
+                    )
+                    return {
+                        "taskRef": {"taskId": str(task_id)},
+                        "mode": str(getattr(mode, "value", mode)),
+                        "admissionState": "admitted",
+                    }
+                tool_context = ResearchContext(admit_research)
             if call.name in {"reminder.list", "reminder.inspect"}:
 
                 async def list_reminders(
@@ -3264,7 +3375,7 @@ class RunCoordinator:
                         )
                     except Exception as exc:
                         self.metrics.increment(
-                            "aura.runtime.tool_execution",
+                            "aura.runtime.tool_execution@1",
                             "reminder_tool_resolution_outcome",
                             outcome="failure",
                             **self._metadata(run),
@@ -3274,14 +3385,14 @@ class RunCoordinator:
                         raise ToolExecutionError("execution", "REMINDER_INSPECTION_FAILED")
                     if result.get("outcome") != "resolved":
                         self.metrics.increment(
-                            "aura.runtime.tool_execution",
+                            "aura.runtime.tool_execution@1",
                             "reminder_tool_resolution_outcome",
                             outcome="clarification",
                             **self._metadata(run),
                         )
                         return {"outcome": "clarification", "items": []}
                     self.metrics.increment(
-                        "aura.runtime.tool_execution",
+                        "aura.runtime.tool_execution@1",
                         "reminder_tool_resolution_outcome",
                         outcome="resolved",
                         **self._metadata(run),
@@ -3371,10 +3482,16 @@ class RunCoordinator:
                     1,
                     "completed",
                     result_count=result.result_count,
+                    research_admission=(
+                        result.result
+                        if call.name == RESEARCH_TOOL_ID
+                        and isinstance(result.result, Mapping)
+                        else None
+                    ),
                 )
                 if call.name == DOCUMENT_SEARCH_TOOL_ID:
                     self.metrics.increment(
-                        "aura.runtime.tool_execution",
+                        "aura.runtime.tool_execution@1",
                         "document_search_tool_outcome",
                         outcome=_document_search_execution_outcome(result.result),
                         **self._metadata(run),
@@ -3391,7 +3508,7 @@ class RunCoordinator:
                     error_code=result.error_code,
                 )
                 self.metrics.increment(
-                    "aura.runtime.tool_execution",
+                    "aura.runtime.tool_execution@1",
                     "document_search_tool_outcome",
                     outcome=_document_search_failure_outcome(
                         result.error_code, status=result.status
@@ -3409,6 +3526,26 @@ class RunCoordinator:
                     error_class=result.error_class,
                     error_code=result.error_code,
                 )
+            if (
+                call.name == RESEARCH_TOOL_ID
+                and result.status == "completed"
+                and isinstance(result.result, Mapping)
+                and isinstance(result.result.get("taskRef"), Mapping)
+            ):
+                # Admission is the complete originating run interaction. The
+                # research worker owns execution and terminal delivery, so a
+                # second model synthesis turn would exceed the run boundary.
+                task_ref = result.result["taskRef"]
+                task_id = task_ref.get("taskId")
+                if isinstance(task_id, str) and task_id:
+                    acknowledgement = (
+                        "Research admitted. I’ll continue in the background "
+                        f"(task {task_id})."
+                    )
+                    await self._append_text_delta(
+                        conversation, run, attempt_id, acknowledgement, output_characters
+                    )
+                    return True
             evidence = _render_tool_evidence(
                 result.result, tool_id=call.name, outcome=result.status
             )
@@ -3551,7 +3688,7 @@ class RunCoordinator:
                 "model_provider"
                 if component.endswith("tool_selection")
                 else "memory_store"
-                if component.endswith("tool_execution")
+                if component.split("@", 1)[0].endswith("tool_execution")
                 else "conversation_store"
             ),
             outcome=outcome,
@@ -3758,7 +3895,7 @@ class RunCoordinator:
             # persisted as assistant content.
             sanitized_content = _DOCUMENT_MARKER_SANITIZE_RE.sub("", assistant.content).strip()
             self.metrics.increment(
-                "aura.runtime.tool_execution",
+                "aura.runtime.tool_execution@1",
                 "document_citation_validation_outcome",
                 outcome="invalid",
                 **self._metadata(run),
@@ -3784,14 +3921,14 @@ class RunCoordinator:
         citations, invalid = _extract_document_citations(assistant.content, evidence)
         if invalid:
             self.metrics.increment(
-                "aura.runtime.tool_execution",
+                "aura.runtime.tool_execution@1",
                 "document_citation_validation_outcome",
                 outcome="invalid",
                 **self._metadata(run),
             )
         else:
             self.metrics.increment(
-                "aura.runtime.tool_execution",
+                "aura.runtime.tool_execution@1",
                 "document_citation_validation_outcome",
                 outcome="valid" if citations else "empty",
                 **self._metadata(run),
@@ -3834,7 +3971,7 @@ class RunCoordinator:
                 return
             sanitized_content = _DOCUMENT_MARKER_SANITIZE_RE.sub("", assistant.content).strip()
             self.metrics.increment(
-                "aura.runtime.tool_execution",
+                "aura.runtime.tool_execution@1",
                 "document_citation_validation_outcome",
                 outcome="invalid",
                 **self._metadata(run),
@@ -3877,6 +4014,12 @@ class RunCoordinator:
         parent_span_id = attempt.get("parent_span_id")
         if not isinstance(started, (int, float)) or not isinstance(span_id, str):
             return
+        # Timeout/failure settlement can race with the executor's terminal
+        # result.  Mark the shared attempt before emitting so one terminal
+        # attempt produces exactly one span and one outcome total.
+        if attempt.get("terminal_observed") is True:
+            return
+        attempt["terminal_observed"] = True
         duration = attempt.get("execution_duration")
         duration_seconds = (
             float(duration) if isinstance(duration, (int, float)) else perf_counter() - started
@@ -3885,7 +4028,7 @@ class RunCoordinator:
         approval_id = attempt.get("approval_id")
         dependency = attempt.get("dependency")
         self._tool_span(
-            "aura.runtime.tool_execution",
+            "aura.runtime.tool_execution@1",
             "tool.execute",
             duration_seconds,
             run,
@@ -3898,9 +4041,11 @@ class RunCoordinator:
             dependency=dependency if isinstance(dependency, str) else None,
         )
         self.metrics.increment(
-            "aura.runtime.tool_execution",
-            "tool_execution_outcome",
+            "aura.runtime.tool_execution@1",
+            "tool_execution_outcomes_total",
             outcome=status,
+            dependency=dependency if isinstance(dependency, str) else "memory_store",
+            **({"error_class": error_class} if error_class is not None else {}),
             **self._metadata(run),
         )
         self._record_evidence(
@@ -3931,7 +4076,7 @@ class RunCoordinator:
         )
         if error_class == "timeout":
             self.metrics.increment(
-                "aura.runtime.tool_execution", "tool_timeout_count", **self._metadata(run)
+                "aura.runtime.tool_execution@1", "tool_timeout_count", **self._metadata(run)
             )
 
     async def _fail_active_tool_attempt(
@@ -4044,6 +4189,7 @@ class RunCoordinator:
         error_class: str | None = None,
         error_code: str | None = None,
         result_count: int | None = None,
+        research_admission: Mapping[str, object] | None = None,
     ) -> None:
         descriptor = self.tool_registry.get(tool_id, version)
         canonical_tool_id = descriptor.id if descriptor is not None else "aura.tool"
@@ -4060,6 +4206,8 @@ class RunCoordinator:
             data["errorCode"] = error_code
         if result_count is not None:
             data["resultCount"] = result_count
+        if research_admission is not None:
+            data["researchAdmission"] = dict(research_admission)
         await self._publish(
             new_event(
                 "tool.status", run.id, conversation.id, await self._next_sequence(run.id), data
@@ -4529,6 +4677,16 @@ def message_payload(message: Message) -> dict[str, object]:
         payload["citations"] = [_citation_payload(item) for item in message.citations]
     if message.attachments:
         payload["attachments"] = [_attachment_payload(item) for item in message.attachments]
+    if message.web_citations:
+        payload["webCitations"] = [_web_citation_payload(item) for item in message.web_citations]
+    if message.research_activity is not None:
+        payload["researchActivity"] = {
+            "taskRef": {"taskId": str(message.research_activity.task_id)},
+            "mode": message.research_activity.mode,
+            "admissionState": message.research_activity.admission_state,
+        }
+    if message.artifact_refs:
+        payload["artifactRefs"] = [{"artifactId": str(item)} for item in message.artifact_refs]
     return payload
 
 
@@ -4586,6 +4744,15 @@ def run_payload(run: Run, *, include_attachments: bool = True) -> dict[str, obje
         }
     if run.citations:
         payload["citations"] = [_citation_payload(item) for item in run.citations]
+    if run.web_citations:
+        payload["webCitations"] = [_web_citation_payload(item) for item in run.web_citations]
+    if run.research_origin is not None:
+        payload["researchOrigin"] = {
+            "researchId": str(run.research_origin.research_id),
+            "taskId": str(run.research_origin.task_id),
+        }
+    if run.artifact_refs:
+        payload["artifactRefs"] = [{"artifactId": str(item)} for item in run.artifact_refs]
     if include_attachments and run.attachments:
         payload["attachments"] = [_attachment_payload(item) for item in run.attachments]
     return payload
@@ -4606,6 +4773,25 @@ def _attachment_payload(attachment: AttachmentSummary) -> dict[str, object]:
     if attachment.height is not None:
         payload["height"] = attachment.height
     return payload
+
+
+def _web_citation_payload(
+    citation: WebCitation | DeletedResearchCitation,
+) -> dict[str, object]:
+    if isinstance(citation, DeletedResearchCitation):
+        return {
+            "kind": citation.kind,
+            "sourceId": str(citation.source_id),
+            "label": citation.label,
+        }
+    return {
+        "kind": "web",
+        "sourceId": str(citation.source_id),
+        "label": citation.label,
+        "url": citation.url,
+        "retrievedAt": citation.retrieved_at.isoformat(),
+        "locator": citation.locator,
+    }
 
 
 def _citation_payload(citation: DocumentCitation) -> dict[str, str]:

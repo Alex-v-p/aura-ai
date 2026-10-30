@@ -25,6 +25,8 @@ if TYPE_CHECKING:
         Message,
         MessageState,
         PendingTitle,
+        ResearchActivityReference,
+        ResearchRunOrigin,
         TitleState,
     )
 
@@ -214,6 +216,12 @@ class RunRepository(Protocol):
     ) -> Message: ...
     async def mark_document_search_used(
         self, run_id: UUID, *, attempt_id: UUID | None = None
+    ) -> None: ...
+    async def set_research_metadata(
+        self,
+        run_id: UUID,
+        origin: ResearchRunOrigin,
+        activity: ResearchActivityReference,
     ) -> None: ...
     async def finish_run(
         self,

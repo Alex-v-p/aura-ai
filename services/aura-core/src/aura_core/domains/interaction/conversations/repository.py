@@ -1,14 +1,19 @@
 """Session-scoped PostgreSQL conversation repository."""
 
+import hashlib
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text as sql_text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from aura_core.domains.governance.identity.public import SqlIdentityRepository
 from aura_core.domains.interaction.conversations.dto import (
     AgentAssignment,
     AssignmentReason,
@@ -17,6 +22,7 @@ from aura_core.domains.interaction.conversations.dto import (
     ConversationBranch,
     ConversationBranchOrigin,
     ConversationListFilters,
+    DeletedResearchCitation,
     DocumentCitation,
     Message,
     MessageRole,
@@ -24,7 +30,9 @@ from aura_core.domains.interaction.conversations.dto import (
     PersonaAssignment,
     PersonaAssignmentReason,
     PersonaAssignmentSource,
+    ResearchActivityReference,
     TitleState,
+    WebCitation,
     now,
 )
 from aura_core.domains.interaction.conversations.persistence import (
@@ -87,6 +95,15 @@ class SqlConversationRepository:
 
     @staticmethod
     def _message(row: MessageRow) -> Message:
+        web_citations = cast(
+            Sequence[Mapping[str, object]], getattr(row, "web_citations", None) or ()
+        )
+        research_activity = cast(
+            Mapping[str, object] | None, getattr(row, "research_activity", None)
+        )
+        artifact_refs = cast(
+            Sequence[Mapping[str, object]], getattr(row, "artifact_refs", None) or ()
+        )
         citations = tuple(
             DocumentCitation(
                 UUID(str(item["documentId"])),
@@ -137,6 +154,38 @@ class SqlConversationRepository:
                 for item in attachment_values
                 if {"linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount"}
                 <= set(item)
+            ),
+            tuple(
+                DeletedResearchCitation(UUID(str(item["sourceId"])))
+                if item.get("kind") == "deleted_research"
+                else WebCitation(
+                    UUID(str(item["sourceId"])),
+                    str(item["label"]),
+                    str(item["url"]),
+                    datetime.fromisoformat(str(item["retrievedAt"])),
+                    str(item["locator"]) if item.get("locator") is not None else None,
+                )
+                for item in web_citations
+                if (
+                    item.get("kind") == "deleted_research"
+                    and {"sourceId", "label", "kind"} <= set(item)
+                )
+                or {"sourceId", "label", "url", "retrievedAt"} <= set(item)
+            ),
+            (
+                ResearchActivityReference(
+                    UUID(str(research_activity["taskId"])),
+                    str(research_activity["mode"]),
+                    str(research_activity["admissionState"]),
+                )
+                if research_activity
+                and {"taskId", "mode", "admissionState"} <= set(research_activity)
+                else None
+            ),
+            tuple(
+                UUID(str(item["artifactId"]))
+                for item in artifact_refs
+                if "artifactId" in item
             ),
         )
 
@@ -384,6 +433,35 @@ class SqlConversationRepository:
                 }
                 for item in message.attachments
             ],
+            web_citations=[
+                (
+                    {
+                        "kind": item.kind,
+                        "sourceId": str(item.source_id),
+                        "label": item.label,
+                    }
+                    if isinstance(item, DeletedResearchCitation)
+                    else {
+                        "kind": "web",
+                        "sourceId": str(item.source_id),
+                        "label": item.label,
+                        "url": item.url,
+                        "retrievedAt": item.retrieved_at.isoformat(),
+                        "locator": item.locator,
+                    }
+                )
+                for item in message.web_citations
+            ],
+            research_activity=(
+                {
+                    "taskId": str(message.research_activity.task_id),
+                    "mode": message.research_activity.mode,
+                    "admissionState": message.research_activity.admission_state,
+                }
+                if message.research_activity is not None
+                else None
+            ),
+            artifact_refs=[{"artifactId": str(item)} for item in message.artifact_refs],
         )
         # Stage links through the relationship so SQLAlchemy knows the
         # message is their parent and always flushes it before the FK rows.
@@ -422,6 +500,88 @@ class SqlConversationRepository:
         row = await session.get(ConversationBranchRow, branch_id, with_for_update=True)
         if row is not None:
             row.head_message_id = head_message_id
+
+    async def append_research_completion(
+        self,
+        session: AsyncSession,
+        issuer: str,
+        subject: str,
+        conversation_id: UUID,
+        text: str,
+        *,
+        branch_id: UUID | None,
+        idempotency_key: str,
+        citations: tuple[WebCitation, ...] = (),
+        research_activity: ResearchActivityReference | None = None,
+        artifact_refs: tuple[UUID, ...] = (),
+    ) -> Message:
+        """Append an owner-authorized research completion in one transaction."""
+
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "conversationId": str(conversation_id),
+                    "branchId": str(branch_id) if branch_id else None,
+                    "text": text,
+                    "citations": [str(item.source_id) for item in citations],
+                    "artifacts": [str(item) for item in artifact_refs],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        prior = await self.idempotency(session, issuer, subject, idempotency_key)
+        if prior is not None:
+            if prior.fingerprint != fingerprint:
+                raise ValueError("research completion idempotency conflict")
+            message = await self.message(session, UUID(prior.response["messageId"]))
+            if message is None:
+                raise LookupError("research completion message is unavailable")
+            return message
+        principal = await SqlIdentityRepository().find(session, issuer, subject)
+        if principal is None:
+            raise LookupError("conversation owner is unavailable")
+        record = await self.get(session, conversation_id, principal.id, lock=True)
+        if record is None:
+            raise LookupError("conversation is unavailable")
+        branches = await self.branches(session, conversation_id)
+        branch = next(
+            (item for item in branches if item.id == branch_id), None
+        ) if branch_id is not None else next(
+            (item for item in branches if item.parent_branch_id is None), None
+        )
+        if branch is None:
+            raise LookupError("conversation branch is unavailable")
+        created = now()
+        message = Message(
+            conversation_id,
+            MessageRole.ASSISTANT,
+            text,
+            MessageState.COMPLETE,
+            None,
+            created_at=created,
+            updated_at=created,
+            web_citations=citations,
+            research_activity=research_activity,
+            artifact_refs=artifact_refs,
+            branch_id=branch.id,
+            parent_message_id=branch.head_message_id,
+        )
+        self.stage_message(session, message)
+        await session.flush()
+        await self.update_branch_head(session, branch.id, message.id)
+        record.version += 1
+        record.updated_at = created
+        await self.update(session, record)
+        self.stage_idempotency(
+            session,
+            issuer,
+            subject,
+            idempotency_key,
+            fingerprint,
+            {"conversationId": str(conversation_id), "messageId": str(message.id)},
+        )
+        return message
 
     def stage_assignment(
         self, session: AsyncSession, assignment: AgentAssignment, conversation_id: UUID
@@ -577,3 +737,46 @@ class SqlConversationRepository:
                 response=response,
             )
         )
+
+
+class SqlConversationCompletionService:
+    """Session-owning public adapter for durable research transcript delivery."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+        self.repository = SqlConversationRepository()
+
+    async def append_research_completion(
+        self,
+        issuer: str,
+        subject: str,
+        conversation_id: UUID,
+        text: str,
+        *,
+        branch_id: UUID | None,
+        idempotency_key: str,
+        citations: tuple[WebCitation, ...] = (),
+        research_activity: ResearchActivityReference | None = None,
+        artifact_refs: tuple[UUID, ...] = (),
+    ) -> Message:
+        async with self.sessions() as session, session.begin():
+            digest = int.from_bytes(
+                hashlib.sha256(f"{issuer}:{subject}:{idempotency_key}".encode()).digest()[:8],
+                "big",
+            )
+            signed = digest - (1 << 64) if digest >= (1 << 63) else digest
+            await session.execute(
+                sql_text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": signed}
+            )
+            return await self.repository.append_research_completion(
+                session,
+                issuer,
+                subject,
+                conversation_id,
+                text,
+                branch_id=branch_id,
+                idempotency_key=idempotency_key,
+                citations=citations,
+                research_activity=research_activity,
+                artifact_refs=artifact_refs,
+            )

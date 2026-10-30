@@ -2,14 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://aura.local/contracts/events/automation/v1/notification-events.schema.json",
   "title": "Aura notification lifecycle events v1",
-  "description": "Closed source-typed identifier-, status-, and timestamp-only durable notification lifecycle events used for PostgreSQL replay and NATS wakeups. Existing reminder and briefing payloads remain valid. Reminder content, briefing or workflow output or source content, owner identity, prompts, responses, credentials, provider material, and other private payloads are prohibited.",
+  "description": "Closed source-typed identifier-, status-, and timestamp-only durable notification lifecycle events used for PostgreSQL replay and NATS wakeups. Existing reminder, briefing, and workflow payloads remain valid. Reminder content, briefing or workflow output or source content, research questions, answers, citations, evidence, URLs, artifacts, recovery details, owner identity, prompts, responses, credentials, provider material, and other private payloads are prohibited.",
   "oneOf": [
     { "$ref": "#/$defs/NotificationDeliveredEvent" },
     { "$ref": "#/$defs/NotificationAcknowledgedEvent" },
     { "$ref": "#/$defs/BriefingDeliveredEvent" },
     { "$ref": "#/$defs/BriefingAcknowledgedEvent" },
     { "$ref": "#/$defs/WorkflowDeliveredEvent" },
-    { "$ref": "#/$defs/WorkflowAcknowledgedEvent" }
+    { "$ref": "#/$defs/WorkflowAcknowledgedEvent" },
+    { "$ref": "#/$defs/ResearchDeliveredEvent" },
+    { "$ref": "#/$defs/ResearchAcknowledgedEvent" }
   ],
   "$defs": {
     "Uuid": { "type": "string", "format": "uuid" },
@@ -49,6 +51,18 @@
         "workflowInstanceId": { "$ref": "#/$defs/Uuid" }, "workflowStepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 },
         "workflowStepExecutionId": { "$ref": "#/$defs/Uuid" }, "workflowResultId": { "$ref": "#/$defs/Uuid" },
         "status": { "$ref": "#/$defs/NotificationStatus" }, "notificationVersion": { "type": "integer", "minimum": 1 }, "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "ResearchEventProperties": {
+      "type": "object", "additionalProperties": false,
+      "description": "Opaque metadata-only research notification lineage. Owner identity, research content, citations, evidence, URLs, artifacts, recovery details, and provider data are prohibited.",
+      "required": ["schemaVersion", "eventId", "eventType", "notificationId", "researchId", "status", "notificationVersion", "occurredAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["notification.delivered", "notification.acknowledged"] },
+        "notificationId": { "$ref": "#/$defs/Uuid" }, "researchId": { "$ref": "#/$defs/Uuid" },
+        "status": { "$ref": "#/$defs/NotificationStatus" }, "notificationVersion": { "type": "integer", "minimum": 1 },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
       }
     },
     "NotificationDeliveredEvent": {
@@ -119,6 +133,28 @@
           "notificationId": { "$ref": "#/$defs/Uuid" }, "workflowId": { "$ref": "#/$defs/Uuid" }, "workflowRevisionId": { "$ref": "#/$defs/Uuid" },
           "workflowInstanceId": { "$ref": "#/$defs/Uuid" }, "workflowStepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 },
           "workflowStepExecutionId": { "$ref": "#/$defs/Uuid" }, "workflowResultId": { "$ref": "#/$defs/Uuid" }, "status": { "const": "acknowledged" },
+          "notificationVersion": { "type": "integer", "minimum": 1 }, "occurredAt": { "$ref": "#/$defs/Timestamp" }
+        }
+      }]
+    },
+    "ResearchDeliveredEvent": {
+      "allOf": [{ "$ref": "#/$defs/ResearchEventProperties" }, {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "notificationId", "researchId", "status", "notificationVersion", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "eventType": { "const": "notification.delivered" },
+          "notificationId": { "$ref": "#/$defs/Uuid" }, "researchId": { "$ref": "#/$defs/Uuid" }, "status": { "const": "delivered" },
+          "notificationVersion": { "type": "integer", "minimum": 1 }, "occurredAt": { "$ref": "#/$defs/Timestamp" }
+        }
+      }]
+    },
+    "ResearchAcknowledgedEvent": {
+      "allOf": [{ "$ref": "#/$defs/ResearchEventProperties" }, {
+        "type": "object", "additionalProperties": false,
+        "required": ["schemaVersion", "eventId", "eventType", "notificationId", "researchId", "status", "notificationVersion", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "eventType": { "const": "notification.acknowledged" },
+          "notificationId": { "$ref": "#/$defs/Uuid" }, "researchId": { "$ref": "#/$defs/Uuid" }, "status": { "const": "acknowledged" },
           "notificationVersion": { "type": "integer", "minimum": 1 }, "occurredAt": { "$ref": "#/$defs/Timestamp" }
         }
       }]

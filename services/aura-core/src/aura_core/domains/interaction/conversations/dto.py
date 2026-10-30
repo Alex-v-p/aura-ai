@@ -151,6 +151,61 @@ class DocumentCitation:
             raise ValueError("citation locator must be bounded")
 
 
+@dataclass(frozen=True, slots=True)
+class WebCitation:
+    """Validated owner-authorized web source metadata for a research result."""
+
+    source_id: UUID
+    label: str
+    url: str
+    retrieved_at: datetime
+    locator: str | None = None
+
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.label) <= 300:
+            raise ValueError("web citation label must be bounded")
+        if not self.url.startswith("https://") or len(self.url) > 2048:
+            raise ValueError("web citation URL must be public HTTPS")
+        if self.locator is not None and len(self.locator) > 255:
+            raise ValueError("web citation locator must be bounded")
+
+
+@dataclass(frozen=True, slots=True)
+class DeletedResearchCitation:
+    """Content-free read projection for a deleted research source."""
+
+    source_id: UUID
+    label: str = "Research source deleted"
+    kind: str = "deleted_research"
+
+    def __post_init__(self) -> None:
+        if self.kind != "deleted_research" or self.label != "Research source deleted":
+            raise ValueError("invalid deleted research citation")
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchActivityReference:
+    """Stable admission-only activity shown in run/message snapshots."""
+
+    task_id: UUID
+    mode: str
+    admission_state: str
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"quick", "auto", "deep", "agent_led"}:
+            raise ValueError("invalid research mode")
+        if self.admission_state not in {"admitted", "rejected"}:
+            raise ValueError("invalid research admission state")
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchRunOrigin:
+    """Opaque research lineage attached to a run snapshot."""
+
+    research_id: UUID
+    task_id: UUID
+
+
 class TitleState(StrEnum):
     """Internal lifecycle for model-derived conversation titles."""
 
@@ -220,6 +275,13 @@ class Message:
     # Immutable, owner-authorized resources explicitly submitted with this
     # message.  Historical rows may omit this additive field.
     attachments: tuple[AttachmentSummary, ...] = ()
+    web_citations: tuple[WebCitation | DeletedResearchCitation, ...] = ()
+    research_activity: ResearchActivityReference | None = None
+    artifact_refs: tuple[UUID, ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(self.artifact_refs) > 8:
+            raise ValueError("message artifact references exceed the delivery bound")
 
 
 @dataclass(slots=True)

@@ -1,0 +1,51 @@
+agent: general_reviewer
+work_item: AURA-0146
+verdict: PASS
+checked:
+  - >-
+    Re-read the approved work item, current implementation diff, latest Core
+    handoff, and every finding from the preceding review passes.
+  - >-
+    Verified production SqlConversationStore metadata persistence locks the
+    originating RunRow and durably stores stable research origin and activity
+    references; RunCoordinator requires the boundary rather than silently
+    falling back to detached state.
+  - >-
+    Verified source delivery claims and deletion admission now serialize on
+    the same research-row lock. Deletion reloads locked current state, rejects
+    an unexpired claim, advances the authoritative version, clears private
+    answer metadata, and prevents a later stale delivery claim.
+  - >-
+    Verified tombstoned research evidence and detail reads are content-free,
+    and conversation/run citation projection resolves deleted sources to the
+    fixed metadata-only tombstone representation after reload.
+  - >-
+    Verified dedicated origins skip transcript append but continue through the
+    independently idempotent notification failure/retry path to one persisted
+    notification.
+  - >-
+    Verified compact answer persistence, source-origin reconciliation,
+    snapshot-only delivery, worker nack/redelivery, unknown-outcome handling,
+    and append-before-notification ordering remain intact.
+  - >-
+    Verified terminal artifact references are capped at eight throughout the
+    source snapshot, delivery conversion, conversation DTO, tests, and public
+    Message contract.
+  - >-
+    Verified migration 0033 preserves workflow_step_ordinal BETWEEN 1 AND 8 in
+    both replaced notification constraints.
+  - >-
+    Verified completion telemetry uses the centralized bounded metadata-only
+    path and focused delivery/deletion evaluation coverage remains green.
+  - >-
+    Independently ran focused research delivery, delivery evaluation, deletion
+    evaluation, conversation, migration, and AURA-0146 contract tests: 154
+    passed.
+  - >-
+    Independently ran work-item, changed-path, contract, generated-sync,
+    import-boundary, service-isolation, module-registry, repository-shape,
+    observability, baseline-protection, and git diff checks; every applicable
+    check passed. Isolated PostgreSQL was not configured in this review
+    environment; the row-lock implementation and deterministic mutual-exclusion
+    regression were inspected directly.
+findings: []

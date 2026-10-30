@@ -27,6 +27,7 @@ from aura_core.domains.artifacts.attachments.public import (
     AttachmentStatus,
 )
 from aura_core.domains.execution.runs.events import RunEvent
+from aura_core.domains.execution.runs.persistence import RunRow
 from aura_core.domains.execution.runs.public import (
     Run,
     RunClaim,
@@ -65,6 +66,7 @@ from aura_core.domains.interaction.conversations.public import (
     ConversationListFilters,
     ConversationNotFound,
     ConversationRecord,
+    DeletedResearchCitation,
     DocumentCitation,
     IdempotencyConflict,
     InvalidConversationCursor,
@@ -79,6 +81,8 @@ from aura_core.domains.interaction.conversations.public import (
     PersonaAssignmentReason,
     PersonaAssignmentSource,
     PersonaUnavailable,
+    ResearchActivityReference,
+    ResearchRunOrigin,
     SqlConversationRepository,
     TitleState,
     VersionConflict,
@@ -110,6 +114,10 @@ from aura_core.domains.knowledge.memory.recall import (
     MemoryRecallRequest,
     MemoryRecallResult,
 )
+from aura_core.domains.knowledge.research.public import (
+    ResearchCitationLifecycleQueryPort,
+    ResearchContentState,
+)
 from aura_core.platform.outbox import OutboxCommand, SqlOutboxRepository
 from aura_core.platform.telemetry import new_span_id
 from aura_core.runtime.models.capacity import DEFAULT_CONTEXT_TOKENS
@@ -127,6 +135,7 @@ class SqlConversationStore:
         persona_admission: PersonaConfigurationQueryPort | None = None,
         attachment_service: AttachmentReadPort | None = None,
         document_service: DocumentReadPort | None = None,
+        research_query: ResearchCitationLifecycleQueryPort | None = None,
     ) -> None:
         self.sessions = sessions
         self.identities = SqlIdentityRepository()
@@ -139,6 +148,7 @@ class SqlConversationStore:
         self.persona_admission = persona_admission
         self.attachment_service = attachment_service
         self.document_service = document_service
+        self.research_query = research_query
         self.model_selection: ModelSelectionPort | None = None
         self.agent_store: Any = None
         self.prompt_metrics: PromptMetricsPort | None = None
@@ -156,13 +166,51 @@ class SqlConversationStore:
         self.attachment_service = attachment_service
         self.document_service = document_service
 
+    def set_research_query(self, query: ResearchCitationLifecycleQueryPort | None) -> None:
+        self.research_query = query
+
     def set_model_selection(self, model_selection: ModelSelectionPort | None) -> None:
         self.model_selection = model_selection
+
+    async def set_research_metadata(
+        self,
+        run_id: UUID,
+        origin: ResearchRunOrigin,
+        activity: ResearchActivityReference,
+    ) -> None:
+        """Persist admission lineage while holding the originating run lock.
+
+        Research admission is source-owned, but the run snapshot must be
+        updated transactionally after the authoritative admission is known.
+        This method deliberately stores only opaque identifiers and the
+        bounded admission reference; it never copies research content.
+        """
+
+        origin_payload: dict[str, object] = {
+            "researchId": str(origin.research_id),
+            "taskId": str(origin.task_id),
+        }
+        activity_payload: dict[str, object] = {
+            "taskId": str(activity.task_id),
+            "mode": activity.mode,
+            "admissionState": activity.admission_state,
+        }
+        async with self.sessions() as session, session.begin():
+            row = await session.get(RunRow, run_id, with_for_update=True)
+            if row is None:
+                raise RunClaimLost("originating run not found")
+            row.research_origin = origin_payload
+            row.research_activity = activity_payload
+            await session.flush()
 
     async def resolve_attachment_availability(self, conversation: Conversation) -> Conversation:
         """Project source-domain deletions as read-time conversation tombstones."""
 
-        if self.attachment_service is None and self.document_service is None:
+        if (
+            self.attachment_service is None
+            and self.document_service is None
+            and self.research_query is None
+        ):
             return conversation
 
         async def resolve_summaries(
@@ -221,11 +269,11 @@ class SqlConversationStore:
             else:
                 runs.append(run)
         if not changed:
-            return conversation
+            return await self._resolve_research_citations(conversation)
         projection = copy.copy(conversation)
         projection.messages = messages
         projection.runs = runs
-        return projection
+        return await self._resolve_research_citations(projection)
 
     async def _require_vision(
         self,
@@ -735,7 +783,54 @@ class SqlConversationStore:
         conversation.persona_assignments = await self.conversations.persona_assignments(
             session, row.id
         )
-        return conversation
+        return await self._resolve_research_citations(conversation)
+
+    async def _resolve_research_citations(self, conversation: Conversation) -> Conversation:
+        query = self.research_query
+        if query is None:
+            return conversation
+        owner = (conversation.principal_issuer, conversation.principal_subject)
+
+        async def deleted(research_id: UUID) -> bool:
+            try:
+                state = await query.citation_lifecycle(
+                    owner[0], owner[1], research_id
+                )
+            except Exception:
+                return True
+            return state is not ResearchContentState.ACTIVE
+
+        messages: list[Message] = []
+        changed = False
+        for message in conversation.messages:
+            activity = message.research_activity
+            if activity is None or not message.web_citations or not await deleted(activity.task_id):
+                messages.append(message)
+                continue
+            copied = copy.copy(message)
+            copied.web_citations = tuple(
+                DeletedResearchCitation(item.source_id) for item in message.web_citations
+            )
+            messages.append(copied)
+            changed = True
+        runs: list[Run] = []
+        for run in conversation.runs:
+            origin = run.research_origin
+            if origin is None or not run.web_citations or not await deleted(origin.research_id):
+                runs.append(run)
+                continue
+            copied_run = copy.copy(run)
+            copied_run.web_citations = tuple(
+                DeletedResearchCitation(item.source_id) for item in run.web_citations
+            )
+            runs.append(copied_run)
+            changed = True
+        if not changed:
+            return conversation
+        projected = copy.copy(conversation)
+        projected.messages = messages
+        projected.runs = runs
+        return projected
 
     async def _row(
         self,

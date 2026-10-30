@@ -1,0 +1,176 @@
+agent: platform_worker
+work_item: AURA-0146
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0146_platform
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: delivery.aura0146.platform-registry-observability
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - tooling/architecture/modules.yaml
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/runtime/tools/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/domains/interaction/research_delivery/public.py
+  - services/aura-core/src/aura_core/domains/interaction/research_delivery/evaluation.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+  - services/aura-core/resources/component-manifests/research-completion-delivery.yaml
+  - services/aura-core/resources/component-manifests/tool-execution.yaml
+  - services/aura-core/tests/test_tool_runtime.py
+  - services/aura-core/tests/test_tool_evaluation.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.interaction.research_completion_delivery@1
+    - aura.runtime.tool_execution@1
+  metrics_added:
+    - research_completion_outcome_count
+    - research_completion_latency_ms
+    - tool_execution_outcomes_total
+  notes: >-
+    Registered the completion-delivery component with closed operation,
+    dependency, outcome, error, metric, and span telemetry vocabularies. The
+    tool-execution manifest now uses its stable @1 identity, declares
+    core_postgresql for web.research admission, and declares the additive
+    terminal-outcome counter. Runtime descriptors and producers emit the
+    versioned identity; terminal settlement marks the shared attempt before
+    emitting exactly one outcomes total, while legacy unversioned lookups
+    remain supported only through a lookup-only telemetry alias. Completion
+    delivery now emits one accepted outcome, latency, and span tuple through
+    real MetadataMetrics using server-derived trace/span IDs, omitted optional
+    dimensions, finite error classes, and stage-specific dependencies. The
+    active deliver operation owns a guarded finalizer, so missing boundaries,
+    validation failures, claim/list failures, every repository-save phase, and
+    settlement failures each produce exactly one terminal tuple while preserving
+    the owning dependency/error classification. Repository-save phases now stay
+    in an unknown/storage state until the save returns; the metadata sink also
+    rejects success/skipped completion tuples carrying an error class.
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0146.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0146.yaml (11 platform-owned paths)
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py
+      --work-item work-items/active/AURA-0146.yaml (no contract changes)
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - >-
+      python3 tooling/architecture/validate-observability.py
+      --work-item work-items/active/AURA-0146.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0146.yaml (skipped: no protected baseline changes)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/src/aura_core/runtime/tools/public.py
+      services/aura-core/src/aura_core/domains/execution/runs/service.py
+      services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/tests/test_tool_runtime.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/runtime/tools/public.py
+      services/aura-core/src/aura_core/domains/execution/runs/service.py
+      services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/tests/test_tool_runtime.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/src/aura_core/domains/interaction
+      services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+      services/aura-core/tests/test_tool_*.py (passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/interaction/research_delivery/public.py
+      services/aura-core/src/aura_core/domains/interaction/research_delivery/evaluation.py
+      services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+      services/aura-core/src/aura_core/platform/telemetry.py (0 errors)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_research_instrumentation_evaluation.py
+      services/aura-core/tests/test_research_provider_observability.py -q
+      (63 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_research_instrumentation_evaluation.py
+      services/aura-core/tests/test_research_provider_observability.py
+      services/aura-core/tests/test_telemetry.py -q (154 passed, 1 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_tool_runtime.py
+      services/aura-core/tests/test_tool_evaluation.py
+      services/aura-core/tests/test_research_delivery.py
+      services/aura-core/tests/test_research_delivery_evaluation.py -q
+      (106 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_run_*.py -q (91 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests -q (2081 passed, 124 skipped, 1 warning)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_telemetry.py -q (91 passed, 1 skipped)
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      The test-owned isolated PostgreSQL run remains pending because
+      AURA_TEST_DATABASE_URL is not configured in this environment; the
+      database-dependent tests in the full service suite retained their
+      existing skips.
+decisions:
+  - >-
+    Added separate registry owners for the interaction research-delivery
+    package, public application boundary, SQL persistence mapping, and worker
+    entrypoint. Existing import edges were declared explicitly; no product
+    behavior or cross-domain table access was added.
+  - >-
+    Kept completion telemetry metadata-only and finite. Metrics accept only
+    the declared delivery operation, bounded outcome/error/status dimensions,
+    and the three declared public dependencies; trace identifiers remain
+    trace-only.
+  - >-
+    Added the required research_tool_lifecycle evaluator to the completion
+    manifest so AURA-0146's evaluator union is complete.
+  - >-
+    Kept the legacy component and metric registry entries available for
+    existing lookup and historical telemetry tests, but removed legacy
+    producer emission and rejected the legacy component for the new terminal
+    outcomes total.
+  - >-
+    Replaced aggregate completion evaluator scoring with four typed
+    evaluator-specific observation subsets and deterministic binary ScoreV1
+    results. Observation parsing rejects unknown fields, nested/privacy-bearing
+    values, open admission states, and non-server-derived replay keys.
+  - >-
+    Updated document citation evaluator attribution and its tool-evaluation
+    fixtures to the canonical aura.runtime.tool_execution@1 identity.
+  - >-
+    Centralized completion-delivery terminal telemetry around the complete
+    active operation with a duplicate-emission guard and explicit phase
+    classification for conversation boundaries, repository saves, source
+    claims, settlement, and pre-dispatch validation. Added real MetadataMetrics
+    coverage for each failure phase and confirmed zero sink rejections.
+  - >-
+    Kept every repository-save attempt in unknown/storage_unavailable until
+    commit completion, including conversation, dedicated, and deletion paths;
+    added exact real-sink triplet assertions for all save phases and closed the
+    success/skipped-with-error completion tuple loophole.
+risks: []
+unresolved:
+  - >-
+    Test-owned isolated PostgreSQL suites remain pending because
+    AURA_TEST_DATABASE_URL is not configured in this environment; the full
+    service suite completed with its existing database-dependent skips.

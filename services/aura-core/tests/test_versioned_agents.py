@@ -169,13 +169,35 @@ def test_seeded_configuration_is_deterministic_and_revisioned() -> None:
     second_persona = second_personas.list_personas()[0]
 
     assert first_agent.display_name == second_agent.display_name == "Aura"
-    assert first_agent.current_revision.revision == second_agent.current_revision.revision == 4
-    assert [item.revision for item in first_agent.revisions] == [1, 2, 3, 4]
-    assert [item.revision for item in second_agent.revisions] == [1, 2, 3, 4]
+    assert first_agent.current_revision.revision == second_agent.current_revision.revision == 5
+    assert [item.revision for item in first_agent.revisions] == [1, 2, 3, 4, 5]
+    assert [item.revision for item in second_agent.revisions] == [1, 2, 3, 4, 5]
     assert first_agent.current_revision_id == second_agent.current_revision_id
     assert first_persona.display_name == second_persona.display_name == "Neutral"
     assert first_persona.current_revision.revision == second_persona.current_revision.revision == 1
     assert first_persona.current_revision_id == second_persona.current_revision_id
+
+
+def test_built_in_aura_research_grant_is_only_enabled_in_immutable_revision_five() -> None:
+    catalog = AgentCatalog()
+    aura = catalog.list_agents()[0]
+    assert [item.revision for item in aura.revisions] == [1, 2, 3, 4, 5]
+    assert aura.current_revision.revision == 5
+    revision_four = next(item for item in aura.revisions if item.revision == 4)
+    revision_five = aura.current_revision
+    policy_four = catalog.get_tool_policy(revision_four.tool_policy_revision_id)
+    policy_five = catalog.get_tool_policy(revision_five.tool_policy_revision_id)
+    assert ToolGrant("web.research", 1) not in policy_four.grants
+    assert ToolGrant("web.research", 1) in policy_five.grants
+    assert policy_four.revision == 4
+    assert policy_five.revision == 5
+    # Resolving an historical revision remains immutable after the current
+    # research-aware revision is installed.
+    assert catalog.resolve_revision_unchecked(revision_four.id).id == revision_four.id
+    assert (
+        catalog.resolve_revision_unchecked(revision_four.id).tool_policy_revision_id
+        == revision_four.tool_policy_revision_id
+    )
 
 
 def test_built_in_aura_promotes_personal_memory_but_custom_agents_default_off() -> None:
@@ -203,6 +225,7 @@ def test_built_in_aura_has_exact_memory_and_reminder_grants_and_custom_agents_de
     assert set(aura_policy.grants) == {
         ToolGrant("memory.search", 1),
         ToolGrant("document.search", 1),
+        ToolGrant("web.research", 1),
         ToolGrant("reminder.create", 1),
         ToolGrant("reminder.list", 1),
         ToolGrant("reminder.inspect", 1),
@@ -341,11 +364,11 @@ def test_tool_policy_is_immutable_versioned_and_agent_owned() -> None:
     policy = catalog.create_tool_policy(
         aura.id,
         (ToolGrant("memory.search", 1),),
-        expected_revision=4,
+        expected_revision=5,
         idempotency_key="tool-policy-r2",
     )
-    assert policy.revision == 5
-    assert catalog.get_tool_policy(original.tool_policy_revision_id).revision == 4
+    assert policy.revision == 6
+    assert catalog.get_tool_policy(original.tool_policy_revision_id).revision == 5
 
     updated = catalog.attach_tool_policy(
         aura.id, policy.id, aura.version, key="tool-policy-attach-r2"
@@ -397,8 +420,8 @@ def test_revisions_are_sequenced_immutably_and_require_expected_version() -> Non
         persona_revision.id,
     )
 
-    assert original.revision == 4
-    assert created.revision == 5
+    assert original.revision == 5
+    assert created.revision == 6
     assert original.instructions != created.instructions
     assert profile.current_revision_id == created.id
     with pytest.raises(ConfigurationVersionConflict):

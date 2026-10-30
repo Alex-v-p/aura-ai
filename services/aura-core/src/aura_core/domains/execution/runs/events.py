@@ -158,6 +158,7 @@ _TOOL_STATUS_FIELDS = frozenset(
         "errorClass",
         "errorCode",
         "resultCount",
+        "researchAdmission",
     }
 )
 _TOOL_STATUS_VALUES = frozenset(
@@ -284,4 +285,25 @@ def validate_tool_status(data: dict[str, Any]) -> dict[str, Any]:
     count = data.get("resultCount")
     if count is not None and (type(count) is not int or not 0 <= count <= 8):
         raise ValueError("invalid tool status result count")
+    admission = data.get("researchAdmission")
+    if admission is not None:
+        if data.get("toolId") != "web.research" or not isinstance(admission, dict):
+            raise ValueError("invalid research admission result")
+        admission_value = cast(dict[str, object], admission)
+        if set(admission_value) != {"taskRef", "mode", "admissionState"}:
+            raise ValueError("invalid research admission result")
+        task_ref = admission_value.get("taskRef")
+        if not isinstance(task_ref, dict):
+            raise ValueError("invalid research admission result")
+        task_ref_value = cast(dict[str, object], task_ref)
+        if set(task_ref_value) != {"taskId"}:
+            raise ValueError("invalid research admission result")
+        try:
+            UUID(str(task_ref_value["taskId"]))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid research admission task") from exc
+        if admission_value.get("mode") not in {"quick", "auto", "deep", "agent_led"}:
+            raise ValueError("invalid research admission mode")
+        if admission_value.get("admissionState") != "admitted":
+            raise ValueError("invalid research admission state")
     return _json_values(dict(data))

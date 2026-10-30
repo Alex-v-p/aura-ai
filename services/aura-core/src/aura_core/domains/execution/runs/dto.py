@@ -12,8 +12,12 @@ if TYPE_CHECKING:
     from aura_core.domains.interaction.conversations.dto import (
         AttachmentSummary,
         Conversation,
+        DeletedResearchCitation,
         DocumentCitation,
         Message,
+        ResearchActivityReference,
+        ResearchRunOrigin,
+        WebCitation,
     )
 
 
@@ -98,6 +102,11 @@ class Run:
     workflow_instance_id: UUID | None = None
     workflow_step_ordinal: int | None = None
     workflow_step_execution_id: UUID | None = None
+    # Additive opaque research lineage; research content never enters a run.
+    research_origin: ResearchRunOrigin | None = None
+    research_activity: ResearchActivityReference | None = None
+    web_citations: tuple[WebCitation | DeletedResearchCitation, ...] = ()
+    artifact_refs: tuple[UUID, ...] = ()
 
     def __post_init__(self) -> None:
         lineage = (

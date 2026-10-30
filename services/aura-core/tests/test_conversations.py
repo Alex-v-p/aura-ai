@@ -46,7 +46,13 @@ from aura_core.domains.interaction.agents.public import (
     GENERAL_DOCUMENT_TOOL_POLICY_ID,
     ToolPolicy,
 )
-from aura_core.domains.interaction.conversations.dto import DocumentCitation
+from aura_core.domains.interaction.conversations.dto import (
+    DeletedResearchCitation,
+    DocumentCitation,
+    ResearchActivityReference,
+    ResearchRunOrigin,
+    WebCitation,
+)
 from aura_core.domains.interaction.conversations.persistence import MessageRow
 from aura_core.domains.interaction.conversations.public import (
     ActiveRunConflict,
@@ -62,6 +68,7 @@ from aura_core.domains.interaction.conversations.public import (
     validate_client_time_zone,
 )
 from aura_core.domains.interaction.conversations.repository import SqlConversationRepository
+from aura_core.domains.knowledge.research.public import ResearchContentState
 from aura_core.entrypoints.worker import app as worker_app
 from aura_core.platform.outbox import InMemoryOutbox, OutboxCommand
 from aura_core.platform.telemetry import MetadataMetrics, new_span_id
@@ -132,6 +139,203 @@ async def test_sql_append_message_eager_loads_relationship_for_each_stream_chunk
     assert second.content == "firstsecond"
     assert second.state is MessageState.COMPLETE
     assert session.get.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_sql_conversation_store_reload_preserves_research_metadata() -> None:
+    """A restarted SQL store must hydrate research lineage on the run snapshot."""
+
+    conversation_id = uuid4()
+    research_id = uuid4()
+    run_id = uuid4()
+    principal = SimpleNamespace(issuer="https://issuer.example", subject="owner")
+    row = SimpleNamespace(
+        id=conversation_id,
+        title="Research",
+        agent_profile_id=uuid4(),
+        agent_revision_id=uuid4(),
+        persona_override_revision_id=None,
+        client_time_zone="UTC",
+        model_id="fake",
+        version=2,
+        title_state="legacy",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        archived_at=None,
+        principal_id=uuid4(),
+    )
+    run = SimpleNamespace(
+        id=run_id,
+        research_origin=ResearchRunOrigin(research_id, research_id),
+        research_activity=ResearchActivityReference(research_id, "auto", "admitted"),
+    )
+
+    @asynccontextmanager
+    async def session_scope() -> AsyncGenerator[object]:
+        yield object()
+
+    store = SqlConversationStore(cast(async_sessionmaker[AsyncSession], session_scope))
+    store.identities.get = AsyncMock(return_value=principal)  # type: ignore[method-assign]
+    store.conversations.messages = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    store.runs.list = AsyncMock(return_value=[run])  # type: ignore[method-assign]
+    store.conversations.branches = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    store.conversations.assignments = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    store.conversations.persona_assignments = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+    loaded = await store._load(object(), row)  # type: ignore[arg-type]
+    assert loaded.runs[0].research_origin == run.research_origin
+    assert loaded.runs[0].research_activity == run.research_activity
+
+
+@pytest.mark.asyncio
+async def test_memory_conversation_read_projects_deleted_research_citations() -> None:
+    models = await FakeChatModel().list_models()
+    research_id = uuid4()
+    source_id = uuid4()
+    store = ConversationStore()
+    conversation, _user, _run = await store.create(
+        "https://issuer.example", "owner", "research", "fake", models, str(uuid4())
+    )
+    message = conversation.messages[0]
+    message.research_activity = ResearchActivityReference(research_id, "auto", "admitted")
+    message.web_citations = (
+        WebCitation(
+            source_id,
+            "Private source label",
+            "https://example.com/private",
+            datetime.now(UTC),
+            "#private",
+        ),
+    )
+
+    class Query:
+        async def citation_lifecycle(
+            self, _issuer: str, _subject: str, _research_id: UUID
+        ) -> ResearchContentState:
+            return ResearchContentState.DELETED
+
+    store.set_research_query(Query())
+    loaded = await store.get(conversation.id, "owner", "https://issuer.example")
+    citation = loaded.messages[0].web_citations[0]
+    assert isinstance(citation, DeletedResearchCitation)
+    assert citation.kind == "deleted_research"
+    assert citation.source_id == source_id
+    assert citation.label == "Research source deleted"
+    assert not hasattr(citation, "url")
+
+
+@pytest.mark.asyncio
+async def test_sql_conversation_reload_projects_deleted_research_citations() -> None:
+    """SQL reloads use the same owner-scoped content-free citation projection."""
+
+    conversation_id = uuid4()
+    research_id = uuid4()
+    source_id = uuid4()
+    principal = SimpleNamespace(issuer="https://issuer.example", subject="owner")
+    row = SimpleNamespace(
+        id=conversation_id,
+        title="Research",
+        agent_profile_id=uuid4(),
+        agent_revision_id=uuid4(),
+        persona_override_revision_id=None,
+        client_time_zone="UTC",
+        model_id="fake",
+        version=2,
+        title_state="legacy",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        archived_at=None,
+        principal_id=uuid4(),
+    )
+    run = SimpleNamespace(
+        id=uuid4(),
+        research_origin=ResearchRunOrigin(research_id, research_id),
+        research_activity=ResearchActivityReference(research_id, "auto", "admitted"),
+        web_citations=(
+            WebCitation(
+                source_id,
+                "Private source label",
+                "https://example.com/private",
+                datetime.now(UTC),
+                "#private",
+            ),
+        ),
+    )
+
+    @asynccontextmanager
+    async def session_scope() -> AsyncGenerator[object]:
+        yield object()
+
+    class Query:
+        async def citation_lifecycle(
+            self, _issuer: str, _subject: str, _research_id: UUID
+        ) -> ResearchContentState:
+            return ResearchContentState.DELETED
+
+    store = SqlConversationStore(cast(async_sessionmaker[AsyncSession], session_scope))
+    store.set_research_query(Query())
+    store.identities.get = AsyncMock(return_value=principal)  # type: ignore[method-assign]
+    store.conversations.messages = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    store.runs.list = AsyncMock(return_value=[run])  # type: ignore[method-assign]
+    store.conversations.branches = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    store.conversations.assignments = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    store.conversations.persona_assignments = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+    loaded = await store._load(object(), row)  # type: ignore[arg-type]
+    citation = loaded.runs[0].web_citations[0]
+    assert isinstance(citation, DeletedResearchCitation)
+    assert citation.kind == "deleted_research"
+    assert citation.source_id == source_id
+    assert citation.label == "Research source deleted"
+    assert not hasattr(citation, "url")
+
+
+@pytest.mark.asyncio
+async def test_sql_conversation_store_persists_research_metadata_under_run_lock() -> None:
+    class Session:
+        def __init__(self, row: object) -> None:
+            self.row = row
+            self.lock_kwargs: dict[str, object] | None = None
+
+        async def __aenter__(self) -> Session:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        def begin(self) -> Session:
+            return self
+
+        async def get(self, _model: object, _run_id: UUID, **kwargs: object) -> object:
+            self.lock_kwargs = kwargs
+            return self.row
+
+        async def flush(self) -> None:
+            return None
+
+    run_id = uuid4()
+    row = SimpleNamespace(research_origin=None, research_activity=None)
+    session = Session(row)
+
+    @asynccontextmanager
+    async def session_scope() -> AsyncGenerator[Session]:
+        yield session
+
+    store = SqlConversationStore(cast(async_sessionmaker[AsyncSession], session_scope))
+    origin = ResearchRunOrigin(uuid4(), uuid4())
+    activity = ResearchActivityReference(origin.task_id, "deep", "admitted")
+    await store.set_research_metadata(run_id, origin, activity)
+
+    assert row.research_origin == {
+        "researchId": str(origin.research_id),
+        "taskId": str(origin.task_id),
+    }
+    assert row.research_activity == {
+        "taskId": str(activity.task_id),
+        "mode": "deep",
+        "admissionState": "admitted",
+    }
+    assert session.lock_kwargs == {"with_for_update": True}
 
 
 def test_same_run_document_citations_accept_only_returned_evidence_and_strip_markers() -> None:

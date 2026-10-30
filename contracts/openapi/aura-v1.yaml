@@ -3661,11 +3661,12 @@
       },
       "NotificationStatus": { "type": "string", "enum": ["delivered", "acknowledged"] },
       "Notification": {
-        "description": "Closed owner-authorized reminder, briefing, or workflow inbox source union. Existing reminder and briefing payloads remain valid byte-for-byte.",
+        "description": "Closed owner-authorized reminder, briefing, workflow, or research inbox source union. Existing reminder, briefing, and workflow payloads remain valid byte-for-byte.",
         "oneOf": [
           { "$ref": "#/components/schemas/ReminderNotification" },
           { "$ref": "#/components/schemas/BriefingNotification" },
-          { "$ref": "#/components/schemas/WorkflowNotification" }
+          { "$ref": "#/components/schemas/WorkflowNotification" },
+          { "$ref": "#/components/schemas/ResearchNotification" }
         ]
       },
       "ReminderNotification": {
@@ -3712,6 +3713,21 @@
           "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }, "deliveredAt": { "type": "string", "format": "date-time" }, "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" }
         }
       },
+      "ResearchNotification": {
+        "type": "object", "additionalProperties": false,
+        "description": "Owner-authorized durable inbox record linking only by opaque identifier to research truth. The owner, question, answer, citations, source evidence, URLs, artifact references, provider material, and recovery details are excluded and must be fetched separately through owner-authorized research APIs.",
+        "required": ["id", "researchId", "status", "version", "createdAt", "updatedAt", "deliveredAt", "acknowledgedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "researchId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "version": { "type": "integer", "minimum": 1 },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "deliveredAt": { "type": "string", "format": "date-time" },
+          "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
       "NotificationPage": {
         "type": "object", "additionalProperties": false,
         "required": ["items", "nextCursor", "unacknowledgedCount"],
@@ -3727,20 +3743,22 @@
         "properties": { "expectedVersion": { "type": "integer", "minimum": 1 } }
       },
       "NotificationStreamEvent": {
-        "description": "Metadata-only notification stream envelope. Reminder content, briefing output and source content, notification content, owner identity, prompts, responses, credentials, provider material, and hidden reasoning are prohibited.",
+        "description": "Metadata-only notification stream envelope. Reminder content, briefing output and source content, workflow content, research questions, answers, citations, evidence, URLs, artifacts, notification content, owner identity, prompts, responses, credentials, provider material, and hidden reasoning are prohibited.",
         "oneOf": [
           { "$ref": "#/components/schemas/ReminderNotificationLifecycleEvent" },
           { "$ref": "#/components/schemas/BriefingNotificationLifecycleEvent" },
           { "$ref": "#/components/schemas/WorkflowNotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/ResearchNotificationLifecycleEvent" },
           { "$ref": "#/components/schemas/NotificationHeartbeatEvent" }
         ]
       },
       "NotificationLifecycleEvent": {
-        "description": "Closed source-typed lifecycle union preserving the legacy reminder event shape.",
+        "description": "Closed source-typed lifecycle union preserving existing reminder, briefing, and workflow event shapes.",
         "oneOf": [
           { "$ref": "#/components/schemas/ReminderNotificationLifecycleEvent" },
           { "$ref": "#/components/schemas/BriefingNotificationLifecycleEvent" },
-          { "$ref": "#/components/schemas/WorkflowNotificationLifecycleEvent" }
+          { "$ref": "#/components/schemas/WorkflowNotificationLifecycleEvent" },
+          { "$ref": "#/components/schemas/ResearchNotificationLifecycleEvent" }
         ]
       },
       "ReminderNotificationLifecycleEvent": {
@@ -3783,6 +3801,21 @@
           "workflowInstanceId": { "type": "string", "format": "uuid" }, "workflowStepOrdinal": { "type": "integer", "minimum": 1, "maximum": 8 },
           "workflowStepExecutionId": { "type": "string", "format": "uuid" }, "workflowResultId": { "type": "string", "format": "uuid" },
           "status": { "$ref": "#/components/schemas/NotificationStatus" }, "notificationVersion": { "type": "integer", "minimum": 1 }, "occurredAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ResearchNotificationLifecycleEvent": {
+        "type": "object", "additionalProperties": false,
+        "description": "Metadata-only research notification lifecycle containing only opaque identifiers, bounded state, version, and timestamp. Owner identity, research content, citations, evidence, URLs, artifacts, recovery details, and provider data are prohibited.",
+        "required": ["schemaVersion", "eventId", "eventType", "notificationId", "researchId", "status", "notificationVersion", "occurredAt"],
+        "properties": {
+          "schemaVersion": { "type": "integer", "const": 1 },
+          "eventId": { "type": "string", "format": "uuid" },
+          "eventType": { "type": "string", "enum": ["notification.delivered", "notification.acknowledged"] },
+          "notificationId": { "type": "string", "format": "uuid" },
+          "researchId": { "type": "string", "format": "uuid" },
+          "status": { "$ref": "#/components/schemas/NotificationStatus" },
+          "notificationVersion": { "type": "integer", "minimum": 1 },
+          "occurredAt": { "type": "string", "format": "date-time" }
         }
       },
       "NotificationHeartbeatEvent": {

@@ -44,6 +44,8 @@ GENERAL_CONVERSATIONAL_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool
 GENERAL_CONVERSATIONAL_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-3")
 GENERAL_DOCUMENT_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-4")
 GENERAL_DOCUMENT_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-4")
+GENERAL_RESEARCH_TOOL_POLICY_ID = uuid5(NAMESPACE, "general-assistant-tool-policy-5")
+GENERAL_RESEARCH_REVISION_ID = uuid5(NAMESPACE, "general-assistant-revision-5")
 NEUTRAL_PERSONA_ID = uuid5(NAMESPACE, "neutral-persona")
 NEUTRAL_PERSONA_REVISION_ID = uuid5(NAMESPACE, "neutral-persona-revision-1")
 PLATFORM_COMPONENT_ID = uuid5(NAMESPACE, "prompt-platform-1")
@@ -170,6 +172,7 @@ SUPPORTED_TOOL_GRANTS = frozenset(
     {
         ToolGrant("memory.search", 1),
         ToolGrant("document.search", 1),
+        ToolGrant("web.research", 1),
         ToolGrant("reminder.create", 1),
         ToolGrant("reminder.list", 1),
         ToolGrant("reminder.inspect", 1),
@@ -481,6 +484,20 @@ class AgentCatalog:
             memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
             tool_policy_revision_id=GENERAL_DOCUMENT_TOOL_POLICY_ID,
         )
+        research_aware = AgentRevision(
+            GENERAL_RESEARCH_REVISION_ID,
+            GENERAL_PROFILE_ID,
+            5,
+            "Aura",
+            "A helpful local-first household assistant.",
+            "You are Aura, a helpful local-first household assistant.",
+            NEUTRAL_PERSONA_REVISION_ID,
+            PROMPT_BUNDLE_ID,
+            GENERAL_POLICY_ID,
+            "You are Aura, a helpful local-first household assistant.",
+            memory_policy_revision_id=GENERAL_MEMORY_POLICY_ID,
+            tool_policy_revision_id=GENERAL_RESEARCH_TOOL_POLICY_ID,
+        )
         self.memory_policies[GENERAL_MEMORY_POLICY_ID] = MemoryPolicy(
             GENERAL_MEMORY_POLICY_ID,
             GENERAL_PROFILE_ID,
@@ -548,7 +565,45 @@ class AgentCatalog:
             max_calls_per_run=1,
             timeout_ms=30_000,
             permission_scopes=frozenset(
-                {"memory:read", "documents:read", "reminders:read", "reminders:write"}
+                {
+                    "memory:read",
+                    "documents:read",
+                    "reminders:read",
+                    "reminders:write",
+                }
+            ),
+        )
+        # Revision four is historical and deliberately remains document-only.
+        # Web research is an additive immutable policy/revision, so old runs
+        # continue to resolve to exactly the grant set they were admitted with.
+        self.tool_policies[GENERAL_RESEARCH_TOOL_POLICY_ID] = ToolPolicy(
+            GENERAL_RESEARCH_TOOL_POLICY_ID,
+            GENERAL_PROFILE_ID,
+            5,
+            grants=(
+                ToolGrant("memory.search", 1),
+                ToolGrant("document.search", 1),
+                ToolGrant("web.research", 1),
+                ToolGrant("reminder.create", 1),
+                ToolGrant("reminder.list", 1),
+                ToolGrant("reminder.inspect", 1),
+                ToolGrant("reminder.series.create", 1),
+                ToolGrant("reminder.reschedule", 1),
+                ToolGrant("reminder.series.update", 1),
+                ToolGrant("reminder.series.pause", 1),
+                ToolGrant("reminder.series.resume", 1),
+                ToolGrant("reminder.cancel", 1),
+            ),
+            max_calls_per_run=1,
+            timeout_ms=30_000,
+            permission_scopes=frozenset(
+                {
+                    "memory:read",
+                    "documents:read",
+                    "research:run",
+                    "reminders:read",
+                    "reminders:write",
+                }
             ),
         )
         self.agents: dict[UUID, AgentProfile] = {
@@ -556,8 +611,8 @@ class AgentCatalog:
                 GENERAL_PROFILE_ID,
                 "general-assistant",
                 "Aura",
-                current_revision_id=document_aware.id,
-                revisions=[revision, successor, conversational, document_aware],
+                current_revision_id=research_aware.id,
+                revisions=[revision, successor, conversational, document_aware, research_aware],
             )
         }
 
@@ -966,9 +1021,13 @@ class AgentCatalog:
                         ("memory:read",)
                         if grant.tool_id == "memory.search"
                         else (
-                            ("reminders:read",)
-                            if grant.tool_id in {"reminder.list", "reminder.inspect"}
-                            else ("reminders:write",)
+                            ("research:run",)
+                            if grant.tool_id == "web.research"
+                            else (
+                                ("reminders:read",)
+                                if grant.tool_id in {"reminder.list", "reminder.inspect"}
+                                else ("reminders:write",)
+                            )
                         )
                     )
                 }

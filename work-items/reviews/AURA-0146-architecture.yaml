@@ -1,0 +1,44 @@
+agent: architecture_guardian
+work_item: AURA-0146
+verdict: PASS
+checked:
+  - >-
+    Re-read the approved work item, AURA-0146 implementation handoffs, the
+    current diff, and the prior blocking review findings before verifying the
+    corrected slice.
+  - >-
+    Verified the immutable built-in agent and tool-policy revision history is
+    preserved: the historical revision remains unchanged and the web.research
+    grant is introduced only through an additive current revision.
+  - >-
+    Verified the conversational admission remains admission-only and settles
+    inside the existing run ceiling; the worker performs completion outside
+    the originating run without a second synthesis turn, worker lease, or
+    Core run state.
+  - >-
+    Verified conversational and dedicated research origin is persisted with
+    authoritative research admission and the terminal worker reconciles a
+    missing delivery record before acknowledgement.
+  - >-
+    Verified delivery consumes the narrow source-owned terminal snapshot
+    boundary rather than a private ResearchTask object, and source claims,
+    deletion, owner, lineage, citation, artifact, and version checks remain
+    in the knowledge research public boundary.
+  - >-
+    Verified the additive research-notification OpenAPI and versioned event
+    variants are closed, backward compatible, and synchronized with the
+    generated Aura TypeScript client under ADR-0018; no new deployable,
+    provider, or architectural exception was introduced.
+  - >-
+    Verified append-before-notification ordering, independent notification
+    retry, worker nack/redelivery, restart reconciliation, and dedicated
+    notification-only behavior are covered by the reviewed implementation and
+    focused tests.
+  - >-
+    Ran the applicable work-item, changed-path, contract, generated-sync,
+    import-boundary, service-isolation, module-registry, repository-shape,
+    observability, and baseline-protection validators; all passed or reported
+    the documented no-baseline-change skip. Isolated PostgreSQL was not
+    configured in this environment, so the repository-supported SQL suite
+    retained its dependency-gated skips.
+findings: []

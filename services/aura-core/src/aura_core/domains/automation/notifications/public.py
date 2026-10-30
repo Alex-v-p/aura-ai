@@ -31,6 +31,7 @@ class NotificationSourceKind(StrEnum):
     REMINDER = "reminder"
     BRIEFING = "briefing"
     WORKFLOW = "workflow"
+    RESEARCH = "research"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,8 +101,20 @@ class WorkflowNotificationSource:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ResearchNotificationSource:
+    kind: Literal["research"]
+    research_id: UUID
+
+    def payload(self) -> dict[str, object]:
+        return {"kind": self.kind, "researchId": str(self.research_id)}
+
+
 NotificationSource = (
-    ReminderNotificationSource | BriefingNotificationSource | WorkflowNotificationSource
+    ReminderNotificationSource
+    | BriefingNotificationSource
+    | WorkflowNotificationSource
+    | ResearchNotificationSource
 )
 
 
@@ -156,6 +169,20 @@ class CreateWorkflowNotification:
 
 
 @dataclass(frozen=True, slots=True)
+class CreateResearchNotification:
+    issuer: str
+    subject: str
+    research_id: UUID
+    idempotency_key: str
+
+    def __post_init__(self) -> None:
+        if not self.issuer or not self.subject or not self.idempotency_key:
+            raise ValueError("authenticated owner and notification idempotency key are required")
+        if len(self.idempotency_key) > 255:
+            raise ValueError("notification idempotency key is too long")
+
+
+@dataclass(frozen=True, slots=True)
 class Notification:
     id: UUID
     issuer: str
@@ -188,6 +215,12 @@ class Notification:
             return self.source.workflow_result_id
         return None
 
+    @property
+    def research_id(self) -> UUID | None:
+        if isinstance(self.source, ResearchNotificationSource):
+            return self.source.research_id
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class NotificationReplayEvent:
@@ -202,6 +235,12 @@ class NotificationReplayEvent:
     def reminder_id(self) -> UUID | None:
         if isinstance(self.source, ReminderNotificationSource):
             return self.source.reminder_id
+        return None
+
+    @property
+    def research_id(self) -> UUID | None:
+        if isinstance(self.source, ResearchNotificationSource):
+            return self.source.research_id
         return None
 
     def payload(self) -> dict[str, object]:
@@ -227,6 +266,8 @@ class NotificationReplayEvent:
                 }
             )
         elif isinstance(self.source, WorkflowNotificationSource):
+            payload.update(self.source.payload())
+        elif isinstance(self.source, ResearchNotificationSource):
             payload.update(self.source.payload())
         return payload
 
@@ -295,6 +336,9 @@ class NotificationRepository(Protocol):
 
     async def create_workflow_notification(
         self, command: CreateWorkflowNotification
+    ) -> Notification: ...
+    async def create_research_notification(
+        self, command: CreateResearchNotification
     ) -> Notification: ...
 
     async def deliver_due(self, *, limit: int = 100) -> DueDeliveryResult: ...
@@ -375,6 +419,17 @@ class NotificationApplicationService:
             raise NotificationError("workflow notifications are unavailable")
         typed_creator = cast(
             Callable[[CreateWorkflowNotification], Awaitable[Notification]], creator
+        )
+        return await typed_creator(command)
+
+    async def create_research_notification(
+        self, command: CreateResearchNotification
+    ) -> Notification:
+        creator = getattr(self.repository, "create_research_notification", None)
+        if not callable(creator):
+            raise NotificationError("research notifications are unavailable")
+        typed_creator = cast(
+            Callable[[CreateResearchNotification], Awaitable[Notification]], creator
         )
         return await typed_creator(command)
 
@@ -472,6 +527,8 @@ def as_payload(item: Notification) -> dict[str, object]:
         )
     elif isinstance(item.source, WorkflowNotificationSource):
         payload.update(item.source.payload())
+    elif isinstance(item.source, ResearchNotificationSource):
+        payload.update(item.source.payload())
     return payload
 
 
@@ -479,6 +536,7 @@ __all__ = [
     "DueDeliveryResult",
     "BriefingNotificationSource",
     "CreateWorkflowNotification",
+    "CreateResearchNotification",
     "CreateBriefingNotification",
     "DeliverBriefingNotification",
     "Notification",
@@ -496,6 +554,7 @@ __all__ = [
     "NotificationView",
     "ReminderNotificationSource",
     "WorkflowNotificationSource",
+    "ResearchNotificationSource",
     "NOTIFICATION_COMPONENT",
     "NOTIFICATION_TOPIC",
     "as_payload",

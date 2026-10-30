@@ -322,6 +322,7 @@ def test_approval_and_notification_unions_preserve_legacy_and_add_workflow() -> 
         "ReminderNotification",
         "BriefingNotification",
         "WorkflowNotification",
+        "ResearchNotification",
     ]
     forbidden = {"content", "input", "output", "instructions", "mapping", "ownerId"}
     assert not forbidden & set(schemas["WorkflowNotification"]["properties"])

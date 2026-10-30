@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
 from typing import TypedDict, cast
 from uuid import UUID, uuid4
 
@@ -12,7 +13,12 @@ import httpx
 import pytest
 from aura_core.domains.artifacts.attachments.public import AttachmentService
 from aura_core.domains.execution.runs.events import RunEvent, new_event
-from aura_core.domains.interaction.conversations.public import InvalidConversationCursor
+from aura_core.domains.interaction.conversations.public import (
+    InvalidConversationCursor,
+    ResearchActivityReference,
+    ResearchRunOrigin,
+    WebCitation,
+)
 from aura_core.domains.knowledge.memory.public import (
     CandidateState,
     MemoryModelConfiguration,
@@ -22,6 +28,7 @@ from aura_core.domains.knowledge.memory.public import (
     MemoryScopeType,
     MemoryTurnEvidence,
 )
+from aura_core.domains.knowledge.research.public import ResearchContentState
 from aura_core.entrypoints.api.app import create_app
 from aura_core.platform.auth import Session, Settings
 from aura_core.platform.telemetry import new_span_id
@@ -163,6 +170,70 @@ async def test_owner_authentication_csrf_and_lazy_idempotent_creation(api_app: F
         assert len(listing.json()["items"]) == 1
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_app_state_binds_research_query_for_deleted_citation_api_projection(
+    api_app: FastAPI,
+) -> None:
+    """API reads expose only the deleted-research citation tombstone."""
+
+    state = api_app.state.aura
+    assert state.store.research_query is state.research_service
+    models = await state.provider.list_models()
+    research_id = uuid4()
+    source_id = uuid4()
+    conversation, message, run = await state.store.create(
+        "https://authentik.dev.example",
+        "owner-subject",
+        "research",
+        "chat",
+        models,
+        str(uuid4()),
+    )
+    message.research_activity = ResearchActivityReference(research_id, "auto", "admitted")
+    message.web_citations = (
+        WebCitation(
+            source_id,
+            "Private source",
+            "https://private.example/secret",
+            datetime.now(UTC),
+            "#secret",
+        ),
+    )
+    run.research_origin = ResearchRunOrigin(research_id, research_id)
+    run.web_citations = message.web_citations
+
+    async def deleted_citation(
+        _issuer: str, _subject: str, _research_id: UUID
+    ) -> ResearchContentState:
+        return ResearchContentState.DELETED
+
+    state.research_service.citation_lifecycle = deleted_citation  # type: ignore[method-assign]
+    client, _session = await owner_client(api_app)
+    try:
+        response = await client.get(f"/api/v1/conversations/{conversation.id}")
+    finally:
+        await client.aclose()
+
+    assert response.status_code == 200
+    payload = response.json()
+    message_citation = next(
+        item for item in payload["messages"] if item["id"] == str(message.id)
+    )["webCitations"][0]
+    run_citation = next(
+        item for item in payload["recentRuns"] if item["id"] == str(run.id)
+    )["webCitations"][0]
+    expected = {
+        "kind": "deleted_research",
+        "sourceId": str(source_id),
+        "label": "Research source deleted",
+    }
+    assert message_citation == expected
+    assert run_citation == expected
+    assert not {"url", "locator", "retrievedAt", "excerpt", "artifactId"}.intersection(
+        message_citation
+    )
 
 
 @pytest.mark.asyncio

@@ -11,10 +11,12 @@ import asyncio
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+import yaml
 from aura_core.domains.execution.runs.events import new_event
 from aura_core.domains.interaction.agents.public import (
     GENERAL_TOOL_POLICY_ID,
@@ -25,6 +27,22 @@ from aura_core.domains.interaction.agents.public import (
     ToolGrant,
     ToolPolicy,
 )
+from aura_core.domains.interaction.research_delivery.public import (
+    MemoryResearchCompletionDeliveryRepository,
+    ResearchCompletionDeliveryInput,
+    ResearchCompletionDeliveryService,
+)
+from aura_core.domains.knowledge.documents.evaluation import (
+    TOOL_EXECUTION_COMPONENT_ID,
+    evaluate_document_citation_validity,
+)
+from aura_core.domains.knowledge.research.public import (
+    ResearchContentState,
+    ResearchMode,
+    ResearchOutcome,
+    ResearchTerminalDeliverySnapshot,
+)
+from aura_core.platform.telemetry import MetadataMetrics
 from aura_core.runtime.tools import (
     DocumentSearchContext,
     MemorySearchContext,
@@ -91,6 +109,510 @@ def test_reminder_create_descriptor_is_exactly_versioned_and_unconditionally_con
     assert descriptor.input_schema["additionalProperties"] is False
     result_properties = cast(dict[str, object], descriptor.result_schema["properties"])
     assert {"reminderId", "status", "dueAt"} <= set(result_properties)
+
+
+def test_tool_descriptors_use_the_versioned_execution_component() -> None:
+    descriptors = default_tool_registry().descriptors()
+
+    assert descriptors
+    assert {
+        descriptor.observable_component for descriptor in descriptors
+    } == {"aura.runtime.tool_execution@1"}
+
+
+def test_tool_execution_outcome_total_rejects_legacy_metric_identity() -> None:
+    metrics = MetadataMetrics()
+    metrics.increment(
+        "aura.runtime.tool_execution@1",
+        "tool_execution_outcomes_total",
+        outcome="completed",
+        dependency="core_postgresql",
+        error_class="execution",
+    )
+    metrics.increment(
+        "aura.runtime.tool_execution",
+        "tool_execution_outcomes_total",
+        outcome="completed",
+        dependency="core_postgresql",
+        error_class="execution",
+    )
+
+    measurements = metrics.measurements
+    assert len(measurements) == 1
+    assert measurements[0].component_id == "aura.runtime.tool_execution@1"
+    assert measurements[0].metric == "tool_execution_outcomes_total"
+    assert metrics.stats().rejected == 1
+
+
+def test_document_evaluator_uses_the_canonical_tool_execution_component() -> None:
+    result = evaluate_document_citation_validity(
+        citation_count=1,
+        valid_citation_count=1,
+    )
+    manifest = yaml.safe_load(
+        (
+            Path(__file__).parents[1]
+            / "resources"
+            / "component-manifests"
+            / "tool-execution.yaml"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert TOOL_EXECUTION_COMPONENT_ID == "aura.runtime.tool_execution@1"
+    assert result.component_id == TOOL_EXECUTION_COMPONENT_ID
+    assert "document_citation_validity" in manifest["evaluators"]
+
+
+class _TelemetryConversation:
+    async def append_research_completion(self, *args: object, **kwargs: object) -> object:
+        del args, kwargs
+        return SimpleNamespace(id=uuid4())
+
+
+class _TelemetryNotifications:
+    async def create_research_notification(self, command: object) -> object:
+        del command
+        return SimpleNamespace(id=uuid4())
+
+
+class _TelemetryAppendFailure(_TelemetryConversation):
+    async def append_research_completion(self, *args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RuntimeError("synthetic append failure")
+
+
+class _TelemetryNotificationFailure(_TelemetryNotifications):
+    async def create_research_notification(self, command: object) -> object:
+        del command
+        raise RuntimeError("synthetic notification failure")
+
+
+class _TelemetrySaveFailureRepository(MemoryResearchCompletionDeliveryRepository):
+    def __init__(self, fail_on: int) -> None:
+        super().__init__()
+        self.fail_on = fail_on
+        self.save_count = 0
+
+    async def save(self, item: object) -> None:
+        self.save_count += 1
+        if self.save_count == self.fail_on:
+            raise RuntimeError("synthetic repository save failure")
+        await super().save(item)  # type: ignore[arg-type]
+
+
+class _TelemetryListFailureRepository(MemoryResearchCompletionDeliveryRepository):
+    async def list_for_research(self, research_id: Any) -> tuple[Any, ...]:
+        del research_id
+        raise RuntimeError("synthetic repository list failure")
+
+
+def _telemetry_snapshot(
+    *,
+    state: ResearchContentState = ResearchContentState.ACTIVE,
+    artifact_refs: tuple[dict[str, object], ...] = (),
+) -> ResearchTerminalDeliverySnapshot:
+    return ResearchTerminalDeliverySnapshot(
+        uuid4(),
+        "https://issuer.example",
+        "owner",
+        1,
+        ResearchOutcome.COMPLETED,
+        state,
+        None,
+        "bounded answer",
+        (),
+        artifact_refs,
+        {},
+        ResearchMode.QUICK,
+    )
+
+
+def _assert_terminal_metadata(
+    metrics: MetadataMetrics, *, dependency: str, error_class: str
+) -> None:
+    assert metrics.stats().rejected == 0
+    assert len(metrics.measurements) == 3
+    assert sum(item.kind == "span" for item in metrics.measurements) == 1
+    assert sum(item.kind == "metric" for item in metrics.measurements) == 2
+    dimensions = [
+        dict(item.dimensions)
+        for item in metrics.measurements
+        if item.kind == "metric"
+    ]
+    assert {item["dependency"] for item in dimensions} == {dependency}
+    assert {item["error_class"] for item in dimensions} == {error_class}
+    assert {item["outcome"] for item in dimensions} == {"unknown"}
+    span = next(item for item in metrics.measurements if item.kind == "span")
+    assert dict(span.trace_attributes)["outcome"] == "unknown"
+
+
+def test_research_completion_sink_rejects_success_or_skipped_with_error() -> None:
+    metrics = MetadataMetrics()
+    for outcome in ("success", "skipped"):
+        metrics.increment(
+            "aura.interaction.research_completion_delivery@1",
+            "research_completion_outcome_count",
+            operation="research_completion.deliver",
+            outcome=outcome,
+            error_class="storage_unavailable",
+            dependency="core_postgresql",
+        )
+    metrics.record_span(
+        "aura.interaction.research_completion_delivery@1",
+        "research_completion.deliver",
+        1.0,
+        trace_id=uuid4().hex,
+        span_id=uuid4().hex[:16],
+        parent_span_id=None,
+        outcome="success",
+        dependency="core_postgresql",
+        error_class="storage_unavailable",
+    )
+
+    assert metrics.measurements == ()
+    assert metrics.stats().rejected == 3
+
+
+@pytest.mark.asyncio
+async def test_research_completion_uses_real_metadata_sink_without_rejections() -> None:
+    metrics = MetadataMetrics()
+    snapshot = _telemetry_snapshot()
+    service = ResearchCompletionDeliveryService(
+        MemoryResearchCompletionDeliveryRepository(),
+        _TelemetryConversation(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=metrics,
+    )
+    await service.register(
+        ResearchCompletionDeliveryInput(
+            snapshot.issuer,
+            snapshot.subject,
+            snapshot.research_id,
+            uuid4(),
+            None,
+            uuid4(),
+            snapshot.version,
+        )
+    )
+
+    await service.deliver(snapshot)
+
+    measurements = metrics.measurements
+    assert len(measurements) == 3
+    assert {item.metric for item in measurements} == {
+        "research_completion_outcome_count",
+        "research_completion_latency_ms",
+    }
+    span = next(item for item in measurements if item.kind == "span")
+    assert span.trace_id == snapshot.research_id.hex
+    assert span.span_id is not None and len(span.span_id) == 16
+    assert metrics.stats().rejected == 0
+
+
+@pytest.mark.asyncio
+async def test_research_completion_sink_bounds_failure_and_deletion_dependencies() -> None:
+    failure_metrics = MetadataMetrics()
+    failed_snapshot = _telemetry_snapshot()
+    failed = ResearchCompletionDeliveryService(
+        MemoryResearchCompletionDeliveryRepository(),
+        _TelemetryAppendFailure(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=failure_metrics,
+    )
+    await failed.register(
+        ResearchCompletionDeliveryInput(
+            failed_snapshot.issuer,
+            failed_snapshot.subject,
+            failed_snapshot.research_id,
+            uuid4(),
+            None,
+            uuid4(),
+            failed_snapshot.version,
+        )
+    )
+    with pytest.raises(RuntimeError):
+        await failed.deliver(failed_snapshot)
+    assert failure_metrics.stats().rejected == 0
+    assert len(failure_metrics.measurements) == 3
+    assert sum(item.kind == "span" for item in failure_metrics.measurements) == 1
+    assert sum(item.kind == "metric" for item in failure_metrics.measurements) == 2
+    assert {
+        dict(item.dimensions)["dependency"] for item in failure_metrics.measurements
+    } == {"conversation_public_api"}
+
+    notification_metrics = MetadataMetrics()
+    notification_snapshot = _telemetry_snapshot()
+    notification_failed = ResearchCompletionDeliveryService(
+        MemoryResearchCompletionDeliveryRepository(),
+        _TelemetryConversation(),
+        _TelemetryNotificationFailure(),  # type: ignore[arg-type]
+        metrics=notification_metrics,
+    )
+    await notification_failed.register(
+        ResearchCompletionDeliveryInput(
+            notification_snapshot.issuer,
+            notification_snapshot.subject,
+            notification_snapshot.research_id,
+            uuid4(),
+            None,
+            uuid4(),
+            notification_snapshot.version,
+        )
+    )
+    with pytest.raises(RuntimeError):
+        await notification_failed.deliver(notification_snapshot)
+    assert notification_metrics.stats().rejected == 0
+    assert len(notification_metrics.measurements) == 3
+    assert sum(item.kind == "span" for item in notification_metrics.measurements) == 1
+    assert sum(item.kind == "metric" for item in notification_metrics.measurements) == 2
+    assert {
+        dict(item.dimensions)["dependency"] for item in notification_metrics.measurements
+    } == {"notification_public_api"}
+
+    deletion_metrics = MetadataMetrics()
+    deleted_snapshot = _telemetry_snapshot(state=ResearchContentState.DELETED)
+    deleted = ResearchCompletionDeliveryService(
+        MemoryResearchCompletionDeliveryRepository(),
+        _TelemetryConversation(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=deletion_metrics,
+    )
+    await deleted.register(
+        ResearchCompletionDeliveryInput(
+            deleted_snapshot.issuer,
+            deleted_snapshot.subject,
+            deleted_snapshot.research_id,
+            uuid4(),
+            None,
+            uuid4(),
+            deleted_snapshot.version,
+        )
+    )
+    await deleted.deliver(deleted_snapshot)
+    assert deletion_metrics.stats().rejected == 0
+    assert len(deletion_metrics.measurements) == 3
+    assert sum(item.kind == "span" for item in deletion_metrics.measurements) == 1
+    assert sum(item.kind == "metric" for item in deletion_metrics.measurements) == 2
+    assert {
+        dict(item.dimensions)["dependency"] for item in deletion_metrics.measurements
+    } == {"core_postgresql"}
+
+
+@pytest.mark.asyncio
+async def test_research_completion_missing_boundary_is_one_delivery_failure_observation() -> None:
+    metrics = MetadataMetrics()
+    snapshot = _telemetry_snapshot()
+    repository = MemoryResearchCompletionDeliveryRepository()
+    service = ResearchCompletionDeliveryService(
+        repository,
+        object(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=metrics,
+    )
+    await service.register(
+        ResearchCompletionDeliveryInput(
+            snapshot.issuer,
+            snapshot.subject,
+            snapshot.research_id,
+            uuid4(),
+            None,
+            uuid4(),
+            snapshot.version,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="boundary is unavailable"):
+        await service.deliver(snapshot)
+
+    _assert_terminal_metadata(
+        metrics, dependency="conversation_public_api", error_class="delivery_failed"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_on", [1, 2])
+async def test_research_completion_repository_save_failures_are_one_storage_observation(
+    fail_on: int,
+) -> None:
+    metrics = MetadataMetrics()
+    snapshot = _telemetry_snapshot()
+    repository = _TelemetrySaveFailureRepository(fail_on)
+    service = ResearchCompletionDeliveryService(
+        repository,
+        _TelemetryConversation(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=metrics,
+    )
+    await service.register(
+        ResearchCompletionDeliveryInput(
+            snapshot.issuer,
+            snapshot.subject,
+            snapshot.research_id,
+            uuid4(),
+            None,
+            uuid4(),
+            snapshot.version,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="repository save failure"):
+        await service.deliver(snapshot)
+
+    _assert_terminal_metadata(
+        metrics, dependency="core_postgresql", error_class="storage_unavailable"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_on", [1, 2])
+async def test_research_completion_dedicated_save_failures_are_one_storage_observation(
+    fail_on: int,
+) -> None:
+    metrics = MetadataMetrics()
+    snapshot = _telemetry_snapshot()
+    repository = _TelemetrySaveFailureRepository(fail_on)
+    service = ResearchCompletionDeliveryService(
+        repository,
+        _TelemetryConversation(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=metrics,
+    )
+    await service.register(
+        ResearchCompletionDeliveryInput(
+            snapshot.issuer,
+            snapshot.subject,
+            snapshot.research_id,
+            None,
+            None,
+            uuid4(),
+            snapshot.version,
+            "dedicated",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="repository save failure"):
+        await service.deliver(snapshot)
+
+    _assert_terminal_metadata(
+        metrics, dependency="core_postgresql", error_class="storage_unavailable"
+    )
+
+
+@pytest.mark.asyncio
+async def test_research_completion_deleted_save_failure_is_one_storage_observation() -> None:
+    metrics = MetadataMetrics()
+    snapshot = _telemetry_snapshot(state=ResearchContentState.DELETED)
+    repository = _TelemetrySaveFailureRepository(1)
+    service = ResearchCompletionDeliveryService(
+        repository,
+        _TelemetryConversation(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=metrics,
+    )
+    await service.register(
+        ResearchCompletionDeliveryInput(
+            snapshot.issuer,
+            snapshot.subject,
+            snapshot.research_id,
+            uuid4(),
+            None,
+            uuid4(),
+            snapshot.version,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="repository save failure"):
+        await service.deliver(snapshot)
+
+    _assert_terminal_metadata(
+        metrics, dependency="core_postgresql", error_class="storage_unavailable"
+    )
+
+
+@pytest.mark.asyncio
+async def test_research_completion_claim_failure_is_one_settlement_observation() -> None:
+    metrics = MetadataMetrics()
+    snapshot = _telemetry_snapshot()
+
+    async def fail_claim(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise RuntimeError("synthetic claim failure")
+
+    repository = MemoryResearchCompletionDeliveryRepository()
+    service = ResearchCompletionDeliveryService(
+        repository,
+        _TelemetryConversation(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=metrics,
+        source_claim=fail_claim,
+    )
+    await service.register(
+        ResearchCompletionDeliveryInput(
+            snapshot.issuer,
+            snapshot.subject,
+            snapshot.research_id,
+            uuid4(),
+            None,
+            uuid4(),
+            snapshot.version,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="claim failure"):
+        await service.deliver(snapshot)
+
+    _assert_terminal_metadata(
+        metrics, dependency="core_postgresql", error_class="settlement_unknown"
+    )
+
+
+@pytest.mark.asyncio
+async def test_research_completion_repository_list_failure_is_one_storage_observation() -> None:
+    metrics = MetadataMetrics()
+    snapshot = _telemetry_snapshot()
+    service = ResearchCompletionDeliveryService(
+        _TelemetryListFailureRepository(),
+        _TelemetryConversation(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=metrics,
+    )
+
+    with pytest.raises(RuntimeError, match="repository list failure"):
+        await service.deliver(snapshot)
+
+    _assert_terminal_metadata(
+        metrics, dependency="core_postgresql", error_class="storage_unavailable"
+    )
+
+
+@pytest.mark.asyncio
+async def test_research_completion_validation_failure_is_one_observation_before_dispatch() -> None:
+    metrics = MetadataMetrics()
+    snapshot = _telemetry_snapshot(artifact_refs=({"artifactId": "not-a-uuid"},))
+    service = ResearchCompletionDeliveryService(
+        MemoryResearchCompletionDeliveryRepository(),
+        _TelemetryConversation(),
+        _TelemetryNotifications(),  # type: ignore[arg-type]
+        metrics=metrics,
+    )
+    await service.register(
+        ResearchCompletionDeliveryInput(
+            snapshot.issuer,
+            snapshot.subject,
+            snapshot.research_id,
+            uuid4(),
+            None,
+            uuid4(),
+            snapshot.version,
+        )
+    )
+
+    with pytest.raises(ValueError, match="badly formed hexadecimal UUID"):
+        await service.deliver(snapshot)
+
+    _assert_terminal_metadata(
+        metrics, dependency="core_postgresql", error_class="validation_failed"
+    )
 
 
 def test_conversational_reminder_descriptors_are_bounded_and_confirmation_safe() -> None:
@@ -519,19 +1041,19 @@ def test_policy_creation_idempotency_and_expected_revision_are_deterministic() -
     grant = (ToolGrant("memory.search", 1),)
 
     first = catalog.create_tool_policy(
-        aura.id, grant, expected_revision=4, idempotency_key="same-request"
+        aura.id, grant, expected_revision=5, idempotency_key="same-request"
     )
     replay = catalog.create_tool_policy(
-        aura.id, grant, expected_revision=4, idempotency_key="same-request"
+        aura.id, grant, expected_revision=5, idempotency_key="same-request"
     )
     assert replay is first
 
     with pytest.raises(ConfigurationIdempotencyConflict):
         catalog.create_tool_policy(
-            aura.id, (), expected_revision=4, idempotency_key="same-request"
+            aura.id, (), expected_revision=5, idempotency_key="same-request"
         )
     with pytest.raises(ConfigurationVersionConflict):
-        catalog.create_tool_policy(aura.id, grant, expected_revision=4)
+        catalog.create_tool_policy(aura.id, grant, expected_revision=5)
 
 
 def test_policy_is_owner_scoped_and_attach_requires_new_agent_revision() -> None:

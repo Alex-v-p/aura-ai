@@ -45,6 +45,8 @@ REMINDER_SERIES_RESUME_TOOL_ID = "reminder.series.resume"
 REMINDER_SERIES_RESUME_TOOL_VERSION = 1
 REMINDER_CANCEL_TOOL_ID = "reminder.cancel"
 REMINDER_CANCEL_TOOL_VERSION = 1
+RESEARCH_TOOL_ID = "web.research"
+RESEARCH_TOOL_VERSION = 1
 REMINDER_TOOL_IDS = frozenset(
     {
         REMINDER_CREATE_TOOL_ID,
@@ -178,6 +180,13 @@ class DocumentSearchContext:
 
 
 @dataclass(frozen=True, slots=True)
+class ResearchContext:
+    """Per-run owner-bound admission callback; execution stays in workers."""
+
+    admit: Callable[[Mapping[str, object]], Awaitable[object]]
+
+
+@dataclass(frozen=True, slots=True)
 class ReminderCreateContext:
     """Proposal-only callback; approval owns all reminder side effects."""
 
@@ -259,7 +268,8 @@ class ToolRegistry:
             or descriptor.idempotency not in {"read_only", "idempotent", "non_idempotent"}
             or descriptor.sensitivity not in {"public", "internal", "private", "restricted"}
             or not re.fullmatch(
-                r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+", descriptor.observable_component
+                r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+(?:@[1-9][0-9]*)?",
+                descriptor.observable_component,
             )
             or not _valid_schema(input_schema)
             or not _valid_schema(result_schema)
@@ -329,6 +339,8 @@ class ToolPolicyEvaluator:
         # scope for every confirmation-backed mutation.
         if descriptor.permission_scope == "reminders:write" and "reminders:write" not in scopes:
             return ToolPolicyDecision(False, "policy", "TOOL_PERMISSION_DENIED")
+        if descriptor.permission_scope == "research:run" and "research:run" not in scopes:
+            return ToolPolicyDecision(False, "policy", "TOOL_PERMISSION_DENIED")
         if (
             descriptor.permission_scope != "reminders:write"
             and scopes
@@ -366,6 +378,27 @@ def validate_tool_arguments(descriptor: ToolDescriptor, arguments: object) -> di
         if not 1 <= len(query) <= 500:
             raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
         return {"query": query}
+    if descriptor.id == RESEARCH_TOOL_ID:
+        allowed = {"question", "mode", "budget", "seedUrls", "domains"}
+        if set(value) - allowed or not isinstance(value.get("question"), str) or not isinstance(value.get("mode"), str):
+            raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+        question = str(value["question"]).strip()
+        mode = str(value["mode"]).strip()
+        if not 1 <= len(question) <= 10_000 or mode not in {"quick", "auto", "deep", "agent_led"}:
+            raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+        result: dict[str, object] = {"question": question, "mode": mode}
+        budget = value.get("budget")
+        if budget is not None:
+            if not isinstance(budget, Mapping) or set(budget) - {"wallTimeSeconds", "fetchedSources", "searchRequests", "browserPages", "modelCalls"}:
+                raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+            result["budget"] = dict(budget)
+        for key, maximum in (("seedUrls", 20), ("domains", 20)):
+            values = value.get(key)
+            if values is not None:
+                if not isinstance(values, (list, tuple)) or len(values) > maximum or any(not isinstance(item, str) for item in values):
+                    raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
+                result[key] = list(values)
+        return result
     if descriptor.id == REMINDER_CREATE_TOOL_ID:
         if set(value) != {"content", "dueAt"} or not isinstance(value.get("content"), str):
             raise ToolExecutionError("validation", "TOOL_ARGUMENTS_INVALID")
@@ -598,6 +631,28 @@ def validate_tool_result(descriptor: ToolDescriptor, result: object) -> dict[str
                 }
             )
         return {"items": document_items, "truncated": truncated}
+    if descriptor.id == RESEARCH_TOOL_ID and descriptor.version == RESEARCH_TOOL_VERSION:
+        if not isinstance(result, Mapping) or set(result) != {
+            "taskRef", "mode", "admissionState"
+        }:
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        task_ref = result.get("taskRef")
+        if not isinstance(task_ref, Mapping) or set(task_ref) != {"taskId"}:
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        try:
+            task_id = str(UUID(str(task_ref["taskId"])))
+        except (TypeError, ValueError) as exc:
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID") from exc
+        mode = result.get("mode")
+        if mode not in {"quick", "auto", "deep", "agent_led"}:
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        if result.get("admissionState") != "admitted":
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        return {
+            "taskRef": {"taskId": task_id},
+            "mode": mode,
+            "admissionState": "admitted",
+        }
     if descriptor.id != MEMORY_SEARCH_TOOL_ID or descriptor.version != MEMORY_SEARCH_TOOL_VERSION:
         if (
             descriptor.id == REMINDER_CREATE_TOOL_ID
@@ -881,6 +936,37 @@ def _document_search_handler(arguments: Mapping[str, object], context: object) -
     return search()
 
 
+def _research_handler(arguments: Mapping[str, object], context: object) -> Awaitable[object]:
+    if not isinstance(context, ResearchContext):
+
+        async def unavailable() -> Mapping[str, object]:
+            raise ToolExecutionError("execution", "TOOL_HANDLER_UNAVAILABLE")
+
+        return unavailable()
+
+    async def admit() -> Mapping[str, object]:
+        try:
+            value = await context.admit(arguments)
+        except Exception as exc:
+            # Admission denial is intentionally content-free at the runtime
+            # boundary; the research application owns detailed classification.
+            raise ToolExecutionError("capability", "TOOL_CAPABILITY_UNAVAILABLE") from exc
+        if not isinstance(value, Mapping) or set(value) != {"taskRef", "mode", "admissionState"}:
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        task_ref = value.get("taskRef")
+        if not isinstance(task_ref, Mapping) or set(task_ref) != {"taskId"}:
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        try:
+            UUID(str(task_ref["taskId"]))
+        except (TypeError, ValueError) as exc:
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID") from exc
+        if value.get("mode") not in {"quick", "auto", "deep", "agent_led"} or value.get("admissionState") != "admitted":
+            raise ToolExecutionError("validation", "TOOL_RESULT_INVALID")
+        return dict(value)
+
+    return admit()
+
+
 def _reminder_handler(arguments: Mapping[str, object], context: object) -> Awaitable[object]:
     if not isinstance(context, ReminderCreateContext):
 
@@ -967,6 +1053,46 @@ _DOCUMENT_RESULT_SCHEMA: Mapping[str, object] = {
             },
         },
         "truncated": {"type": "boolean"},
+    },
+}
+
+_RESEARCH_INPUT_SCHEMA: Mapping[str, object] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["question", "mode"],
+    "properties": {
+        "question": {"type": "string", "minLength": 1, "maxLength": 10_000},
+        "mode": {"type": "string", "enum": ["quick", "auto", "deep", "agent_led"]},
+        "budget": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "wallTimeSeconds": {"type": "integer", "minimum": 1, "maximum": 3600},
+                "fetchedSources": {"type": "integer", "minimum": 1, "maximum": 60},
+                "searchRequests": {"type": "integer", "minimum": 1, "maximum": 20},
+                "browserPages": {"type": "integer", "minimum": 0, "maximum": 15},
+                "modelCalls": {"type": "integer", "minimum": 1, "maximum": 32},
+            },
+        },
+        "seedUrls": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 2048}},
+        "domains": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 253}},
+    },
+}
+_RESEARCH_RESULT_SCHEMA: Mapping[str, object] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["taskRef", "mode", "admissionState"],
+    "properties": {
+        "taskRef": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["taskId"],
+            "properties": {"taskId": {"type": "string", "format": "uuid"}},
+        },
+        "mode": {"type": "string", "enum": ["quick", "auto", "deep", "agent_led"]},
+        "admissionState": {"type": "string", "const": "admitted"},
     },
 }
 _MEMORY_RESULT_SCHEMA: Mapping[str, object] = {
@@ -1190,7 +1316,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="read_only",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_MEMORY_INPUT_SCHEMA,
                 result_schema=_MEMORY_RESULT_SCHEMA,
                 handler=_memory_handler,
@@ -1207,10 +1333,27 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="read_only",
                 sensitivity="restricted",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_DOCUMENT_INPUT_SCHEMA,
                 result_schema=_DOCUMENT_RESULT_SCHEMA,
                 handler=_document_search_handler,
+            ),
+            ToolDescriptor(
+                id=RESEARCH_TOOL_ID,
+                version=RESEARCH_TOOL_VERSION,
+                display_name="Research the web",
+                description="Admit bounded owner-private web research for background execution.",
+                classification="mutation",
+                permission_scope="research:run",
+                confirmation="never",
+                timeout_ms=30_000,
+                retry_limit=0,
+                idempotency="idempotent",
+                sensitivity="private",
+                observable_component="aura.runtime.tool_execution@1",
+                input_schema=_RESEARCH_INPUT_SCHEMA,
+                result_schema=_RESEARCH_RESULT_SCHEMA,
+                handler=_research_handler,
             ),
             ToolDescriptor(
                 id=REMINDER_CREATE_TOOL_ID,
@@ -1224,7 +1367,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="idempotent",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_REMINDER_INPUT_SCHEMA,
                 result_schema=_REMINDER_RESULT_SCHEMA,
                 handler=_reminder_handler,
@@ -1241,7 +1384,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="read_only",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_REMINDER_LIST_INPUT_SCHEMA,
                 result_schema=_REMINDER_READ_RESULT_SCHEMA,
                 handler=_reminder_list_handler,
@@ -1258,7 +1401,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="read_only",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_REMINDER_TARGET_INPUT_SCHEMA,
                 result_schema=_REMINDER_INSPECT_RESULT_SCHEMA,
                 handler=_reminder_inspect_handler,
@@ -1275,7 +1418,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="idempotent",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_SERIES_CREATE_INPUT_SCHEMA,
                 result_schema=_REMINDER_COMMAND_RESULT_SCHEMA,
             ),
@@ -1291,7 +1434,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="idempotent",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_RESCHEDULE_INPUT_SCHEMA,
                 result_schema=_REMINDER_COMMAND_RESULT_SCHEMA,
             ),
@@ -1307,7 +1450,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="idempotent",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_SERIES_UPDATE_INPUT_SCHEMA,
                 result_schema=_REMINDER_COMMAND_RESULT_SCHEMA,
             ),
@@ -1323,7 +1466,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="idempotent",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_REMINDER_TARGET_INPUT_SCHEMA,
                 result_schema=_REMINDER_COMMAND_RESULT_SCHEMA,
             ),
@@ -1339,7 +1482,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="idempotent",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_REMINDER_TARGET_INPUT_SCHEMA,
                 result_schema=_REMINDER_COMMAND_RESULT_SCHEMA,
             ),
@@ -1355,7 +1498,7 @@ def default_tool_registry() -> ToolRegistry:
                 retry_limit=0,
                 idempotency="idempotent",
                 sensitivity="private",
-                observable_component="aura.runtime.tool_execution",
+                observable_component="aura.runtime.tool_execution@1",
                 input_schema=_CANCEL_INPUT_SCHEMA,
                 result_schema=_REMINDER_COMMAND_RESULT_SCHEMA,
             ),

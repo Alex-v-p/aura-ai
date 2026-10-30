@@ -304,7 +304,10 @@ def test_notification_union_preserves_legacy_shape_and_closes_briefing_source() 
     assert "reminderId" not in briefing["properties"]
     baseline = _baseline()
     if baseline is not None:
-        assert reminder == baseline["components"]["schemas"]["Notification"]
+        baseline_schemas = baseline["components"]["schemas"]
+        assert reminder == baseline_schemas.get(
+            "ReminderNotification", baseline_schemas["Notification"]
+        )
 
 
 def test_notification_event_v1_preserves_legacy_definitions_additively() -> None:
@@ -332,7 +335,7 @@ def test_notification_event_v1_preserves_legacy_definitions_additively() -> None
         "NotificationAcknowledgedEvent",
     ):
         assert current["$defs"][name] == baseline["$defs"][name], name
-    assert current["oneOf"][:2] == baseline["oneOf"]
+    assert current["oneOf"][: len(baseline["oneOf"])] == baseline["oneOf"]
 
 
 def test_notification_events_accept_legacy_and_briefing_metadata_only() -> None:

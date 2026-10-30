@@ -641,6 +641,9 @@ class AppState:
             metrics=self.metrics,
             testing=self.testing,
         )
+        # Conversation reads resolve source-owned research citation lifecycle
+        # through this authoritative service in both memory and SQL modes.
+        self.store.set_research_query(self.research_service)
         task_sources = (
             WorkflowTaskSourceAdapter(self.workflow_service),
             BriefingTaskSourceAdapter(self.briefing_service),

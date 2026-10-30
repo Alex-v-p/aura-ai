@@ -1,0 +1,41 @@
+agent: security_privacy_reviewer
+work_item: AURA-0146
+verdict: PASS
+checked:
+  - >-
+    Re-read the approved security and privacy obligations, implementation
+    handoffs, current diff, and all prior blocking findings before confirming
+    the corrected implementation.
+  - >-
+    Verified web.research@1 is deny-by-default for custom agents and requires
+    the exact research:run grant; historical immutable agent and tool-policy
+    revisions remain truthful for existing runs.
+  - >-
+    Verified admission and delivery expose opaque bounded references and
+    metadata-only observations; questions, URLs, excerpts, source content,
+    provider diagnostics, answer content, and artifact content do not enter
+    tool events, notification payloads, or ordinary telemetry.
+  - >-
+    Verified terminal delivery reauthorizes the authoritative owner,
+    conversation/run lineage, current research version, coordinator-validated
+    citations, and task-owned artifacts through the source public boundary;
+    arbitrary foreign references are rejected.
+  - >-
+    Verified deletion and delivery serialize on the authoritative research-row
+    lock/version fence. Deleted or tombstoned evidence cannot be reintroduced
+    into a transcript, notification, or detail response by a stale terminal
+    delivery attempt.
+  - >-
+    Verified unknown append outcomes reconcile by unique delivery key before
+    retry, notification delivery is independently idempotent, and notification
+    failure cannot duplicate transcript append or research task creation.
+  - >-
+    Verified fetched-content prompt-injection and credential-boundary
+    obligations remain outside this admission-only slice; no provider
+    credentials, public uploads, or outbound provider deployment were added.
+  - >-
+    Ran the focused delivery, deletion, evaluator, migration, conversation,
+    notification, runtime, contract, and full Core suites with no failures;
+    isolated PostgreSQL was not configured, and the documented dependency
+    gated SQL cases remained skipped rather than being bypassed.
+findings: []
