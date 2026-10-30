@@ -1,93 +1,72 @@
 agent: integration_maintainer
 work_item: AURA-0144
-status: blocked
-integrated_commits: []
+status: integrated
+integrated_commits:
+  - 146632b
+  - cad38ed
 reviews:
   - reviewer: general_reviewer
     status: PASS
     verdict: work-items/reviews/AURA-0144-general.yaml
   - reviewer: architecture_guardian
-    status: ADR_REQUIRED
+    status: PASS
     verdict: work-items/reviews/AURA-0144-architecture.yaml
   - reviewer: security_privacy_reviewer
-    status: BLOCK
+    status: PASS
     verdict: work-items/reviews/AURA-0144-security-privacy.yaml
   - reviewer: observability_steward
     status: PASS
     verdict: work-items/reviews/AURA-0144-observability.yaml
-conflicts_resolved:
-  - >-
-    Reconciled the reviewed evaluator module's imports by declaring its Core
-    telemetry, research-client, and research-signing dependencies in
-    tooling/architecture/modules.yaml. This is registry metadata only; no
-    evaluator or provider behavior was changed.
-  - >-
-    Reconciled the stabilization evidence for finite provider vocabulary:
-    research components retain their exact closed provider set while legacy
-    calendar, memory, persona, workflow, model, and evaluation labels remain
-    accepted. No telemetry boundary was broadened.
-  - >-
-    Verified memory outbox composition remains source-owned: memory processing
-    calls memory_repository without a redundant override, while the SQL
-    repository default installs TaskSourceInvalidationStage(SqlOutboxRepository());
-    the in-memory testing branch remains unchanged.
+conflicts_resolved: []
 generated_outputs: []
 checks:
   passed:
     - >-
-      python3 tooling/architecture/validate-module-registry.py reports valid
-      module roots and dependency rules after evaluator dependency
-      reconciliation.
+      The updated AURA-0144 work item validates with no open decisions; its
+      disabled-only owner decision explicitly defers production egress and
+      provider-image publication.
+    - >-
+      All four implementation handoffs and all four required review verdicts
+      are schema-valid; review findings are empty and the partial handoffs
+      retain only future deployment enablement gates.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0144.yaml passed for the current AURA-0144
+      metadata changes.
+    - >-
+      Architecture, contract-change, import-boundary, service-isolation,
+      module-registry, repository-shape, observability, and baseline-protection
+      validators passed or reported the expected not-applicable result.
     - >-
       python3 -m unittest tooling.architecture.tests.test_common
-      tooling.architecture.tests.test_modules -v: 27 passed.
+      tooling.architecture.tests.test_modules -v passed all 27 tests.
+    - UV_CACHE_DIR=.local-state/uv-cache uv lock --check passed.
     - >-
-      Exact required AURA-0144 aggregate passed: 133 provider
-      contract, Core-client/settings/observability, static/browser, topology,
-      security, and limits tests.
+      Scoped Ruff validation passed with no findings and scoped Pyright
+      validation passed with 0 errors, warnings, or informations.
     - >-
-      Full services/aura-core pytest suite passed: 1819 tests, with 124
-      dependency-gated skips and one Authlib deprecation warning.
+      The exact required AURA-0144 aggregate passed 133 tests; no provider,
+      contract, security, limits, telemetry, or topology assertion failed.
     - >-
-      Relevant Core research-provider subset passed, including the stabilized
-      provider-label regressions; the exact aggregate reports 133 tests.
+      The full services/aura-core suite passed 1819 tests with 124
+      dependency-gated skips and one pre-existing Authlib deprecation warning.
     - >-
-      Generated-artifact live SQL evidence completed 22/22 tests under the
-      isolated PostgreSQL gate; without the gate the two live cases default
-      skip, and with the switch enabled but no URL they fail explicitly.
-    - >-
-      Combined memory-processing and Task Center projection suites passed 198
-      tests with 3 dependency-gated skips, including SQL task invalidation
-      composition.
-    - >-
-      The AURA-0144 stabilization slice comprises 8 implementation/test/work-item
-      paths; validate-changed-paths passes all 11 current shared-tree paths,
-      including the updated handoff, integration, and review evidence files.
-    - >-
-      Research provider labels remain finite and content-free: research
-      components enforce the exact searxng/static_fetcher/browser_fetcher/none
-      set while established non-research labels remain supported.
-    - >-
-      Memory outbox composition is preserved through the SQL repository default
-      TaskSourceInvalidationStage(SqlOutboxRepository()) path.
-    - git diff --check
-  failed:
-    - >-
-      Architecture review remains ADR_REQUIRED because the owner-controlled
-      controlled-DNS/public-443 egress enforcement dataplane has not been
-      authorized.
-    - >-
-      Security/Privacy review remains BLOCK only for the unenforced external
-      egress boundary and unavailable final provider image provenance
-      attestations.
+      docker compose -f compose.yaml -f deploy/compose/research-providers.yaml
+      config --quiet passed.
+    - git diff --check passed.
+  failed: []
 repository_clean: false
 changed_paths_valid: true
 remaining_risks:
   - >-
-    Provider enablement remains blocked until an accepted owner decision and
-    deployed machine-verifiable attestation establish the external
-    controlled-DNS/public-443 egress boundary.
+    Real provider profiles and research admission remain disabled until a
+    separately authorized controlled-DNS/public-TCP-443 dataplane supplies a
+    machine-verifiable positive and negative attestation suite.
   - >-
-    Provider enablement remains blocked until the deployment owner supplies
-    reviewed immutable final image digests and provenance/signature
-    attestations for all three provider images.
+    Provider images remain local and unpublished. Enablement or promotion
+    requires reviewed immutable manifest digests and provenance or signature
+    evidence for all three images.
+  - >-
+    Cloudflare Tunnel and Nginx Proxy Manager provide inbound Aura access only;
+    local HTTP Aura ingress is permitted for development and does not satisfy
+    provider outbound egress enforcement.

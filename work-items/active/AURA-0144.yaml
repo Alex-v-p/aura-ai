@@ -1,6 +1,6 @@
 id: AURA-0144
 title: Deploy isolated governed research providers
-status: approved
+status: integrated
 change_class: repository_governance
 intent: >
   Add closed versioned internal provider transports, Core-side clients, and
@@ -26,6 +26,9 @@ sources_of_truth:
     - work-items/archived/AURA-0141.yaml
     - ADR-0018 authorizes exactly three provider deployables; adding an enforcing egress infrastructure deployable still requires an accepted ADR amendment or explicit owner decision.
     - Research provider deployment is an opt-in Compose overlay; search static fetch and browser fetch remain independently disabled and unreachable from Aura Web by default.
+    - On 2026-10-30 the owner explicitly deferred any production provider egress deployment and provider-image publication. The existing Cloudflare Tunnel and Nginx Proxy Manager secure inbound Aura access only and are not represented as provider outbound enforcement.
+    - Local Aura ingress may remain HTTP during development. Research provider destination policy remains public HTTPS port 443 only, and every real provider profile and admission switch remains disabled until a separately authorized controlled-DNS public-443 dataplane supplies the required machine-verifiable attestation.
+    - Provider images remain local and unpublished for this phase. Local builds are development evidence only and cannot be enabled or promoted as release images until reviewed immutable manifest digests and provenance or signatures are available.
     - AURA-0144 owns tooling/architecture/modules.yaml after AURA-0142 and AURA-0143 module names stabilize, avoiding parallel registry edits.
     - The Contract Steward owns provider schemas and conformance fixtures; the Core Worker owns inward clients and settings seams; the Platform Worker owns isolated services dependency locks deployment policy and final registry reconciliation; the Test and Evaluation Engineer owns independent hostile-network sandbox privacy limit and instrumentation suites.
     - On the shared feature branch provider work may run beside both Core tickets because it uses an overlay and distinct service roots; the Integration Maintainer alone updates modules.yaml after reviewed AURA-0142 and AURA-0143 handoffs and then runs aggregate architecture validation.
@@ -223,11 +226,4 @@ required_checks:
   - git diff --check
 baseline_changes_allowed: false
 human_approval_required: true
-open_decisions:
-  - >-
-    Owner must authorize the enforcing controlled-DNS and public-TCP-443 egress
-    dataplane and its machine-verifiable attestation model before providers can
-    be enabled.
-  - >-
-    Deployment owner must name the container registry and signing or provenance
-    mechanism for the three final custom provider images before enablement.
+open_decisions: []

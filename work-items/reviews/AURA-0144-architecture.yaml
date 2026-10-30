@@ -1,40 +1,43 @@
 agent: architecture_guardian
 work_item: AURA-0144
-verdict: ADR_REQUIRED
+verdict: PASS
 checked:
   - >-
-    Exactly three provider deployables remain: folded SearXNG with its signed
-    facade, static fetcher, and browser fetcher; stock SearXNG is loopback-only.
+    The 2026-10-30 owner decision explicitly defers production provider egress
+    and image publication; it does not treat Cloudflare Tunnel or Nginx Proxy
+    Manager as outbound enforcement and therefore does not weaken ADR-0018.
   - >-
-    Each provider has a distinct private Core-to-provider network and provider
-    code imports neither Core nor Observatory implementation.
+    This PASS is limited to disabled-only repository integration. The
+    research-providers Compose profile is opt-in, all provider switches default
+    false, Core admission and dispatch capabilities default false, and the
+    operator attestation path defaults empty.
   - >-
-    Closed signed POST transports, correlation envelopes, provider-only
-    dependencies, path ownership, and public dependency direction are valid.
+    Provider readiness remains fail closed without a separately supplied
+    machine-verifiable egress attestation. The bundled egress probe identifies
+    itself as diagnostic-only and cannot emit the production attestation marker.
   - >-
-    Module registry, import boundaries, service isolation, repository shape,
-    observability, and the exact 132-test AURA-0144 aggregate pass.
-findings:
-  - severity: critical
-    rule: >-
-      ADR-0018 requires an enforced controlled-DNS and public-TCP-443-only
-      provider egress boundary, while repository guidance requires an accepted
-      ADR or explicit owner decision before adding its deployable mechanism.
-    summary: The owner egress enforcement decision remains ADR_REQUIRED.
-    evidence:
-      files:
-        - deploy/compose/research-providers.yaml
-        - deploy/research/egress-policy.yaml
-        - deploy/compose/research-providers.env.example
-        - work-items/active/AURA-0144.yaml
-      symbols:
-        - aura-research-public-egress
-        - AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH
-        - open_decisions
-    impact: >-
-      Providers cannot be enabled without risking an incomplete network trust
-      boundary.
-    required_correction: >-
-      Accept an ADR or explicit owner decision selecting the enforcing
-      firewall, CNI, gateway, or equivalent dataplane and its isolation and
-      machine-verifiable attestation model.
+    Local HTTP Aura ingress is orthogonal to provider destination policy:
+    private Core-to-provider transport may use HTTP, while fetched destinations
+    remain restricted to public HTTPS port 443. No HTTP research destination is
+    authorized.
+  - >-
+    Local unpublished image builds are development evidence only. The owner
+    decision does not authorize enabling or promoting them without reviewed
+    immutable manifest digests and provenance or signatures.
+  - >-
+    ADR-0018's three authorized deployables remain the only provider services:
+    folded SearXNG, static fetcher, and browser fetcher. No additional egress
+    deployable or architectural exception was introduced.
+  - >-
+    Module ownership, public dependency direction, provider isolation, thin
+    composition seams, and Core/Observatory separation remain valid.
+  - >-
+    validate-work-item, validate-changed-paths, import-boundary,
+    service-isolation, module-registry, repository-shape, and git diff checks
+    passed.
+  - >-
+    Future provider enablement remains gated on a separately authorized and
+    deployed controlled-DNS public-TCP-443 egress dataplane with
+    machine-verifiable attestation, plus reviewed immutable image digests and
+    provenance or signatures.
+findings: []
