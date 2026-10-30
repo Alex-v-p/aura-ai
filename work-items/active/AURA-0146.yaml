@@ -175,5 +175,4 @@ required_checks:
   - git diff --check
 baseline_changes_allowed: false
 human_approval_required: true
-open_decisions:
-  - Implementation remains dependency-blocked until AURA-0145 is integrated.
+open_decisions: []
