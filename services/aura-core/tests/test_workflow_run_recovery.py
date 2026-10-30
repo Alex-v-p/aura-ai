@@ -24,6 +24,7 @@ from aura_core.domains.execution.runs.service import (
     RunCoordinator,
     workflow_agent_execution_deadline,
 )
+from aura_core.domains.interaction.agents.public import GENERAL_POLICY_ID, GENERAL_REVISION_ID
 from aura_core.entrypoints.cli import alembic_config
 from aura_core.platform.auth import Settings
 from aura_core.platform.telemetry import MetadataMetrics
@@ -37,8 +38,8 @@ def _request(*, now: datetime | None = None) -> WorkflowAgentRunRequest:
     )
     return WorkflowAgentRunRequest(
         lineage=lineage,
-        agent_revision_id=uuid4(),
-        model_policy_revision_id=uuid4(),
+        agent_revision_id=GENERAL_REVISION_ID,
+        model_policy_revision_id=GENERAL_POLICY_ID,
         provider="fixture-provider",
         model_id="fixture-model",
         instructions="Answer the bounded workflow step.",

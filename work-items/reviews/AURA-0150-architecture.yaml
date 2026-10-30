@@ -1,0 +1,11 @@
+agent: architecture_guardian
+work_item: AURA-0150
+verdict: PASS
+checked:
+  - Prior duplicated-identity finding is resolved.
+  - The fixture now imports exported GENERAL_REVISION_ID and GENERAL_POLICY_ID through the agents public boundary.
+  - Workflow revision instance step-execution run and correlation lineage remain UUID4-generated per request.
+  - Final implementation remains confined to the authorized recovery test with no production migration contract deployment frontend provider or Observatory boundary changes.
+  - Changed-path import-boundary service-isolation Ruff Pyright database-independent recovery tests and git diff checks passed.
+  - Worker evidence records four focused and seven full live PostgreSQL recovery tests passing including a repeated full-file run.
+findings: []

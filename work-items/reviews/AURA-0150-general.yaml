@@ -1,0 +1,22 @@
+agent: general_reviewer
+work_item: AURA-0150
+verdict: PASS
+checked:
+  - >-
+    Remediated diff imports public GENERAL_REVISION_ID and GENERAL_POLICY_ID;
+    random workflow lineage and all recovery inputs and assertions remain
+    unchanged.
+  - >-
+    Both public constants identify canonical rows seeded by migration 0004 and
+    retained through the current Alembic head.
+  - "Fresh isolated PostgreSQL focused recovery suite: 4 passed."
+  - "Fresh isolated PostgreSQL complete test file: 7 passed."
+  - "Work-item and changed-path validation: passed."
+  - "Contract-change validation: no contract changes detected."
+  - "Ruff: passed."
+  - "Pyright: 0 errors."
+  - >-
+    Import boundaries, service isolation, module registry, and repository
+    shape: passed.
+  - "git diff --check: passed."
+findings: []

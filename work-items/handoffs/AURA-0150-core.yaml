@@ -1,0 +1,69 @@
+agent: core_worker
+work_item: AURA-0150
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: null
+  worktree: feat/governed-research-artifacts-tasks
+scope:
+  ownership_zone: evaluation.workflow-run-recovery-postgresql
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_workflow_run_recovery.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0150.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0150.yaml --path work-items/active/AURA-0150.yaml
+      --path services/aura-core/tests/test_workflow_run_recovery.py
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0150.yaml (no contract changes detected)
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/tests/test_workflow_run_recovery.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/tests/test_workflow_run_recovery.py
+    - git diff --check
+    - >-
+      Architecture follow-up: the fixture imports GENERAL_REVISION_ID and
+      GENERAL_POLICY_ID from aura_core.domains.interaction.agents.public;
+      duplicated UUID namespace/uuid5 derivation was removed
+    - >-
+      Focused live PostgreSQL recovery coverage against a disposable migrated
+      database: 4 passed
+    - >-
+      Full live PostgreSQL recovery file against a disposable migrated database:
+      7 passed
+    - >-
+      Repeated full live PostgreSQL recovery file with JUnit output against a
+      disposable migrated database: 7 passed
+  failed:
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0150.yaml: failed because unrelated
+      pre-existing AURA-0148 changes include evaluations/research/release-thresholds.yaml,
+      which AURA-0150 does not authorize
+  not_run: []
+decisions:
+  - >-
+    Reused Core's public GENERAL_REVISION_ID and GENERAL_POLICY_ID constants
+    for canonical migrated authority rows. Workflow lineage remains
+    UUID4-generated per request.
+risks:
+  - >-
+    Baseline protection remains blocked by unrelated uncommitted AURA-0148
+    evaluation changes in the shared worktree; no AURA-0150 baseline was changed.
+unresolved: []

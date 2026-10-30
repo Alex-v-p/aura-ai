@@ -1,0 +1,171 @@
+id: AURA-0150
+title: Repair workflow recovery PostgreSQL test identities
+status: integrated
+change_class: bugfix
+intent: >
+  Restore the four live PostgreSQL workflow-run recovery checks by making their
+  test requests reference canonical migrated agent and model-policy revisions,
+  without changing workflow recovery behavior, persistence, migrations,
+  contracts, deployment, or any production module.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/specifications/agents-and-execution.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - work-items/archived/AURA-0137.yaml
+    - work-items/active/AURA-0148.yaml
+    - >-
+      The defect is confined to services/aura-core/tests/test_workflow_run_recovery.py:
+      its live request fixture creates random agent_revision_id and
+      model_policy_revision_id values that do not exist after the canonical
+      migrations, so PostgreSQL correctly rejects run insertion at the foreign
+      keys before recovery behavior is exercised.
+    - >-
+      The correction must reuse canonical migrated immutable identities through
+      existing public test-visible constants or an equivalent test-local lookup;
+      it must not insert fake authority rows, disable constraints, change
+      migrations, or relax the repository behavior under test.
+    - >-
+      AURA-0148 compatibility requires all four previously unallowlisted live
+      workflow recovery nodes to pass against an isolated migrated PostgreSQL
+      database, with no skip or expected-failure classification, so they can be
+      consumed as observed aggregate evidence.
+  contracts: []
+feature_references:
+  - RUN-014
+  - RUN-015
+  - RUN-016
+  - AUT-014
+  - AUT-018
+ownership_zones:
+  - evaluation.workflow-run-recovery-postgresql
+  - delivery.aura0150
+allowed_paths:
+  - work-items/active/AURA-0150.yaml
+  - work-items/archived/AURA-0150.yaml
+  - work-items/handoffs/AURA-0150-*.yaml
+  - work-items/reviews/AURA-0150-*.yaml
+  - work-items/integration/AURA-0150.yaml
+  - services/aura-core/tests/test_workflow_run_recovery.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - deploy/**
+  - evaluations/**
+  - frontend/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - tooling/**
+  - services/aura-observatory/**
+  - services/aura-research-static-fetcher/**
+  - services/aura-research-browser-fetcher/**
+  - services/aura-core/src/**
+  - services/aura-core/migrations/**
+  - services/aura-core/resources/**
+  - services/aura-core/tests/conftest.py
+  - pyproject.toml
+  - uv.lock
+  - compose.yaml
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: execution.runs tests
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes:
+    - canonical immutable agent and model-policy revision identifiers in an isolated test database
+    - synthetic workflow lineage input and metadata-only recovery outcomes
+required_agents:
+  implementation:
+    - core_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 1
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - >-
+    The four repository-backed recovery tests reserve and settle runs against a
+    clean database upgraded to the current Alembic head using agent and
+    model-policy revision identifiers that are present in canonical migrated
+    rows; all four pass with no skip expected failure or foreign-key error.
+  - >-
+    The corrected fixture still generates unique workflow run workflow revision
+    instance step-execution and correlation lineage per request, and it does not
+    alter the inputs deadlines providers outcomes cancellation or replay
+    assertions that exercise recovery behavior.
+  - >-
+    The three database-independent tests in the same file remain green and the
+    full seven-test file passes against the same isolated migrated PostgreSQL
+    database.
+  - >-
+    AURA-0148 can consume the exact four live node results as observed workflow
+    recovery evidence without adding them to a skip allowlist, synthesizing a
+    pass, weakening fail-closed aggregation, or changing any AURA-0148 fixture.
+  - >-
+    No production source migration contract deployment frontend Observatory
+    provider dependency protected baseline or unrelated test file changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0150.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0150.yaml --path work-items/active/AURA-0150.yaml --path services/aura-core/tests/test_workflow_run_recovery.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0150.yaml
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0150.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/tests/test_workflow_run_recovery.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/tests/test_workflow_run_recovery.py
+  - >-
+    AURA_0137_DATABASE_URL=${AURA_0137_DATABASE_URL:?fresh isolated PostgreSQL URL required}
+    AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest
+    -p no:cacheprovider services/aura-core/tests/test_workflow_run_recovery.py::test_reservation_is_durable_before_provider_effect
+    services/aura-core/tests/test_workflow_run_recovery.py::test_restart_returns_unknown_without_replaying_provider_effect
+    services/aura-core/tests/test_workflow_run_recovery.py::test_durable_terminal_failure_is_replayed
+    services/aura-core/tests/test_workflow_run_recovery.py::test_cancellation_is_exact_lineage_and_terminal_replay_is_stable
+    -q
+  - >-
+    AURA_0137_DATABASE_URL=${AURA_0137_DATABASE_URL:?fresh isolated PostgreSQL URL required}
+    AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest
+    -p no:cacheprovider services/aura-core/tests/test_workflow_run_recovery.py -q
+  - >-
+    AURA_0137_DATABASE_URL=${AURA_0137_DATABASE_URL:?fresh isolated PostgreSQL URL required}
+    AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest
+    -p no:cacheprovider services/aura-core/tests/test_workflow_run_recovery.py -q
+    --junitxml=.local-state/aura0150-workflow-recovery.xml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

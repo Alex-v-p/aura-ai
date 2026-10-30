@@ -1,0 +1,71 @@
+agent: integration_maintainer
+work_item: AURA-0150
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0150-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0150-architecture.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The complete Core handoff and both required schema-valid PASS reviews were
+      verified; no unresolved blocking finding remains.
+    - >-
+      The approved AURA-0150 work item passed validation before archival, and
+      the archived integrated work item preserves its acceptance criteria and
+      required-check inventory.
+    - >-
+      Changed-path validation passed for the implementation, handoff, review,
+      and work-item paths within the authorized AURA-0150 scope.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py reported no
+      contract changes.
+    - python3 tooling/architecture/validate-import-boundaries.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      Baseline protection was run in an isolated detached integration worktree
+      containing only AURA-0150 changes and reported no protected baseline or
+      threshold changes; the shared-worktree failure was only the unrelated
+      pre-existing AURA-0148 release threshold edit.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/tests/test_workflow_run_recovery.py
+      passed.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/tests/test_workflow_run_recovery.py passed with no
+      diagnostics.
+    - git diff --check passed.
+    - >-
+      The exact focused isolated PostgreSQL recovery command passed four tests
+      against a fresh pgvector-backed disposable database.
+    - >-
+      The exact full recovery-file command passed seven tests against the same
+      isolated migrated PostgreSQL database.
+    - >-
+      The exact repeated full recovery-file command with JUnit output passed
+      seven tests and produced the requested local report.
+    - >-
+      The AURA-0150 review records and integration report conform to their
+      repository schemas; no generated client, contract, migration, deployment,
+      provider, frontend, Observatory, or protected baseline output changed.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared feature worktree intentionally retains unrelated uncommitted
+    AURA-0148 implementation and validation files; they were not staged or
+    modified by this integration and remain for the AURA-0148 integration pass.
+  - >-
+    The worker handoff records the expected shared-worktree baseline-protection
+    failure; the integration recheck isolated AURA-0150 and confirmed no
+    protected path changed.
