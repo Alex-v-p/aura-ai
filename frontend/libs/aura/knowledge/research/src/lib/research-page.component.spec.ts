@@ -31,4 +31,10 @@ describe('ResearchPageComponent acceptance regressions', () => {
     expect(component).toContain('if (this.activityStarted() && this.selectedId() === id)');
     expect(component).toContain('this.store.clearAdmissionHandoff(); this.store.clearSelection()');
   });
+
+  it('keeps the shell as the only main landmark', () => {
+    expect(template).not.toMatch(/<main\b/);
+    expect(template).toContain('<div class="research-page" aria-labelledby="research-heading">');
+    expect(template).toContain('<h1 id="research-heading">Research</h1>');
+  });
 });

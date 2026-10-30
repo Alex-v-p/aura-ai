@@ -1,0 +1,190 @@
+id: AURA-0151
+title: Restore single main landmarks on governed research routes
+status: integrated
+change_class: bugfix
+intent: >
+  Remove nested main landmarks from the Research, Task Center, and Artifacts
+  route templates so the Aura shell remains the one document main landmark,
+  while preserving each route's styling, accessible heading relationship,
+  labels, and product behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/governed-research-artifacts-and-tasks.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - work-items/archived/AURA-0147.yaml
+    - work-items/active/AURA-0148.yaml
+    - >-
+      AuraShellComponent already owns the document main landmark through
+      main#main-content. ResearchPageComponent TasksPageComponent and
+      ArtifactsPageComponent currently render another main as their outer route
+      container, producing invalid nested main landmarks when composed by the
+      shell.
+    - >-
+      This is a local semantic accessibility correction inside existing Aura
+      feature libraries. Replacing only the three route-container elements with
+      non-main semantic containers does not change a repository boundary,
+      contract, route, deployable, dependency, or architectural decision, so no
+      new ADR is required.
+    - >-
+      AURA-0148 accessibility and aggregate files are concurrent validation
+      work and must not be edited by AURA-0151, except for the minimal additive
+      testMatch alternative in the shared Aura Web Playwright config required
+      to discover aura0151-landmarks.spec.ts. AURA-0151 supplies its own
+      narrowly scoped full-page landmark and axe compatibility test; no other
+      Playwright configuration behavior may change.
+  contracts: []
+feature_references:
+  - WEB-001
+  - WEB-002
+  - WEB-003
+  - WEB-004
+  - WEB-005
+  - WEB-006
+  - WEB-007
+ownership_zones:
+  - frontend.aura.knowledge.research
+  - frontend.aura.activity.tasks
+  - frontend.aura.knowledge.artifacts
+  - frontend.aura-web.landmark-accessibility
+  - frontend.test-infrastructure
+  - delivery.aura0151
+allowed_paths:
+  - work-items/active/AURA-0151.yaml
+  - work-items/archived/AURA-0151.yaml
+  - work-items/handoffs/AURA-0151-*.yaml
+  - work-items/reviews/AURA-0151-*.yaml
+  - work-items/integration/AURA-0151.yaml
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.html
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.spec.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.html
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.spec.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.html
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.spec.ts
+  - frontend/apps/aura-web-e2e/playwright.config.ts
+  - frontend/apps/aura-web-e2e/src/aura0151-landmarks.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - deploy/**
+  - evaluations/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - tooling/**
+  - frontend/apps/aura-web/src/**
+  - frontend/apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+  - frontend/apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
+  - frontend/libs/platform/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation:
+    - frontend_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 1
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - >-
+    AuraShellComponent remains the only main landmark on /research /tasks and
+    /artifacts, and each route template uses a non-main outer container with its
+    existing research-page tasks-page or artifacts-page class and existing
+    aria-labelledby relationship.
+  - >-
+    The visible Research Task Center and Artifacts heading labels and levels are
+    unchanged, and no class style selector focus behavior route behavior state
+    behavior or product copy changes.
+  - >-
+    Focused component regressions prove that none of the three route templates
+    renders a main element and that each retains its page class and heading
+    association.
+  - >-
+    A dedicated real-browser test loads /research /tasks and /artifacts through
+    the Aura shell, asserts exactly one document main landmark on every route,
+    and runs AxeBuilder against the complete page with its default rule set and
+    no include exclude disableRules or withRules restriction; every route has
+    zero axe violations.
+  - >-
+    The shared Aura Web Playwright config changes only by adding
+    aura0151-landmarks.spec.ts to testMatch discovery; its server projects
+    workers reporters timeouts artifacts and existing test matches remain
+    unchanged.
+  - >-
+    The three affected feature-library lint and unit suites and the Aura Web
+    production build pass without changes to dependencies generated clients
+    contracts backend deploy files other AURA-0148 files or protected
+    baselines.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0151.yaml
+  - >-
+    python3 tooling/architecture/validate-changed-paths.py --work-item
+    work-items/active/AURA-0151.yaml --path work-items/active/AURA-0151.yaml
+    --path frontend/libs/aura/knowledge/research/src/lib/research-page.component.html
+    --path frontend/libs/aura/knowledge/research/src/lib/research-page.component.spec.ts
+    --path frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.html
+    --path frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.spec.ts
+    --path frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.html
+    --path frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.spec.ts
+    --path frontend/apps/aura-web-e2e/playwright.config.ts
+    --path frontend/apps/aura-web-e2e/src/aura0151-landmarks.spec.ts
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0151.yaml
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0151.yaml
+  - >-
+    cd frontend && NX_DAEMON=false pnpm exec nx run-many -t lint test
+    --projects=aura-research,aura-tasks,aura-artifacts
+  - cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production
+  - >-
+    cd frontend && pnpm exec playwright test --config
+    apps/aura-web-e2e/playwright.config.ts
+    apps/aura-web-e2e/src/aura0151-landmarks.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

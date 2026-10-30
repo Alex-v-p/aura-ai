@@ -19,4 +19,10 @@ describe('ArtifactsPageComponent acceptance regressions', () => {
     expect(styles).toContain('overflow-wrap:anywhere');
     expect(styles).not.toContain('overflow-x:hidden');
   });
+
+  it('keeps the shell as the only main landmark', () => {
+    expect(template).not.toMatch(/<main\b/);
+    expect(template).toContain('<div class="artifacts-page" aria-labelledby="artifacts-heading">');
+    expect(template).toContain('<h1 id="artifacts-heading">Artifacts</h1>');
+  });
 });

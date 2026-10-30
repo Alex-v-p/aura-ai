@@ -1,0 +1,18 @@
+agent: aura_ux_ui_reviewer
+work_item: AURA-0151
+verdict: PASS
+checked:
+  - >-
+    Advisory UX review confirms the Research, Task Center, and Artifacts route
+    containers preserve visible headings, heading levels, labels, styles,
+    focus behavior, and route behavior while removing invalid nested main
+    landmarks.
+  - >-
+    Advisory browser evidence covers desktop, tablet, and mobile shell routes,
+    exactly one main landmark per route, and a complete-page default axe scan
+    with zero violations.
+  - >-
+    The change introduces no new copy, interaction, motion, color, responsive,
+    or privacy surface and does not weaken existing AURA-0148 accessibility
+    coverage.
+findings: []

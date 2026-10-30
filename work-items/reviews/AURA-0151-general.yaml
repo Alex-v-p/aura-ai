@@ -1,0 +1,23 @@
+agent: general_reviewer
+work_item: AURA-0151
+verdict: PASS
+checked:
+  - >-
+    Reviewed the three route-template changes and their focused component
+    regressions; each route now uses a non-main container while retaining its
+    existing class, heading id, label, and product copy.
+  - >-
+    Reviewed the dedicated real-browser coverage; /research, /tasks, and
+    /artifacts are exercised through the Aura shell across desktop, tablet,
+    and mobile projects with exactly one main landmark and a complete-page
+    default AxeBuilder scan.
+  - >-
+    Work-item, changed-path, contract, frontend-boundary, module-registry,
+    repository-shape, lint, unit-test, production-build, Playwright, and
+    diff-check validations passed; baseline protection was rechecked in an
+    isolated worktree without concurrent AURA-0148 changes.
+  - >-
+    The shared Playwright configuration receives only the additive discovery
+    entry required for aura0151-landmarks.spec.ts; existing server, project,
+    worker, reporter, timeout, and artifact behavior remains unchanged.
+findings: []

@@ -1,0 +1,21 @@
+agent: architecture_guardian
+work_item: AURA-0151
+verdict: PASS
+checked:
+  - >-
+    Scope remains within the existing Aura research, Task Center, Artifacts,
+    and Aura Web E2E ownership zones; no contracts, services, deployables,
+    dependencies, generated clients, or repository boundaries changed.
+  - >-
+    AuraShellComponent remains the document main owner; the three feature
+    route containers are div elements preserving their established styling and
+    aria-labelledby relationships.
+  - >-
+    The Playwright configuration change is a minimal additive testMatch entry
+    for the authorized AURA-0151 browser regression and does not alter shared
+    server or execution policy.
+  - >-
+    Work-item, changed-path, contract, frontend-boundary, module-registry,
+    repository-shape, production-build, focused browser, and diff checks
+    passed; protected-baseline validation was clean in an isolated worktree.
+findings: []

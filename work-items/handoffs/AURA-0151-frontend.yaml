@@ -1,0 +1,63 @@
+agent: frontend_worker
+work_item: AURA-0151
+status: complete
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: null
+  worktree: shared-feature-worktree
+scope:
+  ownership_zone: frontend.aura.knowledge.research, frontend.aura.activity.tasks, frontend.aura.knowledge.artifacts, frontend.aura-web.landmark-accessibility
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.html
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.spec.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.html
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.spec.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.html
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura0151-landmarks.spec.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability: {components: [], metrics_added: []}
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0151.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0151.yaml with all eight scoped paths
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0151.yaml
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - NX_DAEMON=false pnpm exec nx run-many -t lint test --projects=aura-research,aura-tasks,aura-artifacts
+    - NX_DAEMON=false pnpm exec nx run aura-web:build:production
+    - >-
+      pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts
+      apps/aura-web-e2e/src/aura0151-landmarks.spec.ts: 3 passed across
+      desktop, tablet, and mobile with the repository config
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Replaced only the three nested route-container main elements with div
+    containers, preserving each product class, aria-labelledby relationship,
+    headings, styles, focus behavior, and route behavior.
+  - >-
+    Added focused component regressions asserting no route-template main,
+    preserved page class, heading id, and heading label.
+  - >-
+    Added a dedicated real-browser test that loads all three routes through the
+    Aura shell, asserts exactly one main landmark, and runs AxeBuilder over the
+    complete page with its default rule set.
+  - >-
+    Added only aura0151-landmarks.spec.ts to the existing shared Playwright
+    testMatch expression; all existing AURA-0148 discovery and server behavior
+    remains unchanged.
+risks:
+  - >-
+    The shared feature worktree retains concurrent AURA-0148 changes; baseline
+    protection was rerun in an isolated detached worktree containing only
+    AURA-0151 changes and reported no protected baseline or threshold changes.
+unresolved: []
