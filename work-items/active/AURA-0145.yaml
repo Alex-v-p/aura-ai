@@ -1,6 +1,6 @@
 id: AURA-0145
 title: Execute durable governed web research
-status: draft
+status: approved
 change_class: repository_governance
 intent: >
   Add a Core-owned durable research aggregate and coordinator that admits bounded
@@ -30,7 +30,8 @@ sources_of_truth:
     - work-items/active/AURA-0142.yaml
     - work-items/active/AURA-0143.yaml
     - work-items/active/AURA-0144.yaml
-    - AURA-0145 must not enter implementation until AURA-0142 through AURA-0144 are integrated and the two AURA-0144 owner decisions are closed.
+    - AURA-0142 through AURA-0144 are integrated; AURA-0144 is explicitly limited to disabled-only provider development under the 2026-10-30 owner decision.
+    - AURA-0145 implementation and deterministic tests may use in-memory synthetic or explicitly isolated provider fixtures. Real provider profiles admission and outbound research remain disabled and are not acceptance evidence until the separately governed egress and image-provenance gates are satisfied.
     - Research is Core Knowledge truth; Observatory remains optional and cannot participate in research correctness availability authorization cancellation deletion or settlement.
     - Provider calls use only the reviewed AURA-0144 ports; artifact writes use only the generated-artifact public application API; Task Center uses only the research source public snapshot and command boundary.
     - Conversation append notification and web.research tool admission remain exclusively AURA-0146 scope.
@@ -229,5 +230,4 @@ required_checks:
   - git diff --check
 baseline_changes_allowed: false
 human_approval_required: true
-open_decisions:
-  - Implementation remains dependency-blocked until AURA-0144 records owner authorization for the enforcing controlled-DNS public-TCP-443 egress dataplane and the final provider image registry signing and provenance mechanism.
+open_decisions: []
