@@ -4,6 +4,7 @@ status: integrated
 integrated_commits:
   - 146632b
   - cad38ed
+  - 1405329
 reviews:
   - reviewer: general_reviewer
     status: PASS
@@ -26,13 +27,17 @@ checks:
       disabled-only owner decision explicitly defers production egress and
       provider-image publication.
     - >-
+      The final feature branch is clean. Commit-scoped changed-path validation
+      for the AURA-0144 metadata checkpoint 1405329 passed, and no uncommitted
+      branch paths remain to collide with the provider ownership zone.
+    - >-
       All four implementation handoffs and all four required review verdicts
       are schema-valid; review findings are empty and the partial handoffs
       retain only future deployment enablement gates.
     - >-
       python3 tooling/architecture/validate-changed-paths.py --work-item
-      work-items/active/AURA-0144.yaml passed for the current AURA-0144
-      metadata changes.
+      work-items/active/AURA-0144.yaml reports no changed paths on the clean
+      branch; commit-scoped validation passed for the reviewed checkpoint.
     - >-
       Architecture, contract-change, import-boundary, service-isolation,
       module-registry, repository-shape, observability, and baseline-protection
@@ -48,14 +53,18 @@ checks:
       The exact required AURA-0144 aggregate passed 133 tests; no provider,
       contract, security, limits, telemetry, or topology assertion failed.
     - >-
-      The full services/aura-core suite passed 1819 tests with 124
+      The full services/aura-core suite passed 2081 tests with 124
       dependency-gated skips and one pre-existing Authlib deprecation warning.
     - >-
       docker compose -f compose.yaml -f deploy/compose/research-providers.yaml
       config --quiet passed.
     - git diff --check passed.
+    - >-
+      The exact required AURA-0144 aggregate was rerun and passed 133 tests;
+      no provider, contract, security, limits, telemetry, or topology
+      assertion failed.
   failed: []
-repository_clean: false
+repository_clean: true
 changed_paths_valid: true
 remaining_risks:
   - >-

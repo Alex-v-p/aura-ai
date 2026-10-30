@@ -1,6 +1,6 @@
 id: AURA-0142
 title: Add Core generated text artifacts
-status: approved
+status: integrated
 change_class: feature
 intent: >
   Implement the Core-owned generated text artifact aggregate, immutable

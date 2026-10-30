@@ -1,6 +1,6 @@
 agent: integration_maintainer
 work_item: AURA-0142
-status: blocked
+status: integrated
 integrated_commits:
   - 7d7e0e3
 reviews:
@@ -28,6 +28,10 @@ checks:
       Reviewed AURA-0142 commit 7d7e0e3 and all four recorded PASS verdicts;
       no unresolved slice finding remains.
     - >-
+      Commit-scoped changed-path validation for 7d7e0e3 passed for all 29
+      AURA-0142 paths; the final feature branch is clean, so the branch-wide
+      changed-path validator has no uncommitted paths to validate.
+    - >-
       Testing AppState composition creates GeneratedArtifactService and
       exposes every reviewed artifact route through OpenAPI.
     - >-
@@ -38,19 +42,24 @@ checks:
     - python3 tooling/architecture/validate-import-boundaries.py
     - python3 tooling/architecture/validate-service-isolation.py
     - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-work-item.py passed.
+    - python3 tooling/architecture/validate-contract-changes.py reported no
+      contract changes.
+    - python3 tooling/architecture/validate-generated-sync.py passed.
+    - python3 tooling/architecture/validate-observability.py passed.
+    - python3 tooling/architecture/validate-baseline-protection.py skipped with
+      no protected baseline changes.
     - git diff --check
+    - >-
+      The exact isolated AURA-0142 artifact and migration suite passed 63 tests
+      with no skips against the repository-supported disposable PostgreSQL
+      dependency.
+    - docker compose config --quiet passed.
+    - >-
+      The aggregate full services/aura-core suite passed 2081 tests with 124
+      existing dependency-gated skips and one pre-existing Authlib warning.
   failed:
-    - >-
-      Branch-wide changed-path and contract validation cannot be scoped to
-      AURA-0142 while concurrent AURA-0144 provider changes are uncommitted;
-      the validator correctly reports those paths as outside AURA-0142.
-    - >-
-      Final aggregate acceptance is held with AURA-0144's unresolved external
-      egress-enforcement and image-provenance deployment gates.
-repository_clean: false
-changed_paths_valid: false
-remaining_risks:
-  - >-
-    Integration composition is uncommitted in the shared worktree and must be
-    included only in a reviewed integration checkpoint after AURA-0144 is
-    resolved or explicitly returned to its owner.
+    []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks: []

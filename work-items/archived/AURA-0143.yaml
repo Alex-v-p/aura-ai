@@ -1,6 +1,6 @@
 id: AURA-0143
 title: Add the federated durable task projection
-status: approved
+status: integrated
 change_class: feature
 intent: >
   Implement an execution-owned owner-private Task Center read projection over
