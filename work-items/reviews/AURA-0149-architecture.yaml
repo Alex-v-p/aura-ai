@@ -1,0 +1,10 @@
+agent: architecture_guardian
+work_item: AURA-0149
+verdict: PASS
+checked:
+  - The correction is confined to the authorized Core migration and regression-test ownership zone.
+  - No public contract, generated client, service, provider, frontend, Observatory, deployment, or protected baseline path changed.
+  - Migration 0033 retains predecessor 0032, additive research-delivery schema changes, and the disabled downgrade posture.
+  - Import boundaries, service isolation, module registry, repository shape, work-item, and contract-change validation pass.
+  - The separate unchanged AURA-0068 document SQL check passed against a fresh disposable PostgreSQL database.
+findings: []

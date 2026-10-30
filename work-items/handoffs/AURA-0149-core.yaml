@@ -1,0 +1,125 @@
+agent: core_worker
+work_item: AURA-0149
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0149_core
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: services.aura-core.interaction.agent-revision-migration
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0033_research_completion_delivery.py
+  - services/aura-core/tests/test_aura0149_research_delivery_migration.py
+contracts:
+  changed: false
+migrations:
+  changed: true
+  revision: 0033_research_delivery
+  predecessor: 0032_governed_research
+observability:
+  components: []
+  metrics_added: []
+  notes: >-
+    Migration diagnostics remain exception-only and use no research content,
+    citations, artifacts, owner values, credentials, or fetched content.
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/migrations/versions/0033_research_completion_delivery.py
+      services/aura-core/tests/test_aura0149_research_delivery_migration.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/migrations/versions/0033_research_completion_delivery.py
+      services/aura-core/tests/test_aura0149_research_delivery_migration.py
+    - >-
+      AURA_0149_MIGRATION_DATABASE_URL=postgresql+psycopg://aura_fixture:fixture-only@127.0.0.1:55432/aura_fixture
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0149_research_delivery_migration.py -q
+      (4 passed on the first run and 4 passed on an immediate second run
+      against the same disposable database; cleanup restored the document
+      predecessor and removed every synthetic row)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0149_research_delivery_migration.py
+      services/aura-core/tests/test_migration_0033_research_completion_delivery.py
+      services/aura-core/tests/test_research_delivery*.py -q
+      (58 passed against a fresh disposable PostgreSQL database)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_migrations.py
+      services/aura-core/tests/test_migration_0033_research_completion_delivery.py
+      services/aura-core/tests/test_research_delivery*.py -q
+      (62 passed)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0149.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0149.yaml
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - git diff --check
+  failed:
+    - >-
+      Repository-wide changed-path validation sees unrelated uncommitted
+      AURA-0148 deploy, evaluation, frontend, Observatory, and handoff paths,
+      which are outside this work item's allowed paths.
+    - >-
+      Baseline protection sees the unrelated uncommitted
+      evaluations/research/release-thresholds.yaml change from AURA-0148.
+    - >-
+      The required full pyright glob reports 18 pre-existing diagnostics in
+      test_research_delivery.py (lines 121, 129, 346, 588) and
+      test_research_delivery_evaluation.py (lines 67-69, 73, 84-86, 90,
+      124, 166, 186, and 188). They are outside this work item's changed
+      lines and forbidden to edit. The owned migration and new regression
+      file pass pyright independently (0 errors).
+    - >-
+      AURA_0068_DATABASE_URL was not provided, so the required separate
+      document SQL PostgreSQL check could not run. The AURA-0149 live suite
+      used the disposable AURA-0148 Compose PostgreSQL endpoint and passed.
+decisions:
+  - >-
+    The canonical document predecessor is identified by its immutable UUID,
+    not numeric revision 4. The profile advances only from that predecessor.
+  - >-
+    Policy and agent numeric revisions are allocated independently as the next
+    owner-scoped value under a PostgreSQL advisory lock and locked profile row.
+    Existing rows are never updated, deleted, or repurposed.
+  - >-
+    Canonical predecessor and partially existing research seeds are validated
+    for owner binding, immutable lineage, exact bounded scopes, limits, and
+    grants; inconsistent state raises before authority-widening writes.
+  - >-
+    Missing canonical profiles, NULL current revision pointers, missing
+    predecessors, partial canonical rows, and inconsistent seed grants/scopes/
+    limits all fail closed. PostgreSQL transaction rollback leaves no partial
+    authority, and the profile is never deleted by regression cleanup.
+  - >-
+    Policy allocation filters the exact empty principal issuer/subject and
+    canonical profile, while agent allocation filters the canonical profile;
+    unrelated owners and custom profiles cannot consume either successor
+    number.
+  - >-
+    Every live regression path cleans up in finally, including concurrent
+    seeding. Cleanup restores the canonical document pointer/version and
+    removes the canonical and synthetic policy, grant, agent-revision, and
+    custom-profile rows, making repeated full-file runs safe on one database.
+  - >-
+    The regression uses synthetic UUIDs and metadata only. The optional live
+    test preserves an occupied revision-5 policy and agent row, asserts
+    collision-free revision-6 successors, and re-enters the migration.
+risks:
+  - >-
+    The required separate AURA-0068 document SQL run remains pending because
+    no AURA_0068_DATABASE_URL was provided. No provider or public artifact was
+    provisioned or published.
+unresolved:
+  - >-
+    Integration must rerun the work-item changed-path and baseline validators
+    after the unrelated AURA-0148 files are committed or isolated, then obtain
+    General, Architecture, and Security/Privacy review before checkpointing.

@@ -2,6 +2,8 @@
 # ruff: noqa: E501
 
 import uuid
+from collections.abc import Mapping
+from typing import Any, NoReturn, cast
 
 from alembic import op
 from sqlalchemy import text
@@ -15,6 +17,308 @@ _NAMESPACE = uuid.UUID("a8a6b450-20fb-4c6a-b0af-e7cb0f9c7b8a")
 _GENERAL_AGENT = uuid.uuid5(_NAMESPACE, "general-assistant")
 _GENERAL_POLICY = uuid.uuid5(_NAMESPACE, "general-assistant-tool-policy-5")
 _GENERAL_REVISION = uuid.uuid5(_NAMESPACE, "general-assistant-revision-5")
+_GENERAL_DOCUMENT_POLICY = uuid.uuid5(_NAMESPACE, "general-assistant-tool-policy-4")
+_GENERAL_DOCUMENT_REVISION = uuid.uuid5(_NAMESPACE, "general-assistant-revision-4")
+
+_DOCUMENT_GRANTS = (
+    ("memory.search", 1),
+    ("document.search", 1),
+    ("reminder.create", 1),
+    ("reminder.list", 1),
+    ("reminder.inspect", 1),
+    ("reminder.series.create", 1),
+    ("reminder.reschedule", 1),
+    ("reminder.series.update", 1),
+    ("reminder.series.pause", 1),
+    ("reminder.series.resume", 1),
+    ("reminder.cancel", 1),
+)
+_RESEARCH_GRANTS = (*_DOCUMENT_GRANTS, ("web.research", 1))
+_DOCUMENT_SCOPES = ("memory:read", "documents:read", "reminders:read", "reminders:write")
+_RESEARCH_SCOPES = ("memory:read", "documents:read", "research:run", "reminders:read", "reminders:write")
+
+
+def _fail_closed(reason: str) -> NoReturn:
+    raise RuntimeError(f"0033 research seed refused unsafe state: {reason}")
+
+
+def _ordered_grants(bind: Any, policy_id: uuid.UUID) -> list[tuple[str, int]]:
+    rows = bind.execute(
+        text(
+            "SELECT tool_id, tool_version FROM tool_policy_grants "
+            "WHERE policy_id = :policy ORDER BY tool_id, tool_version"
+        ),
+        {"policy": policy_id},
+    ).all()
+    return [(str(row.tool_id), int(row.tool_version)) for row in rows]
+
+
+def _scopes(row: Mapping[Any, Any]) -> tuple[str, ...]:
+    value = row["permission_scopes"]
+    if not isinstance(value, list):
+        _fail_closed("canonical document policy scopes are not a string array")
+    values = cast(list[Any], value)
+    if any(not isinstance(item, str) for item in values):
+        _fail_closed("canonical document policy scopes are not a string array")
+    return tuple(cast(list[str], values))
+
+
+def _validate_document_predecessor(bind: Any, source: Mapping[Any, Any]) -> Mapping[Any, Any]:
+    if source["id"] != _GENERAL_DOCUMENT_REVISION:
+        _fail_closed("profile is not pinned to the canonical document predecessor")
+    if source["agent_profile_id"] != _GENERAL_AGENT:
+        _fail_closed("document predecessor belongs to another agent profile")
+    if source["tool_policy_revision_id"] != _GENERAL_DOCUMENT_POLICY:
+        _fail_closed("document predecessor is not pinned to the canonical policy")
+
+    policy = cast(Mapping[Any, Any] | None, bind.execute(
+        text(
+            "SELECT id, principal_issuer, principal_subject, agent_profile_id, revision, "
+            "max_calls_per_run, timeout_ms, retry_limit, permission_scopes "
+            "FROM tool_policy_revisions WHERE id = :id"
+        ),
+        {"id": _GENERAL_DOCUMENT_POLICY},
+    ).mappings().first())
+    if policy is None:
+        _fail_closed("canonical document policy is missing")
+    if (
+        policy["principal_issuer"] != ""
+        or policy["principal_subject"] != ""
+        or policy["agent_profile_id"] != _GENERAL_AGENT
+        or policy["revision"] <= 0
+        or policy["max_calls_per_run"] != 1
+        or policy["timeout_ms"] != 30_000
+        or policy["retry_limit"] != 0
+        or _scopes(policy) != _DOCUMENT_SCOPES
+    ):
+        _fail_closed("canonical document policy owner, limits, or scopes are inconsistent")
+    if _ordered_grants(bind, _GENERAL_DOCUMENT_POLICY) != sorted(_DOCUMENT_GRANTS):
+        _fail_closed("canonical document policy grants are inconsistent")
+    return policy
+
+
+def _validate_existing_research_seed(bind: Any, source: Mapping[Any, Any]) -> bool:
+    """Validate an already-created canonical seed without mutating it."""
+
+    policy = cast(Mapping[Any, Any] | None, bind.execute(
+        text(
+            "SELECT id, principal_issuer, principal_subject, agent_profile_id, revision, "
+            "max_calls_per_run, timeout_ms, retry_limit, permission_scopes "
+            "FROM tool_policy_revisions WHERE id = :id"
+        ),
+        {"id": _GENERAL_POLICY},
+    ).mappings().first())
+    revision = cast(Mapping[Any, Any] | None, bind.execute(
+        text(
+            "SELECT id, agent_profile_id, revision, display_name, system_prompt, purpose, "
+            "instructions, persona_revision_id, prompt_bundle_revision_id, "
+            "model_policy_revision_id, memory_policy_revision_id, tool_policy_revision_id "
+            "FROM agent_revisions WHERE id = :id"
+        ),
+        {"id": _GENERAL_REVISION},
+    ).mappings().first())
+    if policy is None and revision is None:
+        return False
+    if policy is None or revision is None:
+        _fail_closed("canonical research policy and revision are only partially present")
+    if (
+        policy["principal_issuer"] != ""
+        or policy["principal_subject"] != ""
+        or policy["agent_profile_id"] != _GENERAL_AGENT
+        or policy["revision"] <= 0
+        or policy["max_calls_per_run"] != 1
+        or policy["timeout_ms"] != 30_000
+        or policy["retry_limit"] != 0
+        or _scopes(policy) != _RESEARCH_SCOPES
+        or _ordered_grants(bind, _GENERAL_POLICY) != sorted(_RESEARCH_GRANTS)
+    ):
+        _fail_closed("canonical research policy is inconsistent")
+    source_fields = (
+        "display_name",
+        "system_prompt",
+        "purpose",
+        "instructions",
+        "persona_revision_id",
+        "prompt_bundle_revision_id",
+        "model_policy_revision_id",
+        "memory_policy_revision_id",
+    )
+    if (
+        revision["agent_profile_id"] != _GENERAL_AGENT
+        or revision["tool_policy_revision_id"] != _GENERAL_POLICY
+        or any(revision[field] != source[field] for field in source_fields)
+    ):
+        _fail_closed("canonical research agent revision is inconsistent")
+    return True
+
+
+def _next_owner_revision(bind: Any, table: str) -> int:
+    if table not in {"agent_revisions", "tool_policy_revisions"}:
+        raise ValueError("unsupported revision table")
+    owner_filter = (
+        "principal_issuer = '' AND principal_subject = '' AND "
+        "agent_profile_id = :agent"
+        if table == "tool_policy_revisions"
+        else "agent_profile_id = :agent"
+    )
+    return int(
+        bind.execute(
+            text(f"SELECT COALESCE(MAX(revision), 0) + 1 FROM {table} WHERE {owner_filter}"),
+            {"agent": _GENERAL_AGENT},
+        ).scalar_one()
+    )
+
+
+def _seed_research_delivery(bind: Any) -> None:
+    """Seed the immutable web-research successor under the canonical profile."""
+
+    bind.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": "aura:0033:general-assistant-research-seed"},
+    )
+    profile = bind.execute(
+        text(
+            "SELECT id, current_revision_id FROM agent_profiles "
+            "WHERE id = :agent FOR UPDATE"
+        ),
+        {"agent": _GENERAL_AGENT},
+    ).mappings().first()
+    if profile is None:
+        _fail_closed("canonical general-assistant profile is missing")
+    if profile["current_revision_id"] is None:
+        _fail_closed("canonical general-assistant profile has no current revision")
+
+    current_revision_id = profile["current_revision_id"]
+    source_row = cast(
+        Mapping[Any, Any] | None,
+        bind.execute(
+            text(
+                "SELECT id, agent_profile_id, display_name, system_prompt, purpose, instructions, "
+                "persona_revision_id, prompt_bundle_revision_id, model_policy_revision_id, "
+                "memory_policy_revision_id, tool_policy_revision_id "
+                "FROM agent_revisions WHERE id = :revision"
+            ),
+            {"revision": current_revision_id},
+        ).mappings().first(),
+    )
+    if current_revision_id == _GENERAL_REVISION:
+        if source_row is None:
+            _fail_closed("profile points to a missing canonical research revision")
+        document_source = cast(
+            Mapping[Any, Any] | None,
+            bind.execute(
+                text(
+                    "SELECT id, agent_profile_id, tool_policy_revision_id, display_name, "
+                    "system_prompt, purpose, instructions, persona_revision_id, "
+                    "prompt_bundle_revision_id, model_policy_revision_id, memory_policy_revision_id "
+                    "FROM agent_revisions WHERE id = :revision"
+                ),
+                {"revision": _GENERAL_DOCUMENT_REVISION},
+            ).mappings().first(),
+        )
+        if document_source is None:
+            _fail_closed("canonical document predecessor is missing")
+        _validate_document_predecessor(bind, document_source)
+        _validate_existing_research_seed(bind, document_source)
+        return
+    if current_revision_id != _GENERAL_DOCUMENT_REVISION:
+        _fail_closed("built-in profile is not pinned to the canonical document predecessor")
+    if source_row is None:
+        _fail_closed("canonical document predecessor is missing")
+
+    _validate_document_predecessor(bind, source_row)
+    if _validate_existing_research_seed(bind, source_row):
+        # A partially applied migration may have created both immutable rows but
+        # not yet advanced the profile. Only the canonical predecessor is
+        # eligible for this pointer transition.
+        bind.execute(
+            text(
+                "UPDATE agent_profiles SET current_revision_id = :revision, "
+                "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = :agent AND current_revision_id = :source"
+            ),
+            {
+                "revision": _GENERAL_REVISION,
+                "agent": _GENERAL_AGENT,
+                "source": _GENERAL_DOCUMENT_REVISION,
+            },
+        )
+        return
+
+    source_grants = sorted(_DOCUMENT_GRANTS)
+    if (
+        bind.execute(
+            text("SELECT id FROM tool_policy_revisions WHERE id = :id"),
+            {"id": _GENERAL_POLICY},
+        ).scalar_one_or_none()
+        is not None
+    ):
+        _fail_closed("canonical research policy appeared without a complete seed")
+
+    policy_revision = _next_owner_revision(bind, "tool_policy_revisions")
+    bind.execute(
+        text(
+            "INSERT INTO tool_policy_revisions "
+            "(id, principal_issuer, principal_subject, agent_profile_id, revision, "
+            "max_calls_per_run, timeout_ms, retry_limit, permission_scopes) "
+            "VALUES (:id, '', '', :agent, :revision, 1, 30000, 0, "
+            "CAST(:scopes AS JSONB))"
+        ),
+        {
+            "id": _GENERAL_POLICY,
+            "agent": _GENERAL_AGENT,
+            "revision": policy_revision,
+            "scopes": '["memory:read","documents:read","research:run",'
+            '"reminders:read","reminders:write"]',
+        },
+    )
+    for tool_id, tool_version in source_grants + [("web.research", 1)]:
+        bind.execute(
+            text(
+                "INSERT INTO tool_policy_grants (policy_id, tool_id, tool_version) "
+                "VALUES (:policy, :tool, :version)"
+            ),
+            {"policy": _GENERAL_POLICY, "tool": tool_id, "version": tool_version},
+        )
+
+    revision_number = _next_owner_revision(bind, "agent_revisions")
+    bind.execute(
+        text(
+            "INSERT INTO agent_revisions "
+            "(id, agent_profile_id, revision, display_name, system_prompt, purpose, instructions, "
+            "persona_revision_id, prompt_bundle_revision_id, model_policy_revision_id, "
+            "memory_policy_revision_id, tool_policy_revision_id) "
+            "VALUES (:id, :agent, :revision, :display_name, :system_prompt, :purpose, :instructions, "
+            ":persona_revision_id, :prompt_bundle_revision_id, :model_policy_revision_id, "
+            ":memory_policy_revision_id, :policy)"
+        ),
+        {
+            "id": _GENERAL_REVISION,
+            "agent": _GENERAL_AGENT,
+            "revision": revision_number,
+            "policy": _GENERAL_POLICY,
+            "display_name": source_row["display_name"],
+            "system_prompt": source_row["system_prompt"],
+            "purpose": source_row["purpose"],
+            "instructions": source_row["instructions"],
+            "persona_revision_id": source_row["persona_revision_id"],
+            "prompt_bundle_revision_id": source_row["prompt_bundle_revision_id"],
+            "model_policy_revision_id": source_row["model_policy_revision_id"],
+            "memory_policy_revision_id": source_row["memory_policy_revision_id"],
+        },
+    )
+    bind.execute(
+        text(
+            "UPDATE agent_profiles SET current_revision_id = :revision, "
+            "version = version + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = :agent AND current_revision_id = :source"
+        ),
+        {
+            "revision": _GENERAL_REVISION,
+            "agent": _GENERAL_AGENT,
+            "source": _GENERAL_DOCUMENT_REVISION,
+        },
+    )
 
 
 def upgrade() -> None:
@@ -33,67 +337,9 @@ def upgrade() -> None:
     op.execute(text("ALTER TABLE research_tasks ADD COLUMN IF NOT EXISTS delivery_claim_phase VARCHAR(24)"))
     op.execute(text("ALTER TABLE research_tasks ADD COLUMN IF NOT EXISTS delivery_claim_expires_at TIMESTAMPTZ"))
 
-    # Keep the document-only revision four immutable.  The new web grant is an
+    # Keep the document-only revision immutable. The new web grant is an
     # additive policy and agent revision so historical runs remain resolvable.
-    bind = op.get_bind()
-    source = bind.execute(
-        text("SELECT id FROM agent_revisions WHERE agent_profile_id = :agent AND revision = 4"),
-        {"agent": _GENERAL_AGENT},
-    ).scalar_one_or_none()
-    if source is not None:
-        source_row = bind.execute(
-            text(
-                "SELECT display_name, system_prompt, purpose, instructions, "
-                "persona_revision_id, prompt_bundle_revision_id, model_policy_revision_id, "
-                "memory_policy_revision_id FROM agent_revisions WHERE id = :revision"
-            ),
-            {"revision": source},
-        ).mappings().first()
-        if source_row is not None:
-            bind.execute(
-                text(
-                    "INSERT INTO tool_policy_revisions "
-                    "(id, principal_issuer, principal_subject, agent_profile_id, revision, "
-                    "max_calls_per_run, timeout_ms, retry_limit, permission_scopes) "
-                    "VALUES (:id, '', '', :agent, 5, 1, 30000, 0, "
-                    "jsonb_build_array('memory:read','documents:read','research:run',"
-                    "'reminders:read','reminders:write')) ON CONFLICT (id) DO NOTHING"
-                ),
-                {"id": _GENERAL_POLICY, "agent": _GENERAL_AGENT},
-            )
-            for tool_id in (
-                "memory.search", "document.search", "web.research", "reminder.create",
-                "reminder.list", "reminder.inspect", "reminder.series.create",
-                "reminder.reschedule", "reminder.series.update", "reminder.series.pause",
-                "reminder.series.resume", "reminder.cancel",
-            ):
-                bind.execute(
-                    text(
-                        "INSERT INTO tool_policy_grants (policy_id, tool_id, tool_version) "
-                        "VALUES (:policy, :tool, 1) ON CONFLICT DO NOTHING"
-                    ),
-                    {"policy": _GENERAL_POLICY, "tool": tool_id},
-                )
-            bind.execute(
-                text(
-                    "INSERT INTO agent_revisions "
-                    "(id, agent_profile_id, revision, display_name, system_prompt, purpose, instructions, "
-                    "persona_revision_id, prompt_bundle_revision_id, model_policy_revision_id, "
-                    "memory_policy_revision_id, tool_policy_revision_id) "
-                    "SELECT :id, :agent, 5, :display_name, :system_prompt, :purpose, :instructions, "
-                    ":persona_revision_id, :prompt_bundle_revision_id, :model_policy_revision_id, "
-                    ":memory_policy_revision_id, :policy "
-                    "WHERE NOT EXISTS (SELECT 1 FROM agent_revisions WHERE id = :id)"
-                ),
-                {"id": _GENERAL_REVISION, "agent": _GENERAL_AGENT, "policy": _GENERAL_POLICY, **dict(source_row)},
-            )
-            bind.execute(
-                text(
-                    "UPDATE agent_profiles SET current_revision_id = :revision, version = version + 1 "
-                    "WHERE id = :agent AND current_revision_id = :source"
-                ),
-                {"revision": _GENERAL_REVISION, "agent": _GENERAL_AGENT, "source": source},
-            )
+    _seed_research_delivery(op.get_bind())
 
     op.execute(
         text(

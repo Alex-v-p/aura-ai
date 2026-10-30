@@ -1,0 +1,176 @@
+id: AURA-0149
+title: Make research completion migration collision-safe
+status: approved
+change_class: bugfix
+intent: >
+  Restore deterministic clean and supported pre-upgrade PostgreSQL upgrades by
+  making the AURA-0146 built-in research tool-policy and agent-revision seed
+  tolerate an already occupied owner-scoped revision number without changing
+  immutable history, widening grants, or weakening migration idempotency.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/governed-research-artifacts-and-tasks.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/tools-automation-and-integrations.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0146.yaml
+    - work-items/active/AURA-0148.yaml
+    - The corrective change preserves the accepted AURA-0146 behavior and changes no public contract, provider, runtime policy, or research-delivery lifecycle.
+    - Existing tool-policy and agent revisions are immutable. An occupied owner-scoped revision number must not be overwritten, deleted, repurposed, or silently granted web.research@1.
+    - The migration must retain the canonical deterministic research policy and agent identifiers consumed by Core, derive collision-free owner-scoped numeric revisions, preserve every prior grant, add only the approved research grant and scope, and pin the profile only from the canonical document predecessor identifier.
+    - Missing, inconsistent, cross-owner, or otherwise unsafe seed state fails closed rather than widening authority or rewriting history.
+    - The defect was discovered when AURA-0148 reran the exact AURA-0143 document SQL check and PostgreSQL raised UniqueViolation for uq_tool_policy_owner_revision at general-agent revision 5.
+    - The required Pyright gate is scoped to the migration and AURA-0149 regression files changed by this corrective work item; pre-existing diagnostics in unchanged research-delivery tests remain outside this correction and are not rewritten to manufacture a clean baseline.
+  contracts: []
+feature_references:
+  - AGT-002
+  - AGT-006
+  - AGT-009
+  - RUN-014
+  - OPS-017
+  - DEV-027
+ownership_zones:
+  - services.aura-core.interaction.agent-revision-migration
+  - services.aura-core.interaction.research-delivery-migration
+  - evaluation.aura0149-migration-regression
+  - delivery.aura0149
+allowed_paths:
+  - work-items/active/AURA-0149.yaml
+  - work-items/archived/AURA-0149.yaml
+  - work-items/handoffs/AURA-0149-*.yaml
+  - work-items/reviews/AURA-0149-*.yaml
+  - work-items/integration/AURA-0149.yaml
+  - services/aura-core/migrations/versions/0033_research_completion_delivery.py
+  - services/aura-core/tests/test_migration_0033_research_completion_delivery.py
+  - services/aura-core/tests/test_aura0149_research_delivery_migration.py
+  - services/aura-core/tests/test_research_delivery*.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - frontend/**
+  - deploy/**
+  - evaluations/**
+  - tooling/**
+  - services/aura-observatory/**
+  - services/aura-research-static-fetcher/**
+  - services/aura-research-browser-fetcher/**
+  - services/aura-core/migrations/versions/0001_initial.py
+  - services/aura-core/migrations/versions/0002_idempotency.py
+  - services/aura-core/migrations/versions/0003_idempotency_issuer.py
+  - services/aura-core/migrations/versions/0004_agent_persona_revisions.py
+  - services/aura-core/migrations/versions/0005_persona_overrides.py
+  - services/aura-core/migrations/versions/0006_memory_conversation_provenance.py
+  - services/aura-core/migrations/versions/0007_conversation_metadata.py
+  - services/aura-core/migrations/versions/0008_memory_foundation.py
+  - services/aura-core/migrations/versions/0009_memory_processing.py
+  - services/aura-core/migrations/versions/0010_memory_recall_policies.py
+  - services/aura-core/migrations/versions/0011_memory_recall_modes.py
+  - services/aura-core/migrations/versions/0012_memory_personal_first.py
+  - services/aura-core/migrations/versions/0013_governed_tool_runtime.py
+  - services/aura-core/migrations/versions/0014_reminder_foundation.py
+  - services/aura-core/migrations/versions/0015_notification_delivery.py
+  - services/aura-core/migrations/versions/0016_approval_backed_reminder_tool.py
+  - services/aura-core/migrations/versions/0017_recurring_reminders.py
+  - services/aura-core/migrations/versions/0018_conversational_reminders.py
+  - services/aura-core/migrations/versions/0019_document_library.py
+  - services/aura-core/migrations/versions/0020_document_search_tool_citations.py
+  - services/aura-core/migrations/versions/0021_conversation_branching.py
+  - services/aura-core/migrations/versions/0022_conversation_attachments.py
+  - services/aura-core/migrations/versions/0023_evaluation_runner.py
+  - services/aura-core/migrations/versions/0024_calendar_read_foundation.py
+  - services/aura-core/migrations/versions/0025_notification_briefing_source.py
+  - services/aura-core/migrations/versions/0026_briefing_execution.py
+  - services/aura-core/migrations/versions/0027_workflow_contract_state.py
+  - services/aura-core/migrations/versions/0028_workflow_execution.py
+  - services/aura-core/migrations/versions/0029_generated_artifacts.py
+  - services/aura-core/migrations/versions/0030_task_projection.py
+  - services/aura-core/migrations/versions/0031_memory_reindex_task_version.py
+  - services/aura-core/migrations/versions/0032_governed_research.py
+  - services/aura-core/src/**
+  - services/aura-core/tests/test_document_sql.py
+  - pyproject.toml
+  - uv.lock
+  - compose.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.agents and interaction.research_delivery
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - An occupied policy revision must never receive the research grant unless it is the migration-created immutable successor with the exact approved grant set and execution limits.
+    - Existing built-in and custom agent revisions policies grants owner bindings run pins and historical rows remain byte-for-byte authoritative and are never rewritten or deleted.
+    - Collision handling remains owner-scoped deterministic and fail-closed for inconsistent identifiers ownership predecessor lineage or policy contents.
+    - Re-entry duplicate execution and concurrent upgrade attempts cannot duplicate grants create multiple successors repin an unrelated current revision or increment the profile version more than once.
+    - Migration diagnostics and tests use only synthetic identities and metadata and introduce no conversation research citation artifact credential or fetched-content capture.
+  data_classes:
+    - immutable built-in agent and tool-policy revision metadata
+    - exact-version tool grant identifiers and bounded execution limits
+    - synthetic isolated PostgreSQL migration fixtures
+required_agents:
+  implementation:
+    - core_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 1
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A fresh isolated PostgreSQL database upgrades from base through head with one Alembic head and without uq_tool_policy_owner_revision or agent-revision uniqueness failures.
+  - A supported database at 0032 with the built-in general agent pinned to the canonical immutable document successor and owner-scoped tool-policy and agent numeric revision 5 already occupied upgrades through 0033 without mutating deleting or widening either occupied row.
+  - The collision path creates exactly one new immutable built-in successor under the canonical research policy and agent identifiers, assigns collision-free owner-scoped numeric revisions, preserves the predecessor grants, adds only web.research@1 and research:run, and retains the approved one-call thirty-second zero-retry limits.
+  - The built-in profile advances only when its current revision identifier is the canonical document predecessor, regardless of that predecessor's numeric revision; custom agents historical conversations and runs remain pinned to their original revisions and receive no automatic research grant.
+  - >-
+    Repeating the upgrade target and directly re-entering the migration against
+    the same settled fixture is idempotent: no duplicate policy agent revision
+    or grant appears and the profile version changes at most once.
+  - An inconsistent canonical identifier owner binding predecessor or pre-existing grant set fails closed with no partial authority widening and no destructive repair.
+  - Static migration coverage preserves revision 0033_research_delivery its 0032_governed_research predecessor additive research-delivery schema and disabled downgrade posture.
+  - The exact AURA-0143 document SQL PostgreSQL check that exposed the failure passes unchanged against a separate clean disposable database.
+  - No public contract application runtime deployment frontend Observatory provider protected baseline dependency or other migration changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0149.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0149.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0149.yaml
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0149.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/migrations/versions/0033_research_completion_delivery.py services/aura-core/tests/test_migration_0033_research_completion_delivery.py services/aura-core/tests/test_aura0149_research_delivery_migration.py services/aura-core/tests/test_research_delivery*.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/migrations/versions/0033_research_completion_delivery.py services/aura-core/tests/test_migration_0033_research_completion_delivery.py services/aura-core/tests/test_aura0149_research_delivery_migration.py
+  - AURA_0149_MIGRATION_DATABASE_URL=${AURA_0149_MIGRATION_DATABASE_URL:?fresh isolated PostgreSQL URL required} AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0149_research_delivery_migration.py services/aura-core/tests/test_migration_0033_research_completion_delivery.py services/aura-core/tests/test_research_delivery*.py -q
+  - AURA_0068_DATABASE_URL=${AURA_0068_DATABASE_URL:?separate fresh isolated PostgreSQL URL required} AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_document_sql.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_migrations.py services/aura-core/tests/test_migration_0033_research_completion_delivery.py services/aura-core/tests/test_research_delivery*.py -q
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []
