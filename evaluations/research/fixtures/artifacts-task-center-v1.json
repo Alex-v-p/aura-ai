@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "fixtureRevision": "research-artifacts-task-center-v1",
+  "classification": "synthetic-metadata-only-projection",
+  "taskSources": ["research", "workflow_instance", "briefing_occurrence", "document_processing", "memory_reindex"],
+  "artifactCases": [
+    {"id": "integrity", "digestMatches": true, "immutableRevision": true, "expected": "pass"},
+    {"id": "foreign-owner", "ownerScopeValid": false, "expected": "deny"},
+    {"id": "delete-pending", "lifecycle": "deletion_pending", "previewBlocked": true, "expected": "blocked"},
+    {"id": "delete-complete", "lifecycle": "deleted", "objectAbsent": true, "expected": "absent"}
+  ],
+  "projectionCases": [
+    {"id": "backfill", "sourceVersion": 1, "rebuildVersion": 1, "expected": "converged"},
+    {"id": "stale-event", "sourceVersion": 3, "rebuildVersion": 2, "expected": "preserve-newer"},
+    {"id": "unknown-source", "expected": "unknown-no-commands"}
+  ]
+}

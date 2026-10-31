@@ -1,0 +1,2572 @@
+{
+  "schemaVersion": 1,
+  "description": "Exact broad-Core conditional skip inventory. Every entry carries dedicated green coverage or immutable reviewed integration evidence. Governed workflow recovery entries are mapped to the reviewed AURA-0150 integration report.",
+  "entries": [
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_aura0032_conversation_metadata_api.py::test_postgres_archive_and_cancel_overlap_has_valid_lock_order"
+      ],
+      "source": "services/aura-core/tests/system/test_aura0032_conversation_metadata_api.py:664",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for disposable PostgreSQL concurrency and pagination coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_aura0032_conversation_metadata_api.py::test_postgres_run_status_filter_batches_latest_lookup_and_paginates_sparse_matches"
+      ],
+      "source": "services/aura-core/tests/system/test_aura0032_conversation_metadata_api.py:714",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for disposable PostgreSQL concurrency and pagination coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_aura0091_runner.py::test_sql_runner_ledger_duplicate_lease_terminal_and_publication_recovery"
+      ],
+      "source": "services/aura-core/tests/system/test_aura0091_runner.py:64",
+      "reason": "set isolated AURA_TEST_DATABASE_URL for runner PostgreSQL acceptance",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_aura0091_runner.py::test_sql_runner_ledger_conflicts_cancellation_ordering_and_lease_fencing"
+      ],
+      "source": "services/aura-core/tests/system/test_aura0091_runner.py:182",
+      "reason": "set isolated AURA_TEST_DATABASE_URL for runner PostgreSQL acceptance",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_aura0091_runner.py::test_sql_receipt_and_pre_receipt_cancel_are_serialized"
+      ],
+      "source": "services/aura-core/tests/system/test_aura0091_runner.py:407",
+      "reason": "set isolated AURA_TEST_DATABASE_URL for runner PostgreSQL acceptance",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_agent_configuration_survives_fresh_app_and_idempotent_replays"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:109",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_run_sends_compiled_prompt_and_persists_matching_provenance"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:324",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_repository_hydrates_principal_and_paginates"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:383",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_recent_activity_order_ignores_metadata_and_non_user_events"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:411",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_fresh_production_uow_atomically_creates_cross_domain_rows"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:502",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_repository_event_round_trip_and_outbox_publish_mark"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:586",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_repository_idempotency_replay_and_mismatch_are_atomic"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:606",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_create_add_and_retry_stage_foreign_keys_in_order"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:622",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_legacy_add_run_without_branch_id_extends_root_after_alternative_branch"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:660",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_branch_and_regeneration_audits_are_principal_bound_and_idempotent"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:701",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_edit_branch_orders_message_before_run_and_rolls_back_atomically"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:791",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_context_never_includes_orphan_assistant_when_pair_exceeds_budget"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:921",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_repository_concurrent_same_key_has_one_committed_conversation"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:959",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_sql_run_claim_is_stable_across_redelivery"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:976",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable PostgreSQL database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_redis_session_backend_round_trip_and_idle_expiry"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:995",
+      "reason": "set AURA_TEST_VALKEY_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable Valkey database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_production_oidc_callback_uses_valkey_state_and_sets_session_cookie"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:1136",
+      "reason": "set AURA_TEST_VALKEY_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable Valkey database",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/system/test_production_adapters.py::test_nats_duplicate_command_and_producer_restart_are_deduplicated"
+      ],
+      "source": "services/aura-core/tests/system/test_production_adapters.py:1190",
+      "reason": "set AURA_TEST_NATS_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for a disposable NATS JetStream server",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_agent_memory_policy_sql.py::test_sql_policy_revision_allocation_counts_deterministic_blank_seed"
+      ],
+      "source": "services/aura-core/tests/test_agent_memory_policy_sql.py:162",
+      "reason": "set isolated AURA_TEST_DATABASE_URL for SQL policy allocation coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_approvals.py::test_postgresql_approval_create_is_atomic_and_metadata_only",
+        "services/aura-core/tests/test_approvals.py::test_postgresql_workflow_approval_lifecycle_is_origin_bound_and_not_run_resumed",
+        "services/aura-core/tests/test_approvals.py::test_postgresql_every_decision_attempt_emits_one_bounded_telemetry_record",
+        "services/aura-core/tests/test_approvals.py::test_postgresql_approval_race_and_duplicate_resume_are_exactly_once",
+        "services/aura-core/tests/test_approvals.py::test_postgresql_replay_cursor_is_append_stable_for_equal_timestamps",
+        "services/aura-core/tests/test_approvals.py::test_postgresql_same_owner_event_position_is_commit_stable",
+        "services/aura-core/tests/test_approvals.py::test_postgresql_mixed_owner_expiry_and_decisions_do_not_deadlock",
+        "services/aura-core/tests/test_approvals.py::test_postgresql_cancel_and_expiry_races_have_one_terminal_winner"
+      ],
+      "source": "services/aura-core/tests/test_approvals.py:1187",
+      "reason": "AURA_0056_DATABASE_URL is required for PostgreSQL approval coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_aura0101_nats_stream.py::test_generic_json_consumer_redelivers_after_restart"
+      ],
+      "source": "services/aura-core/tests/test_aura0101_nats_stream.py:106",
+      "reason": "AURA_TEST_NATS_URL is required for JetStream restart coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_aura0133_cancellation_authority.py::test_sql_briefing_spans_correlate_without_rejection"
+      ],
+      "source": "services/aura-core/tests/test_aura0133_cancellation_authority.py:146",
+      "reason": "AURA_0133_DATABASE_URL is required for PostgreSQL briefing coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_aura0149_research_delivery_migration.py::test_migration_0033_fails_closed_for_missing_null_and_inconsistent_state",
+        "services/aura-core/tests/test_aura0149_research_delivery_migration.py::test_migration_0033_preserves_history_allocates_by_owner_and_reenters",
+        "services/aura-core/tests/test_aura0149_research_delivery_migration.py::test_migration_0033_concurrent_reentry_keeps_one_successor"
+      ],
+      "source": "services/aura-core/tests/test_aura0149_research_delivery_migration.py:63",
+      "reason": "AURA_0149_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0149.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0149.yaml"
+        ],
+        "check": "AURA-0149 focused isolated PostgreSQL suite and migration/research aggregate"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_conversation_attachments.py::test_sql_attachment_lifecycle_and_topic_outbox_are_atomic"
+      ],
+      "source": "services/aura-core/tests/test_conversation_attachments.py:1679",
+      "reason": "AURA_0076_DATABASE_URL is required for SQL attachment coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_conversation_attachments.py::test_postgresql_message_links_flush_after_parent_and_rollback_together"
+      ],
+      "source": "services/aura-core/tests/test_conversation_attachments.py:1783",
+      "reason": "AURA_0077_DATABASE_URL is required for SQL attachment coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_conversation_attachments.py::test_postgresql_conversation_create_with_attachments_is_fully_atomic"
+      ],
+      "source": "services/aura-core/tests/test_conversation_attachments.py:1883",
+      "reason": "AURA_0077_DATABASE_URL is required for SQL attachment coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_document_sql.py::test_concurrent_sql_session_idempotency_is_optional_integration_coverage"
+      ],
+      "source": "services/aura-core/tests/test_document_sql.py:333",
+      "reason": "AURA_0068_DATABASE_URL is required for SQL concurrency coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "AURA-0143 workflow/document SQL command",
+        "tests": 69
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_generated_artifact_observability.py::test_sql_repository_create_append_replay_conflict_and_outbox_atomicity",
+        "services/aura-core/tests/test_generated_artifact_observability.py::test_sql_cleanup_duplicate_claim_lease_stale_token_settlement_and_outbox"
+      ],
+      "source": "services/aura-core/tests/test_generated_artifact_observability.py:234",
+      "reason": "AURA_TEST_DEPENDENCIES_ISOLATED=1 is required for live SQL evidence",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "AURA-0142 artifact PostgreSQL/Garage command",
+        "tests": 63
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_repository_matches_in_memory_owner_scope_and_immutable_revision_contract"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:447",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_status_and_pin_idempotent_replays_recheck_scope_in_both_adapters"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:491",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_concurrent_same_key_create_and_versioned_mutation_replay_exactly"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:557",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_correction_reason_secret_rejection_matches_adapters"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:604",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_relations_require_exact_scope_and_created_at_survives_later_mutations"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:622",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_purge_removes_revision_provenance_and_embeddings_transactionally"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:675",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_owner_optimistic_version_prevents_lost_updates"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:715",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_and_memory_embedding_metadata_are_per_revision_and_generation_unique"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:732",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_non_finite_embedding_vectors_are_rejected_before_adapter_mutation"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:791",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_search_filters_before_limit"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:835",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_purge_replays_scrubbed_receipt_and_removes_old_commands"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:852",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_postgres_terminal_processing_rows_are_content_free_and_owner_scoped"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:897",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_postgres_claim_paths_preserve_pinned_policy_snapshot"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:969",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_postgres_generation_owner_numbering_first_generation_completeness_and_fences"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:998",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_postgres_embedding_queue_is_idempotent_and_retry_rows_remain_owner_scoped"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1038",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_postgres_purge_scrubs_linked_candidate_outcome_embedding_and_retry_fence"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1109",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_candidate_decisions_replay_conflict_scrub_and_relations"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1178",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_legacy_review_candidate_approval_normalizes_action_and_decay_defaults"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1283",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_approval_queue_failure_is_repaired_by_idempotent_replay"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1348",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_orphaned_active_generation_is_reassociated_without_resave"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1440",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_authorized_run_without_memory_jobs_returns_settled_activity"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1486",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_candidate_approval_uses_one_optimistic_version_under_concurrency"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1517",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_candidate_approval_resumes_durable_retryable_claim_after_failure"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1544",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_model_configuration_replay_conflict_and_owner_scoped_reindex"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1589",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_model_configuration_reuses_matching_generation_when_link_is_missing"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1705",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_persistence.py::test_sql_memory_policy_replay_conflict_scope_and_fallback_grant"
+      ],
+      "source": "services/aura-core/tests/test_memory_persistence.py:1746",
+      "reason": "set AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 for PostgreSQL memory persistence coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_memory_recall.py::test_sql_recall_applies_owner_generation_and_exact_vector_filters"
+      ],
+      "source": "services/aura-core/tests/test_memory_recall.py:470",
+      "reason": "AURA_TEST_DATABASE_URL is required for live SQL recall coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0004_postgresql.py::test_fresh_postgresql_install_reaches_head_and_seeds_deterministically"
+      ],
+      "source": "services/aura-core/tests/test_migration_0004_postgresql.py:21",
+      "reason": "AURA_MIGRATION_FRESH_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0004_postgresql.py::test_existing_0003_rows_are_backfilled_without_changing_historical_ids"
+      ],
+      "source": "services/aura-core/tests/test_migration_0004_postgresql.py:21",
+      "reason": "AURA_MIGRATION_UPGRADE_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0005_persona_overrides.py::test_fresh_postgresql_install_creates_persona_override_history"
+      ],
+      "source": "services/aura-core/tests/test_migration_0005_persona_overrides.py:36",
+      "reason": "AURA_0023_MIGRATION_FRESH_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0005_persona_overrides.py::test_upgrade_from_0004_backfills_default_persona_without_changing_conversation_id"
+      ],
+      "source": "services/aura-core/tests/test_migration_0005_persona_overrides.py:36",
+      "reason": "AURA_0023_MIGRATION_UPGRADE_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0005_persona_overrides.py::test_sql_persona_adapter_keeps_public_query_synchronized_after_disable"
+      ],
+      "source": "services/aura-core/tests/test_migration_0005_persona_overrides.py:47",
+      "reason": "AURA_0023_PERSONA_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 are required for SQL adapter coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0007_conversation_metadata.py::test_fresh_postgresql_install_adds_nullable_archive_column_and_owner_index"
+      ],
+      "source": "services/aura-core/tests/test_migration_0007_conversation_metadata.py:40",
+      "reason": "AURA_0032_MIGRATION_FRESH_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0007_conversation_metadata.py::test_upgrade_from_0006_preserves_existing_conversation_identity_and_metadata"
+      ],
+      "source": "services/aura-core/tests/test_migration_0007_conversation_metadata.py:40",
+      "reason": "AURA_0032_MIGRATION_UPGRADE_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0008_memory_foundation.py::test_fresh_install_creates_pgvector_and_memory_tables"
+      ],
+      "source": "services/aura-core/tests/test_migration_0008_memory_foundation.py:67",
+      "reason": "AURA_0037_MIGRATION_FRESH_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0008_memory_foundation.py::test_upgrade_from_0007_reaches_memory_head_without_replacing_prior_schema"
+      ],
+      "source": "services/aura-core/tests/test_migration_0008_memory_foundation.py:67",
+      "reason": "AURA_0037_MIGRATION_UPGRADE_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0009_memory_processing.py::test_upgrade_from_memory_foundation_reaches_processing_head_when_database_is_available"
+      ],
+      "source": "services/aura-core/tests/test_migration_0009_memory_processing.py:148",
+      "reason": "AURA_0038_MIGRATION_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0009_memory_processing.py::test_fresh_install_reaches_processing_head_when_database_is_available"
+      ],
+      "source": "services/aura-core/tests/test_migration_0009_memory_processing.py:193",
+      "reason": "AURA_0038_MIGRATION_FRESH_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0009_memory_processing.py::test_migrated_schema_accepts_owner_scoped_vector_attachment"
+      ],
+      "source": "services/aura-core/tests/test_migration_0009_memory_processing.py:226",
+      "reason": "AURA_0038_LIVE_ATTACH_DATABASE_URL is required for live migrated attach coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0010_memory_recall_policies.py::test_recall_migration_reaches_head_when_postgres_is_available[AURA_0039_MIGRATION_DATABASE_URL]"
+      ],
+      "source": "services/aura-core/tests/test_migration_0010_memory_recall_policies.py:91",
+      "reason": "AURA_0039_MIGRATION_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0010_memory_recall_policies.py::test_recall_migration_reaches_head_when_postgres_is_available[AURA_0039_MIGRATION_FRESH_DATABASE_URL]"
+      ],
+      "source": "services/aura-core/tests/test_migration_0010_memory_recall_policies.py:91",
+      "reason": "AURA_0039_MIGRATION_FRESH_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0011_memory_recall_modes.py::test_recall_mode_migration_executes_successors_grants_and_replay_idempotently"
+      ],
+      "source": "services/aura-core/tests/test_migration_0011_memory_recall_modes.py:131",
+      "reason": "AURA_0047_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0012_memory_personal_first.py::test_personal_first_migration_executes_idempotently_and_preserves_pins"
+      ],
+      "source": "services/aura-core/tests/test_migration_0012_memory_personal_first.py:118",
+      "reason": "AURA_0048_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0013_governed_tool_runtime.py::test_migration_0013_executes_built_in_successor_and_is_idempotent"
+      ],
+      "source": "services/aura-core/tests/test_migration_0013_governed_tool_runtime.py:93",
+      "reason": "AURA_0053_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0014_reminder_foundation.py::test_real_postgresql_upgrade_preserves_legacy_outbox_and_is_repeatable"
+      ],
+      "source": "services/aura-core/tests/test_migration_0014_reminder_foundation.py:87",
+      "reason": "AURA_0054_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0014_reminder_foundation.py::test_blank_postgresql_upgrade_creates_reminder_constraints"
+      ],
+      "source": "services/aura-core/tests/test_migration_0014_reminder_foundation.py:191",
+      "reason": "AURA_0054_FRESH_DATABASE_URL is required for blank-database coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0016_approval_backed_reminder_tool.py::test_live_migration_upgrade_is_repeatable_and_preserves_previous_schema"
+      ],
+      "source": "services/aura-core/tests/test_migration_0016_approval_backed_reminder_tool.py:156",
+      "reason": "AURA_0056_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0016_approval_backed_reminder_tool.py::test_live_fresh_migration_creates_approval_constraints"
+      ],
+      "source": "services/aura-core/tests/test_migration_0016_approval_backed_reminder_tool.py:274",
+      "reason": "AURA_0056_FRESH_DATABASE_URL is required for blank-database coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0017_recurring_reminders.py::test_live_upgrade_to_0017_is_repeatable_and_preserves_one_shot_rows"
+      ],
+      "source": "services/aura-core/tests/test_migration_0017_recurring_reminders.py:111",
+      "reason": "AURA_0064_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0018_conversational_reminders.py::test_live_fresh_and_repeat_upgrade_preserve_historical_rows"
+      ],
+      "source": "services/aura-core/tests/test_migration_0018_conversational_reminders.py:101",
+      "reason": "AURA_0066_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0024_calendar_read_foundation.py::test_calendar_migration_live_upgrade_is_repeatable"
+      ],
+      "source": "services/aura-core/tests/test_migration_0024_calendar_read_foundation.py:120",
+      "reason": "AURA_0130_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0030_task_projection.py::test_live_ordered_0029_0030_upgrade_restart_and_downgrade_round_trip"
+      ],
+      "source": "services/aura-core/tests/test_migration_0030_task_projection.py:59",
+      "reason": "AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 are required for ordered migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "AURA-0143 task projection or outbox/NATS command",
+        "tests": 37
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_migration_0031_memory_reindex_task_version.py::test_live_upgrade_rejects_non_positive_versions_and_downgrades"
+      ],
+      "source": "services/aura-core/tests/test_migration_0031_memory_reindex_task_version.py:47",
+      "reason": "AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 are required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "AURA-0143 task projection or outbox/NATS command",
+        "tests": 37
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_notifications.py::test_postgresql_briefing_acknowledgement_replays_complete_source_lineage",
+        "services/aura-core/tests/test_notifications.py::test_postgresql_briefing_idempotency_serializes_changed_payload_and_duplicates",
+        "services/aura-core/tests/test_notifications.py::test_postgresql_concurrent_scheduler_claims_use_skip_locked_and_create_one_notification",
+        "services/aura-core/tests/test_notifications.py::test_postgresql_transaction_rollback_leaves_scheduled_for_restart_retry",
+        "services/aura-core/tests/test_notifications.py::test_postgresql_cancel_vs_fire_serializes_to_one_terminal_outcome",
+        "services/aura-core/tests/test_notifications.py::test_postgresql_notification_unique_reminder_constraint_rejects_duplicate_rows",
+        "services/aura-core/tests/test_notifications.py::test_postgresql_acknowledgement_replays_exactly_and_rejects_conflicting_reuse"
+      ],
+      "source": "services/aura-core/tests/test_notifications.py:95",
+      "reason": "AURA_0055_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "focused notification live command (test_notifications.py + test_notification_stream.py)",
+        "tests": 21
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_notification_stream.py::test_postgresql_stream_authorizes_cursor_and_replays_offline_events"
+      ],
+      "source": "services/aura-core/tests/test_notification_stream.py:72",
+      "reason": "AURA_0055_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "focused notification live command (test_notifications.py + test_notification_stream.py)",
+        "tests": 21
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_outbox.py::test_real_transactional_outbox_commit_and_rollback"
+      ],
+      "source": "services/aura-core/tests/test_outbox.py:57",
+      "reason": "AURA_TEST_DATABASE_URL and AURA_TEST_DEPENDENCIES_ISOLATED=1 are required for PostgreSQL outbox coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "AURA-0143 task projection or outbox/NATS command",
+        "tests": 37
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_reminder_series.py::test_postgresql_staged_series_payload_matches_event_schema_when_configured"
+      ],
+      "source": "services/aura-core/tests/test_reminder_series.py:862",
+      "reason": "AURA_0064_DATABASE_URL is required for PostgreSQL producer coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_reminder_series.py::test_postgresql_series_lifecycle_replay_catch_up_and_serialized_race"
+      ],
+      "source": "services/aura-core/tests/test_reminder_series.py:935",
+      "reason": "AURA_0064_DATABASE_URL is required for PostgreSQL lifecycle coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_reminders.py::test_postgresql_concurrent_idempotency_reuse_is_exact_or_conflicting",
+        "services/aura-core/tests/test_reminders.py::test_postgresql_foreign_owner_access_is_non_disclosing_and_denied"
+      ],
+      "source": "services/aura-core/tests/test_reminders.py:912",
+      "reason": "AURA_0054_MIGRATION_DATABASE_URL is required for PostgreSQL coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_task_projection_sources.py::test_live_sql_source_adapters_keep_fence_across_pages_and_updates"
+      ],
+      "source": "services/aura-core/tests/test_task_projection_sources.py:340",
+      "reason": "isolated PostgreSQL is required for source cursor acceptance",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "AURA-0143 task projection or outbox/NATS command",
+        "tests": 79
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_task_projection_sources.py::test_platform_task_invalidation_outbox_commit_or_rollback_generic"
+      ],
+      "source": "services/aura-core/tests/test_task_projection_sources.py:599",
+      "reason": "isolated PostgreSQL is required for source cursor acceptance",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "AURA-0143 task projection or outbox/NATS command",
+        "tests": 79
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_task_projection_sources.py::test_live_production_source_transitions_stage_task_events_atomically"
+      ],
+      "source": "services/aura-core/tests/test_task_projection_sources.py:711",
+      "reason": "isolated PostgreSQL is required for source cursor acceptance",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml"
+      ],
+      "coverage": {
+        "kind": "dedicated-command",
+        "status": "passed",
+        "check": "AURA-0143 task projection or outbox/NATS command",
+        "tests": 79
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_telemetry.py::test_sql_advancement_outbox_failure_records_one_error_span_and_rolls_back"
+      ],
+      "source": "services/aura-core/tests/test_telemetry.py:821",
+      "reason": "AURA_0064_DATABASE_URL is required for SQL advancement telemetry coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_title_generation.py::test_fresh_postgresql_install_has_legacy_default_for_migration_rows"
+      ],
+      "source": "services/aura-core/tests/test_title_generation.py:47",
+      "reason": "AURA_0028_MIGRATION_FRESH_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_title_generation.py::test_upgrade_from_0005_marks_existing_conversation_legacy_without_changing_ids"
+      ],
+      "source": "services/aura-core/tests/test_title_generation.py:47",
+      "reason": "AURA_0028_MIGRATION_UPGRADE_DATABASE_URL is required for PostgreSQL migration coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_versioned_agents.py::test_sql_agent_create_persists_initial_policies_and_replays_atomically"
+      ],
+      "source": "services/aura-core/tests/test_versioned_agents.py:857",
+      "reason": "set isolated AURA_TEST_DATABASE_URL for SQL agent coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_versioned_agents.py::test_sql_agent_create_rolls_back_after_every_staged_write[MemoryPolicyRevisionRow]",
+        "services/aura-core/tests/test_versioned_agents.py::test_sql_agent_create_rolls_back_after_every_staged_write[MemoryPolicyFallbackGrantRow]",
+        "services/aura-core/tests/test_versioned_agents.py::test_sql_agent_create_rolls_back_after_every_staged_write[ToolPolicyRevisionRow]",
+        "services/aura-core/tests/test_versioned_agents.py::test_sql_agent_create_rolls_back_after_every_staged_write[ToolPolicyGrantRow]",
+        "services/aura-core/tests/test_versioned_agents.py::test_sql_agent_create_rolls_back_after_every_staged_write[AgentProfileRow]",
+        "services/aura-core/tests/test_versioned_agents.py::test_sql_agent_create_rolls_back_after_every_staged_write[AgentRevisionRow]",
+        "services/aura-core/tests/test_versioned_agents.py::test_sql_agent_create_rolls_back_after_every_staged_write[idempotency]",
+        "services/aura-core/tests/test_versioned_agents.py::test_sql_agent_create_rolls_back_after_every_staged_write[audit]"
+      ],
+      "source": "services/aura-core/tests/test_versioned_agents.py:982",
+      "reason": "set isolated AURA_TEST_DATABASE_URL for SQL agent coverage",
+      "evidence": [
+        "work-items/integration/AURA-0142.yaml",
+        "work-items/integration/AURA-0143.yaml",
+        "work-items/integration/AURA-0144.yaml",
+        "work-items/integration/AURA-0145.yaml",
+        "work-items/integration/AURA-0146.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0142.yaml",
+          "work-items/integration/AURA-0143.yaml",
+          "work-items/integration/AURA-0144.yaml",
+          "work-items/integration/AURA-0145.yaml",
+          "work-items/integration/AURA-0146.yaml"
+        ],
+        "check": "reviewed full-Core dependency-conditional inventory"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_workflow_run_recovery.py::test_reservation_is_durable_before_provider_effect"
+      ],
+      "source": "services/aura-core/tests/test_workflow_run_recovery.py:137",
+      "reason": "AURA_0137_DATABASE_URL is required for workflow recovery coverage",
+      "evidence": [
+        "work-items/integration/AURA-0150.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0150.yaml"
+        ],
+        "commit": "44a51c8",
+        "check": "AURA-0150 exact full recovery-file command passed 7/7 against isolated PostgreSQL"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_workflow_run_recovery.py::test_restart_returns_unknown_without_replaying_provider_effect"
+      ],
+      "source": "services/aura-core/tests/test_workflow_run_recovery.py:152",
+      "reason": "AURA_0137_DATABASE_URL is required for workflow recovery coverage",
+      "evidence": [
+        "work-items/integration/AURA-0150.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0150.yaml"
+        ],
+        "commit": "44a51c8",
+        "check": "AURA-0150 exact full recovery-file command passed 7/7 against isolated PostgreSQL"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_workflow_run_recovery.py::test_durable_terminal_failure_is_replayed"
+      ],
+      "source": "services/aura-core/tests/test_workflow_run_recovery.py:183",
+      "reason": "AURA_0137_DATABASE_URL is required for workflow recovery coverage",
+      "evidence": [
+        "work-items/integration/AURA-0150.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0150.yaml"
+        ],
+        "commit": "44a51c8",
+        "check": "AURA-0150 exact full recovery-file command passed 7/7 against isolated PostgreSQL"
+      }
+    },
+    {
+      "nodeIds": [
+        "services/aura-core/tests/test_workflow_run_recovery.py::test_cancellation_is_exact_lineage_and_terminal_replay_is_stable"
+      ],
+      "source": "services/aura-core/tests/test_workflow_run_recovery.py:210",
+      "reason": "AURA_0137_DATABASE_URL is required for workflow recovery coverage",
+      "evidence": [
+        "work-items/integration/AURA-0150.yaml"
+      ],
+      "coverage": {
+        "kind": "immutable-integration",
+        "status": "integrated",
+        "reports": [
+          "work-items/integration/AURA-0150.yaml"
+        ],
+        "commit": "44a51c8",
+        "check": "AURA-0150 exact full recovery-file command passed 7/7 against isolated PostgreSQL"
+      }
+    }
+  ]
+}

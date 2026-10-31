@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "fixtureRevision": "research-quality-citations-v1",
+  "classification": "synthetic-task-scoped-evidence",
+  "taskId": "task-fixture-a",
+  "sources": [
+    {"id": "source-a1", "domain": "source-a.example", "relevant": true, "fresh": true, "independent": true},
+    {"id": "source-a2", "domain": "source-a.example", "relevant": true, "fresh": true, "independent": false},
+    {"id": "source-b1", "domain": "source-b.example", "relevant": true, "fresh": true, "independent": true},
+    {"id": "source-b2", "domain": "source-b.example", "relevant": true, "fresh": true, "independent": false},
+    {"id": "source-c1", "domain": "source-c.example", "relevant": false, "fresh": true, "independent": true}
+  ],
+  "claims": [
+    {"id": "claim-1", "sourceId": "source-a1", "supported": true, "retained": true},
+    {"id": "claim-2", "sourceId": "source-b1", "supported": true, "retained": true},
+    {"id": "claim-3", "sourceId": "source-a2", "supported": true, "retained": true},
+    {"id": "claim-4", "sourceId": "source-b2", "supported": true, "retained": true}
+  ],
+  "citations": [
+    {"sourceId": "source-a1", "taskId": "task-fixture-a", "valid": true, "stale": false},
+    {"sourceId": "source-b1", "taskId": "task-fixture-a", "valid": true, "stale": false},
+    {"sourceId": "source-a2", "taskId": "task-fixture-a", "valid": true, "stale": false},
+    {"sourceId": "source-b2", "taskId": "task-fixture-a", "valid": true, "stale": false}
+  ],
+  "expected": {"relevanceRecallAtK": 0.8, "claimSupport": 1.0, "citationPrecision": 1.0, "freshness": 1.0, "independentDomains": 2, "unsupportedClaims": 0}
+}

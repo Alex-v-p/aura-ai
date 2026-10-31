@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "fixtureRevision": "research-destination-policy-v1",
+  "classification": "synthetic-hostile-network-metadata",
+  "cases": [
+    {"id": "https-public", "scheme": "https", "port": 443, "resolved": ["8.8.8.8"], "expected": "allow"},
+    {"id": "http-downgrade", "scheme": "http", "port": 80, "resolved": ["8.8.8.8"], "expected": "deny"},
+    {"id": "loopback", "scheme": "https", "port": 443, "resolved": ["127.0.0.1"], "expected": "deny"},
+    {"id": "private-rfc1918", "scheme": "https", "port": 443, "resolved": ["10.0.0.7"], "expected": "deny"},
+    {"id": "metadata", "scheme": "https", "port": 443, "resolved": ["169.254.169.254"], "expected": "deny"},
+    {"id": "mixed-dns", "scheme": "https", "port": 443, "resolved": ["8.8.8.9", "192.0.2.1", "10.0.0.8"], "expected": "deny"},
+    {"id": "redirect-to-private", "scheme": "https", "port": 443, "resolved": ["8.8.8.10"], "redirectResolved": ["127.0.0.1"], "expected": "deny"},
+    {"id": "redirect-chain-limit", "scheme": "https", "port": 443, "resolved": ["8.8.8.11"], "redirects": 6, "expected": "deny"},
+    {"id": "userinfo", "scheme": "https", "port": 443, "resolved": ["8.8.8.12"], "userinfo": true, "expected": "deny"},
+    {"id": "non-default-port", "scheme": "https", "port": 8443, "resolved": ["8.8.8.13"], "expected": "deny"},
+    {"id": "encoded-ipv4-loopback", "scheme": "https", "port": 443, "host": "2130706433", "resolved": ["127.0.0.1"], "expected": "deny"},
+    {"id": "encoded-ipv6-loopback", "scheme": "https", "port": 443, "host": "[::1]", "resolved": ["::1"], "expected": "deny"},
+    {"id": "metadata-alias", "scheme": "https", "port": 443, "host": "metadata.google.internal", "resolved": ["169.254.169.254"], "expected": "deny"},
+    {"id": "dns-rebinding-chain", "scheme": "https", "port": 443, "resolved": ["8.8.8.14"], "redirectResolved": ["10.0.0.14"], "redirects": 1, "expected": "deny"}
+  ]
+}

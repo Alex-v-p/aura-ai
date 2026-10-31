@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "workItem": "AURA-0148",
+  "reportRevision": "governed-research-acceptance-v1",
+  "reportStatus": "generated-at-run-time",
+  "capturePolicy": "metadata_only",
+  "fixtureRevision": "research-provider-eval-fixtures-v1",
+  "realProvidersEnabled": false,
+  "published": false,
+  "requiredEvidence": [
+    "security",
+    "quality",
+    "resilience",
+    "artifacts",
+    "task_projection",
+    "privacy",
+    "full_stack"
+  ],
+  "retention": "manual_only",
+  "contentPolicy": "excluded"
+}
