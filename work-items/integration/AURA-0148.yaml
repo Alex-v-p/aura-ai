@@ -1,0 +1,90 @@
+agent: integration_maintainer
+work_item: AURA-0148
+status: integrated
+integrated_commits:
+  - a20878d
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0148-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0148-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0148-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0148-observability.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/reviews/AURA-0148-test-evaluation.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0148-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      All four AURA-0148 implementation handoffs validate against
+      implementation-handoff.schema.json, have complete status, and report no
+      failed or unresolved implementation finding that blocks integration.
+    - >-
+      All six AURA-0148 review verdicts validate against
+      review-verdict.schema.json and are PASS with empty findings; the UX
+      verdict is advisory with no material finding.
+    - >-
+      The approved AURA-0148 work item passed validate-work-item.py before
+      archival, and the archived work item passed the same schema and semantic
+      validation after archival.
+    - >-
+      validate-changed-paths.py passed at the integration boundary for the
+      complete 38-path AURA-0148 change set; all paths are within the approved
+      work-item scope.
+    - >-
+      Contract-change validation reported no contract changes; generated-sync,
+      import-boundary, service-isolation, module-registry,
+      frontend-boundary, repository-shape, observability, and baseline
+      protection validators all passed.
+    - >-
+      Ruff and Pyright passed for the AURA-0148 Python tests, platform runner,
+      and research evaluation suite.
+    - >-
+      The focused AURA-0148 Python/platform suite passed 45 tests in 491.48
+      seconds, including disposable synthetic runner, overlap, timeout, and
+      metadata-only evaluation coverage; runner containers were removed after
+      completion.
+    - >-
+      The definitive synthetic acceptance evidence passed with exactly 25
+      Python observations, 33 Playwright observations, 36 fixture checks, and
+      26/26 evaluator decisions; the governed browser matrix passed 33/33.
+    - >-
+      The overlap regression passed with 1 passed and 21 deselected, proving
+      isolated Compose ownership and held-peer health.
+    - >-
+      The definitive all-upstream runner passed 92 executed checks with zero
+      failures, 36 fixture checks, 26/26 evaluator decisions, and all
+      AURA-0142 through AURA-0147 mandatory checks passing.
+    - >-
+      No real provider, external egress, fetched production page, credential,
+      GitHub publication, or artifact publication was used; the acceptance
+      topology remains local HTTP-compatible with providers disabled.
+    - >-
+      git diff --cached --check and final git diff --check passed for both
+      checkpoints; no source pycache or disposable Compose container remains.
+    - >-
+      The implementation/evaluation checkpoint is a focused Conventional
+      Commit and this report, archived work item, handoffs, and review verdicts
+      are recorded in the separate integration-metadata checkpoint.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Real-provider network acceptance remains intentionally disabled by the
+    approved AURA-0140/AURA-0144 rollout policy; synthetic isolation and
+    provider-boundary checks are the release evidence for this delivery.
+  - >-
+    The feature branch has not been pushed or published, per the delivery
+    instruction.

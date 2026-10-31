@@ -1,0 +1,97 @@
+agent: test_evaluation_engineer
+work_item: AURA-0148
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0148_evaluations
+  worktree: shared
+scope:
+  ownership_zone: evaluation.governed-research-full-stack
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_aura0148_governed_research.py
+  - services/aura-observatory/tests/test_aura0148_evaluation_privacy.py
+  - deploy/compose/run-governed-research-e2e.sh
+  - deploy/compose/e2e/governed-research/acceptance_results.py
+  - deploy/compose/e2e/governed-research/acceptance-inventory-v1.json
+  - deploy/compose/e2e/governed-research/evaluation_adapter.py
+  - deploy/compose/e2e/governed-research/compose.yaml
+  - deploy/compose/e2e/governed-research/fixture.py
+  - deploy/compose/e2e/governed-research/garage.toml
+  - deploy/compose/e2e/governed-research/synthetic_service.py
+  - deploy/compose/e2e/governed-research/upstream_checks.py
+  - evaluations/research/fixtures/artifacts-task-center-v1.json
+  - evaluations/research/fixtures/destination-corpus-v1.json
+  - evaluations/research/fixtures/journeys-v1.json
+  - evaluations/research/fixtures/privacy-telemetry-v1.json
+  - evaluations/research/fixtures/quality-citations-v1.json
+  - evaluations/research/fixtures/resilience-durability-v1.json
+  - evaluations/research/suites/__init__.py
+    - evaluations/research/suites/gate.py
+  - evaluations/research/fixtures/evaluator-manifest-v1.json
+  - evaluations/research/reports/AURA-0148-synthetic-report-manifest.json
+  - evaluations/research/release-thresholds.yaml
+  - frontend/apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
+  - frontend/apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+  - frontend/apps/aura-web-e2e/playwright.config.ts
+contracts:
+  changed: false
+  notes: Synthetic fixtures consume immutable reviewed contracts and do not modify OpenAPI, event schemas, or generated clients.
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.research.destination_policy@1
+    - aura.research.citation_validation@1
+    - aura.research.extraction@1
+    - aura.execution.task_projection@1
+    - aura.observatory.run_inspection_query@1
+  metrics_added: []
+  capture_policy: metadata_only
+  notes: Evaluation outputs contain bounded evaluator identifiers, scores, versions, replay keys, and finite metadata only; no research content, URLs, excerpts, object keys, owner values, or secrets are captured.
+verification:
+  passed:
+    - AURA_WORK_ITEM=AURA-0148 python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0148.yaml
+    - AURA_WORK_ITEM=AURA-0148 PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/tests/test_aura0148_*.py services/aura-observatory/tests/test_aura0148_*.py evaluations/research
+    - AURA_WORK_ITEM=AURA-0148 PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/tests/test_aura0148_*.py services/aura-observatory/tests/test_aura0148_*.py (0 errors)
+    - PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0148_*.py services/aura-observatory/tests/test_aura0148_*.py -q (23 passed, including both Core public-boundary journeys with a file-backed signing-key fixture)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright deploy/compose/e2e/governed-research/acceptance_results.py deploy/compose/e2e/governed-research/evaluation_adapter.py (0 errors)
+    - cd frontend && pnpm exec prettier --check apps/aura-web-e2e/src/governed-research-acceptance.spec.ts apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+    - cd frontend && pnpm exec eslint apps/aura-web-e2e/src/governed-research-acceptance.spec.ts apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/governed-research-acceptance.spec.ts apps/aura-web-e2e/src/governed-research-accessibility.spec.ts --list (33 tests across desktop, tablet, and mobile; both AURA-0148 specs discovered)
+    - cd frontend && AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/governed-research-acceptance.spec.ts apps/aura-web-e2e/src/governed-research-accessibility.spec.ts (33 passed across desktop, tablet, and mobile)
+    - PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0148_governed_research.py services/aura-observatory/tests/test_aura0148_evaluation_privacy.py -q -k 'not core_public_boundary' (20 passed, including fixture digest mutation and duplicate observed-binding fail-closed coverage)
+    - PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check evaluations/research/suites/gate.py services/aura-core/tests/test_aura0148_governed_research.py services/aura-observatory/tests/test_aura0148_evaluation_privacy.py
+    - PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=services/aura-core/src:. UV_CACHE_DIR=.local-state/uv-cache uv run python deploy/compose/e2e/governed-research/evaluation_adapter.py --root . --observed /tmp/aura0148-observed-current.json --report /tmp/aura0148-gate-current-duplicate-fix.json (26 observed evaluator decisions passed after exact-one binding and fixture provenance fixes)
+    - AURA-0148 fixture provenance tests reject digest and revision mutations for every versioned fixture; canonical observation IDs are enforced and the 33-test Playwright envelope binds exactly one observation per evaluator.
+    - Immutable acceptance-inventory-v1 enforces the complete 25-Python and 33-Playwright test-ID sets in both the JUnit normalizer and evaluator gate; focused negative coverage rejects missing accessibility/recovery IDs, extra IDs, replacement IDs, and research admission-only evidence.
+    - Trusted release-policy floors and top-level constraints are enforced in the evaluation gate; focused mutation probes reject 1.0-to-0.9 and 0.8-to-0.7 floor reductions, missing evaluator thresholds, missing policy fields, and enabled real-provider policy, while a stricter 0.8-to-0.9 policy remains accepted.
+    - Synthetic metadata-only adapter run observed 23 Python and 33 Playwright tests and passed all 26 evaluator decisions.
+    - Current timeout-expanded synthetic-only run observed exactly 25 Python and 33 Playwright tests, passed 36 fixture checks, and passed all 26 evaluator decisions.
+    - Current definitive aggregate completed with 92 executed and 0 failed, 36 fixture checks, 26/26 evaluator decisions, and all AURA-0142 through AURA-0147 mandatory checks passing.
+    - bash -n deploy/compose/run-governed-research-e2e.sh (pass); default disposable runner now exports its generated Compose project before subnet allocation.
+    - bash deploy/compose/run-governed-research-e2e.sh --synthetic-only completed with isolated disposable HTTP topology, metadata-only acceptance, and no residual containers or source pycache.
+    - git diff --check
+  failed: []
+  not_run:
+    - Real-provider acceptance; provider profiles remain disabled and no external egress or provider image is used.
+decisions:
+  - Synthetic fixtures are versioned, bounded, task-scoped, and content-safe; no production research content or fetched pages are captured or replayed.
+  - The release gate is fail-closed: missing, duplicate, malformed, mismatched, or below-threshold results produce a failed decision.
+  - Destination scoring is derived from observed deterministic outcomes through Core, static-fetcher, and browser-fetcher policy functions; the corpus includes mixed DNS, encoded IPs, metadata aliases, and redirect rebinding without egress.
+  - Every non-research evaluator is mapped to immutable, machine-readable Python or Playwright observation records with exact producer test IDs, pass outcomes, and assertion counts; missing, failed, duplicate, or extra observations fail closed. The adapter does not score fixture shape or hardcoded booleans.
+  - Observation binding uses exact canonical test IDs and requires exactly one match per evaluator; multi-viewport records remain in the executed evidence envelope but cannot be silently concatenated into one evaluator observation.
+  - All executable evaluation fixtures are loaded through immutable filename, schema, revision, and SHA-256 provenance checks; checked-in fixture mutation fails closed before an observation can pass. Test commands set PYTHONDONTWRITEBYTECODE=1 and the evaluation tree is bytecode-free.
+  - The content-free report contract uses an exact closed metadata schema, finite enums and bounded counts, complete cross-field status/count consistency, and recursive rejection of identifiers, digests, URLs, queries, content, secrets, filenames, object keys, and canaries.
+  - Accessibility checks scope axe to route-owned controls and semantics because the existing application shell owns a duplicate-main landmark baseline; keyboard/focus/dialog, live recovery, reduced-motion, light/dark/forced-colors, mobile, and 200% zoom checks remain active.
+  - The gate emits a bounded metadata-only report contract and validates the checked-in report manifest using a closed recursive allowlist; no replay key or content-bearing value enters the report.
+  - Release thresholds are fail-closed against a trusted immutable per-evaluator floor map and exact top-level policy (`failClosed`, fixture provenance, real-provider disablement, and non-public report policy); checked-in policy may only raise a floor.
+  - Chat-origin mode journeys wait for the app's authoritative conversation-ready state and then assert Send is enabled before submitting; this isolates bootstrap timing without bypassing the real composer or lifecycle assertions.
+risks:
+  - Real-provider, browser-network, and multi-service Compose acceptance remains environment-gated and disabled by owner decision.
+  - The current Aura Web shell does not render a user-visible recovery state when every API request is synchronously aborted as an offline simulation; the executable accessibility suite therefore retains session-loss, cleanup, and storage/service-worker checks, while pure offline recovery remains an environment/product-shell boundary.
+unresolved:
+  - Pure offline transport recovery cannot be asserted in the current shell without product-code support for an offline error state; no product code was changed under this evaluation work item.

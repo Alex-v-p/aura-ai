@@ -32,8 +32,28 @@ sources_of_truth:
     - work-items/archived/AURA-0147.yaml
     - On 2026-10-30 AURA-0142 through AURA-0147 were reviewed and integrated, closing the dependency gate.
     - Owner-approved AURA-0148 execution uses only isolated synthetic provider fixtures; real provider profiles remain disabled and no provider image, fetched artifact, or evaluation report is published.
+    - Upstream checks whose changed-path or active-work-item inputs are inherently repository-state-sensitive are verified from their immutable reviewed integration reports and commit identities; current-state-compatible commands are rerun exactly and missing or mismatched recorded evidence fails closed.
+    - Full-stack acceptance is layered across executed local HTTP Aura Web, Core, provider-boundary, persistence, projection, and Observatory tests using synthetic fixtures; it must aggregate observed results from every boundary and may not substitute unconditional pass labels or production egress.
     - Evaluations use versioned synthetic or explicitly owner-authorized controlled fixtures; production research content and fetched pages are never captured or replayed.
     - Approved thresholds are release gates and may not be lowered bypassed or rewritten to make delivery pass.
+    - >-
+      The archived broad `services/aura-core/tests -q` command retains its
+      original conditional environment: only the exact node IDs in
+      `deploy/compose/e2e/governed-research/legacy-conditional-skips-v1.json`
+      may remain skipped, each justified by immutable AURA-0142 through
+      AURA-0146 integration evidence and separately covered by a dedicated live
+      dependency check. Governed-research, artifact, task, completion, and
+      notification skips are never accepted solely by allowlist or without
+      mapped green dedicated coverage. Every dedicated live command is strict
+      and fails on any skip.
+    - >-
+      The broad skip inventory is reconciled by exact JUnit node IDs and a
+      versioned coverage map: 17 governed initiative nodes require green
+      dedicated commands, four workflow-recovery nodes require the immutable
+      integrated AURA-0150 report at commit 44a51c8, three AURA-0149
+      corrective nodes require its integrated report, and unrelated legacy
+      conditionals may rely on reviewed AURA-0142 through AURA-0146 reports.
+      The exact AURA-0150 full recovery-file command passed 7/7.
   contracts:
     - contracts/openapi/aura-v1.yaml
     - contracts/events/knowledge/v1/research-events.schema.json
@@ -75,6 +95,7 @@ allowed_paths:
   - deploy/compose/run-governed-research-e2e.sh
   - frontend/apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
   - frontend/apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+  - frontend/apps/aura-web-e2e/playwright.config.ts
   - evaluations/research/fixtures/**
   - evaluations/research/suites/**
   - evaluations/research/reports/**

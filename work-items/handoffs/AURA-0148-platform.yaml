@@ -1,0 +1,253 @@
+agent: platform_worker
+work_item: AURA-0148
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0148_platform
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: evaluation.governed-research-full-stack
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/active/AURA-0148.yaml
+  - deploy/compose/e2e/governed-research/compose.yaml
+  - deploy/compose/e2e/governed-research/fixture.py
+  - deploy/compose/e2e/governed-research/acceptance_results.py
+  - deploy/compose/e2e/governed-research/acceptance-inventory-v1.json
+  - deploy/compose/e2e/governed-research/synthetic_service.py
+  - deploy/compose/e2e/governed-research/garage.toml
+  - deploy/compose/e2e/governed-research/integration-evidence-v1.json
+  - deploy/compose/e2e/governed-research/upstream_checks.py
+  - deploy/compose/e2e/governed-research/legacy-conditional-skips-v1.json
+  - deploy/compose/e2e/governed-research/evaluation_adapter.py
+  - deploy/compose/run-governed-research-e2e.sh
+  - deploy/tests/test_aura0148_platform.py
+  - work-items/handoffs/AURA-0148-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check deploy/tests/test_aura0148_platform.py
+      deploy/compose/e2e/governed-research/*.py
+    - >-
+      PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache uv run
+      pyright deploy/tests/test_aura0148_platform.py
+    - >-
+      PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache uv run
+      pytest -p no:cacheprovider deploy/tests/test_aura0148_platform.py -q
+      -k 'acceptance_inventory or fixture_report_is_content_free or
+      research_route_checks_require' passed (3 focused tests, including exact
+      inventory mutation, dedicated research-route lineage, and fail-closed
+      evidence coverage).
+    - docker compose -f deploy/compose/e2e/governed-research/compose.yaml config --quiet
+    - >-
+      Runtime network probes passed: both synthetic fetchers could not resolve
+      or connect to PostgreSQL, NATS, or Garage on their separate networks.
+    - >-
+      Immutable integration-evidence-v1 validation passed for all six work
+      items, including pinned report commits, integrated report status, and
+      explicit sensitive-command inventories.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0148.yaml with the nine owned platform paths
+      passed.
+    - >-
+      implementation-handoff.schema.json validation passed for this handoff.
+    - git diff --check
+    - >-
+      bash deploy/compose/run-governed-research-e2e.sh --synthetic-only passed
+      with seven healthy disposable services (including Valkey), 23 Python observations, 33
+      Playwright observations, 35 fixture checks, and 26/26 release-gate
+      decisions.
+    - >-
+      Scoped AURA-0148 acceptance command passed: 23 Python observations and the
+      explicit governed-research acceptance/accessibility Playwright command
+      passed all 33 observations with injected disposable endpoint variables.
+    - >-
+      Live Compose mapping validation passed: PostgreSQL and NATS resolve to
+      runner-reserved 127.0.0.1 host ports; no Docker bridge address is
+      injected into upstream checks.
+    - >-
+      The all-upstream runner advanced past the AURA-0142 artifact suite after
+      loopback endpoint injection and reached the AURA-0147 Storybook check;
+      provider/research inventory commands before that point produced no
+      failure.
+    - >-
+      bash deploy/compose/run-governed-research-e2e.sh --synthetic-only passed
+      after the final loopback, external-report-root, pgvector, and psycopg
+      endpoint corrections: seven healthy services, 23 Python observations, 33
+      Playwright observations, 35 fixture checks, and 26/26 release-gate
+      decisions.
+    - >-
+      The exact AURA-0143 task-projection command passed against a fresh
+      per-command database without pre-migration or seed manipulation: 79
+      tests passed in 2.58 seconds. The exact outbox/NATS/migration-0031
+      command passed 37 tests in 2.18 seconds, and the exact memory-persistence
+      command passed 30 tests in 9.41 seconds. Archived command text remained
+      unchanged.
+    - >-
+      A standalone tablet Playwright acceptance run passed all four chat-origin
+      journey tests; this isolates the aggregate failure to the full
+      multi-project browser run rather than a platform service health failure.
+    - >-
+      Definitive synthetic-only rerun against current HEAD passed after the
+      runner selected a non-overlapping disposable CIDR group: seven healthy
+      services, 23 Python observations, 33 Playwright observations, 35 fixture
+      checks, and 26/26 release-gate decisions.
+    - >-
+      Focused skip-policy tests passed (3/3): the exact version-controlled
+      legacy allowlist entry is accepted with matching JUnit node evidence,
+      unknown or governed skips fail closed, and a dedicated live command
+      rejects even an allowlisted legacy skip.
+    - >-
+      Dedicated live dependency checks passed without skips: AURA-0143 task
+      projection 79/79, outbox and NATS 37/37, workflow/document SQL 69/69,
+      AURA-0144 provider boundary 133/133, and AURA-0145 research 276/276.
+      Each retained its archived command text and used fresh disposable
+      coordinates.
+    - >-
+      The focused scrubbed broad-Core command retained its exact archived
+      semantics and exited 0 with 2094 passed and 127 skipped. Its temporary
+      JUnit evidence was parsed; 43 reviewed legacy nodes matched exactly and
+      the additional 84 conditional groups were categorized as 21 governed
+      initiative, 3 AURA-0149 corrective, and 60 unrelated legacy nodes.
+      The report was outside the repository and removed after inspection.
+    - >-
+      The exact allowlist now maps all 127 observed nodes: artifact observability
+      (AURA-0142, 63/63), task/document/outbox checks (AURA-0143, 79/79,
+      69/69, and 37/37), notifications (focused 21/21), AURA-0149's three
+      migration nodes (integrated report), workflow recovery (AURA-0150
+      immutable report), and 60 unrelated legacy nodes (reviewed integration
+      reports). Evidence-map completeness tests pass.
+    - >-
+      The four workflow recovery nodes are mapped to the immutable integrated
+      AURA-0150 report at commit 44a51c8. Its exact full recovery-file command
+      passed 7/7 with zero skips against a fresh isolated PostgreSQL database.
+    - >-
+      The broad-Core validator matched all 127 observed JUnit node IDs to the
+      versioned allowlist, including the four AURA-0150 workflow recovery
+      mappings; no mandatory or unmapped skip remained.
+    - >-
+      Final isolated `bash deploy/compose/run-governed-research-e2e.sh
+      --synthetic-only` passed with 23 Python observations, 33 Playwright
+      observations, 35 synthetic fixture checks, and 26/26 evaluation gate
+      decisions. The topology was local HTTP with providers disabled.
+    - >-
+      The prior 92-check aggregate evidence was superseded by the current
+      settled run below; only the current definitive result is counted as
+      release evidence.
+    - >-
+      The overlap regression passed twice consecutively: both held Compose
+      projects had disjoint container, network, and volume ownership; after
+      the unheld peer completed and cleaned up, the held peer remained alive
+      with healthy PostgreSQL until its bounded test-only release barrier was
+      opened. The production runner remains unchanged unless both opt-in hold
+      variables are supplied.
+    - >-
+      The platform test file previously passed 20/20 before the current
+      acceptance-inventory and research-route evidence changes, including exact
+      binding/commit ancestry coverage for all 35 mappings, explicit
+      metadata-only observation mappings for all 35 synthetic checks, current
+      23-Python/33-Playwright observations, and the seven-fixture provenance
+      gate.
+    - >-
+      Focused platform evidence regressions passed (3/3): the exact versioned
+      23-Python/33-Playwright inventory rejects a missing accessibility/recovery
+      ID, an extra ID, and a replacement ID; the 12 research-route fixture
+      checks require the dedicated complete `/research` journey; and missing,
+      duplicate, or failed full-journey evidence fails closed.
+    - >-
+      Final synthetic-only run after the inventory and research-route changes
+      passed with exact `23 Python, 33 Playwright`, 35 fixture checks, and
+      26/26 evaluation decisions. The runner rejected no canonical IDs and
+      left no disposable stack running.
+    - >-
+      Current frontend governed-research acceptance/accessibility matrix
+      passed exactly `33 passed` with workers=1.
+    - >-
+      Current single overlap regression passed: `1 passed, 21 deselected` in
+      245.44 seconds, proving disjoint Compose ownership and held-peer health
+      after the unheld peer cleanup.
+    - >-
+      Current single synthetic-only run passed with exact `23 Python, 33
+      Playwright`, 35 fixture checks, and 26/26 evaluation decisions.
+    - >-
+      Current timeout-expanded synthetic-only run passed with exact `25
+      Python, 33 Playwright`, 36 fixture checks, and 26/26 evaluation
+      decisions; the held focused-suite peer had terminated before aggregate
+      admission.
+    - >-
+      Current definitive `bash deploy/compose/run-governed-research-e2e.sh
+      --all-upstream-checks` passed with `92 executed, 0 failed`, 35 fixture
+      checks, 26/26 evaluation decisions, and all AURA-0142..AURA-0147
+      mandatory checks passing.
+    - >-
+      Current definitive aggregate after timeout expansion passed with `92
+      executed, 0 failed`, 36 fixture checks, 26/26 evaluation decisions, and
+      all AURA-0142..AURA-0147 mandatory checks passing.
+  failed: []
+  not_run: []
+decisions:
+  - >-
+      The default runner starts a disposable internal Compose topology with
+      docker compose up --detach --wait, observes every dependency through its
+      health and protocol boundary, and tears it down with volumes afterward.
+      Providers remain disabled, evidence is metadata-only, and nothing is
+      published.
+  - >-
+      --all-upstream-checks derives the mandatory AURA-0142 through AURA-0147
+      inventory from the archived work items, reruns current-state-compatible
+      commands byte-for-byte, and validates repository-state-sensitive commands
+      from immutable integration reports and resolvable commit identities. It
+      never rewrites active work-item paths.
+  - >-
+      The evaluation adapter consumes the worker-owned gate helper and emits the
+      strict aura0148-gate-report-v1 contract; missing, duplicate, malformed, or
+      failed decisions are release-gate failures.
+  - >-
+    Python and Playwright acceptance commands emit metadata-only JUnit-derived
+    test IDs, counts, assertion counts, and outcomes; Playwright receives a
+    dynamically reserved loopback port to avoid shared-worker server collisions.
+    The versioned acceptance-inventory-v1 manifest is checked before fixture
+    or evaluator execution and requires exactly 25 Python and 33 Playwright
+    IDs; missing, duplicate, extra, and replacement IDs fail closed.
+  - >-
+    Research-route fixture assertions bind to the complete dedicated
+    `/research` journey observation, matching the evaluation owner's canonical
+    Playwright ID. Admission-only evidence cannot satisfy those 12 checks.
+  - >-
+    The synthetic frontend uses HTTP so the acceptance path does not depend on
+    Cloudflare Tunnel, Nginx Proxy Manager, or TLS termination.
+  - >-
+    Every exact pytest command receives newly created databases. The runner
+    provisions only the pgvector dependency required by the disposable image
+    and injects missing advertised coordinates such as AURA-0055 and
+    AURA-0149; it does not pre-run migrations, seed application rows, or alter
+    recorded commands.
+  - >-
+    Broad full-Core commands scrub AURA_TEST_DATABASE_URL, AURA_TEST_NATS_URL,
+    AURA_TEST_VALKEY_URL, and AURA_TEST_DEPENDENCIES_ISOLATED so conditional
+    legacy semantics remain byte-for-byte compatible. A temporary JUnit option
+    is injected through the subprocess environment solely to bind skip
+    summaries to exact node IDs; the report is disposable. Dedicated live
+    commands receive fresh isolated coordinates and reject every skip,
+    including an entry present in the broad legacy allowlist.
+  - >-
+      legacy-conditional-skips-v1.json is an immutable allowlist of exact
+      source-line/reason/node-ID tuples. Governed workflow recovery nodes are
+      covered only by the immutable integrated AURA-0150 report; all other
+      governed nodes are never accepted solely by allowlist and require mapped
+      green dedicated coverage. No production content or provider output is
+      retained.
+risks: []
+unresolved: []
