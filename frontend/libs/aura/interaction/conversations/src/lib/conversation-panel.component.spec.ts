@@ -97,6 +97,17 @@ describe('conversation configuration select bindings', () => {
     expect(componentSource).toContain('target.focus()');
   });
 
+  it('renders generated research citations, deleted tombstones, tasks, and artifacts without trusting raw transport URLs', () => {
+    expect(template).toContain('turn.webCitations');
+    expect(template).toContain('citation.kind === \'web\'');
+    expect(template).toContain('target="_blank" rel="noreferrer noopener"');
+    expect(template).toContain('citation-tombstone');
+    expect(template).toContain("['/tasks', reference.taskId]");
+    expect(template).toContain("['/artifacts', reference.artifactId]");
+    expect(template).not.toContain('citation.url');
+    expect(componentSource).toContain('webCitationAccessibleLabel');
+  });
+
   it('exposes an accessible bootstrap-ready seam before draft input is accepted', () => {
     expect(template).toContain('[attr.data-conversation-ready]="conversationReady() ? \'true\' : \'false\'"');
     expect(template).toContain('[attr.aria-busy]="conversationReady() ? \'false\' : \'true\'"');

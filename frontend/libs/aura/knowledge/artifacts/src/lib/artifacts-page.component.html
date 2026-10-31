@@ -81,7 +81,7 @@
       }
     </section>
   } @else {
-    <button type="button" class="back-link" (click)="back()">← Back to artifacts</button>
+    <a class="back-link" routerLink="/artifacts">← Back to artifacts</a>
     @if (store.loading() && !store.selected()) {
       <div class="loading-skeleton" role="status" aria-label="Loading artifact detail"><span></span><span></span></div>
     }
@@ -100,7 +100,7 @@
             </p>
             <h2 #detailHeading id="artifact-detail-heading" tabindex="-1">{{ detail.title || 'Artifact deleted' }}</h2>
           </div>
-          <span class="state-pill">{{ detail.contentState.replaceAll('_', ' ') }}</span>
+          <span class="state-pill" [class.state-warning]="detail.contentState === 'deletion_pending' || detail.contentState === 'cleanup_unknown'" [class.state-danger]="detail.contentState === 'deletion_failed'">{{ detail.contentState.replaceAll('_', ' ') }}</span>
         </header>
         <dl class="detail-meta">
           <div>
@@ -122,6 +122,13 @@
             <dd>{{ detail.lineage.taskId ? 'Research task linked' : 'Standalone artifact' }}</dd>
           </div>
         </dl>
+        @if (deletionRecovery(detail); as recovery) {
+          <section class="recovery" [class.danger-recovery]="recovery.tone === 'danger'" [class.warning-recovery]="recovery.tone === 'warning'" [attr.aria-live]="detail.contentState === 'deletion_failed' || detail.contentState === 'cleanup_unknown' ? 'assertive' : 'polite'">
+            <h3>{{ recovery.heading }}</h3>
+            <p>{{ recovery.message }}</p>
+            <small>Support reference: {{ recovery.supportReference }}</small>
+          </section>
+        }
         @if (isActive(detail) && store.preview(); as preview) {
           <section class="preview" aria-labelledby="preview-heading">
             <div class="preview-heading">
@@ -158,13 +165,13 @@
               Delete artifact
             </button>
           }
-          @if (detail.capabilities.canRetryCleanup) {
-            <button type="button" class="secondary-button" (click)="store.retryCleanup()">
+          @if (canRetryCleanup(detail)) {
+            <button type="button" class="secondary-button" [disabled]="store.saving()" (click)="retryCleanup()">
               Retry cleanup
             </button>
           }
-          @if (detail.capabilities.canReconcileCleanup) {
-            <button type="button" class="secondary-button" (click)="store.reconcileCleanup()">
+          @if (canReconcileCleanup(detail)) {
+            <button type="button" class="secondary-button" [disabled]="store.saving()" (click)="reconcileCleanup()">
               Reconcile cleanup
             </button>
           }

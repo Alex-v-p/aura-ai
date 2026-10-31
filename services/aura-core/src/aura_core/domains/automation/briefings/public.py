@@ -1114,7 +1114,11 @@ class BriefingTaskProjectionApplication:
             else None,
             item.status.value,
             1.0 if status is TaskNormalizedStatus.COMPLETED else None,
-            TaskProjectionCapability(),
+            # An occurrence route requires its parent schedule identity, which
+            # is intentionally not exposed by the current task detail
+            # contract.  Retain the source route key for diagnostics while
+            # failing closed for direct source navigation.
+            TaskProjectionCapability(has_source_detail=False),
             "briefing_occurrence_detail",
             None,
             item.created_at,

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationApi, ConversationBranchDetail, ConversationBranchRunAccepted, ConversationBranchSummary, RunEventSubscription } from './conversation-api';
 import type { ConversationDetail, ConversationRunAccepted, ConversationSummary, MemoryActivity, ModelCatalog, Run, RunEvent, RunMemoryActivitySnapshot, Session } from '@aura/aura-api-client';
-import { ConversationStore, memoryActivityIndicators, normalizeDocumentCitations, reconcileModelThinkingDelta, visibleMemoryActivities, type ManagementSessionPort } from './conversation-store';
+import { ConversationStore, memoryActivityIndicators, normalizeDocumentCitations, normalizeOpaqueArtifactReferences, normalizeOpaqueTaskReferences, normalizeResearchCitations, reconcileModelThinkingDelta, safePublicHttpsUrl, visibleMemoryActivities, type ManagementSessionPort } from './conversation-store';
 import type { AttachmentSelection } from './conversation-attachments';
 
 const hydratedDefaultAgent = { profileId: 'aura-profile', revisionId: 'aura-revision-12', revision: 12, displayName: 'Aura', status: 'active' as const };
@@ -72,6 +72,35 @@ function persistedRecoveryDetail(status: Run['status']): ConversationDetail {
 }
 
 describe('ConversationStore', () => {
+  it('normalizes generated research references once at the browser boundary', () => {
+    expect(normalizeResearchCitations([
+      { kind: 'web', sourceId: '11111111-1111-4111-8111-111111111111', label: 'Public source', url: 'https://example.com/report', retrievedAt: '2026-10-31T00:00:00Z', locator: 'section:1' },
+      { kind: 'web', sourceId: '11111111-1111-4111-8111-111111111111', label: 'duplicate', url: 'https://example.com/other', retrievedAt: '2026-10-31T00:00:00Z', locator: null },
+      { kind: 'web', sourceId: '55555555-5555-4555-8555-555555555555', label: 'Unsafe query', url: 'https://example.com/report?private=1', retrievedAt: '2026-10-31T00:00:00Z', locator: null },
+      { kind: 'web', sourceId: '66666666-6666-4666-8666-666666666666', label: 'Unsafe port', url: 'https://example.com:8443/report', retrievedAt: '2026-10-31T00:00:00Z', locator: null },
+      { kind: 'web', sourceId: '77777777-7777-4777-8777-777777777777', label: 'Unsafe IPv6', url: 'https://[feb0::1]/private', retrievedAt: '2026-10-31T00:00:00Z', locator: null },
+      { kind: 'web', sourceId: '88888888-8888-4888-8888-888888888888', label: 'Too long', url: `https://example.com/${'a'.repeat(2030)}`, retrievedAt: '2026-10-31T00:00:00Z', locator: null },
+      { kind: 'web', sourceId: '99999999-9999-4999-8999-999999999999', label: 'Bad date', url: 'https://example.com/report', retrievedAt: 'now', locator: null },
+      { kind: 'web', sourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', label: 'Impossible date', url: 'https://example.com/report', retrievedAt: '2026-02-30T00:00:00Z', locator: null },
+      { kind: 'web', sourceId: 'source-1', label: 'Malformed ID', url: 'https://example.com/report', retrievedAt: '2026-10-31T00:00:00Z', locator: null },
+      { kind: 'deleted_research', sourceId: '22222222-2222-4222-8222-222222222222', label: 'Research source deleted' },
+      { kind: 'deleted_research', sourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', label: 'private label' },
+    ])).toEqual([
+      { kind: 'web', sourceId: '11111111-1111-4111-8111-111111111111', label: 'Public source', url: 'https://example.com/report', retrievedAt: '2026-10-31T00:00:00Z', locator: 'section:1' },
+      { kind: 'deleted_research', sourceId: '22222222-2222-4222-8222-222222222222', label: 'Research source deleted' },
+    ]);
+    expect(normalizeOpaqueTaskReferences([{ taskId: '33333333-3333-4333-8333-333333333333' }, { taskId: '33333333-3333-4333-8333-333333333333' }, { taskId: '../private' }])).toEqual([{ taskId: '33333333-3333-4333-8333-333333333333' }]);
+    expect(normalizeOpaqueArtifactReferences([{ artifactId: '44444444-4444-4444-8444-444444444444' }, { artifactId: '44444444-4444-4444-8444-444444444444' }, { artifactId: 'artifact-1' }, { objectKey: 'secret' }])).toEqual([{ artifactId: '44444444-4444-4444-8444-444444444444' }]);
+  });
+
+  it('accepts only bounded public HTTPS citation destinations', () => {
+    expect(safePublicHttpsUrl('https://example.com/report')).toBe('https://example.com/report');
+    expect(safePublicHttpsUrl('https://example.com:443/report')).toBe('https://example.com/report');
+    for (const url of ['http://example.com/report', 'https://example.com:8443/report', 'https://user:password@example.com/report', 'https://example.com/report?private=1', 'https://127.0.0.1/report', 'https://169.254.169.254/metadata', 'https://[::1]/report', 'https://[feb0::1]/report', 'https://[fd00::1]/report', `https://example.com/${'a'.repeat(2030)}`]) {
+      expect(safePublicHttpsUrl(url), url).toBeNull();
+    }
+  });
+
   it('ignores workflow-origin runs and events without a conversation id', async () => {
     const workflowRun = {
       id: 'workflow-run',

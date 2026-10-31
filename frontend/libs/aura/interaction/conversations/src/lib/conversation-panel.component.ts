@@ -5,7 +5,7 @@ import { AfterViewChecked, ChangeDetectionStrategy, ChangeDetectorRef, Component
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { LoadingStateComponent, StatusMessageComponent } from '@aura/shared/ui';
-import { ConversationStore, attachmentSelectionForHydration, memoryActivityIndicators, shouldClearComposerDraftAfterAcceptance, visibleMemoryActivities, type DocumentCitation } from './conversation-store';
+import { ConversationStore, attachmentSelectionForHydration, memoryActivityIndicators, shouldClearComposerDraftAfterAcceptance, visibleMemoryActivities, type ConversationArtifactReference, type ConversationTaskReference, type ConversationWebCitation, type DocumentCitation } from './conversation-store';
 import { AgentStore, isBuiltInAuraAgent, type AgentReference } from '@aura/aura/interaction/agents';
 import { PersonaStore } from '@aura/aura/interaction/personas';
 import type { PersonaReference } from '@aura/aura-api-client';
@@ -759,6 +759,11 @@ export class ConversationPanelComponent implements AfterViewChecked, OnDestroy {
   memoryActivityIsProcessing(activity: import('@aura/aura-api-client').MemoryActivity): boolean { return activity.reconciliationStatus === 'pending' || (activity.status === 'queued' && !activity.candidateId && !activity.memoryId); }
   citationLocator(citation: DocumentCitation): string { const [kind, ordinal] = citation.locator.split(':', 2); return `${kind === 'page' ? 'Page' : 'Section'} ${ordinal}`; }
   citationAccessibleLabel(citation: DocumentCitation): string { return `Open source ${citation.displayLabel}, ${this.citationLocator(citation)}`; }
+  webCitationAccessibleLabel(citation: ConversationWebCitation): string { return citation.kind === 'deleted_research' ? 'Research source deleted' : `Open web source ${citation.label}${citation.locator ? `, ${citation.locator}` : ''}`; }
+  webCitationUrl(citation: ConversationWebCitation): string | null { return citation.kind === 'web' ? citation.url : null; }
+  webCitationLocator(citation: ConversationWebCitation): string { return citation.kind === 'deleted_research' ? 'Source no longer available' : citation.locator || 'Web source'; }
+  taskAccessibleLabel(reference: ConversationTaskReference): string { return `Open research task ${reference.taskId}`; }
+  artifactAccessibleLabel(reference: ConversationArtifactReference): string { return `Open generated artifact ${reference.artifactId}`; }
   /** Route activation can replace this panel before the browser picks a new focus target. */
   focusCitationDestination(): void {
     if (typeof document === 'undefined') return;

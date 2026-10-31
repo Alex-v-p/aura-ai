@@ -15,7 +15,8 @@ const outputDir = process.env['AURA_WEB_E2E_OUTPUT_DIR'] ?? 'test-results/aura-w
  */
 export default defineConfig({
   testDir: 'src',
-  testMatch: /(?:research-tasks-artifacts|aura0151-landmarks)\.spec\.ts/,
+  testMatch:
+    /(?:research-tasks-artifacts|governed-research-(?:acceptance|accessibility)|aura0151-landmarks|aura0153-governed-product-ux)\.spec\.ts/,
   fullyParallel: false,
   workers,
   outputDir,

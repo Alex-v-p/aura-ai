@@ -20,9 +20,31 @@ describe('ArtifactsPageComponent acceptance regressions', () => {
     expect(styles).not.toContain('overflow-x:hidden');
   });
 
+  it('uses semantic danger tokens for light and dark contrast', () => {
+    expect(styles).toContain('background:var(--danger-surface)');
+    expect(styles).toContain('color:var(--danger-text)');
+    expect(styles).not.toContain('#8b1e2d');
+  });
+
   it('keeps the shell as the only main landmark', () => {
     expect(template).not.toMatch(/<main\b/);
     expect(template).toContain('<div class="artifacts-page" aria-labelledby="artifacts-heading">');
     expect(template).toContain('<h1 id="artifacts-heading">Artifacts</h1>');
+  });
+
+  it('keeps cleanup actions disabled during saving and exposes live recovery copy', () => {
+    expect(template).toContain('[disabled]="store.saving()"');
+    expect(template).toContain("detail.contentState === 'deletion_failed' || detail.contentState === 'cleanup_unknown' ? 'assertive' : 'polite'");
+    expect(component).toContain('await this.store.retryCleanup()');
+    expect(component).toContain('await this.store.reconcileCleanup()');
+    expect(component).toContain("recovery?.action==='retry_cleanup'");
+    expect(component).toContain("recovery?.action==='reconcile_cleanup'");
+  });
+
+  it('keeps cleanup recovery states and support references in the page ownership zone', () => {
+    expect(component).toContain('function artifactDeletionRecovery');
+    expect(component).toContain('deletion_failed');
+    expect(component).toContain('cleanup_unknown');
+    expect(component).toContain('AR-');
   });
 });

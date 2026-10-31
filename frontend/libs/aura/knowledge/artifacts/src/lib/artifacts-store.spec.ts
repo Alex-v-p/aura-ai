@@ -1,6 +1,6 @@
 import { getTestBed, TestBed } from '@angular/core/testing';
 import { BrowserDynamicTestingModule, platformBrowserDynamicTesting } from '@angular/platform-browser-dynamic/testing';
-import type { ActiveGeneratedArtifactDetail } from '@aura/aura-api-client';
+import type { ActiveGeneratedArtifactDetail, DeletedGeneratedArtifactTombstone } from '@aura/aura-api-client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ARTIFACTS_API, type ArtifactsApi } from './artifacts-models';
 import { ArtifactApiError, AuraArtifactsApi } from './artifacts-api';
@@ -68,5 +68,17 @@ describe('ArtifactsStore and authorized artifact transport', () => {
     vi.stubGlobal('fetch', hostileFetch);
     const hostileApi = new AuraArtifactsApi();
     await expect(hostileApi.download('artifact-1', 1, 'text/plain; charset=utf-8', 5)).rejects.toBeInstanceOf(ArtifactApiError);
+  });
+
+  it('sends cleanup recovery with the current version and idempotency key', async () => {
+    const tombstone: DeletedGeneratedArtifactTombstone = { id: 'artifact-1', kind: 'generated_text', title: null, mediaType: null, contentState: 'deletion_failed', currentRevision: 1, version: 9, capabilities: { canPreview: false, canDownload: false, canDelete: false, canRetryCleanup: true, canReconcileCleanup: false }, createdAt: '2026-10-30T00:00:00Z', updatedAt: '2026-10-30T00:00:00Z', lineage: { taskId: null, runId: null, conversationId: null, workspaceId: null }, integrity: { revision: 1, sha256: 'a'.repeat(64), byteCount: 5, createdAt: '2026-10-30T00:00:00Z' }, deletionAuditId: 'audit-1' };
+    const api = { get: vi.fn(async () => tombstone), revisions: vi.fn(async () => []), retryCleanup: vi.fn(async () => tombstone) };
+    const harness = apiHarness(api);
+    await harness.store.loadDetail('artifact-1');
+    await harness.store.retryCleanup();
+    expect(api.retryCleanup).toHaveBeenCalledOnce();
+    expect(api.retryCleanup.mock.calls[0]?.[0]).toBe('artifact-1');
+    expect(api.retryCleanup.mock.calls[0]?.[1]).toBe(9);
+    expect(api.retryCleanup.mock.calls[0]?.[2]).toMatch(/^[0-9a-f]{32}$/);
   });
 });

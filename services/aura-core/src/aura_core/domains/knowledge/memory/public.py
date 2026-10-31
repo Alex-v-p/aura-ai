@@ -332,7 +332,13 @@ class MemoryReindexTaskProjectionApplication:
                 else None,
                 "embedding_generation",
                 1.0 if normalized is TaskNormalizedStatus.COMPLETED else None,
-                TaskProjectionCapability(can_retry=item.status == "failed"),
+                # Memory reindexing has no owner-facing source detail route in
+                # the current additive contract.  The projection may still
+                # advertise retry, but it must not imply a navigable detail.
+                TaskProjectionCapability(
+                    can_retry=item.status == "failed",
+                    has_source_detail=False,
+                ),
                 "memory_reindex_detail",
                 item.status if normalized is TaskNormalizedStatus.FAILED else None,
                 item.created_at,

@@ -1,0 +1,108 @@
+agent: core_worker
+work_item: AURA-0153
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0153_core
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: core.task-projection-source-capabilities
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/automation/workflows/public.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/tests/test_task_projection_sources.py
+  - services/aura-core/tests/test_task_projection_api.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+  notes: >-
+    No instrumentation is applicable to this deterministic source capability
+    correction; existing Task Center projection telemetry is unchanged.
+verification:
+  passed:
+    - >-
+      AURA_WORK_ITEM=AURA-0153 python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0153.yaml
+    - >-
+      AURA_WORK_ITEM=AURA-0153 python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0153.yaml --path
+      services/aura-core/src/aura_core/domains/automation/workflows/public.py
+      --path services/aura-core/src/aura_core/domains/automation/briefings/public.py
+      --path services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+      --path services/aura-core/tests/test_task_projection_sources.py --path
+      services/aura-core/tests/test_task_projection_api.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check
+      services/aura-core/src/aura_core/domains/automation/workflows/public.py
+      services/aura-core/src/aura_core/domains/automation/briefings/public.py
+      services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+      services/aura-core/tests/test_task_projection_sources.py
+      services/aura-core/tests/test_task_projection_api.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/automation/workflows/public.py
+      services/aura-core/src/aura_core/domains/automation/briefings/public.py
+      services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+      services/aura-core/tests/test_task_projection_sources.py
+      services/aura-core/tests/test_task_projection_api.py (0 errors)
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_task_projection_sources.py
+      services/aura-core/tests/test_task_projection_api.py -q (28 passed, 3 skipped)
+    - >-
+      git diff --check for all owned Core source and test paths
+  failed:
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0153.yaml detects the unrelated
+      concurrent AURA-0148 change to evaluations/research/release-thresholds.yaml.
+      No AURA-0153 Core path changes a protected baseline.
+  not_run:
+    - >-
+      Frontend lint, unit, build, and Playwright checks are owned by the
+      AURA-0153 frontend worker and integration maintainer.
+    - >-
+      Isolated PostgreSQL source-cursor tests remain environment-gated and
+      were skipped because the isolated database coordinates were not set.
+decisions:
+  - >-
+    Workflow instances, briefing occurrences, and memory reindexing retain
+    their source route keys for projection diagnostics but explicitly set
+    has_source_detail=false because the current DurableTaskDetail contract
+    lacks sufficient parent identity for safe direct navigation.
+  - >-
+    Research and document source capabilities were not changed; their existing
+    public source IDs and route keys remain the only direct-detail links.
+  - >-
+    The regression test uses source public value objects and the execution
+    rebuild API, proving both adapter snapshots and persisted backfill rows
+    preserve the closed capability flags without cross-domain persistence
+    access.
+  - >-
+    Added an API-level parameterized matrix for all five source kinds. It
+    serializes source snapshots through both public summary and detail
+    transport serializers, while deriving research and document snapshots
+    from their public source facades, so route keys cannot silently imply a
+    different capability to Aura Web.
+risks: []
+unresolved:
+  - >-
+    The shared worktree contains unrelated uncommitted AURA-0148 evaluation
+    changes, so baseline-protection cannot pass until integration isolates or
+    checkpoints that work. This does not affect the owned Core implementation.

@@ -465,6 +465,39 @@
                 </ul>
               </footer>
             }
+            @if (turn.role === 'assistant' && turn.webCitations?.length) {
+              <footer class="document-citations research-citations" aria-label="Web research sources">
+                <span class="document-citations-label">Web research sources</span>
+                <ul>
+                  @for (citation of turn.webCitations; track citation.sourceId) {
+                    <li>
+                      @if (citation.kind === 'web') {
+                        <a [href]="webCitationUrl(citation)" target="_blank" rel="noreferrer noopener" [attr.aria-label]="webCitationAccessibleLabel(citation)">
+                          <span>{{ citation.label }}</span><small>{{ webCitationLocator(citation) }}</small>
+                        </a>
+                      } @else {
+                        <span class="citation-tombstone" [attr.aria-label]="webCitationAccessibleLabel(citation)">
+                          <span>{{ citation.label }}</span><small>{{ webCitationLocator(citation) }}</small>
+                        </span>
+                      }
+                    </li>
+                  }
+                </ul>
+              </footer>
+            }
+            @if (turn.role === 'assistant' && (turn.taskRefs?.length || turn.artifactRefs?.length)) {
+              <footer class="document-citations research-results" aria-label="Research results">
+                <span class="document-citations-label">Research results</span>
+                <ul>
+                  @for (reference of turn.taskRefs ?? []; track reference.taskId) {
+                    <li><a [routerLink]="['/tasks', reference.taskId]" [attr.aria-label]="taskAccessibleLabel(reference)"><span>Open research task</span><small>{{ reference.taskId }}</small></a></li>
+                  }
+                  @for (reference of turn.artifactRefs ?? []; track reference.artifactId) {
+                    <li><a [routerLink]="['/artifacts', reference.artifactId]" [attr.aria-label]="artifactAccessibleLabel(reference)"><span>Open report artifact</span><small>{{ reference.artifactId }}</small></a></li>
+                  }
+                </ul>
+              </footer>
+            }
             @if (turn.state === 'partial') {
               <span class="partial-label">Partial response</span>
             }

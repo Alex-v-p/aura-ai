@@ -1,0 +1,82 @@
+agent: frontend_worker
+work_item: AURA-0153
+status: complete
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: /root/aura0153_frontend
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: frontend.aura.interaction.research-completion, frontend.aura.knowledge.research-recovery, frontend.aura.knowledge.artifact-recovery, frontend.aura.activity.task-source-navigation, frontend.aura-web.governed-product-acceptance
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web-e2e/playwright.config.ts
+  - frontend/apps/aura-web-e2e/src/aura0153-governed-product-ux.spec.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-models.spec.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-models.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.html
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.spec.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.css
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.css
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.html
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.spec.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-store.spec.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.css
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.html
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.spec.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-store.spec.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0153.yaml
+    - scoped validate-changed-paths for 25 authorized paths
+    - validate-contract-changes (no contract changes)
+    - validate-generated-sync
+    - validate-import-boundaries
+    - validate-service-isolation
+    - validate-module-registry
+    - validate-frontend-boundaries
+    - validate-repository-shape
+    - frontend aura-api-client check-generated
+    - frontend Nx lint and test for aura-conversations, aura-research, aura-artifacts, aura-tasks, aura-web
+    - frontend aura-web production build
+    - Aura Web Playwright governed product acceptance across desktop, tablet, and mobile (24 passed)
+    - git diff --check
+  failed:
+    - validate-baseline-protection because concurrent AURA-0148 changes include evaluations/research/release-thresholds.yaml, outside this work item
+  not_run:
+    - Core Ruff, Pyright, and focused Core tests; owned by the AURA-0153 core worker/parent integration
+    - aggregate AURA-0148 checks and full multi-project acceptance
+decisions:
+  - Normalized generated Message.webCitations, taskRefs, and artifactRefs at the conversation store boundary so all REST, snapshot, and reconnect hydration paths share the same safe presentation state.
+  - Kept strict browser-boundary validators within their owning frontend zones: Conversations normalizes generated message references, while Research carries an exactly-parity local validator for canonical UUID references, 2048-character public HTTPS URLs, 443-only/no-query destinations, valid date-time citations, and prohibited IPv4/IPv6 literal ranges.
+  - Rendered only bounded public HTTPS citations or fixed deleted-source tombstones; task and artifact links contain opaque IDs only.
+  - Kept Task Center source navigation fail-closed for unsupported, inconsistent, or capability-disabled source details.
+  - Kept state-specific recovery and content-free support references in the authorized research and artifact page components because the model helper files are outside AURA-0153 allowed_paths.
+  - Added browser acceptance for storage/URL privacy across enumerated local/session keys and values, IndexedDB, Cache Storage request/response bodies, service-worker registrations, recorded history URLs, reconnect, logout, session loss, safe references, capability-gated tasks, and keyboard-reachable research/artifact cleanup recovery without changing AURA-0148 E2E specs.
+  - Recovery controls require both the state-specific action and the advertised capability; post-settlement focus targets the live status only, while command start retains focus.
+  - Failure and unknown recovery styling uses semantic warning/danger/info tokens rather than the accent color.
+  - Browser acceptance computes the rendered loading-skeleton animation under reduced motion, verifies forced-colors controls remain visible and focusable, and confirms a recovery action remains within the viewport at 200% zoom without page overflow.
+  - Deletion-failed and cleanup-unknown recovery regions use assertive live announcements; the browser fixture exercises the empty SSE stream's disconnect/reconnect path and verifies authoritative task refresh before navigation.
+  - Budget-exhausted copy distinguishes an already-consumed one-time extension from an unavailable extension and only exposes the extension control when both capability and acceptance state permit it.
+  - Added executable table-driven browser coverage for partial, budget-exhausted (available, used, unavailable), interrupted, provider-disabled, and provider-unavailable research states, plus focused Axe scans for conversation citations, cleanup recovery, and the confirmation dialog.
+  - Privacy assertions now run immediately after hydration, SSE reconnect/authoritative refresh, cleanup mutations, active artifact preview rendering, logout, and session-loss handling; the valid UUID/public HTTPS citation and artifact preview content canaries are asserted in rendered DOM state.
+  - Dangerous actions use semantic light/dark danger surface/text tokens with forced-colors handling; hard-coded color overrides were removed.
+  - Citation section labels use the semantic foreground token for WCAG contrast in dark themes, and artifact collection navigation is a native keyboard-activatable RouterLink with an asserted `/artifacts` destination.
+risks:
+  - Repository baseline protection remains red until the concurrent AURA-0148 protected evaluation-threshold change is reviewed and integrated by the parent.
+unresolved: []

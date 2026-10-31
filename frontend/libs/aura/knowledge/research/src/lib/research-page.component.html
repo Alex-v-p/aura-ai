@@ -221,7 +221,7 @@
             <p class="eyebrow">{{ modeLabel(detail.mode) }} research</p>
             <h2 #activityHeading tabindex="-1">{{ isActive(detail) ? detail.question : detail.tombstoneLabel }}</h2>
           </div>
-          <span class="state-pill">{{ outcomeLabel(detail.outcome) }}</span>
+          <span class="state-pill" [class.state-warning]="detail.outcome === 'partial' || detail.outcome === 'budget_exhausted' || detail.outcome === 'interrupted' || detail.contentState === 'cleanup_unknown' || detail.contentState === 'deletion_pending'" [class.state-danger]="detail.outcome === 'failed' || detail.contentState === 'deletion_failed'">{{ outcomeLabel(detail.outcome) }}</span>
         </header>
         @if (activityStarted()) { <p class="sr-only" role="status" aria-live="polite">Research started.</p> }
         @if (store.streamState() === 'disconnected' || store.streamState() === 'malformed' || store.streamState() === 'gap') {
@@ -260,19 +260,51 @@
             <ul>
               @for (citation of detail.citations; track citation.sourceId) {
                 <li>
-                  <a [href]="citation.url" target="_blank" rel="noreferrer noopener">{{
-                    citation.label
-                  }}</a
-                  ><small>{{ citation.locator || 'Source evidence' }}</small>
+                  @if (safeCitationUrl(citation.url); as safeUrl) {
+                    <a [href]="safeUrl" target="_blank" rel="noreferrer noopener" [attr.aria-label]="'Open web source ' + citation.label">{{ citation.label }}</a>
+                    <small>{{ citation.locator || 'Source evidence' }}</small>
+                  } @else {
+                    <span class="citation-tombstone" role="status">Source unavailable</span>
+                  }
                 </li>
               }
             </ul>
           </section>
         }
         @if (isActive(detail) && detail.artifactRefs.length) {
-          <p class="artifact-note">
-            A report artifact is available in <a routerLink="/artifacts">Artifacts</a>.
-          </p>
+          <section class="artifact-note" aria-labelledby="research-artifacts-heading">
+            <h3 id="research-artifacts-heading">Generated results</h3>
+            <ul>
+              @for (artifact of detail.artifactRefs; track artifact.artifactId) {
+                <li>
+                  @if (artifactRoute(artifact.artifactId); as route) {
+                    <a [routerLink]="route">Open report artifact</a>
+                  } @else {
+                    <span class="citation-tombstone" role="status">Report unavailable</span>
+                  }
+                </li>
+              }
+            </ul>
+          </section>
+        }
+        @if (isActive(detail)) {
+          @if (recovery(detail); as explanation) {
+            <section class="recovery" [class.danger-recovery]="explanation.tone === 'danger'" [class.warning-recovery]="explanation.tone === 'warning'" aria-live="polite">
+              <h3>{{ explanation.heading }}</h3>
+              <p>{{ explanation.message }}</p>
+              @if (explanation.action === 'extend_once' && detail.capabilities.canExtend) {
+                <button type="button" class="secondary-button" (click)="openExtension(detail)">Extend admitted budget once</button>
+              } @else if (explanation.action === 'new_research') {
+                <a class="secondary-button" routerLink="/research">Start new research</a>
+              }
+            </section>
+          }
+        } @else if (deletionRecovery(detail); as deletion) {
+          <section class="recovery deletion-recovery" [class.danger-recovery]="deletion.tone === 'danger'" [class.warning-recovery]="deletion.tone === 'warning'" [attr.aria-live]="detail.contentState === 'deletion_failed' || detail.contentState === 'cleanup_unknown' ? 'assertive' : 'polite'">
+            <h3>{{ deletion.heading }}</h3>
+            <p>{{ deletion.message }}</p>
+            <small>Support reference: {{ deletion.supportReference }}</small>
+          </section>
         }
         <div class="detail-actions">
           @if (detail.capabilities.canCancel) {
@@ -295,13 +327,13 @@
               Delete retained research
             </button>
           }
-          @if (detail.capabilities.canRetryCleanup) {
-            <button class="secondary-button" type="button" (click)="retryCleanup()">
+          @if (canRetryCleanup(detail)) {
+            <button class="secondary-button" type="button" [disabled]="store.saving()" (click)="retryCleanup()">
               Retry cleanup
             </button>
           }
-          @if (detail.capabilities.canReconcileCleanup) {
-            <button class="secondary-button" type="button" (click)="reconcileCleanup()">
+          @if (canReconcileCleanup(detail)) {
+            <button class="secondary-button" type="button" [disabled]="store.saving()" (click)="reconcileCleanup()">
               Reconcile cleanup
             </button>
           }

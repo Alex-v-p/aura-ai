@@ -1,5 +1,5 @@
 import { Inject, Injectable, InjectionToken, Optional, computed, signal } from '@angular/core';
-import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, ResearchActivity, Run, RunEvent, RunMemoryActivitySnapshot, Session, ToolStatusData } from '@aura/aura-api-client';
+import type { ConversationDetail, ConversationSummary, ConversationRunAccepted, MemoryActivity, MemoryCandidateDetail, MemoryDetail, Message, Model, PersonaAssignment as ApiPersonaAssignment, PersonaReference, ResearchActivity, ResearchCitation, Run, RunEvent, RunMemoryActivitySnapshot, Session, ToolStatusData } from '@aura/aura-api-client';
 import type { AgentReference } from '@aura/aura/interaction/agents';
 import { AuraConversationApi, type ConversationApi, type ConversationApiError, type ConversationBranchDetail, type ConversationBranchPage, type ConversationBranchRunAccepted, type ConversationBranchSummary, type ConversationListFilters, type RunEventHandler, type RunEventSubscription } from './conversation-api';
 import type { AttachmentSelection, AttachmentSummary } from './conversation-attachments';
@@ -29,7 +29,8 @@ export function shouldClearComposerDraftAfterAcceptance(
 
 /** Metadata-only source reference accepted by Core for this run. */
 export interface DocumentCitation { readonly documentId: string; readonly displayLabel: string; readonly locator: string; }
-const citationIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const citationIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
+const opaqueUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const citationText = (value: unknown, maxLength: number): string | null => {
   if (typeof value !== 'string' || value.length === 0 || value.length > maxLength || [...value].some((character) => { const code = character.codePointAt(0) ?? 0; return code < 0x20 || code === 0x7f; })) return null;
   return value;
@@ -53,7 +54,135 @@ export function normalizeDocumentCitations(value: unknown): ReadonlyArray<Docume
   return result;
 }
 
-export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; readonly citations?: ReadonlyArray<DocumentCitation>; readonly attachments?: ReadonlyArray<AttachmentSummary>; readonly researchActivity?: ResearchActivity; }
+export type ConversationWebCitation = ResearchCitation;
+export interface ConversationTaskReference { readonly taskId: string; }
+export interface ConversationArtifactReference { readonly artifactId: string; }
+
+export const isSafeOpaqueUuid = (value: unknown): value is string => typeof value === 'string' && opaqueUuidPattern.test(value);
+const isSafeOpaqueId = isSafeOpaqueUuid;
+const isSafeDisplayText = (value: unknown, maxLength: number): value is string => citationText(value, maxLength) !== null;
+function parseIpv4Literal(host: string): readonly [number, number, number, number] | null {
+  if (!/^\d+(?:\.\d+){3}$/u.test(host)) return null;
+  const octets = host.split('.').map(Number);
+  return octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255) ? octets as [number, number, number, number] : null;
+}
+function prohibitedIpv4(octets: readonly [number, number, number, number]): boolean {
+  const [first, second, third, fourth] = octets;
+  return first === 0 || first === 10 || first === 127 || (first === 100 && second >= 64 && second <= 127) || (first === 169 && second === 254) || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 0) || (first === 192 && second === 2) || (first === 192 && second === 88 && third === 99) || (first === 192 && second === 168) || (first === 198 && second >= 18 && second <= 19) || (first === 198 && second === 51) || (first === 203 && second === 0) || first >= 224 || (first === 255 && second === 255 && third === 255 && fourth === 255);
+}
+function parseIpv6Literal(host: string): readonly number[] | null {
+  if (!host.includes(':')) return null;
+  const halves = host.split('::');
+  if (halves.length > 2) return null;
+  const parsePart = (part: string): number[] | null => {
+    if (!part) return [];
+    const groups: number[] = [];
+    const pieces = part.split(':');
+    for (const [index, piece] of pieces.entries()) {
+      if (/^\d+(?:\.\d+){3}$/u.test(piece)) {
+        if (index !== pieces.length - 1) return null;
+        const octets = parseIpv4Literal(piece);
+        if (!octets) return null;
+        groups.push((octets[0] << 8) | octets[1], (octets[2] << 8) | octets[3]);
+      } else if (/^[0-9a-f]{1,4}$/iu.test(piece)) groups.push(Number.parseInt(piece, 16));
+      else return null;
+    }
+    return groups;
+  };
+  const left = parsePart(halves[0]); const right = parsePart(halves[1] ?? '');
+  if (!left || !right) return null;
+  if (halves.length === 1) return left.length === 8 ? left : null;
+  const missing = 8 - left.length - right.length;
+  return missing > 0 ? [...left, ...Array.from({ length: missing }, () => 0), ...right] : null;
+}
+function ipv6Prefix(groups: readonly number[], prefix: readonly number[], bits: number): boolean {
+  const fullGroups = Math.floor(bits / 16); const remainder = bits % 16;
+  for (let index = 0; index < fullGroups; index += 1) if (groups[index] !== (prefix[index] ?? 0)) return false;
+  return remainder === 0 || (groups[fullGroups] & (0xffff << (16 - remainder))) === ((prefix[fullGroups] ?? 0) & (0xffff << (16 - remainder)));
+}
+function prohibitedIpv6(groups: readonly number[]): boolean {
+  return groups.every((group) => group === 0) || (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) || ipv6Prefix(groups, [0xfc00], 7) || ipv6Prefix(groups, [0xfe80], 10) || ipv6Prefix(groups, [0xfec0], 10) || ipv6Prefix(groups, [0xff00], 8) || ipv6Prefix(groups, [0x0100], 64) || ipv6Prefix(groups, [0x2001, 0], 32) || ipv6Prefix(groups, [0x2001, 0x0002], 48) || ipv6Prefix(groups, [0x2001, 0x0010], 28) || ipv6Prefix(groups, [0x2001, 0x0db8], 32) || ipv6Prefix(groups, [0x3fff], 20) || (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff);
+}
+function isPublicHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host === 'metadata' || host.endsWith('.metadata.google.internal')) return false;
+  const ipv4 = parseIpv4Literal(host); if (/^\d+(?:\.\d+){3}$/u.test(host)) return ipv4 !== null && !prohibitedIpv4(ipv4);
+  const ipv6 = parseIpv6Literal(host); return ipv6 ? !prohibitedIpv6(ipv6) : true;
+}
+export function safePublicHttpsUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return null;
+  try { const url = new URL(value); if (url.protocol !== 'https:' || url.username || url.password || (url.port !== '' && url.port !== '443') || !isPublicHostname(url.hostname) || url.search || url.hash) return null; return url.href; } catch { return null; }
+}
+const retrievedAtPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/u;
+function isValidRetrievedAt(value: string): boolean {
+  const match = retrievedAtPattern.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]);
+  const hour = Number(match[4]); const minute = Number(match[5]); const second = Number(match[6]);
+  const timezone = match[7];
+  const offsetHour = timezone === 'Z' ? 0 : Number(timezone.slice(1, 3));
+  const offsetMinute = timezone === 'Z' ? 0 : Number(timezone.slice(4, 6));
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth && hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 23 && offsetMinute <= 59 && Number.isFinite(Date.parse(value));
+}
+
+/**
+ * Research references are additive transport data, not trusted DOM input. A
+ * deleted citation is intentionally reduced to its fixed tombstone label;
+ * active citations must be public HTTPS links without userinfo. Keeping this
+ * validation at the conversation boundary makes REST, snapshots, and SSE use
+ * the same safe projection.
+ */
+export function normalizeResearchCitations(value: unknown): ReadonlyArray<ConversationWebCitation> {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>(); const result: ConversationWebCitation[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const item = candidate as Record<string, unknown>;
+    const sourceId = item['sourceId'];
+    if (!isSafeOpaqueId(sourceId) || seen.has(sourceId)) continue;
+    if (item['kind'] === 'deleted_research') {
+      if (item['label'] !== 'Research source deleted' || Object.keys(item).some((key) => !['kind', 'sourceId', 'label'].includes(key))) continue;
+      seen.add(sourceId); result.push({ kind: 'deleted_research', sourceId, label: 'Research source deleted' });
+    } else if (item['kind'] === 'web') {
+      const label = item['label']; const urlValue = item['url']; const retrievedAt = item['retrievedAt']; const locator = item['locator'];
+      if (Object.keys(item).some((key) => !['kind', 'sourceId', 'label', 'url', 'retrievedAt', 'locator'].includes(key)) || !isSafeDisplayText(label, 300) || typeof retrievedAt !== 'string' || !isValidRetrievedAt(retrievedAt) || (locator !== null && locator !== undefined && !isSafeDisplayText(locator, 255)) || typeof urlValue !== 'string') continue;
+      const url = safePublicHttpsUrl(urlValue);
+      if (!url) continue;
+      seen.add(sourceId); result.push({ kind: 'web', sourceId, label, url, retrievedAt, locator: locator === undefined ? null : locator });
+    }
+    if (result.length >= 20) break;
+  }
+  return result;
+}
+
+export function normalizeOpaqueTaskReferences(value: unknown): ReadonlyArray<ConversationTaskReference> {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>(); const result: ConversationTaskReference[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const taskId = (candidate as Record<string, unknown>)['taskId'];
+    if (Object.keys(candidate as object).some((key) => key !== 'taskId') || !isSafeOpaqueId(taskId) || seen.has(taskId)) continue;
+    seen.add(taskId); result.push({ taskId });
+    if (result.length >= 8) break;
+  }
+  return result;
+}
+
+export function normalizeOpaqueArtifactReferences(value: unknown): ReadonlyArray<ConversationArtifactReference> {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>(); const result: ConversationArtifactReference[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const artifactId = (candidate as Record<string, unknown>)['artifactId'];
+    if (Object.keys(candidate as object).some((key) => key !== 'artifactId') || !isSafeOpaqueId(artifactId) || seen.has(artifactId)) continue;
+    seen.add(artifactId); result.push({ artifactId });
+    if (result.length >= 8) break;
+  }
+  return result;
+}
+
+export interface ConversationTurn { readonly id: string; readonly role: TurnRole; readonly text: string; readonly state?: 'partial' | 'interrupted' | 'failed'; readonly runId?: string | null; readonly transitionMarker?: string; readonly memoryActivities?: ReadonlyArray<MemoryActivity>; readonly citations?: ReadonlyArray<DocumentCitation>; readonly webCitations?: ReadonlyArray<ConversationWebCitation>; readonly taskRefs?: ReadonlyArray<ConversationTaskReference>; readonly artifactRefs?: ReadonlyArray<ConversationArtifactReference>; readonly attachments?: ReadonlyArray<AttachmentSummary>; readonly researchActivity?: ResearchActivity; }
 export function attachmentSelectionForHydration(
   switchedConversation: boolean,
   editingMessageId: string | null,
@@ -1522,7 +1651,7 @@ export class ConversationStore {
   private fromDetail(detail: ConversationDetail): Conversation { const retryableRun = this.latestRetryableRun(detail); const base = this.fromSummary(detail); const previous = this.find(detail.id); const turns = detail.messages.map((message) => { const next = this.fromMessage(message); const old = previous?.turns.find((turn) => turn.id === message.id); return old?.memoryActivities ? { ...next, memoryActivities: old.memoryActivities } : next; }); const currentRun = isConversationRun(detail.currentRun) ? detail.currentRun : null; return { ...base, turns, currentRun, retryableRun, runs: this.uniqueRuns([...detail.recentRuns, ...(currentRun ? [currentRun] : [])]), ...(previous?.branch ? { branch: previous.branch } : {}), ...(previous?.toolActivities ? { toolActivities: previous.toolActivities } : {}), ...(previous?.toolActivityEventIds ? { toolActivityEventIds: previous.toolActivityEventIds } : {}), ...(previous?.toolActivityCursors ? { toolActivityCursors: previous.toolActivityCursors } : {}) }; }
   private uniqueRuns(runs: ReadonlyArray<Run>): ReadonlyArray<Run> { const seen = new Set<string>(); return runs.filter(isConversationRun).filter((run) => { if (seen.has(run.id)) return false; seen.add(run.id); return true; }); }
   private latestRetryableRun(detail: ConversationDetail): Run | null { return [...detail.recentRuns, ...(isConversationRun(detail.currentRun) ? [detail.currentRun] : [])].filter(isConversationRun).filter((run) => this.isRetryable(run.status)).sort((left, right) => Date.parse(right.finishedAt ?? right.createdAt) - Date.parse(left.finishedAt ?? left.createdAt))[0] ?? null; }
-  private fromMessage(message: Message): ConversationTurn { const raw = message as Message & { readonly citations?: unknown; readonly attachments?: unknown; readonly researchActivity?: ResearchActivity }; const citations = normalizeDocumentCitations(raw.citations); const attachments = normalizeAttachments(raw.attachments); return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId, ...(citations.length ? { citations } : {}), ...(attachments.length ? { attachments } : {}), ...(raw.researchActivity ? { researchActivity: raw.researchActivity } : {}) }; }
+  private fromMessage(message: Message): ConversationTurn { const raw = message as Message & { readonly citations?: unknown; readonly webCitations?: unknown; readonly taskRefs?: unknown; readonly artifactRefs?: unknown; readonly attachments?: unknown; readonly researchActivity?: ResearchActivity }; const citations = normalizeDocumentCitations(raw.citations); const webCitations = normalizeResearchCitations(raw.webCitations); const taskRefs = normalizeOpaqueTaskReferences(raw.taskRefs); const artifactRefs = normalizeOpaqueArtifactReferences(raw.artifactRefs); const attachments = normalizeAttachments(raw.attachments); return { id: message.id, role: message.role, text: message.content, state: message.state === 'complete' ? undefined : message.state === 'failed' ? 'failed' : message.state === 'interrupted' ? 'interrupted' : 'partial', runId: message.runId, ...(citations.length ? { citations } : {}), ...(webCitations.length ? { webCitations } : {}), ...(taskRefs.length ? { taskRefs } : {}), ...(artifactRefs.length ? { artifactRefs } : {}), ...(attachments.length ? { attachments } : {}), ...(raw.researchActivity ? { researchActivity: raw.researchActivity } : {}) }; }
   private hydrateHistoricalToolActivities(conversation: Conversation): void {
     for (const run of conversation.runs) {
       if (conversation.currentRun?.id === run.id || !this.isTerminal(run.status) || this.toolReplaySubscriptions.has(run.id)) continue;

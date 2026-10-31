@@ -141,7 +141,11 @@
               Retry task
             </button>
           }
-          <a class="secondary-button" [routerLink]="detail.routeKey === 'research_detail' ? ['/research', detail.sourceId] : ['/tasks', detail.id]">Open source</a>
+          @if (sourceRoute(detail); as source) {
+            <a class="secondary-button" [routerLink]="source.commands">{{ source.label }}</a>
+          } @else {
+            <p class="source-unavailable" role="status">{{ sourceExplanation(detail) }}</p>
+          }
           @if (detail.artifactRefs.length) {
             <a class="secondary-button" routerLink="/artifacts">Inspect artifacts</a>
           }

@@ -290,6 +290,100 @@ def test_source_adapters_are_application_owned_task_ports_with_commands() -> Non
         assert callable(adapter.command_task)
 
 
+@pytest.mark.asyncio
+async def test_source_detail_capability_is_truthful_through_rebuild() -> None:
+    """Backfill/rebuild must not turn source-only route keys into links."""
+
+    workflow = workflow_public.WorkflowInstance(
+        id=uuid4(),
+        workflow_id=uuid4(),
+        revision_id=uuid4(),
+        issuer="https://issuer.example",
+        subject="source-capability-owner",
+        current_ordinal=1,
+        status=workflow_public.WorkflowInstanceStatus.QUEUED,
+        version=1,
+        admitted_at=NOW,
+        deadline=NOW + timedelta(days=1),
+        input_values={},
+        updated_at=NOW,
+    )
+    briefing = briefing_public.BriefingOccurrence(
+        id=uuid4(),
+        schedule_id=uuid4(),
+        issuer="https://issuer.example",
+        subject="source-capability-owner",
+        sequence=1,
+        status=briefing_public.BriefingOccurrenceStatus.SCHEDULED,
+        due_at=NOW,
+        due_local_date=NOW.date(),
+        due_local_time=time(12, 0),
+        time_zone="UTC",
+        source_completeness=briefing_public.BriefingSourceCompleteness.COMPLETE,
+        run_id=None,
+        result_id=None,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    memory = memory_public.MemoryEmbeddingGeneration(
+        id=uuid4(),
+        generation=1,
+        model_id="source-capability-model",
+        model_revision=None,
+        dimension=3,
+        status="building",
+        created_at=NOW,
+        issuer="https://issuer.example",
+        subject="source-capability-owner",
+    )
+    source_snapshots = (
+        (
+            TaskSourceKind.WORKFLOW_INSTANCE,
+            cast(
+                TaskProjectionSnapshot,
+                workflow_public.WorkflowTaskProjectionApplication._snapshot(  # pyright: ignore[reportPrivateUsage]
+                    workflow, uuid4()
+                ),
+            ),
+        ),
+        (
+            TaskSourceKind.BRIEFING_OCCURRENCE,
+            cast(
+                TaskProjectionSnapshot,
+                briefing_public.BriefingTaskProjectionApplication._snapshot(  # pyright: ignore[reportPrivateUsage]
+                    briefing, uuid4()
+                ),
+            ),
+        ),
+        (
+            TaskSourceKind.MEMORY_REINDEX,
+            cast(
+                TaskProjectionSnapshot,
+                memory_public.MemoryReindexTaskProjectionApplication._snapshot(  # pyright: ignore[reportPrivateUsage]
+                    memory, uuid4()
+                ),
+            ),
+        ),
+    )
+
+    for source_kind, snapshot in source_snapshots:
+        assert snapshot.capabilities.has_source_detail is False
+        source = Source([snapshot])
+        source.kind = source_kind
+        repository = MemoryTaskProjectionRepository()
+        service = TaskProjectionService(repository, [source])  # pyright: ignore[reportArgumentType]
+
+        assert await service.rebuild(source_kind) == 1
+        row = await repository.get(source_kind, snapshot.source_id)
+        assert row is not None
+        assert row.capabilities.has_source_detail is False
+        assert row.route_key in {
+            "workflow_instance_detail",
+            "briefing_occurrence_detail",
+            "memory_reindex_detail",
+        }
+
+
 @pytest.mark.parametrize(
     ("source_kind", "module_path"),
     (

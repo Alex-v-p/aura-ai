@@ -1408,7 +1408,15 @@ class WorkflowTaskProjectionApplication:
             item.terminal_outcome.value if item.terminal_outcome else None,
             f"step_{item.current_ordinal}",
             None,
-            TaskProjectionCapability(can_cancel=item.status is not WorkflowInstanceStatus.TERMINAL),
+            # DurableTaskDetail does not carry the workflow definition and
+            # revision identifiers needed to construct a public workflow
+            # instance route.  Keep the projection route key for source
+            # diagnostics, but advertise that no direct source detail link is
+            # available until the additive contract carries that lineage.
+            TaskProjectionCapability(
+                can_cancel=item.status is not WorkflowInstanceStatus.TERMINAL,
+                has_source_detail=False,
+            ),
             "workflow_instance_detail",
             None,
             item.admitted_at,
