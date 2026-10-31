@@ -1,0 +1,77 @@
+agent: integration_maintainer
+work_item: AURA-0153
+status: integrated
+integrated_commits:
+  - 8f6961f
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0153-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0153-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0153-security-privacy.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0153-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The Core and frontend implementation handoffs were complete, all four
+      schema-valid review verdicts were verified, and no blocking finding
+      remained.
+    - >-
+      The AURA-0153 work item passed validation before archival and the
+      archived work item passed validation after archival; changed-path
+      validation passed for all 35 implementation, handoff, and review paths.
+    - >-
+      Contract-change validation reported no contract changes and generated
+      client synchronization passed.
+    - >-
+      Import-boundary, service-isolation, module-registry,
+      frontend-boundary, and repository-shape validators passed.
+    - >-
+      Baseline protection was run in an isolated detached integration worktree
+      containing only AURA-0153 paths and returned the documented no-protected-
+      change skip; the shared-worktree baseline failure was only the unrelated
+      uncommitted AURA-0148 evaluation-threshold edit.
+    - >-
+      Ruff passed for all changed Core source and test paths, and Pyright
+      passed with zero errors, warnings, or information diagnostics.
+    - >-
+      Focused Core source and API projection tests passed 28 tests with 3
+      documented environment-gated skips.
+    - >-
+      Aura API generated-client check passed; Nx lint and unit targets passed
+      for aura-conversations, aura-research, aura-artifacts, aura-tasks, and
+      aura-web.
+    - >-
+      Aura Web production build passed.
+    - >-
+      The final governed-product Playwright command passed all 24 cases across
+      desktop, tablet, and mobile, including privacy, recovery, keyboard,
+      focus, live-region, forced-colors, reduced-motion, zoom, axe, and route
+      assertions.
+    - git diff --check passed before the checkpoint commit.
+    - >-
+      The checkpoint contains only AURA-0153 paths; unrelated AURA-0148 files
+      remain unstaged and unmodified by this integration.
+    - >-
+      The archived work item, handoffs, review verdicts, and this integration
+      report conform to their repository schemas.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared feature worktree intentionally retains unrelated uncommitted
+    AURA-0148 implementation and validation files; they remain for the parent
+    integration pass and were not staged by this checkpoint.
+  - >-
+    No provider deployment, generated artifact publication, GitHub publication,
+    or push was performed; the existing local HTTP-compatible deployment path
+    remains unchanged.
