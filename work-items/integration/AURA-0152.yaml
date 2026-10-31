@@ -1,0 +1,68 @@
+agent: integration_maintainer
+work_item: AURA-0152
+status: integrated
+integrated_commits:
+  - 1e02f06
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0152-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0152-architecture.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0152.yaml
+checks:
+  passed:
+    - >-
+      The complete Core handoff and both schema-valid PASS review verdicts were
+      verified; no unresolved blocking finding remains.
+    - >-
+      The AURA-0152 work item passed validation before and after archival, and
+      changed-path validation passed for all five AURA-0152 implementation and
+      governance paths.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py reported no
+      contract changes.
+    - python3 tooling/architecture/validate-import-boundaries.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      Baseline protection was run in an isolated detached integration worktree
+      containing only AURA-0152 paths and returned the documented no-protected-
+      change skip; the shared-worktree failure was only the unrelated
+      uncommitted AURA-0148 release-threshold edit.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/tests/test_notifications.py passed.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/tests/test_notifications.py passed with no diagnostics.
+    - >-
+      Four independently fresh pgvector PostgreSQL targeted executions of
+      test_postgresql_briefing_idempotency_serializes_changed_payload_and_duplicates
+      passed, one test each, with no skips or retries.
+    - >-
+      The exact archived AURA-0146 aggregate Core selection ran against one
+      fresh isolated PostgreSQL database with AURA_0055_DATABASE_URL and
+      AURA_TEST_DATABASE_URL set to the same URL and passed 299 tests.
+    - git diff --check passed before the checkpoint commit.
+    - >-
+      The implementation checkpoint contains only AURA-0152 paths; unrelated
+      AURA-0148 changes remain unstaged and unmodified by this integration.
+    - >-
+      The archived work item, handoff, review verdicts, and integration report
+      conform to their repository schemas.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared feature worktree intentionally retains unrelated uncommitted
+    AURA-0148 implementation and validation files; they remain for the
+    AURA-0148 integration pass and were not staged by this checkpoint.
+  - >-
+    No product code, provider image, generated artifact, or GitHub publication
+    was created by this integration pass.
