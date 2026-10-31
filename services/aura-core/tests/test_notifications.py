@@ -17,6 +17,7 @@ from aura_core.domains.automation.notifications.public import (
     CreateBriefingNotification,
     CreateWorkflowNotification,
     DueDeliveryResult,
+    Notification,
     NotificationApplicationService,
     NotificationIdempotencyConflict,
     NotificationNotFound,
@@ -395,28 +396,31 @@ async def test_postgresql_briefing_idempotency_serializes_changed_payload_and_du
         first_result_id = uuid4()
         second_result_id = uuid4()
         try:
-            changed_payload = await asyncio.gather(
-                notifications.create_briefing_notification(
-                    CreateBriefingNotification(
-                        issuer,
-                        subject,
-                        schedule_id,
-                        occurrence_id,
-                        first_result_id,
-                        "same-key",
-                    )
+            changed_payload = cast(
+                list[Notification | BaseException],
+                await asyncio.gather(
+                    notifications.create_briefing_notification(
+                        CreateBriefingNotification(
+                            issuer,
+                            subject,
+                            schedule_id,
+                            occurrence_id,
+                            first_result_id,
+                            "same-key",
+                        )
+                    ),
+                    notifications.create_briefing_notification(
+                        CreateBriefingNotification(
+                            issuer,
+                            subject,
+                            schedule_id,
+                            occurrence_id,
+                            second_result_id,
+                            "same-key",
+                        )
+                    ),
+                    return_exceptions=True,
                 ),
-                notifications.create_briefing_notification(
-                    CreateBriefingNotification(
-                        issuer,
-                        subject,
-                        schedule_id,
-                        occurrence_id,
-                        second_result_id,
-                        "same-key",
-                    )
-                ),
-                return_exceptions=True,
             )
             assert (
                 sum(
@@ -426,27 +430,36 @@ async def test_postgresql_briefing_idempotency_serializes_changed_payload_and_du
                 == 1
             )
             assert sum(not isinstance(item, Exception) for item in changed_payload) == 1
+            winning = next(
+                item for item in changed_payload if not isinstance(item, BaseException)
+            )
+            assert isinstance(winning, Notification)
+            assert isinstance(winning.source, BriefingNotificationSource)
+            winning_result_id = winning.source.briefing_result_id
 
-            duplicate = await asyncio.gather(
-                notifications.create_briefing_notification(
-                    CreateBriefingNotification(
-                        issuer,
-                        subject,
-                        schedule_id,
-                        occurrence_id,
-                        first_result_id,
-                        "distinct-key-a",
-                    )
-                ),
-                notifications.create_briefing_notification(
-                    CreateBriefingNotification(
-                        issuer,
-                        subject,
-                        schedule_id,
-                        occurrence_id,
-                        first_result_id,
-                        "distinct-key-b",
-                    )
+            duplicate = cast(
+                list[Notification],
+                await asyncio.gather(
+                    notifications.create_briefing_notification(
+                        CreateBriefingNotification(
+                            issuer,
+                            subject,
+                            schedule_id,
+                            occurrence_id,
+                            winning_result_id,
+                            "distinct-key-a",
+                        )
+                    ),
+                    notifications.create_briefing_notification(
+                        CreateBriefingNotification(
+                            issuer,
+                            subject,
+                            schedule_id,
+                            occurrence_id,
+                            winning_result_id,
+                            "distinct-key-b",
+                        )
+                    ),
                 ),
             )
             assert duplicate[0].id == duplicate[1].id

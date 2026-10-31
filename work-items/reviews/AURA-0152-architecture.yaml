@@ -1,0 +1,27 @@
+agent: architecture_guardian
+work_item: AURA-0152
+verdict: PASS
+checked:
+  - >-
+    The change is confined to the authorized PostgreSQL notification test
+    fixture and AURA-0152 delivery metadata; production Core code, contracts,
+    migrations, persistence constraints, manifests, providers, deployment,
+    telemetry, and protected baselines remain unchanged.
+  - >-
+    The changed-payload race still asserts exactly one successful notification
+    and one NotificationIdempotencyConflict for the same owner and key without
+    depending on coroutine acquisition order.
+  - >-
+    The duplicate phase derives briefing_result_id from the successful
+    Notification returned by the advisory-lock race, preserving source-neutral
+    duplicate delivery semantics and the single replay assertion.
+  - >-
+    Work-item, changed-path, contract, import-boundary, service-isolation,
+    module-registry, repository-shape, Ruff, Pyright, and diff checks passed;
+    protected-baseline validation returned the documented no-protected-change
+    skip in an isolated worktree containing only AURA-0152 paths.
+  - >-
+    Four independently fresh pgvector PostgreSQL targeted executions passed,
+    and the exact archived AURA-0146 aggregate Core selection passed 299 tests
+    with the corrected notification node executing.
+findings: []

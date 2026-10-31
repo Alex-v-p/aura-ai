@@ -1,0 +1,76 @@
+agent: core_worker
+work_item: AURA-0152
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: null
+  worktree: feat/governed-research-artifacts-tasks
+scope:
+  ownership_zone: evaluation.notification-idempotency-postgresql
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_notifications.py
+  - work-items/handoffs/AURA-0152-core.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      Four independent fresh pgvector PostgreSQL targeted executions of
+      test_postgresql_briefing_idempotency_serializes_changed_payload_and_duplicates:
+      4 passed, with no skips or retries.
+    - >-
+      Exact archived AURA-0146 aggregate Core selection with
+      AURA_0055_DATABASE_URL and AURA_TEST_DATABASE_URL bound to the same fresh
+      isolated PostgreSQL database: 299 passed.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0152.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0152.yaml --path work-items/active/AURA-0152.yaml
+      --path services/aura-core/tests/test_notifications.py
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py
+      --work-item work-items/active/AURA-0152.yaml (no contract changes; skipped)
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/tests/test_notifications.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/tests/test_notifications.py
+    - git diff --check
+  failed:
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0152.yaml reported the unrelated
+      pre-existing uncommitted AURA-0148 path evaluations/research/release-thresholds.yaml;
+      AURA-0152 does not modify or authorize that baseline.
+  not_run: []
+decisions:
+  - >-
+    Derived the duplicate-phase briefing result identity from the successful
+    Notification returned by the changed-payload advisory-lock race, so either
+    lock winner is exercised independent of coroutine scheduling.
+  - >-
+    Retained the exact one-success/one-NotificationIdempotencyConflict race
+    assertions, duplicate identity assertion, and single replay-event
+    assertion; no production behavior was changed.
+risks:
+  - >-
+    Baseline-protection remains unable to pass in the shared worktree until the
+    unrelated AURA-0148 changes are integrated or isolated; this worker did not
+    alter those files.
+unresolved: []
