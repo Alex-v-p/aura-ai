@@ -1716,7 +1716,7 @@ test.describe('Aura Web governed research, Task Center, and artifacts', () => {
       page.getByText(/provider unavailable|retry from the owning service/i),
     ).toBeVisible();
     await page.emulateMedia({ forcedColors: 'active' });
-    await page.getByRole('link', { name: /open source/i }).click();
+    await page.getByRole('link', { name: 'Open research source', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/research/${RESEARCH_ID}$`));
     expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
     expect(

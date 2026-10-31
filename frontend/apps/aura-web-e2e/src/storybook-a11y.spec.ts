@@ -810,6 +810,7 @@ const researchTasksArtifactsStories = [
   'task-recovery',
   'artifact-preview',
   'deletion-pending',
+  'deletion-failed',
   'memory-draft',
 ] as const;
 
@@ -865,6 +866,13 @@ for (const story of researchTasksArtifactsStories) {
       if (story === 'deletion-pending') {
         await expect(page.getByRole('heading', { name: 'Artifacts', exact: true })).toBeVisible();
         await expect(page.getByText(/deletion pending/i).first()).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Retry cleanup', exact: true })).toHaveCount(
+          0,
+        );
+      }
+      if (story === 'deletion-failed') {
+        await expect(page.getByRole('heading', { name: 'Artifacts', exact: true })).toBeVisible();
+        await expect(page.getByText(/cleanup needs a retry/i).first()).toBeVisible();
         await expect(
           page.getByRole('button', { name: 'Retry cleanup', exact: true }),
         ).toBeVisible();

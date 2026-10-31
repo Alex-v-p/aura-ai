@@ -1,0 +1,68 @@
+agent: integration_maintainer
+work_item: AURA-0154
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0154-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0154-architecture.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0154-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The complete frontend implementation handoff and all three schema-valid
+      AURA-0154 review verdicts were verified; no blocking finding remained.
+    - >-
+      The approved AURA-0154 work item passed validation before archival and
+      the archived work item passed validation after archival; changed-path
+      validation passed for the approved fixture, acceptance, handoff, review,
+      and integration paths.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py reported no
+      contract changes and validate-generated-sync.py passed.
+    - >-
+      Import-boundary, service-isolation, module-registry,
+      frontend-boundary, and repository-shape validators passed.
+    - >-
+      Baseline protection passed in an isolated detached integration worktree
+      containing only AURA-0154 paths and found no protected baseline or
+      threshold changes; the shared-worktree failure was only the unrelated
+      uncommitted AURA-0148 evaluation-threshold edit.
+    - >-
+      Prettier and ESLint passed for all three changed frontend fixture and
+      acceptance files.
+    - >-
+      NX_DAEMON=false pnpm exec nx run storybook:build-storybook passed.
+    - >-
+      NX_DAEMON=false pnpm exec nx run aura-web:build:production passed.
+    - >-
+      The exact Storybook Playwright configuration passed all 253 tests across
+      configured themes and projects, including deletion_pending absence and
+      deletion_failed retry coverage.
+    - >-
+      The exact Aura Web Playwright configuration passed all 177 tests across
+      desktop, tablet, and mobile projects, including the corrected source
+      navigation assertion.
+    - git diff --check passed before the checkpoint commit.
+    - >-
+      Handoff, archived work item, review verdicts, and this integration report
+      conform to their repository schemas.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared feature worktree intentionally retains unrelated uncommitted
+    AURA-0148 implementation and validation files; they remain for the parent
+    integration pass and were not staged by this checkpoint.
+  - >-
+    No provider deployment, generated artifact publication, GitHub publication,
+    or push was performed; the existing local HTTP-compatible deployment path
+    remains unchanged.

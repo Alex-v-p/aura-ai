@@ -399,11 +399,41 @@ export const DeletionPending: StoryObj<ArtifactsPageComponent> = {
             canPreview: false,
             canDownload: false,
             canDelete: false,
-            canRetryCleanup: true,
+            canRetryCleanup: false,
             canReconcileCleanup: false,
           },
           integrity: { revision: 2, sha256: 'a'.repeat(64), byteCount: 128, createdAt: now },
           deletionAuditId: 'storybook-audit-0147',
+        } satisfies DeletedGeneratedArtifactTombstone),
+      },
+      routeFor(artifactId),
+    ),
+  ],
+};
+export const DeletionFailed: StoryObj<ArtifactsPageComponent> = {
+  name: 'Artifact deletion failed',
+  render: () => ({
+    template: '<aura-artifacts-page></aura-artifacts-page>',
+    moduleMetadata: { imports: [ArtifactsPageComponent] },
+  }),
+  decorators: [
+    providers(
+      {
+        provide: ArtifactsStore,
+        useValue: artifactStore({
+          ...artifact,
+          title: null,
+          mediaType: null,
+          contentState: 'deletion_failed',
+          capabilities: {
+            canPreview: false,
+            canDownload: false,
+            canDelete: false,
+            canRetryCleanup: true,
+            canReconcileCleanup: false,
+          },
+          integrity: { revision: 2, sha256: 'a'.repeat(64), byteCount: 128, createdAt: now },
+          deletionAuditId: 'storybook-audit-0147-failed',
         } satisfies DeletedGeneratedArtifactTombstone),
       },
       routeFor(artifactId),

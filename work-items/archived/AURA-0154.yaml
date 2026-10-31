@@ -1,0 +1,207 @@
+id: AURA-0154
+title: Reconcile governed research frontend acceptance assets
+status: integrated
+change_class: bugfix
+intent: >
+  Bring the older governed-research Storybook fixture and browser acceptance
+  assertion into alignment with the integrated AURA-0153 recovery and source
+  navigation semantics without changing product behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/governed-research-artifacts-and-tasks.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/components-and-interactions.md
+    - docs/design/foundations.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - work-items/archived/AURA-0147.yaml
+    - work-items/archived/AURA-0153.yaml
+    - work-items/active/AURA-0148.yaml
+    - >-
+      Integrated AURA-0153 product semantics expose Retry cleanup only for
+      deletion_failed. A deletion_pending artifact is already admitted for
+      cleanup, hides preview and download, and must not advertise or render a
+      second cleanup command.
+    - >-
+      Integrated AURA-0153 Task Center semantics expose the capability-gated
+      research detail action with the accessible name Open research source
+      and route it to /research/:sourceId. Older acceptance must assert that
+      exact action rather than a broader label that no longer matches.
+    - >-
+      The two observed failures are deterministic stale acceptance assets:
+      Storybook deletion-pending coverage expects Retry cleanup from a fixture
+      that incorrectly advertises canRetryCleanup, while the older browser
+      suite searches for Open source after the product adopted the specific
+      Open research source label.
+    - >-
+      The owner authorizes the minimum scope correction to include
+      frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts. That assertion
+      must verify deletion_pending has no Retry cleanup action while dedicated
+      deletion_failed coverage continues to require Retry cleanup.
+    - >-
+      This correction changes only frontend fixture and acceptance assertions.
+      It adds no product code, route, package, dependency, contract, migration,
+      persistence behavior, telemetry, protected baseline, or architectural
+      exception, so no new ADR is required.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - ART-005
+  - RUN-017
+  - WEB-003
+  - WEB-005
+ownership_zones:
+  - frontend.storybook.governed-research-fixtures
+  - frontend.storybook.accessibility-acceptance
+  - frontend.aura-web.governed-research-acceptance
+  - delivery.aura0154
+allowed_paths:
+  - work-items/active/AURA-0154.yaml
+  - work-items/archived/AURA-0154.yaml
+  - work-items/handoffs/AURA-0154-*.yaml
+  - work-items/reviews/AURA-0154-*.yaml
+  - work-items/integration/AURA-0154.yaml
+  - frontend/apps/storybook/src/research-tasks-artifacts.stories.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - deploy/**
+  - evaluations/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - tooling/**
+  - services/**
+  - frontend/libs/**
+  - frontend/apps/aura-web/src/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/apps/aura-web-e2e/playwright.config.ts
+  - frontend/apps/aura-web-e2e/storybook.config.ts
+  - frontend/apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
+  - frontend/apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura0153-governed-product-ux.spec.ts
+  - frontend/apps/storybook/project.json
+  - frontend/apps/storybook/.storybook/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - package.json
+  - pnpm-lock.yaml
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: false
+  affected:
+    - Existing generated GeneratedArtifactDetail and DurableTaskDetail transports used only by test fixtures
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation:
+    - frontend_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - >-
+    The Storybook Artifact deletion pending fixture advertises no retry cleanup
+    capability, and the existing light- and dark-theme accessibility scenario
+    verifies the pending state and absence of a Retry cleanup control.
+  - >-
+    A dedicated Storybook deletion_failed fixture and its light- and dark-theme
+    accessibility scenario continue to require a visible Retry cleanup action,
+    proving that no fixture or assertion weakens the integrated AURA-0153
+    recovery rule.
+  - >-
+    The older Task Center browser journey locates the exact accessible action
+    Open research source, activates it, verifies navigation to the existing
+    /research/:sourceId route, and retains its task-detail request and
+    forced-colors assertions.
+  - >-
+    The complete Storybook Playwright suite and complete standard Aura Web
+    Playwright suite pass across their configured themes, projects, and
+    viewports; no test is skipped, narrowed, muted, or removed to obtain a
+    passing result.
+  - >-
+    Formatting, focused lint, Storybook build, Aura Web production build,
+    frontend boundary validation, architecture validation, and diff hygiene
+    pass with no product, configuration, contract, dependency, lockfile,
+    generated-client, protected-baseline, screenshot, trace, or video change.
+  - >-
+    A frontend implementation handoff, independent General, Architecture, and
+    UX review verdicts, and an integration report are schema-valid before a
+    focused local Conventional Commit checkpoint; AURA-0148 files remain
+    unstaged and unmodified and nothing is pushed or published.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0154.yaml
+  - >-
+    python3 tooling/architecture/validate-changed-paths.py --work-item
+    work-items/active/AURA-0154.yaml --path work-items/active/AURA-0154.yaml
+    --path frontend/apps/storybook/src/research-tasks-artifacts.stories.ts
+    --path frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+    --path frontend/apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0154.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0154.yaml
+  - >-
+    cd frontend && pnpm exec prettier --check
+    apps/storybook/src/research-tasks-artifacts.stories.ts
+    apps/aura-web-e2e/src/storybook-a11y.spec.ts
+    apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+  - >-
+    cd frontend && pnpm exec eslint
+    apps/storybook/src/research-tasks-artifacts.stories.ts
+    apps/aura-web-e2e/src/storybook-a11y.spec.ts
+    apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+  - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook
+  - cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production
+  - >-
+    cd frontend && pnpm exec playwright test --config
+    apps/aura-web-e2e/storybook.config.ts
+  - >-
+    cd frontend && pnpm exec playwright test --config
+    apps/aura-web-e2e/playwright.config.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

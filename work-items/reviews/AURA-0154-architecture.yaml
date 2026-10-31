@@ -1,0 +1,18 @@
+agent: architecture_guardian
+work_item: AURA-0154
+verdict: PASS
+checked:
+  - >-
+    Confirmed the authorized three-file frontend fixture and acceptance diff
+    remains within the approved ownership zones, with no product, contract,
+    configuration, dependency, migration, generated-client, or protected
+    baseline drift.
+  - >-
+    Confirmed the deletion_pending/deletion_failed capability distinction and
+    the exact Open research source navigation preserve integrated product
+    semantics without adding a route or public-boundary dependency.
+  - >-
+    Focused validators and lint, both frontend production builds, complete
+    Storybook Playwright (253/253), complete Aura Web Playwright (177/177),
+    and diff hygiene passed; findings were empty.
+findings: []
