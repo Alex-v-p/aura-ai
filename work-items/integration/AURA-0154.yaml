@@ -1,7 +1,8 @@
 agent: integration_maintainer
 work_item: AURA-0154
 status: integrated
-integrated_commits: []
+integrated_commits:
+  - e60c8e6
 reviews:
   - reviewer: general_reviewer
     status: PASS
