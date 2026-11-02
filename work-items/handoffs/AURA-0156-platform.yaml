@@ -1,0 +1,94 @@
+agent: platform_worker
+work_item: AURA-0156
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: null
+  worktree: shared
+scope:
+  ownership_zone: repository.documentation
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - README.md
+  - docs/assets/readme/aura-web.png
+  - docs/assets/readme/aura-observatory.png
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      README was rewritten as a repository overview with sanitized screenshots,
+      implemented feature groups, architecture boundaries, local HTTP and
+      external HTTPS startup guidance, documentation links, status, and
+      contribution guidance.
+    - >-
+      README opening and architecture language explicitly frame Aura as a
+      local-first governed model harness with a personal AI UX layer, covering
+      agent/provider selection, tool execution, memory/knowledge, durable work,
+      evaluation, and observability.
+    - >-
+      Both screenshot assets were inspected and verified as 1920x1080 PNGs;
+      the README identifies them as authenticated Aura Web and Observatory
+      product states, presents each at full width with an original-resolution
+      link, and records that the captures contain only sanitized metadata with
+      no private conversations, credentials, or tokens.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0156.yaml passed.
+    - >-
+      validate-changed-paths.py passed for the active work item, README, and
+      both screenshot assets.
+    - >-
+      validate-repository-shape.py passed and reported an authorized repository
+      shape.
+    - >-
+      validate-baseline-protection.py completed with no protected baseline or
+      threshold changes detected.
+    - >-
+      pnpm --dir frontend exec prettier --check ../README.md passed from the
+      repository root.
+    - git diff --check passed.
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Kept provider caveats explicit: governed research contracts and isolated
+    fetcher services exist, but provider rollout remains operator-configured and
+    disabled by default in the local deployment.
+  - >-
+    Preserved the existing disposable loopback HTTP launcher and documented
+    external HTTPS identity guidance without changing deployment configuration.
+  - >-
+    Positioned personal conversations and management screens as the product
+    experience built on Aura's shared governed model-harness execution paths;
+    no new implementation or capability claim was introduced.
+  - >-
+    Qualified privacy language to distinguish metadata-only ordinary OTLP/SSE
+    from the separately governed, owner-enabled bounded run-evidence channel.
+  - >-
+    Main-merge snapshot: HEAD was aligned with origin/dev at the start of this
+    slice (rev-list origin/dev...HEAD was 0/0); no merge, push, or publication
+    was performed.
+risks:
+  - >-
+    The README describes current routes and contracts, while provider-backed
+    research, Home Assistant, and cloud model capabilities still require
+    operator configuration and are not enabled by the quick start.
+  - >-
+    Existing work-items/integration/AURA-0155.yaml reports status integrated but
+    has an empty integrated_commits list; this lifecycle metadata inconsistency
+    is outside the approved documentation paths and should be reconciled by the
+    delivery lead before the final main merge.
+  - >-
+    Existing AURA-0154 and AURA-0155 integration records describe a shared
+    worktree that was not repository-clean; the final integration pass should
+    validate a clean, intentionally staged merge set.
+unresolved: []

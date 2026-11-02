@@ -1,0 +1,73 @@
+agent: integration_maintainer
+work_item: AURA-0156
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0156-general.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0156-security-privacy.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0156-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The complete platform handoff and all three required review verdicts were
+      verified as schema-shaped; the handoff is complete and every reviewer
+      reports PASS with no findings.
+    - >-
+      The approved active work item passed validation before archival, and the
+      archived integrated work item passed validation after archival.
+    - >-
+      Changed-path validation passed for README.md, both README screenshot
+      assets, and the AURA-0156 work-item metadata paths; all are within the
+      approved ownership scope.
+    - >-
+      The README was inspected as the actual changed file and contains the
+      model-harness positioning, evidence-backed feature groups, architecture
+      boundaries, quick start, provider caveats, documentation links, status,
+      and contribution guidance.
+    - >-
+      Both presentation assets were inspected at original resolution and are
+      RGB PNGs at 1920x1080 (16:9), with sanitized authenticated Aura Web and
+      Observatory states matching the README captions.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py reported no
+      protected baseline or threshold changes.
+    - >-
+      pnpm --dir frontend exec prettier --check ../README.md passed from the
+      repository root.
+    - git diff --check passed.
+    - >-
+      Branch readiness was recorded without a merge or rewrite: HEAD and
+      origin/dev are 33b86afd9dee3b0810be836962b91ef683e9f87a, origin/main is
+      an ancestor, and HEAD is 209 commits ahead of origin/main.
+    - >-
+      No commit, push, GitHub artifact publication, or main merge was performed
+      during this integration; the report retains an empty integrated_commits
+      list for the parent delivery lead to checkpoint deliberately.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared feature worktree intentionally retains the uncommitted README,
+    screenshot, handoff, review, archived work-item, and integration-report
+    changes; a reviewed Conventional Commit and any push remain for the parent
+    delivery lead.
+  - >-
+    The local feature branch is aligned with origin/dev but the complete merge
+    candidate remains 209 commits ahead of origin/main; aggregate validation of
+    the entire candidate and the final main merge are outside this metadata-only
+    integration step.
+  - >-
+    Existing work-items/integration/AURA-0155.yaml reports integrated status
+    with an empty integrated_commits list; that pre-existing lifecycle
+    inconsistency is outside AURA-0156's allowed paths and should be reconciled
+    by the delivery lead before final main integration.
