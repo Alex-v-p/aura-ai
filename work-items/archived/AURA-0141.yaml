@@ -1,0 +1,178 @@
+id: AURA-0141
+title: Define research artifact and durable task contracts
+status: integrated
+change_class: repository_governance
+intent: >
+  Add backward-compatible Aura API, lifecycle-event, citation, and generated
+  client contracts for governed research, generated text artifacts, and the
+  federated Task Center without implementing persistence, providers, runtime
+  behavior, or frontend product surfaces.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/governed-research-artifacts-and-tasks.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/clients-and-voice.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - docs/adr/0018-governed-web-research-providers.md
+    - work-items/archived/AURA-0140.yaml
+    - All changes are additive and existing clients may omit or ignore new fields.
+    - Artifact creation and revision append remain internal Core application APIs; the public API exposes no upload endpoint.
+    - Task invalidations contain source kind identifier and version only; owner and source state are resolved through source-owned public snapshot queries in AURA-0143.
+    - web.research@1 is admission-only and returns an opaque task reference within the existing tool lifecycle.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - RUN-014
+  - RUN-015
+  - RUN-016
+  - RUN-017
+  - RUN-024
+  - WEB-003
+  - WEB-006
+  - WEB-010
+  - WEB-011
+  - ART-002
+  - ART-003
+  - ART-004
+  - ART-005
+  - ART-006
+  - ART-007
+  - ART-009
+  - ART-010
+ownership_zones:
+  - contracts.aura-api.research
+  - contracts.aura-api.artifacts
+  - contracts.aura-api.tasks
+  - contracts.events.knowledge.research
+  - contracts.events.artifacts.generated
+  - contracts.events.execution.tasks
+  - contracts.events.runs.research-lineage
+  - frontend.aura-api-client.generated
+  - repository.contract-module-registry
+  - delivery.aura0141
+allowed_paths:
+  - work-items/active/AURA-0141.yaml
+  - work-items/archived/AURA-0141.yaml
+  - work-items/handoffs/AURA-0141-*.yaml
+  - work-items/reviews/AURA-0141-*.yaml
+  - work-items/integration/AURA-0141.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/knowledge/v1/research-events.schema.json
+  - contracts/events/artifacts/v1/generated-artifact-events.schema.json
+  - contracts/events/execution/v1/task-events.schema.json
+  - contracts/events/runs/v1/run-events.schema.json
+  - contracts/tests/test_aura0141_research_artifact_task_contract.py
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - contracts/tests/test_aura0132_briefing_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - services/**
+  - deploy/**
+  - frontend/apps/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - pyproject.toml
+  - uv.lock
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: true
+  affected:
+    - Aura v1 research settings create detail evidence cancellation extension deletion cleanup and reconciliation resources
+    - Aura v1 generated artifact list detail revisions preview download deletion cleanup and reconciliation resources
+    - Aura v1 federated task list detail stream cancel and retry resources
+    - Aura v1 additive conversation run task research activity artifact and validated web citation references
+    - Knowledge research lifecycle events v1
+    - Generated artifact lifecycle events v1
+    - Execution task-source invalidation events v1
+    - Runs events v1 additive research lineage
+    - Generated Aura TypeScript transport client
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Research questions plans URLs source metadata excerpts reports artifact titles and source display values are owner-private and may appear only in authorized REST bodies.
+    - Events and SSE are metadata-only and must exclude owner identity text URLs excerpts titles digests object references source status progress capabilities provider payloads and credentials.
+    - Mutations require same-origin CSRF idempotency and expected versions where state can race; private inputs never use query parameters.
+    - Web citations are accepted only as task-scoped validated evidence references and cannot carry model-invented or unvalidated URLs.
+    - Deletion contracts preserve immediate unreadability distinct pending failed unknown and deleted states content-free tombstones and non-cascading linked-artifact choice.
+    - The generated transport client must not introduce handwritten business behavior browser persistence bearer credentials or Observatory dependencies.
+  data_classes:
+    - owner-private research requests evidence citations and results
+    - owner-private generated artifact metadata revisions and content streams
+    - owner-private task detail and source display values
+    - metadata-only opaque lifecycle invalidations and lineage
+required_agents:
+  implementation:
+    - contract_steward
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura v1 additively defines owner-scoped research creation settings detail source evidence cancellation one-time extension explicit content deletion cleanup retry and unknown-outcome reconciliation using closed schemas modes budgets stages outcomes capabilities versions and idempotent commands.
+  - Quick Auto Deep and Agent-led modes expose admitted immutable budget envelopes and editable owner defaults within operator caps without representing an unbounded mode.
+  - Aura v1 additively defines generated text artifact list detail immutable revisions preview download explicit deletion cleanup retry and reconciliation with Markdown plain-text and JSON media types only and no public upload or revision-create operation.
+  - Aura v1 additively defines Task Center list detail metadata-only SSE filters normalized status authoritative source status and outcome progress capabilities route keys cancel and retry without making the projection authoritative for source lifecycle.
+  - Conversation run and run-event schemas add optional opaque task research-origin stable activity artifact and validated web-citation references while preserving all existing message citation and lineage clients.
+  - The admission-only research tool result contains only opaque task reference admitted mode and admission state and cannot contain research content provider material evidence excerpts or a terminal result.
+  - Research artifact and task event schemas are closed versioned and metadata-only; task invalidations contain exactly source kind source ID source version plus the standard event envelope and cannot represent owner state progress capability title URL digest or content.
+  - Research and artifact deletion states distinguish active pending known failure cleanup unknown and deleted truth; linked artifact deletion is explicit and non-cascading by default and citation resolution can return a content-free deleted tombstone.
+  - Every mutation is CSRF and idempotency protected and uses expected versions where applicable; private request values appear in request bodies rather than URLs.
+  - Generated TypeScript transport types and operations exactly match the OpenAPI contract with no handwritten DTOs and generated-sync validation passes.
+  - Contract tests prove additive compatibility closed schemas event privacy deletion behavior citation constraints mutation guards and absence of provider object-store executor and Observatory internals.
+  - No runtime implementation persistence migration provider deployment feature UI dependency or protected baseline change occurs in this work item.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0141.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0141.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0141.yaml
+  - pytest -q contracts/tests/test_aura0141_research_artifact_task_contract.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

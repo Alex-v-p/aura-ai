@@ -1,0 +1,110 @@
+id: AURA-0026
+title: Refine Aura Web primary destination navigation
+status: integrated
+change_class: bugfix
+intent: >
+  Make the Conversations Agents and Personas destinations visually distinct,
+  representative, and comfortably inset without changing the product routes or
+  adding a frontend dependency.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - User-approved Responsive Navigation and AI Conversation Titles plan
+    - Primary destinations use a padded three-column tray when expanded and remain named icon controls when compact
+    - Local SVG icons represent conversations agents and personas without introducing an icon package
+    - The active destination uses an inset surface accent icon and a non-color-only marker instead of a bright double outline
+    - "This fix is delivered as its own reviewed commit named fix(web): refine primary destination navigation"
+  contracts: []
+feature_references:
+  - AUI-001
+  - AUI-003
+  - AUI-008
+  - AUI-009
+ownership_zones:
+  - frontend.aura-web.shell
+  - frontend.aura-web.e2e
+allowed_paths:
+  - work-items/active/AURA-0026.yaml
+  - work-items/archived/AURA-0026.yaml
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/storybook/**
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - services/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 2
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Expanded navigation presents Conversations Agents and Personas in a padded three-column tray with one-line labels and no clipping.
+  - Conversations uses a speech-bubble icon Agents uses a robot icon and Personas uses a persona mask or profile icon implemented as local SVG.
+  - The current destination has an inset selected surface an accented icon and a visible non-color-only current marker without the prior bright double outline.
+  - Compact navigation retains accessible route names and tooltips for every icon-only destination.
+  - Primary destinations remain visually separate from recent conversations and existing mobile drawer route and theme behavior is preserved.
+  - No icon package dependency route contract or product boundary is added.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0026.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0026.yaml
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config playwright.config.ts
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

@@ -1,0 +1,13 @@
+agent: observability_steward
+work_item: AURA-0109
+verdict: PASS
+checked:
+  - Verified existing bounded ingest metrics, capture policy, retention, dependencies, and cardinality declarations remain unchanged except for the authorized bounded-concurrency evaluator declaration in both telemetry manifests.
+  - Verified catalogue, PostgreSQL claim/settlement, ClickHouse write, and ingest phase spans use stable component identities, finite outcomes/error codes, bounded durations, and one correlation context without content-bearing fields.
+  - Verified accepted, rejected, duplicate, malformed, storage-failure, batch-duration, and visibility behavior is aggregated without per-observation health writes or unbounded tasks.
+  - Verified deterministic concurrency, release-wave, partial-failure, cancellation, restart, reconciliation, and contiguous-watermark tests, including the live 128-observation acceptance, passed as recorded in the worker handoff.
+  - Verified the known full-suite migration-baseline mismatch and unrelated AURA-0098 failures are attributed outside this item and are not weakened or masked.
+findings: []
+risks:
+  - Integration must preserve unrelated AURA-0098 and AURA-0104 changes and report their checks separately.
+unresolved: []

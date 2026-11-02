@@ -1,0 +1,171 @@
+id: AURA-0121
+title: Clarify Observatory workspaces and expose governed run evidence
+status: integrated
+change_class: feature
+intent: >
+  Make every existing Observatory workspace visually coherent, accessible, and
+  operationally useful, while replacing the metadata-only run detail with the
+  owner-only governed run inspection and lazy evidence experience already
+  authorized and implemented by AURA-0117 through AURA-0119. Preserve the
+  complete product and browser boundary from Aura Web.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/clients-and-voice.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - work-items/archived/AURA-0117.yaml
+    - work-items/archived/AURA-0119.yaml
+    - Existing observatory-v1 run-inspection evidence and deletion operations are authoritative and require no contract or generated-client change.
+    - Information hierarchy is summary first trends and deltas second and bounded raw records behind progressive disclosure.
+    - Observatory-owned semantic icons may replace ambiguous Unicode glyphs without adding a dependency or changing shared Aura frontend libraries.
+    - Evidence is fetched only after an explicit owner disclosure action rendered inertly and kept out of URLs logs metrics browser storage service-worker caches and screenshots.
+    - Aura Web Core Observatory backend contracts generated clients databases and deployment topology remain unchanged.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+feature_references: [OBS-002, OBS-006, OBS-007, OBS-008, OBS-009, OBS-020, OBS-025, OBS-035, OBS-039]
+ownership_zones:
+  - observatory-web.shell
+  - observatory-web.run-inspection
+  - observatory-web.monitoring-workspaces
+  - observatory-web.analysis-workspaces
+  - observatory-web.evaluation-workspaces
+  - observatory-web.operations-workspaces
+  - observatory-web.visual-system
+  - evaluation.aura0121
+  - delivery.aura0121
+allowed_paths:
+  - work-items/active/AURA-0121.yaml
+  - work-items/archived/AURA-0121.yaml
+  - work-items/handoffs/AURA-0121-*.yaml
+  - work-items/reviews/AURA-0121-*.yaml
+  - work-items/integration/AURA-0121.yaml
+  - frontend/apps/observatory-web/src/**
+  - frontend/libs/observatory/src/**
+  - frontend/apps/observatory-web-e2e/src/**
+  - frontend/apps/storybook/src/observatory*.stories.ts
+  - frontend/apps/storybook/src/observatory*/**
+  - deploy/compose/e2e/test_full_stack_observability_path.sh
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - .env
+  - .env.local-http
+  - .secrets/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - compose.yaml
+  - deploy/docker/**
+  - deploy/compose/local-http.sh
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/libs/platform/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected:
+    - existing observatory-v1 run inspection evidence and deletion consumer behavior
+    - existing metadata-only run-scoped SSE invalidation consumer behavior
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: observatory-web
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.run_inspection_query
+  required_metrics: []
+  required_evaluators:
+    - run_inspection_projection_truth
+    - run_inspection_outage_isolation
+    - metadata_v2_allowlist
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Exact owner-private evidence must be fetched lazily only after explicit disclosure and rendered as inert text JSON or approved media.
+    - Evidence content identifiers digests and deletion detail must never enter URLs console logs metrics SSE browser storage service-worker caches screenshots or accessibility announcements that outlive the open disclosure.
+    - Evidence responses remain no-store owner-authorized and bounded and deletion retains the existing CSRF idempotency and explicit confirmation behavior.
+    - Live refresh preserves disclosure and expanded-step state without retaining evidence bytes or silently refetching collapsed evidence.
+    - Empty stale disconnected partial unavailable rejected excluded dropped and deleted states must remain truthful and distinguishable.
+    - Aura Web retains zero Observatory links labels routes imports configuration sessions browser communication or client dependencies.
+  data_classes:
+    - metadata_only_operational_observations
+    - owner_private_run_evidence
+    - run_evidence_manifest_and_deletion_state
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 7
+  max_parallel_writers: 2
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - All ten Observatory destinations render a clear page purpose primary state and next action at 1440 by 1000 and 390 by 844 without clipped controls overlapping text residual navigation rails or nested page scroll traps.
+  - The mobile navigation is modal keyboard-contained and closes completely after destination selection while desktop navigation retains a visible current destination and grouped information architecture.
+  - Ambiguous Unicode glyphs are replaced with consistent Observatory-owned semantic SVG icons that have decorative or accessible treatment as appropriate and remain legible in reduced motion forced colors and high contrast.
+  - Overview presents a concise health verdict actionable current KPIs clearly labelled cumulative counters freshness backlog and latency trends and accessible drill-in cues without implying that lifetime totals are current failures.
+  - Runs provides stable terminal status and human-rounded duration display searchable or filterable summaries and clear handling of incomplete or anomalous historical projections without changing authoritative data.
+  - Selecting a run loads the authoritative run-inspection snapshot and presents a hierarchical bounded timeline with category status duration lineage measurements completeness and explicit partial reasons; repeated token stream delivery and thinking events are aggregated rather than eagerly rendered as hundreds of rows.
+  - Run steps and raw trace spans use progressive disclosure with bounded previews or pagination so a normal run does not create an unbounded document while exact timing remains available accessibly.
+  - Evidence manifests show captured excluded partial unavailable and deleted states; exact evidence is fetched only on explicit disclosure rendered inertly with approved media handling and released when collapsed selected run changes or the inspector closes.
+  - Run evidence deletion uses the existing owner-authorized CSRF-protected idempotent endpoint with a run-scoped confirmation and leaves metadata visible with evidence marked deleted.
+  - Metadata-only run-scoped SSE invalidation refreshes the selected snapshot without evidence content and preserves expanded steps while never automatically refetching collapsed evidence.
+  - Components adds useful catalogue summary search filters ordering and accessible trend presentation instead of an undifferentiated eager card wall and raw unlabeled spark values.
+  - Analytics uses understandable defaults units legends axes summary deltas stale and partial explanations and bounded exact tables; controls remain usable on narrow screens.
+  - Compare formats durations consistently and emphasizes meaningful deltas status deployment component measurement and topology differences instead of raw floating-point milliseconds.
+  - Evaluations Experiments Operations and Retention share the same visual hierarchy KPI semantics empty stale partial and error states and destructive-action clarity while preserving their existing contracts and mutation safeguards.
+  - Storybook covers every Observatory destination plus loading empty stale disconnected partial error deleted large-run and narrow-screen states and axe reports no serious or critical violations.
+  - Browser acceptance proves keyboard navigation responsive layouts live refresh state preservation lazy evidence retrieval inert rendering zero browser persistence deletion confirmation and the Aura Web no-reference boundary.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0121.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0121.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0121.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0121.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0121.yaml
+  - pnpm --dir frontend exec nx lint observatory-web
+  - pnpm --dir frontend exec nx test observatory-web
+  - pnpm --dir frontend exec nx test observatory
+  - pnpm --dir frontend exec nx build observatory-web --configuration=production
+  - pnpm --dir frontend exec nx build-storybook storybook
+  - pnpm --dir frontend exec nx e2e observatory-web-e2e
+  - bash deploy/compose/e2e/test_full_stack_observability_path.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

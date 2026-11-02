@@ -1,0 +1,63 @@
+agent: integration_maintainer
+work_item: AURA-0076
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0076-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0076-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0076-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0076-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0076-ux-ui.yaml
+  - reviewer: test_evaluation_engineer
+    status: PARTIAL
+    verdict: work-items/handoffs/AURA-0076-tests.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0076.yaml
+checks:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0076.yaml (passed before archival)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0076.yaml (92 changed paths)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0076.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0076.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0076.yaml (skipped: no protected baseline changes)
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - UV_CACHE_DIR=/tmp/aura-0076-integration-uv-cache uv run --offline pyright services/aura-core (0 errors, 0 warnings, 0 informations)
+    - UV_CACHE_DIR=/tmp/aura-0076-integration-uv-cache uv run --offline ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e
+    - UV_CACHE_DIR=/tmp/aura-0076-integration-uv-cache uv run --offline pytest services/aura-core/tests (1011 passed, 101 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0076-integration-uv-cache uv run --offline pytest deploy/compose/e2e (1 passed)
+    - pnpm --dir frontend exec nx check-generated aura-api-client
+    - pnpm --dir frontend exec nx lint aura-api-client
+    - pnpm --dir frontend exec nx test aura-conversations
+    - pnpm --dir frontend exec nx lint aura-conversations
+    - pnpm --dir frontend exec nx test aura-documents
+    - pnpm --dir frontend exec nx lint aura-documents
+    - pnpm --dir frontend run lint
+    - pnpm --dir frontend run test (248 passed)
+    - pnpm --dir frontend run build:production
+    - pnpm --dir frontend run build-storybook
+    - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts (272 passed, 367 skipped)
+    - bash ./deploy/compose/run-full-stack-e2e.sh (attempted; Docker blocked network creation before app startup, no assertions accepted)
+    - git diff --check
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - Full-stack compose acceptance remains environment-blocked before application startup by Docker's invalid pool request because the configured network overlaps another address space; standalone deployment fixture and all available Core/frontend/browser checks pass.
+  - Full-stack vision acceptance remains dependent on a locally configured provider descriptor advertising a verified image-capable model; no model identifier or automatic routing was introduced.

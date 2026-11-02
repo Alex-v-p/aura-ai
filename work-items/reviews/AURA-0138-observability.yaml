@@ -1,0 +1,24 @@
+agent: observability_steward
+work_item: AURA-0138
+verdict: PASS
+checked:
+  - >-
+    Verified closed metadata-only SSE validation, bounded buffers and records,
+    pending-versus-committed cursor ordering, accumulated projection flags,
+    replay deduplication, and the bounded processed-event window.
+  - >-
+    Verified 404 and 410 cursor recovery performs a complete visible-state REST
+    refresh, stale state remains usable, and failed projections do not commit
+    the event cursor.
+  - >-
+    Verified the delayed-EOF regression holds authoritative REST in flight for
+    750 milliseconds, beyond the 500 millisecond retry, then reopens a stream
+    with the committed Last-Event-ID and leaves reconnecting state.
+  - >-
+    Focused delayed-EOF and coalescing Playwright probes passed 2 of 2;
+    workflow unit tests passed 11 of 11; E2E lint and diff validation passed.
+  - >-
+    Confirmed workflow content and owner identity remain absent from SSE,
+    telemetry, logs, URLs, persistence, and diagnostics, and no Aura Web to
+    Observatory or Core to Observatory dependency was introduced.
+findings: []

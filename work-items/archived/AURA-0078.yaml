@@ -1,0 +1,154 @@
+id: AURA-0078
+title: Establish Observatory metadata telemetry ingestion
+status: integrated
+change_class: repository_governance
+intent: >
+  Establish the versioned metadata-only telemetry contract and independent
+  Observatory ingestion and storage foundation without coupling Aura Core to
+  Observatory implementation or data.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved metadata observations have indefinite retention until an authorized manual deletion command is implemented by AURA-0080.
+    - Owner-approved Observatory storage follows the current Aura infrastructure-managed encryption standard without application-level field encryption.
+  contracts: []
+feature_references:
+  - OBS-001
+  - OBS-004
+  - OBS-005
+  - OBS-010
+  - OBS-038
+  - OBS-039
+ownership_zones:
+  - contracts.telemetry.v1
+  - aura-observatory.service
+  - aura-observatory.ingest
+  - aura-observatory.persistence
+  - aura-observatory.migrations
+  - repository.dependencies
+  - repository.module-registry
+  - evaluation.observatory-ingestion
+allowed_paths:
+  - work-items/active/AURA-0078.yaml
+  - work-items/archived/AURA-0078.yaml
+  - work-items/handoffs/AURA-0078-*.yaml
+  - work-items/reviews/AURA-0078-*.yaml
+  - work-items/integration/AURA-0078.yaml
+  - contracts/telemetry/v1/**
+  - services/aura-observatory/**
+  - tooling/architecture/modules.yaml
+  - pyproject.toml
+  - uv.lock
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/openapi/**
+  - contracts/events/**
+  - services/aura-core/**
+  - frontend/**
+  - compose.yaml
+  - deploy/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/telemetry/v1/metadata-observation.schema.json
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: telemetry.ingestion
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+  required_metrics:
+    - telemetry_ingest_accepted_count
+    - telemetry_ingest_rejected_count
+    - telemetry_ingest_duplicate_count
+    - telemetry_ingest_storage_failure_count
+    - telemetry_ingest_duration_ms
+  required_evaluators:
+    - metadata_observation_contract_rejection
+    - telemetry_ingestion_idempotency
+    - observatory_service_isolation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - The closed contract rejects prompts responses memories documents filenames tool payloads credentials endpoints bearer tokens owner identity and arbitrary attributes.
+    - The private ingest boundary accepts only a file-injected service credential and never logs the credential or raw rejected payload.
+    - Observatory owns separate PostgreSQL and ClickHouse schemas migrations credentials and repositories and never imports Aura Core or queries Core tables.
+    - Observations have no automatic TTL and remain until the separately authorized retention feature deletes them.
+    - Duplicate malformed rejected and failed observations produce bounded metadata-only counters without storing rejected content.
+  data_classes:
+    - operational_metadata
+    - opaque_trace_identifiers
+    - opaque_run_identifiers
+    - component_identifiers
+    - deployment_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A closed JSON Schema 2020-12 contract accepts only bounded metadata observations with stable identifiers timestamps component identity numeric measurements trace topology deployment metadata service role and metadata_only capture policy.
+  - Contract validation rejects sensitive fields arbitrary attributes malformed identifiers non-finite metrics oversized dimensions and any non-metadata capture policy.
+  - Aura Observatory exists as an independent Python service with thin API ingest-worker migration and CLI entrypoints and contains no import of aura_core.
+  - Observatory PostgreSQL owns component and deployment catalogues ingest counters service configuration and future retention-action metadata while ClickHouse owns observations and span topology through versioned service-owned migrations.
+  - Ingestion authenticates a private service credential validates and normalizes every observation deduplicates stable observation IDs and records accepted rejected duplicate malformed storage-failure and latency metrics.
+  - PostgreSQL and ClickHouse repositories expose narrow ports and support deterministic in-memory adapters for unit tests without creating a shared schema or Core dependency.
+  - No observation TTL automatic purge captured content evaluation judge alert dashboard frontend API or Core exporter is introduced by this work item.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0078.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0078.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0078.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0078.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0078.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run pyright services/aura-observatory
+  - uv run ruff check services/aura-observatory
+  - uv run pytest services/aura-observatory/tests
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

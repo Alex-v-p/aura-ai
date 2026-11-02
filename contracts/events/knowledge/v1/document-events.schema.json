@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/knowledge/v1/document-events.schema.json",
+  "title": "Aura document lifecycle events v1",
+  "description": "Closed metadata-only document lifecycle events carried by the transactional outbox and durable transport. Filenames, media types, byte counts, owner identity, content, excerpts, hashes, chunks, embeddings, object keys, storage endpoints, credentials, parser diagnostics, prompts, responses, and search queries are prohibited.",
+  "$ref": "#/$defs/DocumentEvent",
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "DocumentLifecycleStatus": {
+      "type": "string",
+      "enum": ["uploading", "queued", "processing", "ready", "failed", "deleting", "deleted"]
+    },
+    "DocumentEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "eventType",
+        "documentId",
+        "status",
+        "documentVersion",
+        "occurredAt",
+        "correlationId",
+        "causationId"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "eventId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "eventType": {
+          "type": "string",
+          "enum": [
+            "document.upload.created",
+            "document.queued",
+            "document.processing",
+            "document.ready",
+            "document.failed",
+            "document.deleting",
+            "document.deleted"
+          ]
+        },
+        "documentId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "status": {
+          "$ref": "#/$defs/DocumentLifecycleStatus"
+        },
+        "documentVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "occurredAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "correlationId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "causationId": {
+          "$ref": "#/$defs/Uuid"
+        }
+      }
+    }
+  }
+}

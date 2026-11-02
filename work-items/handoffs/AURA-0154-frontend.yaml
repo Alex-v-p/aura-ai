@@ -1,0 +1,79 @@
+agent: frontend_worker
+work_item: AURA-0154
+status: complete
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: /root/aura0154_frontend
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: >-
+    frontend.storybook.governed-research-fixtures,
+    frontend.storybook.accessibility-acceptance,
+    frontend.aura-web.governed-research-acceptance
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/storybook/src/research-tasks-artifacts.stories.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0154.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0154.yaml --path work-items/active/AURA-0154.yaml
+      --path frontend/apps/storybook/src/research-tasks-artifacts.stories.ts
+      --path frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      --path frontend/apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0154.yaml (no contract changes)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - >-
+      cd frontend && pnpm exec prettier --check
+      apps/storybook/src/research-tasks-artifacts.stories.ts
+      apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+    - >-
+      cd frontend && pnpm exec eslint
+      apps/storybook/src/research-tasks-artifacts.stories.ts
+      apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+    - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook
+    - cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production
+    - >-
+      cd frontend && pnpm exec playwright test --config
+      apps/aura-web-e2e/storybook.config.ts (253 passed across configured themes)
+    - >-
+      cd frontend && pnpm exec playwright test --config
+      apps/aura-web-e2e/playwright.config.ts (177 passed across desktop, tablet, and mobile)
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Made the deletion_pending Storybook tombstone truthful by setting
+    canRetryCleanup to false and asserting the Retry cleanup control is absent.
+  - >-
+    Added a dedicated deletion_failed Storybook tombstone with canRetryCleanup
+    true and light/dark accessibility coverage requiring the visible Retry cleanup action.
+  - >-
+    Updated the older Task Center journey to locate the exact accessible action
+    Open research source and retain its /research/:sourceId and forced-colors assertions.
+  - >-
+    Kept all changes within the approved frontend fixture and acceptance paths;
+    no product code, route, contract, dependency, configuration, or AURA-0148 file was changed.
+risks: []
+unresolved: []

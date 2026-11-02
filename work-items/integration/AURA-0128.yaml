@@ -1,0 +1,83 @@
+agent: integration_maintainer
+work_item: AURA-0128
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0128-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0128-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0128-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - work-items/archived/AURA-0128.yaml
+  - work-items/integration/AURA-0128.yaml
+checks:
+  passed:
+    - >-
+      Both implementation handoffs are schema-valid, complete, within their
+      authorized ownership zones, and contain no unresolved blocking items.
+    - >-
+      All three required review artifacts are schema-valid PASS verdicts with
+      no findings or unresolved blocking issues.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0128.yaml passed before archival, and the
+      archived integrated work item passed the same validator after archival.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0128.yaml passed before archival for 15 paths;
+      the archived integrated work item passed changed-path validation after
+      archival for the same authorized paths.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0128.yaml passed.
+    - python3 tooling/architecture/validate-generated-sync.py passed.
+    - python3 tooling/architecture/validate-import-boundaries.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0128.yaml skipped as expected because
+      no protected baseline or threshold changed.
+    - >-
+      python3 -m unittest tooling.architecture.tests.test_common
+      tooling.architecture.tests.test_modules -v passed (27 tests).
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0128_calendar_contract.py
+      services/aura-core/tests/system/test_contract_and_deployment.py
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/test_document_contract.py
+      services/aura-core/tests/test_memory_product_api.py
+      services/aura-core/tests/test_notification_api.py
+      services/aura-core/tests/test_reminder_api.py -q passed (93 passed,
+      3 skipped).
+    - cd frontend && pnpm exec nx run aura-api-client:generate passed.
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated passed.
+    - cd frontend && pnpm exec nx run aura-api-client:lint passed.
+    - git diff --check passed.
+    - >-
+      The active work item was moved to work-items/archived/AURA-0128.yaml
+      with status integrated, and final changed-path validation confirms all
+      discovered paths remain within the authorized scope.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The reviewed integration remains uncommitted in the shared worktree for
+    the Delivery Lead's focused checkpoint; no push was performed.
+  - >-
+    AURA-0129 must select and validate the existing-runtime-compatible
+    credential encryption and key-delivery mechanism before durable provider
+    credential implementation.
+  - >-
+    Network-enforced provider destination allowlisting remains outside this
+    slice and requires a separately authorized ADR if it becomes necessary.

@@ -1,0 +1,51 @@
+agent: integration_maintainer
+work_item: AURA-0103
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0103-ux-ui.yaml
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0103-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0103-architecture.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0103.yaml passed before archival.
+    - >-
+      AURA-0103 changed-path validation passed for the five attributable paths
+      before archival; the archived work item and final staged path set remain
+      within the same allow list.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - >-
+      Contract-change and protected-baseline validators passed with no changes
+      detected.
+    - pnpm --dir frontend nx lint observatory passed with five pre-existing warnings and zero errors.
+    - pnpm --dir frontend nx test observatory passed: 47 tests.
+    - pnpm --dir frontend nx test observatory-web passed: 1 test.
+    - pnpm --dir frontend nx build observatory-web --configuration=production passed.
+    - >-
+      The full observatory-web.spec.ts matrix passed all 222 tests across
+      desktop, tablet, and mobile on disposable port 4320. The initial exact
+      invocation was blocked by the already-running Observatory Docker server
+      on port 4300; no test assertion failure was accepted as green.
+    - git diff --check passed.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Preserved AURA-0098 changes remain unstaged and independently blocked by
+    its documented PostgreSQL migration-ledger, public admission, and governed
+    recovery-health prerequisites. They are not resolved or claimed here.
+  - >-
+    The live Docker server occupied the default Playwright port, so the final
+    222-case browser matrix used an isolated disposable port while preserving
+    the exact config and test target.

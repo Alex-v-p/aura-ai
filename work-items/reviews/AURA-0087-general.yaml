@@ -1,0 +1,11 @@
+agent: general_reviewer
+work_item: AURA-0087
+verdict: PASS
+checked:
+  - Re-reviewed the active work item, implementation handoffs, current diff, production adapter execution path, and the previously blocking provider-backed scan-limit acceptance.
+  - Confirmed the Compose full-stack gate now checks pinned ClickHouse 25.8 direct and ProductionObservatoryStore quantileExact parity, inserts a 1000001-row source, and executes the production adapter query through the scan-limit response path before cleanup.
+  - Confirmed AnalyticsRequest remains at the inward port boundary; catalogue combinations, case-insensitive outcome normalization, typed query parameters, observed-time freshness, multi-day per-day rates, execution-limit handling, retention-domain overlap, malformed-provider handling, and frontend runtime validation/recovery remain corrected.
+  - Confirmed late-data evidence is now computed as a source-global window marker over the entire single bounded lookahead source before aggregation and repeated into returned aggregate rows independently of the final response LIMIT.
+  - Confirmed the overflow-page regression exercises series and point truncation while retaining the source-global late-data marker and propagating partial state to the returned series.
+  - Re-ran the focused AURA-0087 service suites successfully with 46 passed and 2 environment-gated provider tests skipped locally; inspected the reported pinned-provider full-stack and 168-test mocked-browser acceptance results.
+findings: []

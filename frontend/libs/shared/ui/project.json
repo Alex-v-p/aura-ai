@@ -1,0 +1,10 @@
+{
+  "name": "shared-ui",
+  "projectType": "library",
+  "sourceRoot": "libs/shared/ui/src",
+  "tags": ["scope:shared", "type:ui"],
+  "targets": {
+    "test": { "executor": "nx:run-commands", "options": { "command": "vitest run --config vitest.workspace.ts --dir libs/shared/ui" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "eslint libs/shared/ui" } }
+  }
+}

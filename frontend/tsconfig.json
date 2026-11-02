@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./apps/aura-web/tsconfig.app.json" },
+    { "path": "./libs/shared/ui/tsconfig.lib.json" },
+    { "path": "./libs/shared/layout/tsconfig.lib.json" },
+    { "path": "./libs/aura/interaction/conversations/tsconfig.lib.json" }
+  ]
+}

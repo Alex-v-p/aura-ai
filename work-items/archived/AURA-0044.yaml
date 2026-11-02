@@ -1,0 +1,97 @@
+id: AURA-0044
+title: Support first-run memory setup and refine the memory workspace
+status: integrated
+change_class: bugfix
+intent: >
+  Let an owner explicitly configure memory models on first use and make every
+  Memory screen a coherent, accessible, responsive Aura workspace.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/clients-and-voice.md
+  decisions:
+    - Preserve the existing 404 response for an absent memory model configuration
+    - Require explicit owner save after preselecting installed recommended models
+    - Use a balanced workspace with search and quick filters plus disclosed advanced filters
+    - Apply the redesign across Records, Review queue, Settings, and agent policy controls
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references: [AUI-013, AUI-023, MOD-017]
+ownership_zones:
+  - aura-web.memory
+  - aura-web.memory-tests
+allowed_paths:
+  - work-items/active/AURA-0044.yaml
+  - work-items/archived/AURA-0044.yaml
+  - frontend/libs/aura/knowledge/memory/**
+  - frontend/apps/storybook/src/memory-product.stories.ts
+  - frontend/apps/aura-web-e2e/src/memory-product.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - tooling/architecture/**
+  - contracts/**
+  - services/**
+  - frontend/libs/platform/aura-api-client/src/lib/generated/**
+  - deploy/**
+  - compose.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: none
+  owning_module: aura-web.memory
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Memory content remains inert text and owner-only APIs retain CSRF protection
+    - Provider endpoints, credentials, prompts, and responses remain absent from the UI
+  data_classes: [private_memory_metadata, private_memory_content]
+required_agents:
+  implementation: [frontend_worker, test_evaluation_engineer]
+  review: [general_reviewer, security_privacy_reviewer]
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - An expected configuration 404 renders guided setup while retaining inventory and reindex results.
+  - Initial save submits expected version one only after explicit owner confirmation.
+  - Installed qwen3:8b and qwen3-embedding:4b are recommended and preselected when available but never auto-saved.
+  - Existing configuration hydrates both selected controls and non-404 failures provide retry recovery.
+  - Records use a balanced full-width workspace with quick filters and accessible disclosed advanced filters.
+  - Empty, filtered-empty, loading, detail, create, review, settings, reindex, error, and agent-policy states are coherent in light and dark themes.
+  - Narrow screens provide contextual memory detail without a stacked empty panel and preserve keyboard focus behavior.
+  - Existing memory content, scope, candidate, and conversation-indicator behavior remains compatible.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0044.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0044.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test frontend/apps/aura-web-e2e/src/memory-product.spec.ts --config=frontend/playwright.config.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

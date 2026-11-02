@@ -1,0 +1,121 @@
+agent: test_evaluation_engineer
+work_item: AURA-0132
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0132_evaluation
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: evaluation.scheduled-briefing-contracts
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/today.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - work-items/handoffs/AURA-0132-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      pnpm exec eslint apps/aura-web-e2e/src/notifications.spec.ts
+      apps/aura-web-e2e/src/today.spec.ts
+      apps/aura-web-e2e/src/storybook-a11y.spec.ts
+    - >-
+      git diff --check -- frontend/apps/aura-web-e2e/src/notifications.spec.ts
+      frontend/apps/aura-web-e2e/src/today.spec.ts
+      frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0132.yaml --path
+      frontend/apps/aura-web-e2e/src/notifications.spec.ts --path
+      frontend/apps/aura-web-e2e/src/today.spec.ts --path
+      frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts --path
+      work-items/handoffs/AURA-0132-test-evaluation.yaml
+    - >-
+      AURA_WEB_E2E_APP_PORT=4342 AURA_WEB_E2E_STORYBOOK_PORT=6342
+      AURA_WEB_E2E_REUSE_SERVERS=1 AURA_WEB_E2E_WORKERS=2 pnpm exec playwright
+      test apps/aura-web-e2e/src/notifications.spec.ts
+      apps/aura-web-e2e/src/today.spec.ts
+      apps/aura-web-e2e/src/storybook-a11y.spec.ts --grep
+      "typed briefing|Notification Storybook briefing|Today graceful"
+      --project=desktop --project=tablet --project=mobile (8 passed, 4
+      expected Storybook skips)
+    - >-
+      The focused briefing notification test passed across desktop, tablet, and
+      mobile; it covered typed source rendering, acknowledgement, no result
+      fetch, no result identifier in the URL, and Axe.
+    - >-
+      The focused Today test passed across desktop, tablet, and mobile; it
+      covered a typed briefing card, canonical notification destination, no
+      result identifier in the href, and preservation of reminder and
+      conversation cards with Axe.
+    - >-
+      Notification Storybook briefing passed in light and dark desktop themes;
+      the disabled deferred-result action and URL containment assertions passed
+      with Axe.
+    - >-
+      After the generated client settled on the canonical top-level
+      BriefingNotification union (schedule, occurrence, and result identifiers),
+      the focused 12-case Playwright rerun passed with 8 passed and 4 expected
+      Storybook project skips across desktop, tablet, and mobile.
+    - >-
+      The complete notifications.spec.ts responsive run passed with 40 passed
+      and 2 expected skips across desktop, tablet, and mobile after explicitly
+      closing the mobile drawer before underlying notification interaction and
+      closing the detail dialog before reopening the drawer for navigation
+      verification.
+    - >-
+      The Today scoped-retry case passed across desktop, tablet, and mobile
+      (3 passed) after aligning the E2E selector with the product's accessible
+      label, "Retry unread notifications"; the notification request
+      amplification and independent-source assertions remained unchanged.
+  failed:
+    []
+  not_run:
+    - >-
+      The full AURA-0132 aggregate contract/Core/frontend/build and browser
+      checks remain with delivery and integration owners.
+    - >-
+      The complete three-file Playwright matrix was not completed in this slice;
+      the focused new scenarios and responsive projects were run.
+decisions:
+  - >-
+    Added a canonical typed BriefingNotification browser fixture using only
+    opaque schedule, occurrence, and result identifiers. The test asserts that
+    the notification detail remains usable before the dedicated result route
+    exists and that acknowledgement still works through the source-neutral API.
+  - >-
+    Added Today coverage proving briefing notifications remain navigation-only,
+    point to the canonical notification detail route, do not place the result
+    identifier in an href, and do not displace reminder or conversation cards.
+  - >-
+    Added the briefing Storybook state to the existing light/dark Axe matrix,
+    asserting the dedicated-result control is disabled until its route exists.
+    Existing legacy reminder tests remain unchanged and continue to cover
+    reminder rendering and completion behavior.
+  - >-
+    No production code, transport contract, golden, threshold, or baseline was
+    changed by this evaluation slice.
+  - >-
+    The remaining mobile failure was an invalid test interaction: the test
+    opened the drawer while already on /notifications, only inspected the
+    active same-route link, and then clicked content beneath the still-open
+    inert drawer. No NavigationEnd could close it. The E2E now closes the
+    drawer explicitly, then closes the detail dialog before reopening the
+    drawer for the responsive navigation assertion; no product same-route
+    behavior change is required.
+  - >-
+    The Today retry test now targets the scoped accessible action label rather
+    than the generic visible text, preserving the exact retry request count
+    and reminder/conversation request upper bounds.
+risks: []
+unresolved: []

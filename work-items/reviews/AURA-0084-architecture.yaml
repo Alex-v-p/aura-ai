@@ -1,0 +1,12 @@
+agent: architecture_guardian
+work_item: AURA-0084
+verdict: PASS
+checked:
+  - Core and Observatory retain separate module roots, databases, sessions, audiences, generated clients, and deployment lifecycles.
+  - Core persistence and telemetry changes remain behind Core-owned repository and platform seams; Observatory query, retention, authentication, and storage remain service-owned.
+  - Versioned contract changes are backward-compatible and the generated Angular client remains transport-only.
+  - The Observatory proxy preserves the complete external authority while API and storage services remain private.
+  - Durable opaque BFF sessions use only the existing Observatory-owned encrypted-state-root volume; Core Valkey remains an ephemeral cache.
+  - No new service, database, schema, package, network, provider dependency, cross-product import, or architectural exception was introduced.
+  - Work-item, changed-path, repository-shape, module-registry, service-isolation, frontend-boundary, contract, generated-sync, and diff checks passed.
+findings: []

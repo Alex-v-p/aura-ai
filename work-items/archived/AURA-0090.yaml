@@ -1,0 +1,221 @@
+id: AURA-0090
+title: Add evaluation artifact storage and manual deletion
+status: integrated
+change_class: repository_governance
+intent: >
+  Store explicitly authorized evaluation artifacts and scores behind an
+  Observatory-owned least-privilege storage boundary and delete them through
+  durable idempotent manual commands without exposing content or coupling Core
+  to Observatory state.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Reuse the existing private Garage deployment with an Observatory-specific bucket and key that cannot access Core buckets; do not add an object-storage provider or share credentials.
+    - Raw evaluation artifact bytes are stored only in the Observatory Garage bucket on the encrypted state root and are inert untrusted data; they are never parsed executed logged measured emitted or persisted in PostgreSQL ClickHouse NATS SSE URLs browser storage or Core state.
+    - PostgreSQL owns artifact authorization metadata opaque references lifecycle idempotency deletion jobs immutable target snapshots recovery phases and content-free deletion audits.
+    - ClickHouse owns high-cardinality evaluation scores and their metadata-safe job dataset suite evaluator and component correlations; it never stores raw evaluation inputs outputs prompts rubrics comments or artifact bytes.
+    - Object locators are derived internally from opaque UUID artifact references and are never accepted from callers persisted as provider keys or exposed across public boundaries.
+    - Artifact storage validates authorization capture classification declared byte limit closed media classification and SHA-256 integrity before publishing available metadata; partial objects are removed or remain recoverable without becoming visible.
+    - Manual deletion supports exactly job dataset suite required UTC cutoff and purge-all selectors using durable immutable target ledgers and bounded pages.
+    - Deletion is asynchronous idempotent and recoverable; a missing Garage object is successful idempotent cleanup while authentication integrity and provider failures remain explicit bounded failure classes.
+    - Deletion removes targeted Garage objects artifact metadata scores and derived evaluation storage projections while preserving component and deployment definitions service configuration sessions and content-free deletion audit records.
+    - AURA-0090 adds no evaluation API CLI SSE browser orchestration NATS consumer Core runner dataset evaluator judge baseline or experiment behavior; those remain assigned to AURA-0091 through AURA-0096.
+  contracts:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/evaluation/v1/failure-codes.schema.json
+    - contracts/events/evaluation/v1/evaluation-events.schema.json
+feature_references:
+  - EVA-001
+  - EVA-005
+  - EVA-038
+  - EVA-048
+ownership_zones:
+  - services.aura-observatory.evaluation-artifact-storage
+  - services.aura-observatory.evaluation-score-storage
+  - services.aura-observatory.evaluation-deletion
+  - services.aura-observatory.migrations
+  - deploy.observatory-garage
+  - repository.module-registration
+  - evaluation.artifact-storage-tests
+allowed_paths:
+  - work-items/active/AURA-0090.yaml
+  - work-items/archived/AURA-0090.yaml
+  - work-items/handoffs/AURA-0090-*.yaml
+  - work-items/reviews/AURA-0090-*.yaml
+  - work-items/integration/AURA-0090.yaml
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/object_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/migrations/postgresql/versions/0007_evaluation_artifact_storage.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0005_evaluation_scores.sql
+  - services/aura-observatory/resources/component-manifests/evaluation-artifact-storage.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-deletion.yaml
+  - services/aura-observatory/tests/test_aura0090_*.py
+  - services/aura-observatory/tests/test_aura0080_query_retention.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0079_identity_regressions.py
+  - .env.example
+  - compose.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/local-http.yaml
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0090_*.py
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/validate-observability.py
+  - tooling/architecture/tests/test_validate_observability.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/**
+  - services/aura-observatory/migrations/postgresql/versions/0001_observatory_foundation.sql
+  - services/aura-observatory/migrations/postgresql/versions/0002_observatory_retention_state.sql
+  - services/aura-observatory/migrations/postgresql/versions/0003_ingest_health_timestamps.sql
+  - services/aura-observatory/migrations/postgresql/versions/0004_ingest_visibility_watermark.sql
+  - services/aura-observatory/migrations/postgresql/versions/0005_ingest_health_history.sql
+  - services/aura-observatory/migrations/postgresql/versions/0006_component_definitions.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0001_observations.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0002_observation_ordering.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0004_comparison_markers.sql
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/libs/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - infra/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: evaluation-storage
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.evaluation_artifact_storage
+    - aura.observatory.evaluation_deletion
+  required_metrics:
+    - observatory_evaluation_artifact_operation_count
+    - observatory_evaluation_artifact_operation_duration_ms
+    - observatory_evaluation_deletion_action_count
+    - observatory_evaluation_deletion_deleted_count
+    - observatory_evaluation_deletion_failure_count
+  required_evaluators:
+    - evaluation_artifact_authorization
+    - evaluation_artifact_integrity
+    - evaluation_artifact_storage_isolation
+    - evaluation_artifact_content_leakage
+    - evaluation_deletion_idempotency
+    - evaluation_deletion_recovery
+    - evaluation_deletion_preservation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - The Observatory Garage key is file-injected separately scoped and unable to access Core buckets; no credential value appears in environment source logs exceptions metrics tests reports or committed fixtures.
+    - Raw artifacts are bounded streamed digest-verified inert untrusted bytes and never parsed rendered executed interpreted as instructions or returned through a public endpoint in this item.
+    - Only closed content-capable capture classifications and an explicit persisted authorization record may store an artifact; metadata_only and hashed records cannot create objects.
+    - Object locators are deterministic internal derivations from UUID references use a fixed prefix and cannot contain caller paths filenames endpoints bucket names traversal segments or provider keys.
+    - The object adapter uses one configured private endpoint no redirects bounded connect/read/write timeouts and no caller-controlled URL host headers or credentials.
+    - PostgreSQL stores authorization lifecycle digest byte count media classification opaque associations idempotency deletion state and audits but no raw bytes filenames prompts responses rubrics comments credentials endpoints or provider object keys.
+    - ClickHouse stores finite scores and versioned correlations but no raw content arbitrary attributes object keys credentials owner identity or unbounded diagnostic strings.
+    - Deletion target capture and object metadata publication are concurrency-safe idempotent and restart-recoverable without retargeting late data or falsely reporting success.
+    - Logs metrics manifests and test diagnostics use bounded phase outcome and failure classifications only; artifact job dataset suite and owner identifiers never become labels or log fields.
+    - Deletion audits remain content-free after artifact metadata objects and scores are removed and cannot be used to reconstruct object locations or private evaluation content.
+  data_classes:
+    - authorized_evaluation_content
+    - evaluation_artifact_metadata
+    - evaluation_score
+    - evaluation_deletion_audit
+required_agents:
+  implementation:
+    - observatory_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The existing retention visibility query remains valid PostgreSQL and reports deletion visibility without syntax errors while artifact-storage acceptance exercises the complete stack.
+  - Full-stack browser acceptance permits bounded metadata-only SSE comparison refreshes while verifying every comparison request keeps run identifiers out of URLs and browser persistence.
+  - A forward-only idempotent PostgreSQL migration from empty and existing Observatory schemas creates authorization artifact lifecycle deletion action target recovery and content-free audit state without sharing Core tables.
+  - A forward-only idempotent ClickHouse migration creates evaluation score storage with finite numeric scores bounded dimensions exact evaluator component dataset suite job and result correlations and no content columns arbitrary maps or automatic TTL.
+  - Artifact storage requires an explicit content-capable authorization record validates declared size and SHA-256 while streaming enforces a fixed maximum and publishes metadata only after the complete object succeeds.
+  - Metadata-only hashed unauthorized oversized malformed digest-mismatched unsupported-media duplicate-conflicting and caller-locator artifact writes fail closed without leaving a visible artifact.
+  - Duplicate retries with the same service-generated idempotency key and fingerprint return the same opaque reference while reuse for different content or authorization conflicts deterministically.
+  - The Garage adapter derives a fixed object key from the opaque artifact UUID uses no redirects caller-controlled endpoints or paths and treats stored bytes as inert untrusted content.
+  - The existing Garage deployment provisions a separate Observatory evaluation bucket and file-injected key whose access is limited to that bucket while the Core key remains limited to Core buckets.
+  - Only the Observatory worker receives evaluation bucket credentials and private object-storage network access; Web Collector session stores databases and Core services do not receive the new key.
+  - PostgreSQL persists only bounded authorization artifact association lifecycle integrity and deletion metadata and never stores raw content filenames provider endpoints provider object keys credentials or owner identity.
+  - ClickHouse score writes reject non-finite values unknown evaluator kinds arbitrary dimensions raw content and incompatible capture classifications and preserve zero distinctly from missing evidence.
+  - Durable manual deletion commands support exactly job dataset suite required UTC cutoff and purge_all selectors with service-generated UUID idempotency explicit confirmation and immutable target snapshots.
+  - Deletion removes targeted Garage objects PostgreSQL artifact metadata ClickHouse scores and derived evaluation storage projections while preserving content-free deletion audit rows component and deployment catalogues service configuration sessions and unrelated data.
+  - Missing objects and repeated completed commands are idempotent successes; storage authentication integrity timeout and database failures remain recoverable explicit bounded failures with no content in diagnostics.
+  - Concurrent overlapping deletion commands serialize or share immutable targets without double-counting retargeting late artifacts or deleting artifacts outside either authorized selector.
+  - Worker restart resumes durable deletion from its persisted phase without re-uploading content retargeting new artifacts losing audit state or falsely reporting terminal success.
+  - Artifact and deletion metrics expose only fixed operation action outcome phase and failure-code labels with bounded counts/durations and never identifiers content sizes digests media values or storage locations as labels.
+  - Component manifests declare metadata-only capture manual-owner deletion no automatic TTL stable dependencies metrics evaluators and provider-neutral storage roles.
+  - Compose topology fresh migration upgrade migration and idempotent rerun tests verify the private Garage bucket/key network file-secret and encrypted-state-root boundaries.
+  - Full-stack storage acceptance writes a bounded synthetic artifact verifies integrity and score storage exercises each deletion selector and purge-all simulates a missing object and restart recovery and confirms no content or locator appears in logs events metrics URLs or browser persistence.
+  - No evaluation API CLI SSE Angular NATS subject consumer Core source Core migration dependency upgrade cloud storage protected golden result or repository baseline change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0090.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0090.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0090.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0090.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0090.yaml
+  - cd services/aura-observatory && uv run ruff check src tests
+  - cd services/aura-observatory && uv run pyright
+  - cd services/aura-observatory && uv run pytest tests
+  - python3 -m unittest deploy.compose.test_topology
+  - cd /home/alexa/Documents/Projects/aura-ai && uv run pytest deploy/tests/test_aura0090_*.py
+  - docker compose --env-file .env --profile observatory config --quiet
+  - bash deploy/compose/run-observatory-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Evaluation artifact upload download and deletion HTTP and CLI resources remain assigned to AURA-0095.
+  - Evaluation request result orchestration NATS subjects attempts cancellation and recovery remain assigned to AURA-0091 and AURA-0092.
+  - Dataset suite evaluator and local judge execution remain assigned to AURA-0093 and AURA-0094.
+  - Experiment baseline regression and browser workflows remain assigned to AURA-0095 and AURA-0096.

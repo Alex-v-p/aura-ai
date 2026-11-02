@@ -1,0 +1,11 @@
+agent: architecture_guardian
+work_item: AURA-0140
+verdict: PASS
+checked:
+  - Verified web.research@1 is admission-only, remains within the existing thirty-second tool ceiling, and uses one durable completion record as the sole terminal conversation writer.
+  - Verified identifier-and-version-only task invalidations reconcile through the same source-owned public snapshot query used for rebuild, with a nondelegable internal capability and no cross-domain persistence reads.
+  - Verified SearXNG and static and browser fetchers preserve inward provider direction, isolated identities, bounded egress, no ambient credentials, and independent kill switches.
+  - Verified Core owns research, artifacts, tasks, deletion, and completion state while Garage stores bytes and Observatory remains fully independent.
+  - Verified future tickets retain bounded ownership and require their own approved work items before product changes.
+  - Verified all required architecture and repository checks pass or produce the declared documentation-only skip.
+findings: []

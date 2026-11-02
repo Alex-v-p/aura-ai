@@ -1,0 +1,30 @@
+component:
+  id: aura.observatory.run_inspection_query
+  version: 1.0.0
+  owner: observatory.run_inspection_query
+  category: observability
+input:
+  schema: observatory-v1
+  replayable: true
+output:
+  schema: observatory-v1-run-inspection
+dependencies:
+  - postgresql
+  - clickhouse
+  - session_store
+metrics:
+  - run_inspection_query_latency_ms
+  - run_inspection_merge_latency_ms
+evaluators:
+  - run_inspection_projection_truth
+  - run_inspection_outage_isolation
+  - metadata_v2_allowlist
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [operation, outcome, status, dependency, errorClass]
+  trace_only: [runId]
+  prohibited: [eventId, evidenceId, digest, object_key, prompt, response, content, arguments, result, token, credential, password, owner_identity]
+export:
+  sink: prometheus
+  cadence: per_query

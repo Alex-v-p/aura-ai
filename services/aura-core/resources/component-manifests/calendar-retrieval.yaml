@@ -1,0 +1,40 @@
+component:
+  id: aura.integration.calendar_retrieval
+  version: 1.0.0
+  owner: integrations.calendar
+  category: application
+input:
+  schema: aura-calendar-retrieval-query-v1
+  replayable: false
+  replay_reason: Retrieval is an on-demand owner-authorized read of transient provider content.
+output:
+  schema: aura-calendar-retrieval-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - valkey
+metrics:
+  - calendar_retrieval_duration_ms
+  - calendar_retrieval_outcome
+  - calendar_returned_event_count_bucket
+metric_semantics:
+  calendar_retrieval_duration_ms: Bounded on-demand retrieval duration in milliseconds.
+  calendar_retrieval_outcome: Content-free retrieval outcome.
+  calendar_returned_event_count_bucket: Bounded returned-event count bucket, never event content.
+capture_policy: metadata_only
+evaluators:
+  - calendar.normalization.v1
+  - calendar.provider-boundary.v1
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, status, event_count_bucket]
+  trace_only: [trace_id, span_id, parent_span_id, correlation_id, attempt_id, query_id]
+  prohibited: [content, event_title, description, attendees, location, calendar_name, provider_identifier, owner_identity, timezone, cursor, token, credential, url, endpoint]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown

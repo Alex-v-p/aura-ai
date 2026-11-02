@@ -1,0 +1,49 @@
+agent: test_evaluation_engineer
+work_item: AURA-0090
+verdict: PASS
+checked:
+  - >-
+    Read the active AURA-0090 work item, applicable architecture/specification/
+    ADR sources, implementation and review handoffs, and the complete current
+    diff. No production or test implementation was edited during this review;
+    only this review verdict was updated.
+  - >-
+    Independently ran the focused migration/storage suite after the
+    score-phase correction: 86 passed and 1 Docker-dependent test was skipped.
+    The current Observatory suite passed 110 tests with 19 expected skips and
+    one existing Authlib deprecation warning.
+  - >-
+    Re-verified the cancellation correction in
+    services/aura-observatory/src/aura_observatory/evaluation_storage.py.
+    EvaluationDeletionService._execute now places lease.close in an outer
+    finally covering both score and object phases. The new
+    test_cancelled_score_deletion_closes_lease_and_recovers_after_restart uses
+    a blocking score store and renew-capable repository, asserts no active
+    lease-renewal task remains after cancellation, preserves the score target,
+    and completes the retry without false completion.
+  - >-
+    Prior validation evidence remains green for work-item/path/repository-shape/
+    module/isolation/observability/baseline/contract checks, Python typing and
+    linting, deployment topology, Compose topology, and protected-baseline
+    checks. The final full-stack script is syntactically valid.
+  - >-
+    Reviewed the final status-0 real-stack evidence in
+    /tmp/aura-observatory-e2e-final3.UgUYDY.log. It reports storage/deletion
+    preflight and score readback passed (lines 1537-1538), durable worker
+    restart recovery passed (line 1597), the bounded privacy scan passed (line
+    1700), session/reset acceptance passed, and final Core-after-Observatory-
+    stop acceptance passed (line 2023). The intentional ClickHouse 408/159
+    scan-boundary probe is classified and followed by a passing boundary check;
+    no traceback or acceptance failure appears in the log. Teardown network
+    "resource is still in use" messages are cleanup noise and were not treated
+    as product-test failures.
+  - >-
+    Verified all six previously blocking areas are now covered: reservation and
+    provider failure classes are bounded and tested; the real worker is stopped
+    and restarted against persisted PostgreSQL/ClickHouse/Garage state; runtime
+    logs and metrics plus browser SSE/URL/storage are scanned with a synthetic
+    sentinel; real ClickHouse rows are read back with correlations, zero, and
+    nullable evidence; job/dataset/suite/cutoff/purge selectors use distinct
+    real fixtures; and cancellation tests cover streamed upload, score phase,
+    and object phase with safe retry/recovery assertions.
+findings: []

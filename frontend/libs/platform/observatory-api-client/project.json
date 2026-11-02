@@ -1,0 +1,28 @@
+{
+  "name": "observatory-api-client",
+  "projectType": "library",
+  "sourceRoot": "libs/platform/observatory-api-client/src",
+  "tags": ["scope:observatory", "type:data-access"],
+  "targets": {
+    "generate": {
+      "executor": "nx:run-commands",
+      "options": { "command": "node libs/platform/observatory-api-client/tools/generate-client.mjs" }
+    },
+    "check-generated": {
+      "executor": "nx:run-commands",
+      "options": { "command": "node libs/platform/observatory-api-client/tools/generate-client.mjs --check" }
+    },
+    "validate-contract": {
+      "executor": "nx:run-commands",
+      "options": { "command": "node libs/platform/observatory-api-client/tools/validate-contract.mjs" }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "vitest run --config vitest.workspace.ts libs/platform/observatory-api-client/src" }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "eslint libs/platform/observatory-api-client" }
+    }
+  }
+}

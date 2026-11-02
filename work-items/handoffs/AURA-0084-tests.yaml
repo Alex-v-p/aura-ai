@@ -1,0 +1,421 @@
+agent: test_evaluation_engineer
+work_item: AURA-0084
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.observatory-auth-recovery
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/observatory-web-e2e/full-stack.config.ts
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - deploy/compose/test_topology.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.observatory.query_api
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0084.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role test_evaluation_engineer
+      --path frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml
+      --path deploy/compose/run-observatory-full-stack-e2e.sh (passed)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role platform_worker
+      --path deploy/compose/run-observatory-full-stack-e2e.sh (passed; the
+      deployment runner is platform-owned by the path governance map)
+    - bash -n deploy/compose/run-observatory-full-stack-e2e.sh
+    - >-
+      Static fixture-secret check: the runner creates all twelve disposable
+      secret files beneath its mktemp root under umask 077, applies chmod 0600,
+      supplies only file paths through the temporary env file, uses file-backed
+      Compose secret sources for every secret, and retains cleanup of the
+      fixture root.
+    - >-
+      Static fixture-location check: the runner creates its mktemp directory
+      under the repository-local .aura-e2e.* pattern and fail-closes unless
+      .gitignore contains .aura-e2e.*/ and .dockerignore contains
+      **/.aura-e2e.*/ before writing secret files.
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0084.yaml
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0084.yaml (skipped: no protected baseline changes)
+    - >-
+      cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0084-uv uv run
+      ruff check src tests/test_aura0079_auth.py
+      tests/test_aura0084_auth_recovery.py
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0084-uv uv run pyright
+    - >-
+      cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0084-uv uv run
+      pytest tests/test_aura0079_auth.py tests/test_aura0084_auth_recovery.py
+      (17 passed, 1 deprecation warning)
+    - cd frontend && NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm exec nx run observatory:lint
+    - cd frontend && NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm exec nx run observatory:test
+    - cd frontend && NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm exec nx run observatory-web:lint
+    - cd frontend && NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm exec nx run observatory-web:test
+    - >-
+      cd frontend && NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm exec nx
+      run observatory-web:build:production
+    - pnpm exec eslint apps/observatory-web-e2e/src/observatory-web.spec.ts
+    - >-
+      Full Observatory pytest from the repository root: 231 passed, 1
+      Authlib deprecation warning. Running the same suite from the service
+      directory is not a valid invocation because one existing regression
+      reads the repository-root compose.yaml.
+    - >-
+      Post-fix root live-browser acceptance rebuilt only observatory-api and
+      observatory-web; the canonical Observatory origin retained its
+      authenticated session across service replacement and rendered all tabs
+      plus Sign out. The expected transient Disconnected state exposed an
+      explicit reconnect action.
+    - >-
+      Post-fix isolated recovery acceptance ended exactly at
+      http://127.0.0.1:4300/ after provider_denied with injected code/state,
+      rendered neutral Owner sign-in was not authorized copy, exposed no
+      connection/outage pill, had exactly one role=status, focused
+      auth-recovery-title, and contained none of the injected value.
+    - >-
+      The same root browser acceptance observed system dark preference and
+      computed canvas #191517 and text #f6eef1 tokens. Earlier root evidence
+      on this unchanged recovery surface recorded localStorage and
+      sessionStorage length zero.
+    - >-
+      The validated AURA-0083 checkpoint covers canonical login, separate Core
+      session, normal-down preservation, reset invalidation, reauthentication,
+      continued Core usability, and the 12-model Core inventory; destructive
+      lifecycle operations were not repeated for AURA-0084.
+    - >-
+      Corrected mocked-browser design defects: the anonymous return-path case
+      uses the existing root route with a benign query, session expiry is
+      activated after the authenticated shell through a mutable fixture before
+      applying run filters, and logout-403 copy is asserted through the visible
+      recovery paragraph to avoid strict locator ambiguity.
+    - >-
+      Final expiry-fixture correction sets the mocked session invalid when the
+      armed runs request returns 401, preserving real expired-session behavior
+      and stale-sequence invalidation when concurrent auth loads complete.
+    - >-
+      Corrected the opt-in full-stack runner's Compose secret fixture: twelve
+      temporary mode-0600 files are created under the private mktemp root and
+      referenced by file-backed secret definitions, avoiding unsupported
+      environment-backed secrets for read-only services. Container-facing
+      AURA_*_FILE settings remain /run/secrets/<name>; distinct fixture-only
+      source variables provide host paths solely for Compose interpolation.
+      The existing exit cleanup removes the fixture root and disposable
+      Compose resources.
+    - >-
+      Moved the disposable fixture root from /tmp to the repository-local
+      ignored .aura-e2e.* path so Docker Desktop can bind-mount secret source
+      files. Startup now verifies both ignore rules before writing any secret
+      and retains the existing trap-based cleanup.
+    - >-
+      Expanded bounded failure logging in the full-stack runner to include
+      Observatory PostgreSQL, migration, ClickHouse, session, API, worker,
+      Collector, and Web services, plus Core PostgreSQL, migration, API,
+      worker, scheduler, and Web services. The existing no-color tail=100
+      bound and cleanup behavior are unchanged.
+    - >-
+      Added bounded no-color tail=100 logging for the separate deterministic
+      aura-e2e-ollama provider project before provider teardown. This preserves
+      the existing Core and Observatory worker/API diagnostics and makes the
+      latest Core PROVIDER_ERROR acceptance failure distinguish provider
+      startup/protocol output from worker-side output without logging request
+      bodies or credentials.
+    - >-
+      Added a bounded worker-side provider preflight after the selected Core
+      services become healthy: the actual aura-core-worker container asserts
+      its effective test endpoint and fixture-chat-2 default, performs a
+      5-second GET of /api/tags with a 64 KiB response bound, and requires
+      fixture-chat-2
+      in the inventory. This is harness-only reachability evidence and does not
+      alter Core startup or provider behavior.
+    - >-
+      Sequenced the disposable stack startup around the existing Core API
+      readiness contract: start and wait for aura-core-api, poll its
+      /health/ready endpoint for up to 90 seconds (including NATS JetStream
+      readiness), start the browser-facing and Observatory services, then
+      start the Core worker/scheduler and run the worker/provider preflights.
+      This prevents a fresh-state worker consumer from racing API stream
+      creation without changing Core services or inventing a worker endpoint.
+    - >-
+      Extended the worker preflight through the production OllamaAdapter:
+      after inventory, the worker instantiates OllamaAdapter from its effective
+      environment, exhausts stream_chat_events for fixture-chat-2 under a
+      10-second overall bound, and requires both a text delta and
+      ModelStreamCompleted. This intentionally avoids native-tool selection in
+      the metadata-only Observatory run while retaining native-tool coverage in
+      the established Core full-stack suite. It invokes the
+      image's /app/.venv/bin/python so httpx and the Core package are available;
+      the probe prints no provider content and is confined to the disposable
+      runner.
+    - >-
+      The real browser helper receives AURA_OBSERVATORY_CORE_MODEL=fixture-chat-2,
+      selects that exact selectable model through the visible Core Conversation
+      options menu before sending, and verifies the model metadata button. The
+      run remains created by and visible in the Core UI.
+    - >-
+      Enhanced terminal Core-run diagnostics using only the already-fetched
+      conversation detail: sanitized run status/error, assistant message state,
+      assistant content length, tool lifecycle status, and bounded tool call
+      counters. No IDs, message content, tool arguments, URLs, or unsanitized
+      errors are emitted; no extra event query was needed.
+    - >-
+      Inspected the deterministic provider entrypoint: its Uvicorn command uses
+      --no-access-log, so startup-only aura-e2e-ollama output cannot prove that
+      no HTTP request was received. The new worker-side /api/tags preflight is
+      the reliable request-path check available without changing provider code.
+    - >-
+      Added the local-HTTP-approved safe escaped PostgreSQL healthcheck to the
+      generated observatory-postgres override, alongside its disposable volume
+      override, so the full-stack runner does not inherit the legacy literal
+      NUL expression.
+    - >-
+      Set AURA_OBSERVATORY_ENVIRONMENT=disposable_local in the runner fixture
+      env so the Observatory API, worker, and migration share the exact
+      disposable-local HTTP mode without weakening production Settings
+      validation.
+    - >-
+      Corrected the isolated Observatory origin to the exact disposable-local
+      contract: environment=disposable_local, public origin and callback at
+      http://observatory.localhost:4300, and insecure cookies. The generated
+      Compose model was rendered without starting services and confirmed the
+      API/worker/migration settings, no web host ports, observatory.localhost
+      alias on observatory-edge, shared frontend-e2e network, read-only nginx
+      config bind, port-4300 healthcheck, and full-stack browser URLs.
+    - >-
+      The runner generates its nginx config from the tracked
+      deploy/docker/observatory-web.nginx.conf with only listen 8080 changed
+      to listen 4300; static parity checks confirmed no other source change.
+    - >-
+      Added bounded opt-in Chromium host resolution to the full-stack-only
+      Playwright config. When AURA_OBSERVATORY_BROWSER_HOST_RESOLVER_RULES is
+      absent, no launch args are added; when set, a single-line value up to 512
+      characters becomes the Chromium --host-resolver-rules argument. The
+      runner supplies MAP observatory.localhost observatory-web, while the
+      mocked browser config remains unchanged.
+    - >-
+      Restricted the disposable network allocator to the dedicated
+      10.254.192.0/18 pool, still scanning occupied Docker IPAM ranges and
+      requiring two free /28s. The allocator no longer falls back to the
+      Docker-default-prone 172.30.0.0/16 or 172.31.0.0/16 pools.
+    - >-
+      `cd frontend && pnpm exec eslint
+      apps/observatory-web-e2e/full-stack.config.ts` passed; Playwright
+      `--list` passed with the resolver variable both set and unset, listing
+      the two full-stack tests without starting a web server or browser.
+    - >-
+      Daemon-free temporary `docker compose config --format json` rendering
+      confirmed the runner propagates MAP observatory.localhost observatory-web
+      to frontend-e2e, retains the canonical 4300 base URL, and preserves the
+      internal alias with no host ports.
+    - >-
+      Updated the real Core-run helper to use the exact current `Message Aura`
+      textbox as its visible and editable readiness gate, removing the stale
+      heading-name assertion while preserving the existing conversation/run
+      response and completion checks.
+    - >-
+      Scoped the created-prompt assertion to the last accessible `Your message`
+      article with an exact text locator, removing ambiguity from navigation
+      labels and conversation headings while preserving the response assertion.
+    - >-
+      Improved real Core-run polling diagnostics: non-OK conversation responses
+      now report `http:<status>`, an absent accepted run reports `missing`, and
+      a present run reports its exact status before the assertion expects
+      `completed`; the existing timeout and polling intervals are unchanged.
+    - >-
+      Core-run polling now fails immediately for failed, canceled/cancelled, or
+      interrupted terminal statuses with only bounded status, error code,
+      retryability, and a normalized 200-character error message; run IDs and
+      other private context are not included in the diagnostic.
+    - >-
+      Corrected the full-stack Core model picker locator to use the current
+      accessible label contract (`Conversation options` dialog
+      `getByLabel('Model')`) rather than deriving a label from DOM text. This
+      matches the production select's wrapped accessible label and the
+      established Core full-stack selectors, while retaining the exact
+      fixture-chat-2 option/value assertion and selection.
+    - >-
+      Hardened real Core run submission after a preserved-stack timeout: the
+      helper now verifies the filled composer value, send visibility, and
+      enabled/actionable state for up to 30 seconds before installing the
+      conversation POST waiter. Click failures and missing POST responses now
+      report only bounded route, control-state, composer-length, and selected
+      model visibility diagnostics; the request wait is bounded to 30 seconds
+      and no prompt, credential, or response body is emitted.
+    - >-
+      Made createCoreRun deterministic against persisted browser state by
+      clicking the accessible New conversation control after navigation and
+      waiting for the canonical /conversation route. Before model selection or
+      prompt filling it now asserts the New conversation heading, empty
+      composer, and disabled Send control, ensuring the acceptance exercises a
+      fresh draft and the real create-conversation POST rather than an existing
+      conversation run endpoint.
+    - >-
+      Closed the confirmed Core hydration race by waiting for the established
+      `Loading your conversation` status to become hidden before creating the
+      fresh draft, and waiting for the Conversation options dialog to become
+      hidden after Close before filling the composer. Click failures preserve a
+      bounded original actionability error while attaching control-state
+      diagnostics; the pending response waiter is rejection-handled without
+      blocking for its full timeout.
+    - >-
+      Added bounded run-observation evidence to the real Observatory flow:
+      after owner sign-in it waits for a 200 GET /api/v1/events before Core run
+      creation, records only bounded run IDs/counts from successful GET
+      /api/v1/runs response events, and keeps the normal target-button
+      assertion. If the target is absent after a 60-second render wait, one
+      same-origin cache:no-store REST probe reports only status/target
+      presence, alongside SSE-open state, observed-REST target presence,
+      connection status text, and visible target-button count; no cookies,
+      payload content, or response bodies are exposed.
+    - >-
+      Hardened the real retention acceptance wait with a bounded response
+      observer for POST /api/v1/retention/actions and subsequent GET action
+      status responses. It records only HTTP statuses, finite queued/running/
+      succeeded/failed enums, and bounded failure-code presence; it detects
+      retention failure and owner-session recovery states before timeout and
+      reports sanitized, bounded progress/failure text. Successful retention
+      still requires the strict succeeded state and positive deleted count.
+    - >-
+      `cd frontend && NX_DAEMON=false NX_ISOLATE_PLUGINS=false pnpm exec
+      eslint apps/observatory-web-e2e/src/full-stack.spec.ts` passed; the
+      full-stack Playwright config listed both acceptance tests without
+      starting a browser or web server.
+    - >-
+      Added a daemon-free-validated runner preflight immediately before
+      frontend browser execution: observatory-api constructs one fixed,
+      contract-validated metadata-only observation and the production
+      clickhouse_row shape, then POSTs JSONEachRow to the configured ClickHouse
+      database with file-injected Settings credentials and the adapter's
+      insert-deduplicate parameters. A fixed valid run ID deliberately exercises
+      the run_projections materialized view; synchronous exact-ID mutations in
+      finally remove both the synthetic observation and derived projection on
+      success or insert failure. Before cleanup, the same in-container probe
+      invokes the production overview-count and unfiltered run-list adapter
+      paths against that row, so ClickHouse HTTP 500s surface before browser
+      polling. Production response classification remains active and any
+      surfaced body is normalized and bounded to 512 characters without
+      printing credentials, URLs, or payload content.
+    - >-
+      Added default-off AURA_OBSERVATORY_E2E_KEEP_ON_FAILURE=1 diagnostics to
+      the disposable runner. On a non-zero exit it preserves only the scoped
+      Compose project and repository-local mode-0600 fixture directory after
+      bounded logs have been captured; the existing trap is disabled before
+      returning so signal cleanup cannot run twice. Success and the default
+      failure path still stop/remove the project, provider, networks, and
+      fixture directory.
+    - >-
+      Updated deploy/compose/test_topology.py to match the deliberate
+      full-stack runner design: it now requires the repository-local
+      .aura-e2e.* fixture covered by both ignore files, mode-0600 secret files
+      with distinct *_SECRET_SOURCE_FILE Compose interpolation variables and
+      /run/secrets container paths, the canonical observatory.localhost:4300
+      owner flow, and the current Observatory-only outage phase. It also
+      preserves assertions for dedicated IPAM allocation, project-scoped
+      network cleanup, fixture cleanup/keep-on-failure behavior, and no
+      operator .env mutation.
+    - >-
+      python3 -m pytest -q deploy/compose/test_topology.py
+      deploy/tests/test_aura0079_runtime_wiring_regressions.py (47 passed, 1
+      PytestConfigWarning about the existing asyncio_mode option)
+    - >-
+      python3 deploy/compose/test_topology.py (41 tests passed)
+    - >-
+      python3 -m pytest -q deploy/tests/test_aura0079_runtime_wiring_regressions.py
+      (6 passed, 1 PytestConfigWarning about the existing asyncio_mode option)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role platform_worker --path
+      deploy/compose/test_topology.py (passed; deployment topology ownership is
+      platform_worker in the repository governance map)
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      The requested bounded Playwright command
+      `AURA_OBSERVATORY_WEB_E2E_APP_PORT=4301
+      AURA_OBSERVATORY_WEB_E2E_WORKERS=1 NX_CLOUD=false pnpm exec playwright
+      test --config apps/observatory-web-e2e/playwright.config.ts` was
+      attempted, but its configured web server exited before serving. Verbose
+      Nx output reports cloud.nx.app DNS failure (EAI_AGAIN). This is an
+      environment-only limitation; current post-fix browser acceptance passed
+      through the root-run browser above.
+    - >-
+      One scoped invocation of
+      `AURA_GARAGE_IMAGE=<digest-qualified fixture image>
+      bash deploy/compose/run-observatory-full-stack-e2e.sh` was attempted
+      after the provider-log correction. It exited before creating any Docker
+      resource with `permission denied ... unix:///home/alexa/.docker/desktop/docker.sock`;
+      the runner trap removed its repository-local fixture directory. No
+      provider/Core/Observatory services were started or stopped by this
+      worker, so the newly added provider diagnostics could not be collected in
+      this environment. The validated AURA-0083 checkpoint remains the
+      lifecycle evidence for the already-satisfied acceptance expectations.
+decisions:
+  - >-
+    Added only test-owned mocked browser coverage: identity outage followed by
+    successful retry without a redirect loop, in-session expiry during a
+    component-health request with focus/live-region assertions, callback
+    marker sanitization, same-origin return-path bounds, and empty browser
+    storage after callback recovery.
+  - >-
+    Backend callback, cookie-clearing, owner validation, session rotation, and
+    OpenAPI/manifest regressions remain covered by the scoped Observatory test
+    pair; no production behavior or protected baseline was changed here.
+  - >-
+    Browser and full-stack limitations are recorded as environment/safety
+    context, not product assertion failures; no credentials or stack lifecycle
+    state were exposed or changed; root-run acceptance closed the latest
+    browser assertions.
+  - >-
+    The e2e fixture deliberately triggers session expiry only after initial
+    authentication, so hidden component prefetch cannot consume the failure
+    before the intended user action; the root route is used for SPA recovery
+    tests because deep links are not served by the disposable web host.
+  - >-
+    The latest full-stack run reached a terminal Core run with the bounded
+    public diagnostic PROVIDER_ERROR, but retained output contained no
+    underlying provider exception. Static Compose rendering confirmed both
+    Core API and worker point at fixture-chat through the shared external
+    aura-e2e-provider network; the runner now captures the provider project's
+    bounded logs on failure so the next scoped run can identify any provider
+    startup or protocol fault.
+  - >-
+    Core's worker Settings path does not substitute a test provider:
+    run_forever constructs Settings(), whose AURA_OLLAMA_URL and
+    AURA_DEFAULT_MODEL aliases resolve the same values used by the established
+    external-provider runner; OllamaAdapter is constructed directly from
+    config.ollama_url. The worker-side preflight makes this effective
+    configuration and network path observable before browser execution.
+  - >-
+    The armed 401 now invalidates the fixture session itself, preventing a
+    concurrent successful auth bootstrap from incorrectly restoring an expired
+    browser state.
+  - >-
+    Chromium host resolution is opt-in and limited to the full-stack config;
+    the mocked config receives no resolver arguments. The runner uses the
+    internal Docker service alias only to compensate for Chromium's special
+    handling of `.localhost`, while retaining the canonical browser origin.
+risks: []
+unresolved: []

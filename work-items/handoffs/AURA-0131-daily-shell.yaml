@@ -1,0 +1,115 @@
+agent: frontend_worker
+work_item: AURA-0131
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0131_daily_shell
+  worktree: shared-main
+scope:
+  ownership_zone: frontend.aura-web.daily-planning; frontend.aura-web.shell
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.spec.ts
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/libs/aura/daily-action/src/index.ts
+  - frontend/libs/aura/daily-action/src/lib/daily-action-page.component.css
+  - frontend/libs/aura/daily-action/src/lib/daily-action-page.component.html
+  - frontend/libs/aura/daily-action/src/lib/daily-action-page.component.spec.ts
+  - frontend/libs/aura/daily-action/src/lib/daily-action-page.component.ts
+  - frontend/libs/aura/daily-action/src/lib/daily-calendar-agenda.ts
+  - work-items/handoffs/AURA-0131-daily-shell.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0131.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0131.yaml
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/daily-action apps/aura-web/src/app/shell/aura-shell.component.spec.ts (20 passed after UX recheck)
+    - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/daily-action (14 passed after mobile/200% overflow recheck)
+    - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/daily-action (14 passed after all-section-link narrow reflow recheck)
+    - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/daily-action (14 passed after section-link stretch recheck)
+    - cd frontend && AURA_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts -g 'long calendar titles' --project=desktop (environment failed before assertion: long-title fixture content was not visible)
+    - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/daily-action libs/aura/integrations/calendar (23 passed after conflict-identity recheck)
+    - cd frontend && pnpm exec nx test aura-web (10 passed)
+    - cd frontend && pnpm exec nx lint aura-web
+    - cd frontend && pnpm exec nx build aura-web --configuration=production
+    - git diff --check
+  failed: []
+  not_run:
+    - Full AURA-0131 aggregate checks, Storybook build, and Playwright checks remain with delivery and evaluation owners.
+decisions:
+  - >-
+    Added an optional DAILY_CALENDAR_AGENDA projection token so Today can render
+    server-projected events and conflicts without importing calendar transport,
+    lifecycle, or store internals. The shell adapts the integrations-calendar
+    public CalendarStore projection at composition time.
+  - >-
+    Added a bounded chronological agenda with timezone/date context, all-day
+    before timed rows, text source labels, cross-timezone provenance, and
+    server-returned conflict explanations. Existing reminder, notification,
+    approval, and conversation sections remain independently rendered.
+  - >-
+    Added /integrations and /integrations/calendar routes and an accessible
+    Connect navigation group while preserving existing route and mobile focus
+    behavior.
+  - >-
+    Started the optional calendar projection from Today exactly once per
+    CalendarStore reset epoch. This triggers connection, discovery, and
+    connected agenda hydration without creating a refresh loop; a session reset
+    permits the next authenticated Today mount to start a fresh epoch.
+  - >-
+    Calendar conflict presentation matches the server-returned relationship by
+    compound calendarId/eventId identity and inverts only directional
+    contains/contained_by relationships for the right endpoint; no overlap or
+    conflict inference is performed in the browser.
+  - >-
+    Today tracks rows by compound calendar/event identity, renders every
+    server-returned conflict, presents half-open multi-day ranges through the
+    final included date, and uses wrapping warning tokens for narrow and 200%
+    reflow.
+  - >-
+    The Connect navigation link targets /integrations with descendant-active
+    semantics, while the collection card remains the explicit entry to
+    /integrations/calendar.
+  - >-
+    Added intrinsic sizing guards, narrow-screen heading stacking, and
+    anywhere-wrapping for agenda titles and timezone provenance so private
+    event text remains readable without horizontal overflow at mobile width or
+    200% zoom.
+  - >-
+    The rendered overflow source was the routed DailyActionPageComponent host:
+    it is a flex item inside the shell main content and retained an automatic
+    min-content width despite the inner agenda wrapping. The host and agenda
+    root now explicitly use width: 100% and min-width: 0, while the existing
+    Playwright scrollWidth/clientWidth assertion remains the end-to-end
+    regression.
+  - >-
+    At the narrow effective viewport used by mobile and 200% zoom, every Today
+    section heading now stacks its action link below the heading content. The
+    link itself has min-width: 0, max-width: 100%, anywhere wrapping, and a
+    2.75rem minimum height; at the narrow breakpoint it stretches to the
+    section width, preserving the full label and 44px operability without
+    allowing section controls to widen the document.
+risks:
+  - >-
+    The optional composition adapter is intentionally kept in main.ts; any
+    changes to the calendar library's public projection must be reconciled at
+    this shell seam rather than by adding a daily-action dependency on its
+    internals.
+unresolved:
+  - >-
+    Browser-level calendar planner, responsive, keyboard, theme, and private
+    content containment coverage is owned by the AURA-0131 test/evaluation
+    slice and must be included in aggregate review.

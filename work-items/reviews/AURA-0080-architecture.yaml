@@ -1,0 +1,10 @@
+agent: architecture_guardian
+work_item: AURA-0080
+verdict: PASS
+checked:
+  - Production and reference run status use deterministic observed-at and observation-ID ordering.
+  - Production and reference component duration and outcome selection use the same ordering semantics.
+  - Post-aggregation status filtering remains in HAVING.
+  - Core and Observatory service, storage, and frontend boundaries remain intact.
+  - Equal-timestamp and pagination regressions cover the corrected behavior.
+findings: []

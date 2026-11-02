@@ -1,0 +1,275 @@
+id: AURA-0091
+title: Add the controlled Core evaluation runner
+status: integrated
+change_class: repository_governance
+intent: >
+  Execute authorized deterministic component replays and controlled synthetic
+  end-to-end evaluations in a separately deployable Core runner using the
+  exact deployed Core code while keeping evaluation transport content-free,
+  resource-isolated, cancellable, reproducible, and independent from normal
+  Core availability.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/overview.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - The architecture baseline already names the Core Evaluation Runner as a separate thin Core deployable over shared production application logic; this item does not add a new product or service boundary and does not require a new ADR.
+    - Add a closed versioned evaluation-runner transport contract because the AURA-0089 resource and lifecycle-event schemas do not define the complete NATS command result and cancellation envelopes required by the runner.
+    - Use a dedicated JetStream stream subjects durable consumer identities and file-injected service credentials with least-privilege publish and subscribe permissions; the normal Core NATS identity cannot consume evaluation commands and the runner identity cannot consume normal Core work.
+    - NATS messages carry only bounded identifiers references hashes capture authorization limits deadlines reproducibility bindings finite statuses and failure codes; raw inputs outputs prompts rubrics comments artifact bytes credentials endpoints object keys filenames owner identity arbitrary attributes and exception text are prohibited.
+    - Core PostgreSQL owns a minimal content-free runner attempt receipt lease cancellation and terminal-publication ledger for at-least-once idempotency and crash recovery; Observatory remains authoritative for evaluation definitions jobs scheduling retries results and analysis and the runner never reads Observatory databases.
+    - The runner may access the existing Observatory evaluation artifact bucket only through a separate runner-specific file-injected key limited to that bucket with owner permission denied; it must never receive the Observatory worker key or ordinary Core object credentials.
+    - Artifact references are opaque UUIDs whose object locators are derived internally; every read or write verifies the transport-declared authorization classification byte bound and SHA-256 digest and never accepts a caller-controlled path bucket endpoint or provider key.
+    - Initial module replay is restricted to an explicit registry of production replay adapters reached through public Core boundaries; dynamic imports arbitrary component names and copied Observatory implementations are prohibited.
+    - Initial end-to-end support is restricted to controlled synthetic scenarios using exact deployed Core orchestration and explicitly versioned fixture ports; it cannot impersonate an owner mutate normal owner data invoke real consequential tools or obtain ambient provider credentials.
+    - Runner attempts have separate fixed concurrency queue deadline token byte case and provider budgets; cancellation and shutdown are cooperative and bounded and never borrow the API or normal worker concurrency pool.
+    - Result identifiers and transport message identifiers are deterministic for a request attempt and terminal state so duplicate delivery recovery and result publication are idempotent without treating NATS as business truth.
+    - Runner startup readiness failure saturation crash NATS loss Garage loss model loss or malformed work must not delay or fail Core API worker scheduler migration or ordinary request paths.
+    - AURA-0091 adds no Observatory job orchestration scheduler retry policy dataset or suite persistence evaluator scoring judge API CLI SSE browser experiment baseline alert or production telemetry capture behavior; those remain assigned to AURA-0092 through AURA-0097.
+  contracts:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/evaluation/v1/failure-codes.schema.json
+    - contracts/events/evaluation/v1/evaluation-events.schema.json
+feature_references:
+  - EVA-021
+  - EVA-022
+  - EVA-023
+  - EVA-024
+  - EVA-039
+  - EVA-040
+  - EVA-048
+  - CMP-022
+ownership_zones:
+  - contracts.evaluation-runner-transport-v1
+  - services.aura-core.runtime-replay
+  - services.aura-core.evaluation-runner
+  - services.aura-core.evaluation-runner-state
+  - services.aura-core.evaluation-transport
+  - services.aura-core.evaluation-artifact-adapter
+  - deploy.core-evaluation-runner
+  - deploy.evaluation-nats-isolation
+  - repository.module-registration
+  - evaluation.core-runner-tests
+allowed_paths:
+  - work-items/active/AURA-0091.yaml
+  - work-items/archived/AURA-0091.yaml
+  - work-items/handoffs/AURA-0091-*.yaml
+  - work-items/reviews/AURA-0091-*.yaml
+  - work-items/integration/AURA-0091.yaml
+  - contracts/evaluation/v1/evaluation-runner-transport.schema.json
+  - services/aura-core/src/aura_core/runtime/replay/**
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/**
+  - services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/database/base.py
+  - services/aura-core/src/aura_core/platform/evaluation_transport.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/providers/object_storage/evaluation.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/__init__.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+  - services/aura-core/migrations/versions/0023_evaluation_runner.py
+  - services/aura-core/resources/component-manifests/evaluation-runner.yaml
+  - services/aura-core/tests/test_aura0091_*.py
+  - services/aura-core/tests/test_settings.py
+  - services/aura-core/tests/test_outbox.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_document_retrieval.py
+  - services/aura-core/tests/system/test_aura0091_*.py
+  - .env.example
+  - compose.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/local-http.yaml
+  - deploy/compose/run-evaluation-runner-e2e.sh
+  - deploy/compose/test_topology.py
+  - deploy/docker/aura-core-entrypoint.sh
+  - deploy/docker/aura-core.Dockerfile.dockerignore
+  - deploy/docker/aura-evaluation-runner.Dockerfile
+  - deploy/docker/nats-*.sh
+  - deploy/docker/nats-*.conf
+  - deploy/tests/test_aura0091_*.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/validate-observability.py
+  - tooling/architecture/tests/test_validate_observability.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/evaluation/v1/evaluation.schema.json
+  - contracts/evaluation/v1/failure-codes.schema.json
+  - contracts/events/evaluation/v1/evaluation-events.schema.json
+  - contracts/telemetry/**
+  - contracts/openapi/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/entrypoints/api/**
+  - services/aura-core/src/aura_core/entrypoints/worker/**
+  - services/aura-core/src/aura_core/entrypoints/scheduler/**
+  - services/aura-core/src/aura_core/domains/artifacts/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/domains/interaction/**
+  - services/aura-core/src/aura_core/domains/execution/**
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/migrations/versions/0001_initial.py
+  - services/aura-core/migrations/versions/0002_run_attempts.py
+  - services/aura-core/migrations/versions/0003_persona_support.py
+  - services/aura-core/migrations/versions/0004_agent_persona_revisions.py
+  - services/aura-core/migrations/versions/0005_conversation_persona_overrides.py
+  - services/aura-core/migrations/versions/0006_title_generation.py
+  - services/aura-core/migrations/versions/0007_conversation_metadata.py
+  - services/aura-core/migrations/versions/0008_memory_foundation.py
+  - services/aura-core/migrations/versions/0009_memory_processing.py
+  - services/aura-core/migrations/versions/0010_memory_recall_policies.py
+  - services/aura-core/migrations/versions/0011_memory_recall_modes.py
+  - services/aura-core/migrations/versions/0012_memory_personal_first.py
+  - services/aura-core/migrations/versions/0013_governed_tool_runtime.py
+  - services/aura-core/migrations/versions/0014_reminder_foundation.py
+  - services/aura-core/migrations/versions/0015_notification_delivery.py
+  - services/aura-core/migrations/versions/0016_approval_backed_reminder_tool.py
+  - services/aura-core/migrations/versions/0017_recurring_reminders.py
+  - services/aura-core/migrations/versions/0018_conversational_reminders.py
+  - services/aura-core/migrations/versions/0019_document_library.py
+  - services/aura-core/migrations/versions/0020_document_search_tool_citations.py
+  - services/aura-core/migrations/versions/0021_conversation_branching.py
+  - services/aura-core/migrations/versions/0022_conversation_attachments.py
+  - frontend/**
+  - infra/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: true
+  affected:
+    - evaluation-runner-transport-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: evaluation-runner
+observability:
+  applicable: true
+  affected_components:
+    - aura.evaluation.runner
+  required_metrics:
+    - evaluation_runner_queue_time_ms
+    - evaluation_runner_fixture_load_duration_ms
+    - evaluation_runner_execution_duration_ms
+    - evaluation_runner_outcome_count
+    - evaluation_runner_cancellation_count
+    - evaluation_runner_resource_limit_count
+    - evaluation_runner_reproducibility_completeness
+  required_evaluators:
+    - evaluation_runner_contract_validation
+    - evaluation_runner_exact_component_version
+    - evaluation_runner_idempotency
+    - evaluation_runner_cancellation
+    - evaluation_runner_resource_isolation
+    - evaluation_runner_reproducibility
+    - evaluation_runner_content_leakage
+    - evaluation_runner_core_independence
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Evaluation inputs are authorized untrusted data and can never select imports providers endpoints credentials files paths buckets subjects policies permissions tools or execution authority.
+    - Runner transport is a closed schema with strict size count enum identifier timestamp and digest bounds and rejects unknown fields unsupported versions non-finite numbers and content-bearing or credential-like fields before claiming an attempt.
+    - NATS uses separate runner and dispatch identities with exact subject ACLs durable consumer names and a dedicated stream; credentials are injected from files and never committed logged measured returned or copied into result artifacts.
+    - The runner-specific Garage key is distinct from Core and Observatory keys limited to the evaluation artifact bucket denied owner permission and delivered only to the runner on the private storage network.
+    - Artifact fetches and writes use internally derived UUID locators a configured private endpoint no redirects bounded timeouts exact byte limits SHA-256 verification closed media classifications and fail-closed authorization compatibility.
+    - Raw input output prompt rubric comment artifact bytes filenames provider diagnostics and exception text never enter NATS PostgreSQL telemetry logs metrics traces SSE URLs screenshots test reports or browser storage.
+    - PostgreSQL runner state contains only request job attempt event idempotency correlation causation component version digest deadline status lease cancellation and publication metadata and cannot reconstruct evaluation content or object locations.
+    - The replay registry is closed and invokes only reviewed public Core seams with exact component versions; arbitrary Python import module path callable provider tool and model selection are rejected.
+    - Controlled synthetic end-to-end execution uses versioned fixture adapters and denies consequential real tools owner data normal conversation state external network and ambient credentials.
+    - Deadlines cancellation concurrency and resource ceilings are enforced independently of caller values by stricter deployment maxima and cannot be widened by an evaluation artifact or NATS message.
+    - Failure handling maps provider transport storage validation and execution errors to finite content-free codes without exposing exception strings request identifiers or artifact digests as metric labels or log fields.
+  data_classes:
+    - evaluation_execution_metadata
+    - authorized_evaluation_content
+    - evaluation_artifact_reference
+    - evaluation_reproducibility_metadata
+    - evaluation_runner_audit
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A closed JSON Schema 2020-12 evaluation-runner transport v1 defines request cancellation completed cancelled and failed messages with exact version event correlation causation request job attempt idempotency component capture limit deadline provenance artifact-reference and digest fields and no raw content or arbitrary attributes.
+  - Existing AURA-0089 evaluation resources lifecycle events and failure codes remain backward compatible and the new transport contract references their settled meanings without silently widening production telemetry or owner authorization.
+  - The NATS topology creates a dedicated evaluation stream and stable subjects for runner commands and results with bounded retention delivery attempts acknowledgement deadlines and payload sizes appropriate to reference-only messages.
+  - Separate file-injected dispatch and runner NATS identities have complementary least-privilege ACLs; normal Core Observatory API Web Collector databases and unrelated workers cannot consume commands or publish forged results.
+  - A durable pull consumer validates schema authentication deadline capture authorization provenance exact deployed component and deployment bindings before execution and permanently rejects poison messages while retrying only bounded transient failures.
+  - A forward-only idempotent Core migration from empty and existing schemas creates a content-free attempt ledger supporting claim lease cancellation terminal result identity and transactional result-publication recovery without storing evaluation definitions artifacts scores or raw input output.
+  - Duplicate request and redelivery handling returns or republishes the same deterministic terminal identity and never duplicates component side effects artifacts or terminal observations; conflicting reuse of an attempt or idempotency identity fails closed.
+  - Cancellation deterministically settles queued work and cooperatively interrupts active fixture loading model work and component execution at bounded checkpoints while preserving one terminal state across cancellation deadline completion and retry races.
+  - Effective limits are the stricter of transport-declared and deployment-configured maxima for concurrency queue depth deadline cases input bytes output bytes tokens model work and artifact operations and saturation never borrows normal API or worker capacity.
+  - A closed replay registry executes at least one deterministic production component replay through its public Core API verifies the exact declared deployed version and rejects unknown non-replayable mismatched or dynamically selected components.
+  - A controlled synthetic end-to-end scenario exercises the exact deployed Core orchestration with versioned fixture model dependency and tool ports while producing no normal owner conversation memory document reminder approval notification or other consequential production mutation.
+  - The runner fetches only declared opaque input artifact references verifies capture authorization size media class and SHA-256 before use and treats all bytes as untrusted evaluation evidence rather than configuration policy instruction or code.
+  - Output content is bounded and written only through internally derived opaque references using the runner-specific Garage credential; NATS results contain references hashes sizes classifications statuses and reproducibility metadata but never bytes locators endpoints or filenames.
+  - Completed cancelled and failed results include the exact code revision image configuration component model prompt policy seed fixture and deployment evidence available from the request or verified runtime and mark missing or mismatched reproducibility fields explicitly rather than inferring them.
+  - Queue fixture-load execution cancellation resource and terminal outcomes emit metadata-only measurements with stable component identity fixed bounded labels and no request job attempt artifact dataset suite owner digest content or exception values as metric labels or logs.
+  - Runner NATS Garage model and database outages malformed requests unsupported versions digest failures lease loss deadline expiration cancellation and process restart produce bounded recoverable behavior and finite failure classes without an acknowledgement-before-durable-terminal gap.
+  - Starting stopping saturating or breaking the evaluation runner does not change Core API worker scheduler migration readiness normal NATS consumers ordinary model requests or telemetry export and Core remains usable with every evaluation dependency unavailable.
+  - Compose exposes no runner port joins only the required Core database evaluation NATS model and evaluation-object networks mounts only runner-specific secrets applies CPU memory process and concurrency limits and keeps all durable state under the encrypted state root.
+  - Fresh migration upgraded migration idempotent rerun unit property concurrency privacy integration topology and project-scoped real-stack tests cover contracts ACLs artifact integrity replay synthetic end-to-end duplicate delivery cancellation deadlines recovery resource isolation and Core independence.
+  - Acceptance captures no private evaluation content or credentials in command output logs metrics reports screenshots or committed fixtures and tears down the single project-scoped stack before any later full-stack phase.
+  - No Observatory source migration API CLI scheduler worker database or browser behavior normal Core HTTP contract dependency upgrade cloud judge external message protected golden result or repository baseline change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0091.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0091.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0091.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0091.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0091.yaml
+  - cd services/aura-core && uv run ruff check src tests
+  - cd services/aura-core && uv run pyright
+  - cd services/aura-core && uv run pytest tests
+  - cd services/aura-core && uv run pytest tests/system/test_aura0091_*.py
+  - python3 -m unittest deploy.compose.test_topology
+  - cd /home/alexa/Documents/Projects/aura-ai && uv run pytest deploy/tests/test_aura0091_*.py
+  - docker compose --env-file .env --profile observatory config --quiet
+  - bash -n deploy/compose/local-http.sh deploy/compose/run-evaluation-runner-e2e.sh deploy/docker/aura-core-entrypoint.sh deploy/docker/nats-*.sh
+  - bash deploy/compose/run-evaluation-runner-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Observatory evaluation job attempt retry scheduler outbox and cancellation-authority persistence remain assigned to AURA-0092; the Core ledger is executor-internal receipt lease and publication state only.
+  - Dataset suite evaluator and broad component replay registrations remain assigned to AURA-0093; this item proves the runner boundary with a minimal deterministic registry and controlled synthetic scenario.
+  - Local Ollama judge models prompts rubrics calibration and advisory thresholds remain assigned to AURA-0094 and cloud judges remain prohibited.
+  - Evaluation HTTP CLI SSE browser upload download review and progress workflows remain assigned to AURA-0095.
+  - Experiment baseline regression comparison and promotion behavior remain assigned to AURA-0096 and protected repository baselines remain unchanged.

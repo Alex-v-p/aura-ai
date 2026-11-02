@@ -1,0 +1,21 @@
+component:
+  id: aura.knowledge.document_deletion
+  version: 1.0.0
+  owner: knowledge.documents
+  category: persistence
+input:
+  schema: document-delete-v1
+  replayable: false
+output:
+  schema: document-delete-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies: [postgresql, object_storage]
+metrics: [document_deletion_duration_ms, document_deletion_outcome, consumer_received, consumer_acknowledged, consumer_nacked, consumer_rejected, consumer_redelivered, outbox_duplicates]
+evaluators: [document_deletion_completion, document_owner_isolation]
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, document_id]
+  prohibited: [content, filename, object_key, digest, owner, credential, vector]

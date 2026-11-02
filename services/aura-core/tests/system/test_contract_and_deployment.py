@@ -1,0 +1,602 @@
+"""Static contract and deployment boundary checks without network dependencies."""
+
+import json
+import re
+from pathlib import Path
+from typing import Any, cast
+from uuid import uuid4
+
+import pytest
+from aura_core.platform.auth import Settings
+from aura_core.platform.outbox.service import make_run_command
+
+ROOT = Path(__file__).parents[4]
+
+
+def test_ollama_discovery_settings_have_independent_safe_bounds() -> None:
+    settings = Settings()
+
+    assert settings.document_embedding_model == "qwen3-embedding:4b"
+    assert settings.document_embedding_dimension == 768
+    assert settings.ollama_inventory_timeout_seconds == 5.0
+    assert settings.ollama_verification_timeout_seconds == 60.0
+    assert settings.ollama_inventory_cache_ttl_seconds == 15.0
+
+    for field, value in (
+        ("ollama_inventory_timeout_seconds", 0),
+        ("ollama_inventory_timeout_seconds", 61),
+        ("ollama_verification_timeout_seconds", 0),
+        ("ollama_verification_timeout_seconds", 301),
+        ("ollama_inventory_cache_ttl_seconds", -1),
+        ("ollama_inventory_cache_ttl_seconds", 301),
+    ):
+        with pytest.raises(ValueError):
+            Settings(**cast(Any, {field: value}))
+
+
+def test_document_entrypoints_bind_the_dimension_safe_embedding_adapter() -> None:
+    api_source = (
+        ROOT / "services/aura-core/src/aura_core/entrypoints/api/state.py"
+    ).read_text()
+    worker_source = (
+        ROOT / "services/aura-core/src/aura_core/entrypoints/worker/app.py"
+    ).read_text()
+
+    assert "dimension=self.settings.document_embedding_dimension" in api_source
+    assert "dimension=config.document_embedding_dimension" in worker_source
+    assert "settings=self.settings" in api_source
+    assert "settings=config" in worker_source
+
+
+def test_openapi_exposes_only_same_origin_contract_and_required_commands() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    paths = contract["paths"]
+    expected = {
+        "/api/v1/auth/session",
+        "/api/v1/auth/login",
+        "/api/v1/auth/callback",
+        "/api/v1/auth/logout",
+        "/api/v1/models",
+        "/api/v1/conversations",
+        "/api/v1/conversations/{conversation_id}",
+        "/api/v1/conversations/{conversation_id}/runs",
+        "/api/v1/runs/{run_id}/cancel",
+        "/api/v1/runs/{run_id}/retry",
+        "/api/v1/runs/{run_id}/events",
+        "/api/v1/runs/{run_id}/memory-activity",
+        "/api/v1/tools",
+        "/health/live",
+        "/health/ready",
+    }
+    assert expected <= paths.keys()
+    assert all("ollama" not in path.lower() for path in paths)
+    assert contract["servers"] == [{"url": "/", "description": "Same-origin Aura BFF"}]
+    assert (
+        contract["components"]["securitySchemes"]["sessionCookie"]["name"] == "__Host-aura_session"
+    )
+    for path, operation in (
+        ("/api/v1/conversations", "post"),
+        ("/api/v1/conversations/{conversation_id}/runs", "post"),
+        ("/api/v1/runs/{run_id}/cancel", "post"),
+        ("/api/v1/runs/{run_id}/retry", "post"),
+    ):
+        params = cast(list[dict[str, Any]], paths[path][operation]["parameters"])
+        refs = {cast(str, parameter["$ref"]) for parameter in params}
+        assert "#/components/parameters/CsrfToken" in refs
+        assert "#/components/parameters/IdempotencyKey" in refs
+
+
+def test_memory_contract_is_owner_scoped_versioned_and_content_safe() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    assert contract["info"]["version"] == "1.22.0"
+    paths = cast(dict[str, dict[str, Any]], contract["paths"])
+    mutation_operations = {
+        ("/api/v1/memories", "post"),
+        ("/api/v1/memories/{memory_id}/revisions", "post"),
+        ("/api/v1/memories/{memory_id}/status", "patch"),
+        ("/api/v1/memories/{memory_id}/pin", "patch"),
+        ("/api/v1/memories/{memory_id}/purge", "post"),
+    }
+    assert {
+        "/api/v1/memories",
+        "/api/v1/memories/{memory_id}",
+        *(path for path, _ in mutation_operations),
+    } <= paths.keys()
+    for path, method in mutation_operations:
+        parameters = cast(list[dict[str, Any]], paths[path][method]["parameters"])
+        refs = {cast(str, parameter["$ref"]) for parameter in parameters}
+        assert "#/components/parameters/CsrfToken" in refs
+        assert "#/components/parameters/IdempotencyKey" in refs
+        if path != "/api/v1/memories":
+            assert "#/components/parameters/MemoryReadScopeType" in refs
+            assert "#/components/parameters/MemoryReadAgentProfileId" in refs
+
+    list_parameters = cast(list[dict[str, Any]], paths["/api/v1/memories"]["get"]["parameters"])
+    list_refs = {
+        cast(str, parameter["$ref"]) for parameter in list_parameters if "$ref" in parameter
+    }
+    detail_parameters = cast(
+        list[dict[str, Any]], paths["/api/v1/memories/{memory_id}"]["get"]["parameters"]
+    )
+    detail_refs = {cast(str, parameter["$ref"]) for parameter in detail_parameters}
+    assert "#/components/parameters/MemoryCollectionScopeType" in list_refs
+    assert "#/components/parameters/MemoryCollectionAgentProfileId" in list_refs
+    required_read_scope_refs = {
+        "#/components/parameters/MemoryReadScopeType",
+        "#/components/parameters/MemoryReadAgentProfileId",
+    }
+    assert required_read_scope_refs <= detail_refs
+    assert all(parameter.get("name") != "q" for parameter in list_parameters)
+    schemas = cast(dict[str, dict[str, Any]], contract["components"]["schemas"])
+    parameters = cast(dict[str, dict[str, Any]], contract["components"]["parameters"])
+    collection_scope = parameters["MemoryCollectionScopeType"]
+    assert collection_scope["schema"]["default"] == "user"
+    assert "all returns user and" in collection_scope["description"]
+    assert "every owner-authorized agent scope" in collection_scope["description"]
+    assert "rejects agentProfileId" in collection_scope["description"]
+    read_scope = parameters["MemoryReadScopeType"]
+    assert read_scope["schema"]["allOf"][0]["$ref"].endswith("/MemoryScopeType")
+    assert "not permitted for detail or mutations" in read_scope["description"]
+    assert "Rejected for user scope" in parameters["MemoryReadAgentProfileId"]["description"]
+    detail_description = paths["/api/v1/memories/{memory_id}"]["get"]["responses"]["200"][
+        "description"
+    ]
+    assert "scopeType=agent" in detail_description
+    assert "agentProfileId" in detail_description
+    list_description = paths["/api/v1/memories"]["get"]["responses"]["200"]["description"]
+    assert "explicit all" in list_description
+    for path, method in mutation_operations:
+        if path == "/api/v1/memories":
+            continue
+        mutation_refs = {
+            cast(str, parameter["$ref"])
+            for parameter in paths[path][method]["parameters"]
+            if "$ref" in parameter
+        }
+        assert "#/components/parameters/MemoryReadScopeType" in mutation_refs
+    search = paths["/api/v1/memories/search"]["post"]
+    search_body = search["requestBody"]["content"]["application/json"]["schema"]
+    assert search_body["$ref"].endswith("SearchMemoriesRequest")
+    search_parameters = search.get("parameters", [])
+    assert any(parameter.get("$ref", "").endswith("/CsrfToken") for parameter in search_parameters)
+    assert schemas["SearchMemoriesRequest"]["properties"]["query"]["maxLength"] == 500
+    search_scope = schemas["SearchMemoriesRequest"]["properties"]["scopeType"]
+    assert search_scope["allOf"][0]["$ref"].endswith("/MemoryCollectionScopeType")
+    assert search_scope["default"] == "user"
+    assert "all combines user and every owner-authorized agent scope" in search_scope[
+        "description"
+    ]
+    generated_client = (
+        ROOT / "frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts"
+    ).read_text()
+    assert "searchMemories:" in generated_client
+    assert "SearchMemoriesRequest" in generated_client
+
+    assert schemas["MemoryScopeType"]["enum"] == ["user", "agent"]
+    assert schemas["MemoryCollectionScopeType"]["enum"] == ["user", "agent", "all"]
+    assert schemas["MemoryKind"]["enum"] == [
+        "episodic",
+        "semantic",
+        "procedural",
+        "preference",
+        "system",
+    ]
+    assert schemas["MemoryLifecycleStatus"]["enum"] == [
+        "active",
+        "dormant",
+        "archived",
+        "disabled",
+        "disputed",
+        "superseded",
+    ]
+    half_life = schemas["MemoryRevision"]["properties"]["halfLifeDays"]
+    assert (half_life["minimum"], half_life["maximum"]) == (0.25, 3650)
+    assert "correctionReason" in schemas["MemoryRevision"]["required"]
+    assert "evidence" in schemas["MemoryProvenance"]["required"]
+    assert "embeddingGenerations" in schemas["MemoryDetail"]["required"]
+    assert schemas["MemoryEmbeddingGeneration"]["properties"]["status"]["$ref"].endswith(
+        "/MemoryEmbeddingGenerationStatus"
+    )
+    assert schemas["PurgeMemoryRequest"]["properties"]["confirmation"]["const"] == (
+        "PURGE MEMORY"
+    )
+    assert "vector" not in schemas["MemoryEmbedding"]["properties"]
+    assert {"generationId", "generation", "modelRevision", "digest"} <= set(
+        schemas["MemoryEmbedding"]["required"]
+    )
+
+
+def test_governed_tool_contract_is_read_only_versioned_and_csrf_protected() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    schemas = cast(dict[str, dict[str, Any]], contract["components"]["schemas"])
+    tools = contract["paths"]["/api/v1/tools"]["get"]
+    assert tools["operationId"] == "listTools"
+    summary = schemas["ToolDescriptorSummary"]
+    assert summary["properties"]["classification"]["$ref"].endswith("/ToolClassification")
+    assert summary["properties"]["confirmation"]["$ref"].endswith("/ToolConfirmation")
+    assert schemas["CreateAgentToolPolicyRequest"]["additionalProperties"] is False
+    assert set(schemas["CreateAgentToolPolicyRequest"]["required"]) == {
+        "grants",
+        "expectedRevision",
+    }
+    assert "maxCallsPerRun" not in schemas["CreateAgentToolPolicyRequest"]["properties"]
+    create = contract["paths"]["/api/v1/agents/{agent_profile_id}/tool-policies"]["post"]
+    attach = contract["paths"][
+        "/api/v1/agents/{agent_profile_id}/tool-policies/"
+        "{tool_policy_revision_id}/attach"
+    ]["post"]
+    create_refs = {
+        cast(str, parameter["$ref"])
+        for parameter in cast(list[dict[str, Any]], create["parameters"])
+        if "$ref" in parameter
+    }
+    attach_refs = {
+        cast(str, parameter["$ref"])
+        for parameter in cast(list[dict[str, Any]], attach["parameters"])
+        if "$ref" in parameter
+    }
+    expected_refs = {
+        "#/components/parameters/CsrfToken",
+        "#/components/parameters/IdempotencyKey",
+    }
+    assert expected_refs <= create_refs
+    assert expected_refs <= attach_refs
+    assert schemas["AgentToolPolicy"]["properties"]["retryLimit"]["maximum"] == 0
+
+
+def test_reminder_contract_is_additive_owner_scoped_and_content_safe() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    assert contract["info"]["version"] == "1.22.0"
+    paths = cast(dict[str, dict[str, Any]], contract["paths"])
+    mutations = {
+        ("/api/v1/reminders", "post"),
+        ("/api/v1/reminders/{reminder_id}/complete", "post"),
+        ("/api/v1/reminders/{reminder_id}/cancel", "post"),
+    }
+    for path, method in mutations:
+        refs = {
+            cast(str, parameter["$ref"])
+            for parameter in cast(list[dict[str, Any]], paths[path][method]["parameters"])
+        }
+        assert {
+            "#/components/parameters/CsrfToken",
+            "#/components/parameters/IdempotencyKey",
+        } <= refs
+
+    schemas = cast(dict[str, dict[str, Any]], contract["components"]["schemas"])
+    assert schemas["ReminderStatus"]["enum"] == [
+        "scheduled",
+        "fired",
+        "completed",
+        "canceled",
+    ]
+    assert schemas["Reminder"]["properties"]["content"]["maxLength"] == 2000
+    assert schemas["ReminderTransitionRequest"]["required"] == ["expectedVersion"]
+    assert paths["/api/v1/reminders"]["get"]["parameters"][0]["name"] == "view"
+
+    event_contract = cast(
+        dict[str, Any],
+        json.loads(
+            (
+                ROOT
+                / "contracts/events/automation/v1/reminder-events.schema.json"
+            ).read_text()
+        ),
+    )
+    definitions = cast(dict[str, dict[str, Any]], event_contract["$defs"])
+    base_properties = set(definitions["EventProperties"]["properties"])
+    assert base_properties == {
+        "schemaVersion",
+        "commandId",
+        "aggregateType",
+        "aggregateId",
+        "createdAt",
+        "correlationId",
+        "causationId",
+        "eventType",
+        "status",
+        "version",
+    }
+    assert not {
+        "content",
+        "owner",
+        "ownerSubject",
+        "prompt",
+        "response",
+        "credential",
+    } & base_properties
+    assert definitions["EventProperties"]["additionalProperties"] is False
+    assert (
+        definitions["EventProperties"]["properties"]["aggregateType"]["const"]
+        == "automation.reminder"
+    )
+
+
+def test_approval_contract_is_additive_owner_scoped_and_content_safe() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    assert contract["info"]["version"] == "1.22.0"
+    paths = cast(dict[str, dict[str, Any]], contract["paths"])
+    expected_paths = {
+        "/api/v1/approvals",
+        "/api/v1/approvals/{approval_id}",
+        "/api/v1/approvals/{approval_id}/approve",
+        "/api/v1/approvals/{approval_id}/reject",
+        "/api/v1/approvals/stream",
+    }
+    assert expected_paths <= paths.keys()
+
+    for path, method in (
+        ("/api/v1/approvals/{approval_id}/approve", "post"),
+        ("/api/v1/approvals/{approval_id}/reject", "post"),
+    ):
+        refs = {
+            cast(str, parameter["$ref"])
+            for parameter in cast(list[dict[str, Any]], paths[path][method]["parameters"])
+            if "$ref" in parameter
+        }
+        assert {
+            "#/components/parameters/CsrfToken",
+            "#/components/parameters/IdempotencyKey",
+        } <= refs
+
+    schemas = cast(dict[str, dict[str, Any]], contract["components"]["schemas"])
+    assert schemas["ApprovalStatus"]["enum"] == [
+        "pending",
+        "approved",
+        "rejected",
+        "expired",
+        "canceled",
+    ]
+    assert schemas["ReminderApprovalToolId"]["enum"] == [
+        "reminder.create",
+        "reminder.series.create",
+        "reminder.reschedule",
+        "reminder.series.update",
+        "reminder.series.pause",
+        "reminder.series.resume",
+        "reminder.cancel",
+    ]
+    assert schemas["Approval"]["oneOf"] == [
+        {"$ref": "#/components/schemas/ReminderApproval"},
+        {"$ref": "#/components/schemas/WorkflowApproval"},
+    ]
+    approval = schemas["ReminderApproval"]
+    assert {"id", "proposalId", "runId", "status", "version", "expiresAt"} <= set(
+        approval["required"]
+    )
+    assert approval["properties"]["toolId"]["$ref"].endswith("/ReminderApprovalToolId")
+    command_detail = schemas["ReminderCommandProposalDetail"]
+    assert set(command_detail["required"]) == {
+        "id",
+        "operation",
+        "summary",
+        "targetType",
+        "targetId",
+        "expectedVersion",
+    }
+    assert command_detail["properties"]["summary"]["minLength"] == 1
+    assert command_detail["properties"]["summary"]["maxLength"] == 120
+    assert command_detail["additionalProperties"] is False
+    proposal_schema = schemas["ReminderApprovalDetail"]["allOf"][1]["properties"][
+        "proposal"
+    ]
+    assert {
+        "#/components/schemas/ReminderProposalDetail",
+        "#/components/schemas/ReminderCommandProposalDetail",
+    } == {item["$ref"] for item in proposal_schema["oneOf"]}
+    stream = paths["/api/v1/approvals/stream"]["get"]
+    assert stream["operationId"] == "streamApprovals"
+    event = schemas["ReminderApprovalEvent"]
+    event_properties = event.get("properties", {})
+    assert not {
+        "content",
+        "dueAt",
+        "arguments",
+        "prompt",
+        "response",
+    } & set(event_properties)
+    assert event_properties["schemaVersion"]["const"] == 1
+    assert event_properties["toolId"]["$ref"].endswith("/ReminderApprovalToolId")
+
+    generated_client = (
+        ROOT / "frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts"
+    ).read_text()
+    assert "listApprovals" in generated_client
+    assert "streamApprovals" in generated_client
+
+
+def test_notification_contract_is_owner_scoped_replayable_and_content_free() -> None:
+    contract = cast(
+        dict[str, Any], json.loads((ROOT / "contracts/openapi/aura-v1.yaml").read_text())
+    )
+    assert contract["info"]["version"] == "1.22.0"
+    paths = contract["paths"]
+    assert "/api/v1/notifications/stream" in paths
+    acknowledge = paths["/api/v1/notifications/{notification_id}/acknowledge"]["post"]
+    refs = {parameter["$ref"] for parameter in acknowledge["parameters"]}
+    assert {
+        "#/components/parameters/CsrfToken",
+        "#/components/parameters/IdempotencyKey",
+    } <= refs
+    schemas = contract["components"]["schemas"]
+    assert schemas["NotificationStatus"]["enum"] == ["delivered", "acknowledged"]
+    assert "unacknowledgedCount" in schemas["NotificationPage"]["required"]
+    lifecycle_refs = schemas["NotificationLifecycleEvent"]["oneOf"]
+    assert lifecycle_refs[:2] == [
+        {"$ref": "#/components/schemas/ReminderNotificationLifecycleEvent"},
+        {"$ref": "#/components/schemas/BriefingNotificationLifecycleEvent"},
+    ]
+    assert lifecycle_refs[2] == {
+        "$ref": "#/components/schemas/WorkflowNotificationLifecycleEvent"
+    }
+    for schema_name in (
+        "ReminderNotificationLifecycleEvent",
+        "BriefingNotificationLifecycleEvent",
+    ):
+        stream_event = schemas[schema_name]["properties"]
+        assert not {
+            "content",
+            "prompt",
+            "response",
+            "ownerSubject",
+            "documentId",
+            "calendarId",
+        } & set(stream_event)
+
+
+def test_run_event_contract_keeps_typed_replay_and_delta_shapes() -> None:
+    schema = cast(
+        dict[str, Any],
+        json.loads((ROOT / "contracts/events/runs/v1/run-events.schema.json").read_text()),
+    )
+    assert schema["$schema"].endswith("draft/2020-12/schema")
+    definitions = cast(dict[str, dict[str, Any]], schema["$defs"])
+    event_types: set[str] = {
+        cast(str, definition["allOf"][1]["properties"]["eventType"]["const"])
+        for definition in definitions.values()
+        if len(definition.get("allOf", [])) > 1
+    }
+    assert event_types == {
+        "run.snapshot",
+        "run.status",
+        "assistant.delta",
+        "model.thinking.delta",
+        "assistant.snapshot",
+        "run.error",
+        "memory.activity",
+        "tool.status",
+        "approval.status",
+        "heartbeat",
+    }
+    assert schema["$defs"]["AssistantDeltaEvent"]["allOf"][1]["properties"]["data"]["required"] == [
+        "messageId",
+        "offset",
+        "text",
+    ]
+    thinking = schema["$defs"]["ModelThinkingDeltaEvent"]
+    thinking_data = thinking["allOf"][1]["properties"]["data"]
+    assert thinking_data == {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["offset", "text"],
+        "properties": {
+            "offset": {"type": "integer", "minimum": 0},
+            "text": {"type": "string", "minLength": 1, "maxLength": 4096},
+        },
+    }
+    assert "live-only" in thinking["description"]
+    assert "omit the SSE id field" in thinking["description"]
+    assert "never persisted" in thinking["description"]
+    assert "transcript content" in thinking["description"]
+    assert schema["$defs"]["RunSnapshotEvent"]["allOf"][1]["properties"]["data"]["required"] == [
+        "run",
+        "assistantMessage",
+    ]
+    memory_activity = definitions["MemoryActivity"]
+    assert memory_activity["additionalProperties"] is False
+    assert set(memory_activity["properties"]) == {
+        "id",
+        "action",
+        "status",
+        "scope",
+        "candidateId",
+        "memoryId",
+        "memoryRevisionId",
+        "policyRevisionId",
+        "embeddingGenerationId",
+        "reconciliationStatus",
+        "occurredAt",
+    }
+    assert not {
+        "content",
+        "evidence",
+        "prompt",
+        "response",
+        "vector",
+        "credential",
+        "ownerSubject",
+    } & set(memory_activity["properties"])
+    assert (
+        definitions["MemoryActivityEvent"]["allOf"][1]["properties"]["eventType"]["const"]
+        == "memory.activity"
+    )
+
+
+def test_outbox_wire_command_contains_identifiers_but_no_conversation_content() -> None:
+    payload = json.loads(make_run_command(uuid4(), uuid4()).wire_payload())
+    assert set(payload) == {
+        "schemaVersion",
+        "commandId",
+        "runId",
+        "conversationId",
+        "createdAt",
+        "correlationId",
+        "causationId",
+    }
+    assert "content" not in payload and "prompt" not in payload and "message" not in payload
+
+
+def test_local_identity_is_optional_and_core_has_no_container_dependency() -> None:
+    compose = (ROOT / "compose.yaml").read_text()
+    identity_override = (ROOT / "deploy/compose/local-identity.yaml").read_text()
+    assert "authentik" not in compose.lower()
+    assert "AUTHENTIK" not in compose
+    assert "profiles: [local-identity]" in identity_override
+    core_block = compose.split("  aura-core-api:", 1)[1].split("  aura-core-worker:", 1)[0]
+    assert "authentik-server" not in core_block.lower()
+    assert "authentik-postgres" not in core_block.lower()
+    assert "authentik-worker" not in core_block.lower()
+    assert "AURA_OWNER_SUBJECT: ${AURA_OWNER_SUBJECT:?" in core_block
+    blueprint = (ROOT / "deploy/authentik/blueprints/aura-oidc.yaml").read_text()
+    assert "temporary-local-identity" in blueprint
+    assert "AURA_AUTHENTIK_REDIRECT_URI" in blueprint
+
+
+def test_platform_requires_encrypted_state_and_isolates_identity_cache() -> None:
+    compose = (ROOT / "compose.yaml").read_text()
+    identity_override = (ROOT / "deploy/compose/local-identity.yaml").read_text()
+    assert "${AURA_STATE_ROOT:?encrypted state root is required}" in compose
+    assert (
+        "${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server@sha256:"
+        "76bf433fd434c067cb25dc3e197cee793998441cda912441ea275293e76cc32c}"
+    ) in identity_override
+    assert "AUTHENTIK_REDIS__HOST: authentik-valkey" in identity_override
+    assert "AUTHENTIK_HOST_BROWSER: ${AUTHENTIK_HOST_BROWSER:?" in identity_override
+    assert "AURA_OIDC_ISSUER: ${AURA_OIDC_ISSUER:?" in identity_override
+    assert "networks: [aura-identity, aura-identity-db, aura-identity-cache]" in identity_override
+    assert (
+        "networks: [aura-frontend, aura-core-db, aura-core-bus, aura-core-cache, "
+        "aura-object-storage, aura-core-egress]"
+    ) in compose
+    assert "host.docker.internal:host-gateway" in compose
+    identity_core_block = identity_override.split("  aura-core-api:", 1)[1].split(
+        "  authentik-postgres:", 1
+    )[0]
+    identity_core_networks = next(
+        line.strip()
+        for line in identity_core_block.splitlines()
+        if line.strip().startswith("networks:")
+    )
+    network_match = re.fullmatch(r"networks:\s*\[([^\]]*)\]", identity_core_networks)
+    assert network_match is not None
+    assert {network.strip() for network in network_match.group(1).split(",")} == {
+        "aura-frontend",
+        "aura-core-db",
+        "aura-core-bus",
+        "aura-core-cache",
+        "aura-object-storage",
+        "aura-core-egress",
+        "aura-identity",
+    }
+    assert "aura-valkey-password" in compose
+    assert "authentik-valkey-password" in identity_override

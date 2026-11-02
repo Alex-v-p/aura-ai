@@ -1,0 +1,116 @@
+id: AURA-0058
+title: Establish Aura management-surface design governance
+status: integrated
+change_class: repository_governance
+intent: >
+  Add a persistent read-only Aura UX and UI advisory reviewer and a durable,
+  implementation-ready design direction for the sidebar and every management
+  destination without changing product behavior or creating a competing
+  visual system.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/reference-research.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - Owner-approved grouped sidebar and warm calm refined visual direction
+    - Owner-approved mission-control Agents with progressive builders
+    - Owner-approved creative Personas with ephemeral live previews
+    - Owner-approved human-readable Memory agenda Reminders decision-inbox Approvals and lightweight Notifications directions
+    - Owner-approved advisory-only UX UI reviewer with no PASS or BLOCK authority
+  contracts: []
+feature_references:
+  - AUI-008
+  - AUI-009
+  - AUI-012
+  - AUI-013
+  - AUI-014
+  - AUI-019
+  - AUI-023
+  - AUI-025
+ownership_zones:
+  - repository.codex-agent-system
+  - docs.design.aura-web
+allowed_paths:
+  - work-items/active/AURA-0058.yaml
+  - work-items/archived/AURA-0058.yaml
+  - .codex/agents/aura-ux-ui-reviewer.toml
+  - .codex/hooks/pre-tool-scope-guard.py
+  - docs/design/sidebar-and-management-surfaces.md
+  - tooling/architecture/tests/test_hooks.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/config.toml
+  - .codex/hooks/validate-subagent-handoff.py
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/**
+  - services/**
+  - frontend/**
+  - evaluations/**
+  - deploy/**
+  - infra/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - The advisory reviewer must be unable to edit repository content.
+    - Browser review must not expose secrets private payloads hidden reasoning credentials or unsanitized provider diagnostics.
+    - Design guidance must preserve owner authorization and sensitive-detail disclosure boundaries.
+  data_classes:
+    - repository_source
+    - rendered_owner_interface
+required_agents:
+  implementation:
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A project custom agent named aura_ux_ui_reviewer is installed with a read-only sandbox and advisory-only instructions grounded in every approved Aura Web design reference.
+  - The repository scope guard recognizes aura_ux_ui_reviewer as read-only while the blocking reviewer schema and authority remain unchanged.
+  - An automated hook regression test proves aura_ux_ui_reviewer cannot perform patch or detected shell writes.
+  - The management-surface design document defines global and contextual navigation desktop tablet and mobile layouts shared patterns and route-level direction for Agents Personas Memory Reminders Approvals and Notifications.
+  - The design document traces decisions to the approved design foundation records chosen and rejected alternatives and states that accepted ADRs and versioned contracts take precedence.
+  - No runtime product contract frontend service baseline or deployment behavior changes in this work item.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0058.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0058.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - python3 -c "import tomllib; tomllib.load(open('.codex/agents/aura-ux-ui-reviewer.toml', 'rb'))"
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

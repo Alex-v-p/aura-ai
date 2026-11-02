@@ -1,0 +1,23 @@
+agent: architecture_guardian
+work_item: AURA-0096
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the final diff against the architecture handover, accepted
+    ADRs, module boundaries, AURA-0096 ownership zones, and service-owned
+    migration boundaries.
+  - >-
+    Confirmed Observatory remains isolated from Core, experiment and
+    regression persistence uses Observatory-owned PostgreSQL and ClickHouse
+    migrations, and comparison and retention access use explicit typed public
+    ports rather than sibling-table fallbacks.
+  - >-
+    Confirmed the generated Angular client remains transport-only, the
+    evaluation SSE additions are additive and metadata-only, worker recovery
+    is bounded, and module, repository-shape, service-isolation, changed-path,
+    and contract validators pass.
+  - >-
+    Confirmed no new deployable service, cross-product dependency, runner
+    protocol change, automatic promotion, or protected-baseline mutation was
+    introduced.
+findings: []

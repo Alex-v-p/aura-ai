@@ -1,0 +1,260 @@
+agent: contract_steward
+work_item: AURA-0097
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: priority
+  agent_thread_id: /root/aura0097_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.observatory-v1, frontend.platform.observatory-api-client.generated
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_aura0097_operations_contracts.py
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - work-items/handoffs/AURA-0097-contract-steward.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward as the sole writer for the
+    observatory-v1 source contract, its contract tests, and reproducible
+    transport-only Angular output during this ownership slice. Producer
+    behavior, persistence, migrations, frontend feature logic, Core contracts,
+    and business logic were not changed.
+  compatibility: backward_compatible
+  definitions:
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - >-
+          Added owner-session list, create, exact-version detail, and explicit
+          deletion resources for immutable service-owned dashboard presets,
+          versioned owner dashboards, and versioned saved queries. Dashboard
+          panels are capped at 24 and reference exact saved-query versions;
+          presets embed only the same closed query union.
+        - >-
+          Added a discriminated closed SavedQueryDefinition union for bounded
+          operational analytics, run search, trace search, run comparison,
+          regression search, and component health queries. Every member is
+          closed and carries finite windows, lists, page sizes, series, and
+          point limits. SQL, expression strings, arbitrary JSON, arbitrary
+          attributes and dimensions, URLs, endpoints, credentials, and
+          caller-selected executors cannot be represented.
+        - >-
+          Added an owner-authorized idempotent GET execution resource for one
+          exact saved-query ID and version. The server executes the stored
+          closed definition through its public bounded query port; callers may
+          provide only an opaque continuation cursor and cannot override the
+          stored filters, limits, attributes, expression, content, or version.
+          Its closed discriminated result union covers analytics, run search,
+          trace search, run comparison, regression search, and component
+          health with measured freshness, snapshot time, explicit partial,
+          unavailable, and incompatible states, and bounded continuation where
+          applicable.
+        - >-
+          Added exact-version alert-rule resources, grouped alert-instance
+          snapshots, explicit time-bounded or manually cleared suppressions,
+          durable acknowledgements, closed state commands, finite evidence,
+          explicit missing/partial/stale/incompatible states, and deterministic
+          latency, error, saturation, quality, availability, privacy, and
+          freshness signal vocabulary.
+        - >-
+          Constrained AlertCondition.groupBy to zero or one allowlisted
+          metadata facet, matching the accepted initial production evaluator
+          capability and preventing the public contract from advertising
+          unsupported multi-facet grouping.
+        - >-
+          Added incident creation, detail, and explicit transition resources
+          with finite severity, impact, state, exact related-alert identities,
+          bounded content-free evidence, optimistic expected versions, and
+          bounded owner-authored resolution notes returned only by REST.
+        - >-
+          Added annotation list, create, exact-version detail, and deletion
+          resources. Annotations attach only to exact run, deployment,
+          experiment, regression, or incident identities and versions. Text is
+          bounded untrusted product data and is absent from telemetry, history,
+          SSE, URLs, grouping labels, arbitrary dimensions, and browser-cache
+          contracts.
+        - >-
+          Added content-free bounded operational history and a dedicated
+          authenticated same-origin operational SSE ledger. Live envelopes
+          carry only stable event and resource identities, exact versions,
+          finite state/change values, UTC time, and metadata_only capture.
+          REST snapshots remain authoritative and Last-Event-ID is the existing
+          persisted exclusive cursor.
+        - >-
+          All state-changing operations require the existing anti-CSRF and
+          idempotency headers. Delete, suppression-clear, alert-state, and
+          incident-transition commands additionally require closed explicit
+          confirmation values and expose deterministic 409, 422, and 503
+          response boundaries.
+  compatibility_notes:
+    - >-
+      observatory-v1 remains version 1.0.0. Every pre-AURA-0097 path,
+      operationId, request, response, schema, security declaration, operational
+      /api/v1/events payload, and evaluation SSE payload remains unchanged.
+      The new paths, schemas, tags, parameters, and operationIds are additive.
+    - >-
+      No existing enum is widened or narrowed. AURA-0097 uses a dedicated
+      /api/v1/operations/events stream and new closed vocabularies, so older
+      operational and evaluation stream consumers cannot receive unknown
+      AURA-0097 event values.
+    - >-
+      The saved-query execution operation and its result schemas are additive.
+      Existing clients can continue using all earlier operations unchanged;
+      regenerated clients gain a single read-only operationId and new result
+      types without modifying existing request or response shapes.
+    - >-
+      The one-facet AlertCondition.groupBy correction narrows only the new,
+      unreleased AURA-0097 surface before its first integrated checkpoint. It
+      does not change any pre-AURA-0097 operation or payload and aligns the
+      contract with the accepted production-compatible rule.
+    - >-
+      Existing root owner-session security remains inherited by every new
+      operation. Authenticated responses remain governed by the existing
+      no-store contract policy.
+  producers:
+    - >-
+      Aura Observatory dashboard, saved-query, alert-evaluation, suppression,
+      acknowledgement, incident, annotation, operational-history, and
+      operational-live application boundaries assigned to AURA-0097.
+    - >-
+      Existing Observatory bounded analytics, health, comparison, run, trace,
+      experiment, and regression query ports, referenced only through exact
+      closed identities and allowlisted query fields.
+  consumers:
+    - >-
+      The generated @aura/observatory-api-client transport types and operation
+      descriptors assigned to the AURA-0097 frontend ownership zone.
+    - >-
+      Observatory Web dashboard composition, saved-query management, alert
+      triage, suppression, acknowledgement, incident, annotation, history, and
+      live-update workflows assigned to AURA-0097.
+    - >-
+      The existing Observatory worker or scheduler boundary that performs
+      bounded low-priority alert evaluation without delaying ingest,
+      evaluation, or Core activity.
+  rollout:
+    - >-
+      Apply the additive Observatory-owned PostgreSQL migration, deploy the
+      producer and operational-live ledger, and regenerate the transport-only
+      Angular client before enabling browser workflows. Persist authoritative
+      state and history before publishing the corresponding SSE hint.
+    - >-
+      Keep alerts in product only. Do not configure an external notification
+      provider, Web Push, email, webhook, Home Assistant, Prometheus, Loki, or
+      Grafana delivery path.
+    - >-
+      Producers must resolve saved-query and alert evidence through public
+      bounded query ports, enforce exact resource existence and version checks,
+      lease and idempotency rules transactionally, and return explicit partial,
+      stale, missing, incompatible, or unavailable evidence rather than infer
+      a value.
+    - >-
+      Execute saved queries only by loading the exact persisted ID/version and
+      dispatching its discriminated definition server-side. Continuation
+      cursors may advance only the same snapshot-stable stored query; they must
+      not become a caller-controlled filter or version override.
+    - >-
+      Browser consumers must regenerate before rollout, keep authenticated
+      data in memory only, exclude it from Workbox and browser persistence,
+      treat REST as authoritative, and use operational SSE solely as a
+      metadata-only refresh hint.
+  generated_outputs:
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0097.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0097.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0097.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0097.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - uv run ruff check contracts/tests
+    - uv run pytest contracts/tests -q (31 passed)
+    - pnpm --dir frontend exec nx run observatory-api-client:generate
+    - pnpm --dir frontend exec nx run observatory-api-client:validate-contract
+    - pnpm --dir frontend exec nx run observatory-api-client:check-generated
+    - pnpm --dir frontend exec nx test observatory-api-client --skip-nx-cache (7 passed)
+    - pnpm --dir frontend exec nx lint observatory-api-client --skip-nx-cache
+    - pnpm --dir frontend exec nx test observatory --skip-nx-cache (47 passed)
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0097.yaml was executed but remains pending the
+      separately assigned AURA-0097 component manifests, metrics, and evaluator
+      declarations; contract-owned paths cannot resolve those findings.
+    - >-
+      Generated-client parity, producer, persistence, migration, CLI, Web,
+      Storybook, browser, and full-stack checks belong to the other AURA-0097
+      ownership zones and aggregate integration.
+decisions:
+  - >-
+    Kept observatory-v1 at 1.0.0 because the complete AURA-0097 surface is
+    additive. Used a dedicated operations event endpoint instead of widening
+    either existing SSE vocabulary, preserving older exhaustive consumers.
+  - >-
+    Reused existing analytics, evaluation reference, UTC, UUID, component,
+    model, deployment, outcome, and pagination vocabulary where compatible.
+    Added only closed operational resource, version, facet, severity, state,
+    and action vocabulary needed by this work item.
+  - >-
+    Made dashboard and alert composition reference exact saved-query versions.
+    Query definitions are a discriminated finite union rather than an object
+    map, expression language, URL, SQL fragment, caller-defined dimension set,
+    or arbitrary filter tree.
+  - >-
+    Added one GET execution boundary instead of requiring browser consumers to
+    reinterpret each saved-query kind into unrelated low-level endpoints. The
+    response remains a transport-only closed union and does not embed query
+    planning or other business behavior in the schema.
+  - >-
+    Kept acknowledgement distinct from alert recovery and incident resolution.
+    Suppression is a first-class exact-scoped record with either an explicit
+    end time or manual clear, and every command has optimistic version or exact
+    target information for deterministic conflict handling.
+  - >-
+    Allowed bounded owner-authored dashboard labels, incident notes, and
+    annotation text only in authorized REST snapshots. Operational history and
+    live events use separate content-free schemas that cannot transport those
+    values.
+  - >-
+    Did not consult external documentation because dependency-version
+    verification was not assigned. Repository ADR-0016 and the checked-in
+    observatory-v1 conventions define the authorized protocol behavior.
+risks:
+  - >-
+    OpenAPI cannot prove referenced record existence, exact-version freshness,
+    legal incident state transitions, suppression time ordering, threshold and
+    unit compatibility, panel position uniqueness, or idempotent ownership.
+    Producers must enforce those invariants transactionally and tests must
+    cover stale and concurrent commands.
+  - >-
+    Client generators may model OpenAPI 3.1 nullable unions and numeric bounds
+    differently. The assigned frontend worker must regenerate from this source
+    and keep the checked-in client transport-only; generator output is not part
+    of this contract-authorship slice.
+  - >-
+    The producer must make the execution state and nullable result consistent,
+    derive freshness from measured evidence rather than request time, and keep
+    continuation cursors bound to the exact query version and snapshot. OpenAPI
+    cannot prove those runtime invariants.
+  - >-
+    Each destructive route uses a resource-specific constant confirmation, so
+    a confirmation intended for one resource cannot authorize deletion of a
+    different resource type.
+unresolved: []

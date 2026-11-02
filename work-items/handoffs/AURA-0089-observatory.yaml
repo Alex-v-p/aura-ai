@@ -1,0 +1,100 @@
+agent: observatory_worker
+work_item: AURA-0089
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.evaluation-v1.consumer-compatibility
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/handoffs/AURA-0089-observatory.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      consumer_boundary:
+        - Observatory is the logical owner of evaluation definitions, results, scores, artifacts, experiments, replays, and baselines, but this contract-only slice adds no runtime persistence, API, CLI, browser, or orchestration behavior.
+        - Future Observatory consumers must dispatch resourceType and schemaVersion explicitly, validate closed objects, enforce stable identifier/idempotency semantics, and reject unknown fields before domain handling.
+        - Dataset, case, suite, evaluator, request, result, score, experiment, replay, and baseline references are portable contract records. Their ownership does not authorize reading Core tables or importing Core implementation modules.
+        - Request and result provenance must be checked for agreement across dataset, suite, evaluator, component, model, deployment, configuration, fixture, prompt, policy, seed, clock, locale, limits, and deadline before a later worker schedules work.
+        - Evaluation content, where explicitly authorized, is inert untrusted data. Observatory consumers must never interpret it as instructions, policy, permissions, provider selection, endpoints, credentials, object keys, executable paths, or execution authority.
+        - Artifact references expose only opaque identifiers, integrity/media metadata, capture authorization, bounded limits, deletion scopes, and manual retention. Bytes and storage credentials/locations remain behind the separately assigned artifact boundary.
+        - Baselines distinguish candidates from explicit owner-promoted immutable records. Observatory must require a manual promotion command and immutable source result identities; automatic promotion and protected repository baseline mutation are not authorized.
+        - Scores with evidenceStatus not_observed or not_applicable must omit both value and outcome; Observatory must preserve that missing-evidence state instead of inferring a score or outcome.
+        - Every resource idempotencyKey is a service-generated lowercase UUID, not a user-controlled token or free-form namespace; duplicate requests, results, scores, experiments, baselines, and replays must be handled idempotently by the owning service.
+    - id: evaluation-failure-codes-v1
+      version: 1
+      source: contracts/evaluation/v1/failure-codes.schema.json
+      consumer_boundary:
+        - Observatory consumers accept only the finite provider-neutral failure taxonomy: REQUEST_INVALID, DEADLINE_EXCEEDED, RESOURCE_LIMIT_EXCEEDED, DEPENDENCY_UNAVAILABLE, EXECUTION_FAILED, RESULT_VALIDATION_FAILED, STORAGE_FAILED, and INTERNAL_FAILURE.
+        - Internal exceptions, provider diagnostics, payload excerpts, credentials, endpoints, and content-derived classifications must be mapped to one finite code before a result or lifecycle event is persisted, emitted, or shown in a browser.
+    - id: evaluation-events-v1
+      version: 1
+      source: contracts/events/evaluation/v1/evaluation-events.schema.json
+      consumer_boundary:
+        - Observatory may consume and publish only the four closed lifecycle types: evaluation.requested, evaluation.completed, evaluation.cancelled, and evaluation.failed.
+        - Lifecycle events are content-free evidence. They carry bounded identifiers, correlation/causation, request/job/attempt/idempotency values, provenance hashes/versions, bounded deadlines/attempts, result digests, opaque artifact references, and bounded reason/failure classifications only.
+        - Event delivery must remain idempotent and at-least-once safe; event and request provenance equality, terminal-state ordering, cancellation races, and duplicate handling are consumer/application invariants rather than transport assumptions.
+        - Raw input/output, prompt/rubric/comment text, artifact bytes, credentials, endpoints, filenames, provider object keys, owner identity, exception text, arbitrary attributes, and hidden reasoning are rejected at this boundary and must not be copied into Observatory storage, logs, metrics, SSE, URLs, or browser persistence.
+rollout:
+  - AURA-0090 may implement the separately credentialed Garage artifact store and deletion commands without changing these content-free event shapes or exposing provider object keys.
+  - AURA-0091 and AURA-0092 may add Core runner and Observatory orchestration transport adapters after defining authenticated delivery and idempotent state transitions; this handoff does not choose NATS subjects, streams, consumers, retries, or cancellation mechanics.
+  - AURA-0093 and AURA-0095 may add Observatory-owned definitions, evaluator execution, persistence, API, CLI, SSE, and browser resources behind the versioned contracts; no Core database or private module dependency is permitted.
+  - AURA-0094 and AURA-0096 may add local judge calibration and manual baseline/comparison workflows; local Ollama only, deterministic-first scoring, explicit promotion, and immutable records remain mandatory.
+  - Ordinary production telemetry remains on the independent metadata_only telemetry contracts and storage path; evaluation schemas must never be used to widen passive production capture.
+  - All downstream consumers must resolve the shared failure taxonomy and enforce missing-evidence, UUID idempotency, and artifact-authorization-strength semantics at their domain boundary; JSON Schema alone does not establish cross-resource relationships.
+generated_outputs: []
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0089.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0089.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0089.yaml (not applicable)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0089.yaml (no protected changes)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0089.yaml
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/tests/test_aura0089_*.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/tests/test_aura0089_*.py (0 errors, 0 warnings, 0 informations)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0089_*.py (62 passed)
+    - python3 -m json.tool contracts/evaluation/v1/evaluation.schema.json
+    - python3 -m json.tool contracts/evaluation/v1/failure-codes.schema.json
+    - python3 -m json.tool contracts/events/evaluation/v1/evaluation-events.schema.json
+    - Observatory source import scan: no aura_core imports
+    - Observatory source/migration boundary scan: no aura_core imports or Core table/database access patterns (one explanatory comment mentions the prohibited boundary without accessing it)
+    - git diff --check
+  failed: []
+  not_run:
+    - No active AURA-0090/AURA-0091/AURA-0092/AURA-0093/AURA-0095/AURA-0096 work-item files were present; their storage, transport, runner, orchestration, evaluator, API, browser, and baseline implementation checks remain assigned to those downstream items.
+    - No Observatory product code, migration, API, CLI, transport, or browser behavior was changed in this consumer-compatibility handoff, so runtime acceptance is intentionally deferred to the assigned downstream work items.
+decisions:
+  - Kept this Observatory slice contract-consumer-only and changed no service source, migration, entrypoint, deployment, generated client, API, CLI, browser, or Core code.
+  - Recorded Observatory ownership of evaluation domain records as a service boundary, not as permission to share Core tables or import Core modules. Existing Observatory Postgres/ClickHouse adapters remain service-owned and independently composed.
+  - Required strict schemaVersion/resourceType dispatch, closed-object validation, cross-resource provenance checks, idempotency, and fail-closed rejection before future persistence or execution.
+  - Kept artifact references opaque and content-bearing data behind explicit authorization, capture classification, manual-only retention, non-empty UUID references, and consumer-enforced authorization strength; Garage credentials, object layout, deletion mechanics, and byte handling remain AURA-0090 decisions.
+  - Preserved the finite shared failure taxonomy and UUID-only idempotency rules; Observatory must map internal/provider failures before persistence or publication and generate idempotency keys inside the owning service.
+  - Preserved explicit missing-evidence semantics: not_observed and not_applicable scores carry neither a value nor outcome, so downstream consumers cannot infer quality from absent evidence.
+  - Kept durable lifecycle events content-free and limited to the four versioned event types; event transport, authenticated envelopes, NATS subjects, stream policy, and retries remain AURA-0091/AURA-0092 decisions.
+  - Kept baseline state immutable and manual-only, with no automatic promotion or protected golden-result mutation; comparison statistics and promotion workflow remain AURA-0096 decisions.
+  - Preserved metadata-only production telemetry as an independent contract and storage path; evaluation content cannot enter passive telemetry, logs, metrics, SSE, URLs, or browser persistence.
+  - Did not consult online documentation because this read-only compatibility audit is governed by the repository's pinned JSON Schema contracts and accepted ADRs and introduces no dependency or protocol implementation.
+risks:
+  - JSON Schema cannot prove cross-resource identity equality, digest recomputation, identifier non-reuse, temporal ordering, score-evidence semantics across records, or semantic absence of instructions/credentials in authorized content. Future Observatory producers and consumers must enforce these invariants in typed domain/application ports and fail closed.
+  - The finite failure taxonomy prevents exception/provider leakage only when every producer maps failures before persistence/publication; an unbounded exception string or provider-derived code would violate the contract.
+  - AURA-0090 through AURA-0096 must preserve the separation between authorized evaluation content and content-free event/telemetry surfaces. A storage, API, SSE, log, metric, URL, or browser implementation that exposes bytes, object keys, credentials, owner identity, or raw evaluation text would violate this handoff.
+  - At-least-once and out-of-order lifecycle delivery requires an Observatory-owned idempotency and terminal-state policy; NATS or another transport must not become business truth and must not be used to justify duplicate result or baseline mutation.
+  - No downstream active work-item files were available for direct dependency review. The contract handoff and AURA-0089 open decisions are the authoritative dependency boundary until those items are activated.
+unresolved: []

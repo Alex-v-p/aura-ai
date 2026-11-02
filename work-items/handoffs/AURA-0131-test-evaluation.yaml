@@ -1,0 +1,202 @@
+agent: test_evaluation_engineer
+work_item: AURA-0131
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0131_evaluation
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: evaluation.calendar-planning
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/storybook/src/calendar-planning.stories.ts
+  - frontend/apps/storybook/src/daily-action.stories.ts
+  - frontend/apps/aura-web-e2e/src/calendar-planning.spec.ts
+  - frontend/apps/aura-web-e2e/src/today.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - work-items/handoffs/AURA-0131-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      pnpm exec nx run storybook:build-storybook (passed; existing executor,
+      asset-size, and unused-main warnings only)
+    - >-
+      pnpm exec eslint apps/storybook/src/calendar-planning.stories.ts
+      apps/storybook/src/daily-action.stories.ts apps/aura-web-e2e/src/calendar-planning.spec.ts
+      apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts
+      apps/aura-web-e2e/src/storybook-a11y.spec.ts
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/calendar-planning.spec.ts
+      --project=desktop (8 passed after owner hydration update and test expectation
+      alignment)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      --project=desktop --grep "Calendar Storybook" (18 passed in light and dark
+      themes after owner token update)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts --project=desktop
+      --grep "merges the read-only calendar agenda|keeps calendar partial and unavailable
+      recovery local" (2 passed after idempotent projection start)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts
+      --project=desktop --project=tablet --project=mobile --grep "keeps Today useful
+      when calendar is permission-denied" (3 passed; reminder and conversation cards
+      remained visible and private calendar events remained absent)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      --project=desktop --grep "Today Storybook" (28 passed in light and dark
+      themes after bounded cold-preview readiness and fixture start support)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/aura-web.spec.ts
+      --project=desktop --project=tablet --project=mobile --grep "supports desktop
+      collapse and tablet rail navigation|keeps primary destinations structurally
+      separate|keeps primary destinations available in the mobile drawer" (4 passed,
+      5 project skips)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      --project=desktop --grep "Calendar Storybook empty-selection is accessible in light theme"
+      (1 passed)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/aura-web.spec.ts
+      apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      --list (861 tests listed in the earlier baseline; the final matrix later
+      executed 891 tests)
+    - git diff --check
+    - >-
+      AURA_WORK_ITEM=AURA-0131 python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0131.yaml (passed for the six evaluation
+      files before this handoff was added)
+    - >-
+      pnpm exec eslint apps/aura-web-e2e/src/calendar-planning.spec.ts
+      apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      apps/storybook/src/calendar-planning.stories.ts (passed)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0131.yaml --path frontend/apps/storybook/src/calendar-planning.stories.ts
+      --path frontend/apps/aura-web-e2e/src/calendar-planning.spec.ts
+      --path frontend/apps/aura-web-e2e/src/today.spec.ts
+      --path frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      --path work-items/handoffs/AURA-0131-test-evaluation.yaml (passed; 5 paths)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/calendar-planning.spec.ts
+      --project=desktop --project=tablet --project=mobile (30 passed, 12 failed
+      of 42; loading, state, route, recovery, selection, agenda, and request
+      amplification checks passed; this was the pre-owner-fix baseline)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/calendar-planning.spec.ts
+      --project=desktop --grep "covers connection loading" (1 passed; loading
+      assertion aligned to the rendered status contract)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts
+      --project=desktop --grep "renders multi-day events" (1 passed)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts
+      --project=desktop --grep "keeps long calendar titles" (failed: document
+      scroll width exceeds the viewport at 200% zoom; production responsive
+      overflow)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      --project=desktop --grep "Calendar Storybook" (20 passed across light and
+      dark themes, including LongTitles)
+    - >-
+      pnpm exec nx run storybook:build-storybook (passed after the owner surface
+      corrections; existing executor and asset-size warnings only)
+    - >-
+      pnpm exec playwright test apps/aura-web-e2e/src/storybook-a11y.spec.ts
+      --project=desktop --grep "Calendar Storybook|Today Storybook" (48 passed
+      across light and dark themes)
+    - >-
+      Focused Calendar lifecycle/target rerun across desktop, tablet, and mobile
+      (12 passed; OAuth focus, disconnect confirmation/progress focus, keyboard
+      selection focus, and dark 200% target sizing all green after owner fixes)
+    - >-
+      Full four-file Playwright matrix for calendar-planning, today, aura-web,
+      and storybook-a11y across desktop/tablet/mobile (411 passed, 1 failed, 479
+      skipped of 891)
+    - >-
+      Rerun of the Today long-title case after the DailyAction section-link
+      responsive correction (1 passed in 13.5 seconds; mobile-width geometry at
+      200% zoom is within the viewport)
+    - >-
+      Final full four-file Playwright matrix for calendar-planning, today,
+      aura-web, and storybook-a11y across desktop/tablet/mobile (412 passed, 0
+      failed, 479 skipped of 891)
+    - >-
+      Final owner-correction rerun of the focused Calendar OAuth,
+      disconnect-confirmation, and permission-denied cases across
+      desktop/tablet/mobile (12 passed; hybrid synchronous/post-render recovery
+      focus behavior verified)
+    - >-
+      Final owner-correction rerun of pnpm exec nx run storybook:build-storybook
+      (passed; generated request type changes compile, with existing executor,
+      asset-size, and unused-main warnings only)
+    - >-
+      Final owner-correction rerun of the full four-file Playwright matrix for
+      calendar-planning, today, aura-web, and storybook-a11y across
+      desktop/tablet/mobile (412 passed, 0 failed, 479 skipped of 891)
+    - >-
+      Final agenda-refresh focus rerun covering all-day/timed agenda rendering,
+      delayed OAuth, inline disconnect confirmation, and permission-denied
+      recovery across desktop/tablet/mobile (15 passed; Refresh agenda,
+      OAuth-recovery, confirmation, and scoped permission assertions green)
+    - >-
+      Final full four-file Playwright matrix after agenda-refresh focus
+      correction for calendar-planning, today, aura-web, and storybook-a11y
+      across desktop/tablet/mobile (412 passed, 0 failed, 479 skipped of 891)
+  failed: []
+  not_run:
+    - >-
+      Full required AURA-0131 architecture validators, aura-web lint/test,
+      calendar and daily-action unit tests, production aura-web build, and the
+      remaining production/integration checks remain with delivery/integration.
+decisions:
+  - >-
+    Added independent generic fixtures for calendar lifecycle, explicit
+    selection, merged agenda, server conflict projection, recovery states,
+    private-content containment, route navigation, and request amplification;
+    no provider or private owner data is persisted or logged.
+  - >-
+    Added Calendar and Today Storybook state coverage for loading, disconnected,
+    reconnecting, reauthorization, revocation uncertainty, partial, stale,
+    rate-limited, permission-denied, offline, empty, reduced-motion, light/dark,
+    and axe/runtime-error checks.
+  - >-
+    No Axe rule, threshold, golden result, or existing assertion was weakened.
+    The management conflict assertion was not added because that surface does
+    not render conflicts; the Today projection path remains covered separately.
+  - >-
+    Storybook calendar fixtures implement the public projection start() hook as
+    a no-op, and Today Storybook readiness allows a bounded 30-second cold-build
+    window without changing state, Axe, or runtime-error assertions.
+  - >-
+    Navigation expectations preserve the visible Calendar label while asserting
+    its approved accessible name/title (Calendar integrations) and the Connect
+    group structure.
+  - >-
+    Permission-denied Today coverage asserts the calendar recovery message and
+    absence of private event titles while retaining independent reminder and
+    conversation cards across desktop, tablet, and mobile projects.
+  - >-
+    Added proportionate independent coverage for management loading/provider
+    error/disabled/unavailable/last-error states, delayed OAuth success/failure
+    focus, single-submit disconnect confirmation progress/cancel focus,
+    keyboard selection, dark-theme touch targets and 200% reflow, and active
+    Connect navigation on both integration routes.
+  - >-
+    Added Today fixture coverage for composite calendar/event identities,
+    multiple server conflict relationships, multi-day display, and long titles
+    at mobile width and 200% zoom. No browser-side conflict calculation was
+    introduced.
+risks: []
+unresolved: []

@@ -1,0 +1,103 @@
+agent: observatory_worker
+work_item: AURA-0085
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0085_observatory
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.ingest-health
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/migrations/postgresql/versions/0005_ingest_health_history.sql
+  - services/aura-observatory/src/aura_observatory/adapters/memory.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/src/aura_observatory/ingest.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/resources/component-manifests/live-updates.yaml
+  - services/aura-observatory/tests/test_aura0085_health.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0084_auth_recovery.py
+  - services/aura-observatory/tests/test_aura0085_adversarial.py
+contracts:
+  changed: false
+migrations:
+  changed: true
+  files:
+    - services/aura-observatory/migrations/postgresql/versions/0005_ingest_health_history.sql
+  notes:
+    - Forward-only rerunnable PostgreSQL migration adds bounded counters, heartbeat and visibility state, and content-free health history.
+    - Health history is independently bounded and is not affected by observation retention deletion.
+observability:
+  components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+    - aura.observatory.query_api
+    - aura.observatory.live_updates
+  metrics_added:
+    - observatory_ingest_intake_lag_ms
+    - observatory_ingest_visibility_lag_count
+    - observatory_ingest_rejection_count
+    - observatory_ingest_duplicate_count
+    - observatory_ingest_storage_duration_ms
+    - observatory_ingest_worker_heartbeat_age_ms
+    - observatory_ingest_backlog_count
+    - observatory_query_duration_ms
+    - observatory_query_freshness_lag_ms
+verification:
+  passed:
+    - .venv/bin/ruff check services/aura-observatory/src services/aura-observatory/tests
+    - .venv/bin/pyright
+    - .venv/bin/python -m pytest services/aura-observatory/tests (330 passed)
+    - .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0085_adversarial.py (27 passed)
+    - .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0085_health.py (6 passed)
+    - PostgreSQL storage-latency histogram regression covers migration state, restart visibility, 129 samples, monotonic buckets/sum, and bounded 128-sample UI reservoir.
+    - Latency summary regressions cover non-monotonic insertion, 128-sample rollover, PostgreSQL hydration, and authenticated overview/history round-trip.
+    - Legacy AURA-0080 SSE replay/race and AURA-0078 manifest regression tests pass after strict cursor and additive metric fixes.
+    - .venv/bin/ruff check services/aura-observatory/src/aura_observatory services/aura-observatory/tests/test_aura0085_adversarial.py
+    - .venv/bin/pyright services/aura-observatory/src/aura_observatory
+    - .venv/bin/python tooling/architecture/validate-work-item.py work-items/active/AURA-0085.yaml
+    - .venv/bin/python tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0085.yaml
+    - .venv/bin/python tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0085.yaml
+    - .venv/bin/python tooling/architecture/validate-repository-shape.py
+    - git diff --check
+  failed: []
+  not_run:
+    - Frontend, browser, full-stack, aggregate architecture, review, and integration checks remain assigned to their respective AURA-0085 owners.
+decisions:
+  - Rejection reasons are finite allowlisted values and are persisted only as aggregate counts; parser, payload, exception, identifier, endpoint, and credential text never enters health state.
+  - Intake lag is calculated only after successful schema validation, surfaced from the ingest worker's accepted-observation high-water mark, and clamps future-skewed, non-finite, and excessively old values to the documented bounded range.
+  - Visibility health is derived from the Observatory-owned contiguous ClickHouse watermark, pending receipts, and visibility ledger; no Collector or Core queue state is introduced.
+  - Health snapshots are persisted only when state or visibility materially changes, so health.changed never becomes a heartbeat surrogate; SSE catch-up compares persisted sequence numbers and excludes the Last-Event-ID cursor strictly, including health.changed cursors.
+  - Latency samples use bounded reservoirs and bounded durations; SQL and HTTP diagnostics remain outside REST, SSE, metrics, and browser payloads.
+  - Production composition injects one narrow health persistence/event port into ingest and query adapters; accepted counts and validated observation high-water timestamps are updated together, while heartbeat writes never refresh query freshness.
+  - Durable health and observation replay share the Observatory ingest allocator sequence, allowing a strict exclusive Last-Event-ID merge without exposing health payloads or replaying the cursor event.
+  - Health classification uses recent failure timestamps so cumulative duplicates/rejections do not permanently degrade the service, and current storage failures can recover after the bounded failure window.
+  - Health history cursors are centrally validated as base64url JSON containing only a timezone-aware timestamp and canonical UUID; anonymous and non-owner requests are denied before history access.
+  - Gauge/current-total metric exports use replacement semantics. Production storage latency keeps a bounded 128-sample reservoir for UI percentiles while PostgreSQL stores atomic cumulative count, sum, and fixed cumulative buckets for restart-safe Prometheus histograms.
+  - Health events register a visible marker in the shared contiguous ledger before watermark advancement, so health.changed cannot fence later observations.
+  - Health projection is a bounded API-lifecycle use case with an optional storage refresh callback; REST overview and SSE only read current state and never persist snapshots or trigger feedback loops.
+  - Production ingest suppresses legacy counter writes when the injected PostgreSQL health port owns outcome accounting, preserving rejected versus every finite malformed request/OTLP category and routing every storage failure through one recoverable signal.
+  - Production worker storage-latency samples persist through the explicit PostgreSQL health port; the API scrape hydrates bounded histogram count, sum, and bucket series from that store. File export remains opt-in for tests/local diagnostics, and production settings default it off.
+  - SSE replay metrics retain the actual persisted event type and only count events at the connection-start replay fence; health.changed is a closed, manifest-declared label.
+  - Query latency is persisted only at the bounded use-case query boundary with finite resource labels; health snapshot projection writes are excluded from query latency.
+  - Health projection runs in the existing API lifespan with explicit startup/shutdown ownership and testing opt-out; the ingest worker now only emits heartbeats and processes telemetry.
+  - Production cross-process storage histograms use the PostgreSQL health store; the optional atomic file sink is disabled by default and retained only for explicit tests/local diagnostics. The forward-only migration is idempotent and row-locked updates preserve monotonic cumulative state under concurrent samples.
+  - Latency summaries preserve insertion order for latestMs while calculating p50/p95 from a sorted copy; rollover and PostgreSQL/API history round-trip regressions cover non-monotonic samples.
+risks:
+  - Component manifests now declare the AURA-0085 metrics and evaluators, and the legacy manifest assertion includes the additive intake-health and query-freshness metrics; runtime scrape behavior remains covered by the owning service and integration checks.
+  - The repository-root Observatory test invocation passes all 330 service tests; browser, frontend, and full-stack checks remain outside this backend ownership zone.
+  - The repository observability validator remains unchanged because its tooling path is outside this work item's allowed paths; service tests enforce the AURA-0085 typed metric invariants while the validator covers catalogue registration and ownership.
+unresolved: []

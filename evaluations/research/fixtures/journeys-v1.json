@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "fixtureRevision": "research-journeys-v1",
+  "classification": "synthetic-disabled-provider-journeys",
+  "providersEnabled": false,
+  "journeys": [
+    {"mode": "quick", "origin": "chat", "interactive": true, "detachedAfterSeconds": null, "expected": "task_and_cited_completion"},
+    {"mode": "quick", "origin": "research", "interactive": true, "detachedAfterSeconds": null, "expected": "task_and_cited_completion"},
+    {"mode": "auto", "origin": "chat", "interactive": false, "detachedAfterSeconds": 30, "expected": "task_and_notification"},
+    {"mode": "auto", "origin": "research", "interactive": false, "detachedAfterSeconds": 30, "expected": "task_and_notification"},
+    {"mode": "deep", "origin": "chat", "interactive": false, "detachedAfterSeconds": 0, "expected": "task_and_artifact"},
+    {"mode": "deep", "origin": "research", "interactive": false, "detachedAfterSeconds": 0, "expected": "task_and_artifact"},
+    {"mode": "agent_led", "origin": "chat", "interactive": false, "detachedAfterSeconds": 0, "expected": "bounded_task_and_artifact"},
+    {"mode": "agent_led", "origin": "research", "interactive": false, "detachedAfterSeconds": 0, "expected": "bounded_task_and_artifact"}
+  ]
+}

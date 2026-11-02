@@ -1,0 +1,249 @@
+id: AURA-0055
+title: Fire due reminders and deliver durable in-app notifications
+status: integrated
+change_class: repository_governance
+intent: >
+  Add reliable PostgreSQL-backed due-reminder firing, exactly-once in-app
+  notification creation, owner-authorized notification APIs and replayable live
+  updates, and an accessible Aura Web notification centre without adding an
+  external delivery provider or weakening Core service isolation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/open-decisions.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved one-second scheduler polling with batches of at most one hundred due reminders
+    - Owner-approved atomic fired transition notification creation audit replay-event persistence and identifier-only outbox staging
+    - Owner-approved PostgreSQL replay followed by NATS wakeups for live notification SSE
+    - Owner-approved in-app delivery semantics where durable inbox availability is delivered and acknowledgement does not complete a reminder
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/automation/v1/reminder-events.schema.json
+feature_references:
+  - AUT-002
+  - AUT-013
+  - AUT-018
+  - AUT-019
+  - AUT-020
+  - AUI-019
+  - AUI-025
+  - AUI-026
+  - AUI-030
+  - GOV-005
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.automation.v1
+  - aura-core.automation.reminder-delivery
+  - aura-core.automation.notifications
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.entrypoints.api
+  - aura-core.entrypoints.scheduler
+  - aura-core.entrypoints.worker
+  - aura-core.platform.outbox
+  - aura-core.platform.telemetry
+  - aura-web.api-client
+  - aura-web.automation.notifications
+  - aura-web.automation.reminders
+  - aura-web.shell
+  - aura-web.e2e
+  - frontend.storybook
+  - deployment.aura-core-scheduler
+  - repository.architecture.registry
+  - evaluation.automation-notifications
+allowed_paths:
+  - work-items/active/AURA-0055.yaml
+  - work-items/archived/AURA-0055.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/automation/v1/reminder-events.schema.json
+  - contracts/events/automation/v1/notification-events.schema.json
+  - docs/specifications/tools-automation-and-integrations.md
+  - services/aura-core/migrations/versions/0015_notification_delivery.py
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/bootstrap/reminder_uow.py
+  - services/aura-core/src/aura_core/bootstrap/notification_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/notifications.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/**
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/reminder-scheduler.yaml
+  - services/aura-core/resources/component-manifests/notification-delivery.yaml
+  - services/aura-core/tests/test_reminders.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_reminder_scheduler.py
+  - services/aura-core/tests/test_notifications.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_notification_stream.py
+  - services/aura-core/tests/test_notification_evaluation.py
+  - services/aura-core/tests/test_outbox.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_migration_0015_notification_delivery.py
+  - services/aura-core/tests/system/test_notification_delivery.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/**
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/notification-centre.stories.ts
+  - frontend/libs/aura/automation/notifications/**
+  - frontend/libs/aura/automation/reminders/**
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/tsconfig.base.json
+  - compose.yaml
+  - deploy/docker/aura-scheduler.Dockerfile
+  - deploy/docker/aura-core-entrypoint.sh
+  - deploy/docker/aura-core.Dockerfile.dockerignore
+  - deploy/compose/e2e/local-aura.yaml
+  - deploy/compose/test_topology.py
+  - deploy/compose/run-full-stack-e2e.sh
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - services/aura-core/src/aura_core/domains/integrations/**
+  - services/aura-core/src/aura_core/domains/governance/approvals/**
+  - services/aura-core/src/aura_core/providers/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - deploy/authentik/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/automation/v1/notification-events.schema.json
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: automation.notifications
+observability:
+  applicable: true
+  affected_components:
+    - aura.automation.reminder_scheduler
+    - aura.automation.notification_delivery
+  required_metrics:
+    - reminder_scheduler_scan_duration_ms
+    - reminder_due_lag_ms
+    - reminder_fired_count
+    - reminder_duplicate_prevention_count
+    - reminder_fire_persistence_outcome
+    - notification_sse_connection_count
+    - notification_sse_replay_count
+    - notification_acknowledgement_outcome
+    - notification_failure_count
+  required_evaluators:
+    - reminder_firing_exactly_once
+    - notification_owner_authorization
+    - notification_replay_recovery
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every notification list acknowledgement detail fetch replay cursor and live event must be bound to the authenticated owner principal.
+    - Reminder and notification content must remain absent from NATS messages SSE envelopes telemetry ordinary audit metadata and outbox metadata.
+    - Notification acknowledgement requires same-origin CSRF validation a UUID idempotency key and optimistic expected-version enforcement.
+    - Last-Event-ID must resume only after an owner-authorized persisted event and must not disclose whether another owner event exists.
+    - Concurrent scheduler claims and cancel-versus-fire races must use PostgreSQL row locking and one transaction so exactly one valid outcome wins.
+    - The scheduler service receives only Core database connectivity and no Ollama provider browser egress NATS Valkey OIDC or unrelated credentials.
+  data_classes:
+    - private reminder content
+    - private in-app notification detail
+    - owner identity
+    - reminder notification and SSE lifecycle metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - platform_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A dedicated thin Core scheduler scans PostgreSQL every second in batches of at most one hundred and invokes shared reminder-delivery application behavior rather than reimplementing domain rules.
+  - Concurrent scheduler instances claim due scheduled reminders with FOR UPDATE SKIP LOCKED and atomically transition each claimed reminder to fired create one notification write content-free audit metadata persist an owner replay event and stage the identifier-only reminder lifecycle outbox event.
+  - A database uniqueness constraint permits exactly one notification per reminder and crash-before-commit database-failure and crash-after-commit behavior respectively roll back retry later and avoid duplicates.
+  - Cancel-versus-fire contention serializes through database locking so cancellation or firing wins consistently and terminal reminder invariants remain intact.
+  - Notifications are Core-owned records with delivered or acknowledged status optimistic versions reminder references and lifecycle timestamps and acknowledgement never completes the reminder automatically.
+  - Authenticated owners can list inspect and acknowledge only their notifications and can use the existing reminder completion command from notification detail.
+  - The notification SSE endpoint emits identifier status and timestamp metadata only supplies heartbeats and replays owner-authorized PostgreSQL events strictly after Last-Event-ID before following NATS wakeups.
+  - Duplicate or missed NATS wakeups cannot lose or duplicate durable inbox state and reconnecting or previously offline clients reconcile from PostgreSQL.
+  - Aura Web provides a responsive accessible notification centre unread badge acknowledgement controls reminder completion action and bounded-backoff reconnect behavior that refreshes related reminder state.
+  - The aura-core-scheduler Compose service has database access only and no provider egress browser network NATS Valkey OIDC or unrelated secret attachment.
+  - OpenAPI version 1.8.0 and the notification event JSON Schema remain additive and the generated transport client is synchronized.
+  - Scheduler and notification component manifests and runtime instrumentation cover scan duration due lag fired count duplicate prevention persistence outcome SSE connection and replay acknowledgement and failures using metadata-only capture.
+  - No recurrence reminder editing deletion household sharing Web Push Home Assistant calendar email voice Aura Wall model-facing tool confirmation approval or Observatory behavior is added.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0055.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0055.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0055.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0055.yaml
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts
+  - docker compose config --quiet
+  - python3 deploy/compose/test_topology.py
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

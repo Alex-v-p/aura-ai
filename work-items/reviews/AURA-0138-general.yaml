@@ -1,0 +1,43 @@
+agent: general_reviewer
+work_item: AURA-0138
+verdict: PASS
+checked:
+  - >-
+    Re-read the active work item and final handoffs, then traced the complete
+    final workflow store, route component, template, event validator, generated
+    API adapter, and workflow browser suite against every prior general finding.
+  - >-
+    Verified unknown create and start commands retain the same semantic
+    idempotency key through unknown outcome, authoritative reconciliation,
+    unrelated SSE, and confirmed retry; successful create/start responses adopt
+    authoritative parent and instance state.
+  - >-
+    Verified route transitions and live reconciliation are now distinct:
+    workflow-only definition or revision invalidations preserve the active run,
+    instance invalidations refresh it, and explicit parent inspection clears it.
+    Browser coverage now includes the same-workflow live-event regression.
+  - >-
+    Verified exact retirement, seven non-cascading deletion scopes, tombstone
+    targeting, recovery/cancellation capability gates, detailed run evidence,
+    approval handoff, session reset, delayed agent-load isolation, and
+    metadata-only stream cursor/coalescing behavior remain intact.
+  - >-
+    Verified the immutable publish review captures ordered typed provenance,
+    authorized agent revision and bounded limits, makes the background inert,
+    traps keyboard focus, restores focus after Escape and delayed publication,
+    and has focused accessibility/browser assertions.
+  - >-
+    Independently ran aura-workflows:test (11 passed), aura-workflows:lint
+    (passed), the Aura Web production build (passed), git diff --check (passed),
+    and a focused desktop workflow browser selection covering publish review,
+    unknown create/start, route rebinding, and SSE coalescing (5 passed). The
+    complete desktop workflow suite had also passed in the preceding final-tree
+    review before the bounded regression assertions were expanded.
+  - >-
+    Re-reviewed the post-integration mobile authoring correction. The editor
+    keeps only the active step and its immediate predecessor visible, defers
+    focus until the rendered target is available, and treats Next on the final
+    step as a bounded announced no-op. Independently reran the complete mobile
+    four-step authoring, eight-step bound, mapping, focus, privacy, and
+    accessibility journey (passed).
+findings: []

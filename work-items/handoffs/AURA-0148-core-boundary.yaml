@@ -1,0 +1,95 @@
+agent: core_boundary_worker
+work_item: AURA-0148
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0148_core_boundary
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: evaluation.governed-research-full-stack
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_aura0148_governed_research.py
+  - work-items/handoffs/AURA-0148-core-boundary.yaml
+contracts:
+  changed: false
+  notes: >-
+    The acceptance test consumes existing public Core application, provider,
+    artifact, notification, and Task Center contracts without changing them.
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+  capture_policy: metadata_only
+verification:
+  passed:
+    - >-
+      PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache
+      RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check
+      services/aura-core/tests/test_aura0148_governed_research.py
+    - >-
+      PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache uv run
+      pyright services/aura-core/tests/test_aura0148_governed_research.py
+    - >-
+      PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=.local-state/uv-cache uv run
+      pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0148_governed_research.py -q
+      (14 passed)
+    - >-
+      git diff --check -- services/aura-core/tests/test_aura0148_governed_research.py
+  failed:
+    - >-
+      AURA_WORK_ITEM=AURA-0148 python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0148.yaml is blocked by concurrent unrelated
+      AURA-0151/frontend changes outside this work item's allowed paths; the
+      Core test and handoff paths themselves are allowed.
+  not_run:
+    - >-
+      Full repository and disposable Compose aggregate checks remain owned by
+      the AURA-0148 platform/integration workers.
+decisions:
+  - >-
+    The public-boundary journey uses the real Core ResearchApplicationService
+    and ResearchCoordinator with MemoryResearchRepository, the generated
+    artifact composition, NotificationApplicationService, and the Task Center
+    ApplicationTaskSourceAdapter/TaskProjectionService composition.
+  - >-
+    Provider calls are bounded synthetic provider-port fixtures only; no HTTP
+    interception, credentials, external egress, fetched pages, or provider
+    deployables are used. The fixture uses a public literal IP so destination
+    validation does not perform DNS or network I/O.
+  - >-
+    Eight complete journeys cover Quick, Auto, Deep, and Agent-led from both
+    conversation and dedicated research origins. Evidence is projected,
+    forced unknown, and recovered through source authority; a rebuild then
+    converges all eight rows.
+  - >-
+    Chat delivery appends cited completion activity and artifact references;
+    dedicated delivery intentionally skips transcript append. Both origins
+    create a notification through the notification public service.
+  - >-
+    Generated artifact lineage is exercised through revision two content,
+    integrity-checked download, revision history, and explicit deletion. The
+    owner command path also exercises one extension and cancellation settlement
+    through the coordinator.
+  - >-
+    Stable metadata-only pytest observations are
+    python::services.aura-core.tests.test_aura0148_governed_research::test_core_public_boundary_executes_eight_research_journeys_and_recovery
+    and
+    python::services.aura-core.tests.test_aura0148_governed_research::test_core_public_boundary_fences_extension_and_cancellation.
+risks:
+  - >-
+    This Core acceptance evidence is an in-process public-module journey and
+    does not replace the platform worker's local HTTP/Compose acceptance.
+unresolved:
+  - >-
+    Existing release-gate observation mapping still names the Playwright
+    journey records for journey evaluator IDs; the Core test emits the stable
+    metadata-only pytest ID
+    python::services.aura-core.tests.test_aura0148_governed_research::test_core_public_boundary_executes_eight_research_journeys_and_recovery
+    for independent review evidence.

@@ -1,0 +1,116 @@
+agent: test_evaluation_engineer
+work_item: AURA-0148
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0148_frontend_remediation
+  worktree: shared
+scope:
+  ownership_zone: evaluation.governed-research-full-stack
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
+  - frontend/apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      cd frontend && pnpm exec prettier --check
+      apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
+      apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+    - >-
+      cd frontend && pnpm exec eslint
+      apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
+      apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+    - >-
+      cd frontend && AURA_WEB_E2E_APP_PORT=6504 AURA_WEB_E2E_REUSE_SERVERS=0
+      AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test --config
+      apps/aura-web-e2e/playwright.config.ts
+      apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
+      apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+      --reporter=line — 33 passed across desktop, tablet, and mobile in the
+      prior integrated run.
+    - >-
+      cd frontend && AURA_WEB_E2E_APP_PORT=6514 AURA_WEB_E2E_REUSE_SERVERS=0
+      AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test --config
+      apps/aura-web-e2e/playwright.config.ts
+      apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
+      apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+      --project=desktop --reporter=line — 11 passed after changing the
+      accessibility assertion to a complete-page Axe scan.
+    - >-
+      The same focused command with AURA_WEB_E2E_APP_PORT=6515 and
+      --project=tablet — 11 passed.
+    - >-
+      The same focused command with AURA_WEB_E2E_APP_PORT=6516 and
+      --project=mobile — 11 passed.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0148.yaml — validated 32 changed paths.
+    - >-
+      git diff --check — passed.
+    - >-
+      Against settled AURA-0153 frontend code, the exact command with
+      AURA_WEB_E2E_APP_PORT=6529, AURA_WEB_E2E_REUSE_SERVERS=0, and
+      AURA_WEB_E2E_WORKERS=1 ran the unchanged 33-test desktop/tablet/mobile
+      matrix — 33 passed.
+    - >-
+      The focused tablet keyboard/focus/live-region test passed 1/1. The
+      transient tablet matrix failure was diagnosed as stale acceptance
+      wording for settled product labels, not a keyboard or focus regression.
+  failed:
+    - >-
+      The shared-worktree changed-path validator currently fails closed on
+      concurrent AURA-0153 product paths and work items outside AURA-0148's
+      allowed paths. The AURA-0148 frontend files themselves remain within
+      their authorized paths; integration must rerun this validator after
+      AURA-0153 is reconciled.
+  not_run:
+    - >-
+      Repository-wide aggregate checks remain owned by the AURA-0148 platform
+      and integration workers.
+decisions:
+  - >-
+    Each Quick, Auto, Deep, and Agent-led journey now follows both chat and
+    /research origins through cited source evidence, durable Task Center
+    recovery, notification delivery, artifact preview, revision history,
+    download, and deletion settlement assertions.
+  - >-
+    Artifact recovery acceptance explicitly renders deletion_failed with Retry
+    cleanup and cleanup_unknown with Reconcile cleanup, asserting preview and
+    revision content are not resurrected after deletion admission.
+  - >-
+    Browser privacy inspection enumerates IndexedDB object-store values and
+    Cache Storage request URLs, response headers, and response bodies in
+    addition to storage names; prohibited content markers fail the test.
+  - >-
+    After AURA-0151 restored shell landmark ownership, the route accessibility
+    test uses Axe against the complete document on every research, Task Center,
+    artifact, and conversation route. The previous route-root include and
+    duplicate-main comment/rule masking were removed.
+  - >-
+    The research task fixture consumed by Task Center recovery remains
+    contract-valid with sourceKind research, routeKey research_detail, and
+    capabilities.hasSourceDetail true. The source-link assertion accepts the
+    owning product's verified label Open research source, while unavailable
+    non-research source links remain absent. Completion delivery is asserted
+    through the settled Open report artifact link.
+  - >-
+    No Aura product code, contracts, providers, credentials, or deployment
+    topology was changed. The browser suite continues to use local HTTP and
+    synthetic fixtures, independent of Cloudflare Tunnel or Nginx TLS.
+risks:
+  - >-
+    AURA-0153 remains concurrently uncommitted in the shared worktree, so
+    repository-wide changed-path validation is intentionally deferred to the
+    integration boundary after that work item settles.
+unresolved: []

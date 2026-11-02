@@ -1,0 +1,11 @@
+agent: security_privacy_reviewer
+work_item: AURA-0149
+verdict: PASS
+checked:
+  - An occupied owner-scoped policy or agent revision is never updated, deleted, repurposed, or granted web.research@1.
+  - Exact empty-principal ownership, canonical profile lineage, approved grants, scopes, call limits, timeout, and retry limits are validated before writes.
+  - Inconsistent identifiers, owners, predecessors, partial seeds, and grants fail closed without partial authority widening or destructive repair.
+  - Advisory transaction locking and row locking make concurrent and repeated seed execution deterministic and preserve custom and historical rows.
+  - Regression diagnostics and fixtures contain only synthetic identities and metadata and no conversation, citation, artifact, credential, or fetched-content data.
+  - The dedicated AURA-0149 regression suite passed 4 tests twice consecutively against the same disposable PostgreSQL database.
+findings: []

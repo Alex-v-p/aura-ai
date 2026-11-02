@@ -1,0 +1,97 @@
+agent: contract_steward
+work_item: AURA-0117
+status: complete
+runtime:
+  model: gpt-6-astra
+  reasoning_effort: high
+  execution_tier: priority
+  agent_thread_id: /root/aura0117_contracts
+  worktree: shared-main
+scope:
+  ownership_zone: architecture.run-evidence-capture, contracts.run-evidence-v1, contracts.observatory-run-inspection, frontend.observatory.generated-client
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/events/runs/v1/run-evidence.schema.json
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_aura0117_run_evidence_contract.py
+  - docs/adr/0017-governed-production-run-evidence.md
+  - docs/adr/README.md
+  - docs/architecture/aura-ai-architecture-handover.md
+  - docs/architecture/module-boundaries.md
+  - docs/architecture/system-context.md
+  - docs/specifications/observatory-and-evaluation.md
+  - docs/specifications/open-decisions.md
+  - frontend/libs/platform/observatory-api-client/README.md
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.spec.ts
+  - frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/observatory-api-client/tools/validate-contract.mjs
+  - work-items/handoffs/AURA-0117-contracts.yaml
+contracts:
+  changed: true
+  ids:
+    - run-evidence-v1
+    - observatory-v1
+  versions:
+    run-evidence-v1: 1
+    observatory-v1: 1.0.0
+  compatibility: backward_compatible_additive
+  producers:
+    - future Aura Core explicit run-boundary serializers through a bounded nonblocking RunEvidenceRecorder port
+    - existing Observatory metadata projection for inspection measurements and lineage
+  consumers:
+    - future Observatory run-evidence ingestion and PostgreSQL/Garage storage
+    - future Observatory query and deletion API
+    - Observatory Web through the generated observatory-api-client only
+  rollout:
+    - deploy contract-aware Observatory ingestion and storage before enabling the Core owner-controlled full_content policy
+    - deploy inspection, evidence streaming, and deletion API before the Observatory UI consumes the new operations
+    - keep capture disabled until all downstream consumers are ready; existing OTLP, SSE, run, trace, and Aura Web behavior remains unchanged
+  generated_outputs:
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  validation:
+    - JSON Schema 2020-12 envelope is closed and bounded with discriminated payload/category/media variants, lexical UUID/date/base64 assertions, exact canonical-byte rules, independent stable-ID collision semantics, and state-bound non-captured reasons
+    - captured content requires a closed producer admission attestation; text, structured JSON, images, and PDFs have media-specific decoded-text, container, metadata, and OCR mode requirements, while prohibited material is represented only as whole-item rejection
+    - OpenAPI 3.1 operations are owner-session protected, no-store, bounded, and additive
+    - evidence streaming is Blob-only for seven approved media types with a one-MiB contract cap, a custom manifest-digest header, and content-free no-store errors
+    - deletion requires CSRF, a UUID idempotency key, an exact confirmation value, and a bounded content-free failure code
+    - SSE uses a dedicated metadata-only run invalidation variant with UUID run identity
+    - Aura Web and aura-api-client isolation regression test passes
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0117.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0117.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0117.yaml (not applicable by contract-phase declaration)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0117.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0117.yaml (skipped; no protected changes)
+    - UV_CACHE_DIR=/tmp/aura-0117-uv uv run pytest -q contracts/tests/test_aura0117_run_evidence_contract.py contracts/tests/test_observatory_v1.py contracts/tests/test_observatory_v1_compatibility.py (36 passed)
+    - cd frontend && corepack pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && corepack pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && corepack pnpm exec nx test observatory-api-client (9 passed)
+    - cd frontend && corepack pnpm exec nx lint observatory-api-client
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - ADR-0017 records owner-enabled production evidence as a separate one-way asynchronous channel; ordinary OTLP and SSE remain metadata-only.
+  - Exact payloads use explicit serializers; prohibited credential material and provider-hidden reasoning have no captured payload representation.
+  - Evidence retrieval uses an approved-media Blob response rather than a generic octet-stream or JSON buffer.
+  - Application JSON evidence uses RFC 8785 canonical bytes; text uses exact UTF-8 content bytes; every attachment uses decoded base64 bytes, including JSON and text attachments.
+  - Stable event and evidence identifiers collide independently if reused with changed immutable evidence; exact retries are idempotent and have distinct delivery identities.
+  - Existing metadata-observation-v2 remains unchanged: telemetry uses only its trace/span/run correlation and supported finite dimensions; event/evidence identity and capture/media state remain in the separate run-evidence channel.
+  - Existing observatory-v1 version remains 1.0.0 because all operations and schemas are additive and existing operation shapes are unchanged.
+risks:
+  - Runtime consumers must enforce evidenceKind/payload-kind agreement, digest and byte-count verification, duplicate collision rejection, and ordering semantics during the follow-up ingestion work.
+  - Browser runtime must implement zero persistence, inert rendering, and screenshot exclusion; these are not transport-client behaviors.
+unresolved:
+  - Follow-up work items must implement Core serializers/export isolation, Observatory PostgreSQL and dedicated Garage storage, API behavior, UI, and full-stack failure tests in the approved sequence.

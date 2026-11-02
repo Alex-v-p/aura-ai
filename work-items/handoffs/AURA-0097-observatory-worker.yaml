@@ -1,0 +1,432 @@
+agent: observatory_worker
+work_item: AURA-0097
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: priority
+  agent_thread_id: /root/aura0097_observatory
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.operations
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/migrations/postgresql/versions/0014_observatory_operations.sql
+  - services/aura-observatory/resources/component-manifests/dashboards.yaml
+  - services/aura-observatory/resources/component-manifests/saved-queries.yaml
+  - services/aura-observatory/resources/component-manifests/alerting.yaml
+  - services/aura-observatory/resources/component-manifests/incidents.yaml
+  - services/aura-observatory/resources/component-manifests/annotations.yaml
+  - services/aura-observatory/src/aura_observatory/dashboards.py
+  - services/aura-observatory/src/aura_observatory/saved_queries.py
+  - services/aura-observatory/src/aura_observatory/alerting.py
+  - services/aura-observatory/src/aura_observatory/incidents.py
+  - services/aura-observatory/src/aura_observatory/annotations.py
+  - services/aura-observatory/src/aura_observatory/operational_live.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/adapters/dashboards.py
+  - services/aura-observatory/src/aura_observatory/adapters/saved_queries.py
+  - services/aura-observatory/src/aura_observatory/adapters/alerting.py
+  - services/aura-observatory/src/aura_observatory/adapters/incidents.py
+  - services/aura-observatory/src/aura_observatory/adapters/annotations.py
+  - services/aura-observatory/src/aura_observatory/adapters/operational_live.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  - services/aura-observatory/tests/test_aura0097_observatory.py
+  - services/aura-observatory/tests/test_aura0097_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0097_test_evaluation.py
+  - services/aura-observatory/tests/test_aura0097_evaluation_query_adapter.py
+  - tooling/architecture/modules.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+migrations:
+  changed: true
+  files:
+    - services/aura-observatory/migrations/postgresql/versions/0014_observatory_operations.sql
+observability:
+  components:
+    - aura.observatory.dashboards
+    - aura.observatory.saved_queries
+    - aura.observatory.alerting
+    - aura.observatory.incidents
+    - aura.observatory.annotations
+  metrics_added:
+    - observatory_dashboard_operation_count
+    - observatory_saved_query_operation_count
+    - observatory_alert_evaluation_count
+    - observatory_alert_evaluation_duration_ms
+    - observatory_alert_operation_count
+    - observatory_alert_instance_transition_count
+    - observatory_alert_suppression_count
+    - observatory_alert_acknowledgement_count
+    - observatory_incident_transition_count
+    - observatory_annotation_operation_count
+    - observatory_operations_recovery_count
+    - observatory_operations_backlog_count
+    - observatory_operations_oldest_due_lag_ms
+    - observatory_operations_lease_outcome_count
+    - observatory_sse_replay_lag_ms
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0097.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0097.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0097.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0097.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0097.yaml
+    - uv run ruff check services/aura-observatory/src/aura_observatory/{dashboards.py,saved_queries.py,alerting.py,incidents.py,annotations.py,operational_live.py,ports.py,composition.py,metrics.py}
+    - uv run pyright services/aura-observatory
+    - uv run pytest services/aura-observatory/tests/test_aura0097_observatory.py services/aura-observatory/tests/test_aura0097_test_evaluation.py -q (30 passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0097_observatory.py services/aura-observatory/tests/test_aura0097_test_evaluation.py -q (40 passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0097_test_evaluation.py services/aura-observatory/tests/test_aura0097_observatory.py services/aura-observatory/tests/test_aura0097_postgres_integration.py -q (40 passed, 10 PostgreSQL-gated skips)
+    - uv run pytest services/aura-observatory/tests/test_aura0097_observatory.py services/aura-observatory/tests/test_aura0097_test_evaluation.py services/aura-observatory/tests/test_aura0097_postgres_integration.py -q (30 passed, 7 skipped)
+    - uv run pytest services/aura-observatory/tests/test_aura0097_observatory.py services/aura-observatory/tests/test_aura0097_postgres_integration.py -q (13 passed, 8 skipped)
+    - uv run pytest services/aura-observatory/tests/test_aura0097_test_evaluation.py -q -k 'propagates_filters_windows_facets_and_cursor_replay or rejects_closed_result_and_private_payload_escapes or instrumentation_is_truthful' (3 passed, 24 deselected)
+    - uv run pytest services/aura-observatory/tests/test_aura0097_test_evaluation.py -q -k 'closed_result or comparison or projection or promptBundle' (2 passed, 25 deselected)
+    - uv run pytest services/aura-observatory/tests/test_aura0097_test_evaluation.py -q -k 'execution_rejects_closed_result or closed_result or projection or private_payload' (2 passed, 25 deselected; strict adversarial projection matrix)
+    - uv run pytest services/aura-observatory/tests/test_aura0097_evaluation_query_adapter.py -q (13 passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0097_evaluation_query_adapter.py services/aura-observatory/tests/test_aura0097_test_evaluation.py -q (40 passed)
+    - uv run pytest services/aura-observatory/tests contracts/tests -q (1243 passed, 37 skipped)
+    - >-
+      Direct projector probes accept prompt-v1 and attribution bindingKind=prompt,
+      reject config:a, and reject boolean/negative/over-limit seriesLimit,
+      pointLimit, and scannedRows values.
+    - >-
+      Real ObservatoryMetrics probes accept alert operation definition_read,
+      database_timeout, database_unavailable, malformed_evidence, and saved
+      query stale labels with bounded dependencies and positive durations.
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests
+    - uv run pyright services/aura-observatory (0 errors)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - git diff --check
+  failed: []
+  not_run:
+    - PostgreSQL integration migration execution; no disposable database was authorized by this worker.
+    - Browser and frontend checks; assigned to frontend ownership zone.
+decisions:
+  - >-
+    Kept all operational resources in one Observatory-owned PostgreSQL adapter
+    with memory composition only for isolated tests. Core databases and
+    ClickHouse tables are never accessed by the operations boundary.
+  - >-
+    Persisted operational live events as metadata-only envelopes. Annotation
+    text, incident notes, dashboard labels, query definitions, grouping values,
+    and evidence values never enter the event ledger.
+  - >-
+    Used stable UUID5 rule/group identities and PostgreSQL idempotency command
+    records for deterministic retries. Alerts remain in-product with no
+    external delivery integration.
+  - >-
+    Removed the unavailable operational-live component from the work-item
+    affected-component list because the repository's existing manifest
+    inventory has no authorized operational-live manifest path; the live event
+    adapter remains implemented and covered by the operations component.
+  - >-
+    Enforced closed suppression bounds: an end before or equal to the start is
+    rejected, and a valid interval is explicitly classified as scheduled,
+    active, or expired at creation time. Clear and replay remain idempotent.
+  - >-
+    Incident transitions retain the prior version, replace only the expected
+    current resource, and issue a deterministic semantic patch version so the
+    first transition and idempotent replay are durable and stale commands are
+    rejected.
+  - >-
+    Annotation target validation now uses an explicit reference port. Exact
+    incident identity and version are checked before persistence; unavailable
+    external reference providers and missing targets map deterministically to
+    service-unavailable and not-found errors without sibling-table access.
+  - >-
+    Production composition now injects a typed composite annotation reference
+    port. Run and deployment references use bounded public Observatory query
+    projections, experiment and regression references use the public exact
+    evaluation query service, and incident references use the operations
+    repository's exact-resource surface. No target kind falls back to latest
+    state or direct sibling storage access.
+  - >-
+    Alert evaluation is owned by the evaluation_scheduler entrypoint only;
+    the ingest worker retains the compatibility helper for isolated tests but
+    no longer starts a second alert loop. PostgreSQL and memory claims use
+    bounded due times, owner/token leases, expiry recovery, and completion
+    backoff state so concurrent schedulers cannot evaluate one rule twice.
+  - >-
+    PostgreSQL operations reserve scoped idempotency commands before mutation,
+    maintain explicit current-version rows, perform conditional replacements,
+    apply exact JSON reference filters and keyset cursors, and write
+    content-free audit rows transactionally with persisted live events.
+  - >-
+    API operations use one facade rather than exposing the raw repository,
+    validate exact command bodies/timestamps and confirmation literals, return
+    the acknowledgement resource with HTTP 201, and expose bounded history.
+    Operational SSE performs persisted catch-up followed by bounded polling
+    and metadata-only heartbeats while honoring disconnects.
+  - >-
+    Dashboard, saved-query, alert, incident, and annotation services record
+    their allowlisted operation metrics through one composed sink.
+  - >-
+    Operational component spans no longer write the evaluation-only duration
+    metric. Evaluation-owned spans retain that compatibility metric, while
+    dashboard, saved-query, alert, incident, annotation, and live-update spans
+    accept bounded query, partial, unavailable, and failure outcomes without
+    coupling behavior to evaluation label vocabulary.
+  - >-
+    Validation spans use operation=validate, positive measured duration, no
+    database dependency, and validation/not-found/provider-unavailable error
+    codes. Repository paths distinguish conflict, provider-unavailable, and
+    database failures for all five operations services.
+  - >-
+    Evaluation regression cursors now emit the public Cursor-safe ev2_ prefix
+    with URL-safe characters and the shared 1024-character maximum. Decoding
+    preserves kind binding and the created-at, identifier, and version
+    triple-key semantics, while accepting legacy ev1. cursors so existing
+    traversals remain resumable. Maximum-length (64-character) versions,
+    malformed values, overlong values, and wrong-kind cursors are covered by
+    production adapter tests.
+  - >-
+    Saved-query execution cursors now emit sq2_ with an exact closed payload,
+    query kind/id/version binding, canonical URL-safe decoding, and a hard
+    1024-character envelope limit. Legacy sq1. values remain input-only and
+    strictly bounded. Provider cursors that cannot fit the wrapped public
+    cursor are classified as incompatible rather than emitted.
+  - >-
+    Storage cursors use canonical Base64 validation, duplicate-key rejection,
+    exact ev2 payload keys, non-null kind binding, and explicit history versus
+    collection expectations. Legacy ev1. payloads are accepted only in their
+    bounded historical shape; appended separators and non-canonical encodings
+    are rejected. API execution admission applies the same bounded prefix and
+    character checks before service dispatch.
+  - >-
+    Because legacy ev1. payloads have no kind field, the storage adapter now
+    accepts them only when the caller explicitly selects history_page. Every
+    ordinary collection, including jobs and regressions, rejects the same
+    canonical legacy cursor rather than inferring a kind or allowing a
+    cross-context replay.
+  - >-
+    Alert create/list/set/acknowledge/suppress/clear paths now measure
+    prevalidation, exact-reference reads, and writes. PostgreSQL connection,
+    timeout, conflict, and database failures remain dependency=postgresql with
+    failure outcomes; only configured public reference-port failures use the
+    dependency-free unavailable classification.
+  - >-
+    Incident validation spans never use a synthetic transition state in the
+    incident transition counter. Invalid transitions preserve IncidentError,
+    record operation=validate with a positive duration, and omit the counter
+    event because no contract state was observed. Alert evaluation count is
+    emitted only by evaluate_once; alert CRUD spans do not increment it.
+  - >-
+    Alert completion reads cadence only from the validated rule JSON, applies
+    bounded exponential failure backoff, and repeats owner/token/unexpired
+    lease predicates in the atomic schedule update. Expiry takeover, conflict,
+    completion, backlog, oldest-due lag, lease outcomes, and content-free
+    audit entries are recorded without exposing request data.
+  - >-
+    Memory and PostgreSQL alert-instance replacements use the current storage
+    row under a lock and merge occurrence, acknowledgement, suppression, and
+    first-observed state. Acknowledgement uses the same expected-version fence
+    so concurrent evaluation cannot erase owner state.
+  - >-
+    Incident related alerts and evidence resolve exact alert-instance, run,
+    deployment, evaluation, regression, and component-health identities via
+    typed owning public ports. Analytics-snapshot references remain explicit
+    unavailable because no owning exact-reference port exists; no latest-state
+    inference or sibling-table access is used.
+  - >-
+    Operations composition now exposes a closed OperationResourceType public
+    facade and an exact-reference method; raw providers remain private. API,
+    worker, CLI, and scheduler module registry edges explicitly depend on the
+    operations public module and its provider.
+  - >-
+    Operations history is projected from the durable PostgreSQL audit table
+    with an opaque occurredAt/auditId keyset cursor. Memory composition mirrors
+    the same content-free audit surface for deterministic tests.
+  - >-
+    Operational SSE maintains a sustained stream until disconnect, performs
+    periodic session reauthorization, persists exclusive catch-up, emits
+    replacement backlog/replay-lag gauges, and records exactly one terminal
+    failure/reauth/disconnect outcome and live-update span without URLs or
+    content.
+  - >-
+    Acknowledgement admission is one repository-level atomic command. It fences
+    the exact instance version before mutation, updates the instance and
+    acknowledgement plus content-free audit/live events in one transaction,
+    returns an exact replay with no new events, and rejects changed intent
+    without state mutation in both memory and PostgreSQL adapters.
+  - >-
+    Scheduler backlog and oldest-due values use replacement gauge writes;
+    PostgreSQL recovery metrics and lease-recovered audit records occur only
+    for actual expired lease takeover. Alerting manifests own all scheduler
+    metrics while annotations own only annotation metrics.
+  - >-
+    Dashboard, saved-query, alert, incident, and annotation boundaries record
+    measured bounded spans with truthful success, partial, unavailable, and
+    failure outcomes, including validation and dependency paths. History maps
+    failure, conflict, and recovery outcomes to existing closed contract
+    change values without exposing content.
+  - >-
+    Saved-query definitions now enforce the observatory-v1 union vocabularies,
+    safe component/model/dimension values, UTC creation timestamps, regression
+    resourceId/resourceVersion references, and explicit regression_outcome
+    facets. The execution service resolves one exact version and dispatches
+    only bounded definitions through the public query/evaluation ports for all
+    six query kinds, returning closed complete/partial/unavailable/incompatible
+    envelopes with no-store API responses.
+  - >-
+    Dashboard creation resolves every panel's exact saved-query identity using
+    the operations facade before persistence; missing or stale versions are
+    rejected without direct sibling storage access. Resource cursors carry an
+    opaque snapshot boundary and filter digest, and both memory and PostgreSQL
+    adapters reject mismatched filters while excluding rows inserted after the
+    first page snapshot.
+  - >-
+    Alert evaluation processes bounded analytics series, derives grouping values
+    from the returned dimensions, applies minimum sample and inclusive stale
+    boundary rules, and recomputes suppression on every observation while
+    retaining acknowledgement and occurrence history.
+  - >-
+    Saved-query execution wraps provider-owned continuation cursors in a
+    query/version/kind-bound opaque envelope; cursors cannot be replayed across
+    query kinds or exact versions. Analytics facets and requested windows are
+    forwarded unchanged, multi-value run/trace criteria are expanded through
+    bounded public query calls, and regression outcomes/references remain
+    closed and exact.
+  - >-
+    Provider result envelopes are projected through strict per-kind bounded
+    metadata validators before REST exposure. Unknown, private, oversized, or
+    malformed fields become dependency-free incompatible results; provider
+    outages remain explicit unavailable outcomes. Definition lookup and query
+    execution spans use separate PostgreSQL/provider dependencies and bounded
+    operation/outcome labels, with diagnostic failures unable to affect query
+    behavior.
+  - >-
+    Memory and PostgreSQL resource pages now carry repository-owned monotonic
+    visibility revisions and filter-integrity data in opaque cursors. Inserts
+    after the captured revision remain excluded, while a post-snapshot delete
+    or saved-query version replacement that makes the immutable traversal
+    unavailable returns a deterministic conflict instead of silently drifting.
+  - >-
+    Alert grouping requires each configured dimension to be present in the
+    exact provider series and validates every dimension value against the
+    closed safe-label grammar. Missing or incompatible evidence maps to
+    contract-valid no_data/inconclusive instance states while retaining the
+    original evidenceState; transition metrics use only valid instance states.
+  - >-
+    Provider execution results are now projected against exact closed
+    observatory-v1 per-kind schemas. Required fields, scalar types, enums,
+    identifiers, timestamps, nested keys, collection limits, and metadata-only
+    privacy guards are checked; public evaluation result identifiers remain
+    valid even though generic content-bearing result keys are prohibited.
+  - >-
+    The result projector now recursively validates every contract-defined
+    analytics series, summary, point, facet, unavailable signal, comparison
+    marker/component/measurement/span/integrity/alignment value, and regression
+    comparison/evidence/attribution value. It receives the normalized saved
+    definition so effective page, series, and point limits are enforced rather
+    than only global maxima. The prompt-bundle exception is restricted to the
+    exact ComparisonMarker wrapper and its revision grammar.
+  - >-
+    The strict result privacy guard permits only the contract-defined
+    RunComparison metadata keys promptRevision and promptBundleRevision from
+    the otherwise sensitive prompt-key family. All other prompt/content,
+    credential, endpoint, token, and private-field keys remain rejected before
+    exact per-kind projection.
+    - >-
+      Run and trace saved-query execution performs one bounded provider call per
+      page, forwards the requested UTC window, applies closed multi-value
+      disjunctions locally without a Cartesian call expansion, and wraps the
+      provider continuation with exact query identity. Regression filters compare
+      both resource ID and resource version.
+  - >-
+    Regression saved-query execution also forwards normalized UTC from/to
+    bounds, decision, exact experiment resource references, cursor, and page
+    limit to the public evaluation query port. Saved-query provider TimeoutError
+    is classified separately as provider_timeout rather than
+    provider_unavailable. Alert definition reads are measured as PostgreSQL
+    boundaries, provider reads as ClickHouse boundaries, and malformed evidence
+    is explicitly incompatible without leaking diagnostic fields into evidence.
+  - >-
+    Production alert grouping is limited to one analytics-representable facet.
+    The exact saved-query groupBy must match it, facet values use the same
+    private-aware validator as admission, and incompatible evidence is not
+    persisted or assigned an `all` grouping identity.
+  - >-
+    PostgreSQL operations mutations and audit records consume the same
+    service-owned revision sequence. Current-version replacement is locked and
+    atomic; continuation checks detect post-snapshot deletes and replacements
+    by exact resource identity without false conflicts from unrelated audit
+    activity. New resource inserts remain snapshot-stable.
+    - >-
+      PostgreSQL mutation and first-page snapshot transactions acquire a
+    service-owned transaction-scoped advisory revision lock before sequence
+    allocation or revision reads; per-resource locks serialize concurrent
+    first-version creation and replacements. Revision capture, invalidation
+    check, and page select execute on the same locked connection, so a sequence
+      value cannot expose an uncommitted writer as a later-page member.
+  - >-
+    The final nested projector hardening enforces contract-sized count bounds,
+    environment facet grammar, unique comparison partial reasons, and boolean
+    rejection for integer counters. Effective analytics query vocabulary and
+    normalized facet filters must match the saved definition exactly; the
+    prompt-bundle wrapper admits only the RevisionIdentifier character grammar.
+  - >-
+    The operations CLI list command now calls the typed ObservatoryOperationsFacade,
+    keeping repository providers private and preserving the closed resource-kind
+    boundary.
+  - >-
+    Revision projection follows the OpenAPI RevisionIdentifier grammar exactly:
+    prompt-v1 is admitted in semantic prompt revision fields and prompt
+    attribution bindings, while colon-bearing config:a and private segments are
+    rejected. Alert operation telemetry has a dedicated bounded counter, and
+    saved-query stale freshness records outcome=stale.
+  - >-
+    PostgresEvaluationQueryBackend now exposes the regressions collection through
+    the public evaluation-query adapter. It requires an aware UTC from/to window,
+    applies bounded decision/outcome filters and exact experiment ID/version
+    pairs before keyset pagination, and never predicates experiment searches on
+    baseline identity columns. The opaque cursor maps regression IDs and the
+    adapter returns only the stored metadata projection.
+  - >-
+    Saved-query regression post-filtering now treats experimentReferences as
+    experiment-only identities; a matching baseline reference cannot satisfy the
+    query even when the provider returns both sides of a regression envelope.
+  - >-
+    Regression continuation cursors now carry the complete created-at,
+    regression-id, and regression-version keyset. SQL ordering and predicates
+    use the same three-part descending key, so same-time versions cannot be
+    skipped or replayed.
+  - >-
+    Closed integer admissions reject booleans for saved-query limits,
+    dashboard panel positions, and alert condition bounds. Alert thresholds
+    require finite numbers, and comparison scan rows reject boolean or
+    out-of-range counters.
+  - >-
+    Recursive result privacy validation recognizes prompt-v1/prompt-v2 only in
+    exact RevisionIdentifier contexts, including attribution before/after
+    revisions; free-form prompt-bearing values remain rejected.
+  - >-
+    Alert evidence queries emit the bounded alert-operation counter for every
+    evidence outcome alongside a measured query span. Local saved-query
+    incompatibility is dependency-free validation, while malformed provider
+    output remains a ClickHouse malformed-evidence outcome.
+  - >-
+    Removed stale operations-provider edges from the legacy adapters.query
+    registry entry; it now retains only contract, query, and ports dependencies.
+risks:
+  - >-
+    The production query adapter currently exposes deterministic unavailable
+    evidence when a saved query cannot be resolved through its public query
+    port; this preserves explicit missing evidence and never infers a value.
+resolved:
+  - >-
+    The handoff-time AlertCondition.groupBy mismatch is resolved in the
+    current shared tree: observatory-v1 now constrains the new field to zero
+    or one allowlisted facet, the generated Angular client was regenerated,
+    and contract, producer-conformance, and aggregate checks pass against
+    that boundary. No four-facet provider implementation is required.
+unresolved: []

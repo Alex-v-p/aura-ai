@@ -1,0 +1,271 @@
+id: AURA-0070
+title: Add governed conversational document retrieval and citations
+status: integrated
+change_class: repository_governance
+intent: >
+  Let the built-in Aura agent search the authenticated owner's ready document
+  library through one bounded read-only tool and return validated, accessible
+  document citations, while treating all retrieved text as untrusted evidence,
+  preserving the one-tool-call run budget, and keeping custom agents denied by
+  default.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved Aura-managed Garage uploads remain the only v1 document source with no mounted filesystem SMB Nextcloud arbitrary URL OCR image interpretation sharing attachment or replacement behavior
+    - Owner-approved document.search@1 is a read-only owner-bound search over the entire ready library and preserves the existing maximum of one tool call per run
+    - Owner-approved successor built-in Aura tool policy and agent revision grant document.search@1 while all historical revisions remain immutable and custom agents remain deny-by-default
+    - Owner-approved structured citations persist document identity and page-or-section locator only and never duplicate excerpts filenames queries object keys or original content
+    - Owner-approved citation links resolve only to the existing authorized Aura Web document detail route
+    - Document text is untrusted evidence and cannot change policy tools permissions prompts system behavior or long-term memory
+    - Full-stack acceptance diagnosis authorizes the existing document-parser service entrypoint to use the dependency-bearing project virtualenv interpreter because the system interpreter cannot import the pinned PDF parser dependency
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - AGT-014
+  - RUN-007
+  - CTX-009
+  - KNO-007
+  - KNO-013
+  - KNO-014
+  - KNO-017
+  - KNO-019
+  - KNO-020
+  - KNO-030
+  - TOL-001
+  - TOL-002
+  - TOL-005
+  - TOL-008
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.runs.v1
+  - aura-api-client.generated
+  - aura-core.runtime.tools
+  - aura-core.execution.runs
+  - aura-core.interaction.conversations
+  - aura-core.interaction.agents
+  - aura-core.knowledge.documents.public-api
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.platform.telemetry
+  - aura-web.interaction.conversations
+  - aura-web.interaction.agents
+  - aura-web.e2e
+  - platform.compose-e2e-fixtures
+  - platform.compose-topology
+  - evaluation.document-retrieval
+  - repository.module-registry
+allowed_paths:
+  - work-items/active/AURA-0070.yaml
+  - work-items/archived/AURA-0070.yaml
+  - docs/specifications/agents-and-execution.md
+  - docs/specifications/memory-and-knowledge.md
+  - docs/specifications/tools-automation-and-integrations.md
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/runs/v1/run-events.schema.json
+  - services/aura-core/migrations/versions/0020_document_search_tool_citations.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/bootstrap/document_uow.py
+  - services/aura-core/src/aura_core/domains/execution/runs/**
+  - services/aura-core/src/aura_core/domains/interaction/agents/**
+  - services/aura-core/src/aura_core/domains/interaction/conversations/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/ports.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/tools.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-core/resources/component-manifests/document-retrieval.yaml
+  - services/aura-core/resources/component-manifests/tool-execution.yaml
+  - services/aura-core/resources/component-manifests/tool-selection.yaml
+  - services/aura-core/resources/component-manifests/policy-evaluation.yaml
+  - services/aura-core/tests/fixtures/documents/**
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_document_retrieval.py
+  - services/aura-core/tests/test_document_sql.py
+  - services/aura-core/tests/test_migration_0020_document_search_tool_citations.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_prompting_runtime.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_tool_evaluation.py
+  - services/aura-core/tests/test_tool_runtime.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_document_api.py
+  - frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/interaction/agents/**
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/documents.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - compose.yaml
+  - deploy/compose/e2e/fake_provider.py
+  - deploy/compose/e2e/test_fake_provider.py
+  - deploy/compose/e2e/external-aura.yaml
+  - deploy/compose/e2e/local-aura.yaml
+  - deploy/compose/run-full-stack-e2e.sh
+  - deploy/compose/test_topology.py
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/providers/object_storage/**
+  - frontend/libs/aura/knowledge/documents/**
+  - frontend/libs/observatory/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.conversations
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.document_retrieval
+    - aura.runtime.tool_selection
+    - aura.runtime.policy_evaluation
+    - aura.runtime.tool_execution
+  required_metrics:
+    - document_retrieval_duration_ms
+    - document_retrieval_candidate_count
+    - document_search_tool_outcome
+    - document_citation_validation_outcome
+  required_evaluators:
+    - document_recall
+    - document_chunk_recall
+    - document_retrieval_ranking
+    - document_citation_validity
+    - document_irrelevant_context_rate
+    - document_prompt_injection_resistance
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - document.search@1 fixes the owner from the admitted run and cannot accept an owner document identifier raw-object request lifecycle override or caller-selected result limit.
+    - Only ready owner documents can produce evidence; failed deleting deleted and cross-owner documents remain unavailable without existence disclosure.
+    - Queries excerpts filenames original content object keys embeddings owner identity provider payloads prompts responses and hidden reasoning never enter events audit metadata logs traces metrics or evaluation capture.
+    - Retrieved document text is explicitly delimited untrusted evidence and cannot create grants invoke another tool alter system or policy instructions or write long-term memory.
+    - Citation markers are accepted only for opaque evidence identifiers returned by document.search@1 during that exact run; invalid invented stale duplicate or malformed identifiers are discarded.
+    - Persisted citations contain only document identity and bounded page-or-section locator; Aura Web constructs authorized internal links and never trusts model-provided URLs.
+    - Historical agent and tool-policy revisions remain immutable and custom agents receive no automatic grant.
+    - Authenticated citation targets and document responses remain outside Workbox caches IndexedDB localStorage sessionStorage URLs logs and browser telemetry.
+  data_classes:
+    - private_document_content
+    - private_document_filename_and_metadata
+    - private_document_query_and_excerpt
+    - private_document_embeddings
+    - owner_identity
+    - run_scoped_evidence_identifiers
+    - metadata_only_document_citations
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The registry exposes exactly one additive document.search@1 read tool with a closed query-only input and bounded hybrid result schema containing opaque evidence identifiers document identifiers display names excerpts and page-or-section locators.
+  - The run coordinator binds document search to the admitted principal and ready library fixes retrieval and context limits server-side and preserves the existing maximum of one tool call followed by one tools-disabled synthesis request.
+  - Failed deleting deleted and cross-owner documents cannot produce tool evidence citations preview or download access and no raw object path is reachable from the tool.
+  - A new immutable built-in Aura tool-policy and agent revision grant document.search@1 alongside historical grants without modifying older rows conversations or revisions and without granting any custom agent.
+  - Assistant message and run response contracts add optional structured document citations that contain only document identity display label and bounded page-or-section locator while remaining backward compatible for historical messages and clients.
+  - Core accepts citations only when their opaque evidence identifiers were returned by document.search@1 in the same run discards malformed invented stale and duplicate markers and records only metadata-safe validation outcomes.
+  - Document excerpts are rendered to the model as bounded explicitly delimited untrusted evidence and embedded instructions cannot widen grants change policy trigger tools affect system behavior or enter automatic long-term memory extraction.
+  - Aura Web renders validated citations as keyboard-accessible source links constructed from document identifiers to the authorized /documents/:id detail route with readable locator text and without placing private data in URLs durable browser storage caches logs or telemetry.
+  - Labelled PDF DOCX Markdown and plain-text fixtures measure document recall chunk recall ranking citation validity irrelevant-context rate and prompt-injection resistance without lowering existing thresholds or protected baselines.
+  - Metadata-only manifests telemetry and evaluations distinguish search success empty unavailable denied invalid-citation and injection-resistance outcomes without capturing query filename excerpt content owner credential object key embedding prompt response or provider payload.
+  - Full-stack acceptance uploads each supported format waits for ready asks Aura a grounded question opens its citation deletes the document and verifies that it is no longer searchable downloadable or citable.
+  - No filesystem SMB Nextcloud URL source OCR image interpretation XLSX PPTX sharing version history conversation attachment automatic memory extraction new service package framework or tool-call-budget increase is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0070.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0070.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0070.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0070.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0070.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run pyright services/aura-core
+  - uv run ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e/fake_provider.py
+  - uv run pytest deploy/compose/e2e/test_fake_provider.py
+  - uv run pytest services/aura-core/tests/test_conversations.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_document_retrieval.py services/aura-core/tests/test_document_sql.py services/aura-core/tests/test_migration_0020_document_search_tool_citations.py services/aura-core/tests/test_prompting_runtime.py services/aura-core/tests/test_run_events.py services/aura-core/tests/test_tool_evaluation.py services/aura-core/tests/test_tool_runtime.py services/aura-core/tests/test_versioned_agents.py services/aura-core/tests/system/test_api_conversation_flow.py services/aura-core/tests/system/test_document_api.py
+  - pnpm --dir frontend exec nx check-generated aura-api-client
+  - pnpm --dir frontend exec nx lint aura-api-client
+  - pnpm --dir frontend exec nx test aura-conversations
+  - pnpm --dir frontend exec nx lint aura-conversations
+  - pnpm --dir frontend exec nx test aura-agents
+  - pnpm --dir frontend exec nx lint aura-agents
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/documents.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - python3 deploy/compose/test_topology.py
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

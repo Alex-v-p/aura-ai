@@ -1,0 +1,56 @@
+agent: security_privacy_reviewer
+work_item: AURA-0105
+verdict: PASS
+checked:
+  - >-
+    Read the Aura review skill, approved AURA-0105 work item, platform handoff,
+    repository guidance, applicable architecture, Observatory specification,
+    ADR-0013, and the complete scoped topology-test diff. Treated concurrent
+    AURA-0098 files as unrelated shared-worktree state.
+  - >-
+    Verified service_block matches top-level Compose service declarations and
+    the corrected observatory-garage-bootstrap extraction ends immediately at
+    aura-evaluation-runner-garage-bootstrap. The worker identity assertions can
+    no longer consume the runner's legitimate read grant.
+  - >-
+    Verified the Observatory worker bootstrap assertions remain fail-closed:
+    they require the worker-specific access key and secret, the private
+    observatory-object-storage network, write grant, explicit read and owner
+    denial, rejection of unexpected bucket grants, and exact compact
+    permission flag W.
+  - >-
+    Verified the evaluation runner bootstrap is independently extracted and
+    requires only its runner-specific Garage key pair, an explicit read-write
+    grant, owner denial, exact compact permission flag RW, the private
+    object-storage network, and successful completion of the Observatory
+    worker bootstrap. It explicitly excludes both worker and API access-key
+    names.
+  - >-
+    Verified the Observatory API bootstrap remains independently bounded and
+    requires the API-specific key pair, write grant, explicit read and owner
+    denial, rejection of unexpected bucket grants, and exact compact
+    permission flag W.
+  - >-
+    Verified the runtime Observatory API is now inspected through its own
+    service block and contains its distinct API Garage key pair, the private
+    object-storage network, and the API bootstrap dependency. Parsed Compose
+    state confirms it contains no worker, judge, runner, or Core Garage key.
+  - >-
+    Verified the runtime Observatory worker retains only its worker Garage key
+    pair and private object-storage network and does not receive the API key.
+    No production Compose credential, grant, network, dependency, secret
+    handling, or service definition changed under AURA-0105.
+  - >-
+    Ran the focused Garage topology regression successfully and the complete
+    static Compose topology suite successfully with 50 tests. Ruff, Compose
+    profile rendering, work-item validation, repository-shape validation,
+    service-isolation validation, contract-change validation, baseline
+    protection, and git diff validation passed.
+  - >-
+    validate-changed-paths reported only concurrent AURA-0098 paths outside
+    AURA-0105 allowed_paths. The AURA-0105 implementation itself is confined to
+    deploy/compose/test_topology.py and authorized governance artifacts, so the
+    shared-worktree failure is not an AURA-0105 security or privacy finding.
+findings: []
+risks: []
+unresolved: []

@@ -1,0 +1,37 @@
+agent: architecture_guardian
+work_item: AURA-0104
+verdict: PASS
+checked:
+  - >-
+    Verified the final manifest dependency is garage, matching the existing
+    evaluation-artifact-storage manifest and composed evaluation artifact
+    bucket; no run-evidence dependency remains.
+  - >-
+    Reconfirmed artifact metadata and storage are separately injected through
+    narrow ports, definition commands use the typed command port, judge
+    definitions use their typed port, and no repository, getattr, or Any-cast
+    reach-through remains in the corrected admission paths.
+  - >-
+    Reconfirmed the evaluation API module declares its direct
+    evaluation-definitions, local-judges, and ports dependencies.
+  - >-
+    Reconfirmed migration 0015 is Observatory-owned and follows the existing
+    PostgreSQL migration chain.
+  - >-
+    Reconfirmed the Observatory API uses a distinct write-only Garage identity
+    with no read or owner grant and no Core, worker, or judge credentials.
+  - >-
+    Reconfirmed no Aura Core, Aura Web, Aura feature-library, shared frontend,
+    or Observatory feature-library files changed.
+  - >-
+    Work-item, changed-path, module-registry, service-isolation,
+    frontend-boundary, and whitespace checks passed after correction. No ADR
+    is required because the implementation remains within accepted Observatory
+    ownership, REST, PostgreSQL, Garage, provider-isolation, and frontend
+    product boundaries.
+findings: []
+risks:
+  - >-
+    AURA-0098 still owns composed end-to-end resilience and causal recovery
+    acceptance; this PASS applies only to AURA-0104 architecture conformance.
+unresolved: []

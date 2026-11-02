@@ -1,0 +1,32 @@
+agent: architecture_guardian
+work_item: AURA-0094
+verdict: PASS
+checked:
+  - >-
+    Re-read the active work item, architecture handover, system context,
+    module-boundary rules, ADR-0013, ADR-0015, prior architecture review,
+    implementation handoffs, integration report, module registration, and the
+    current diff.
+  - >-
+    Verified the explicit owner decision dated 2026-10-21 accepts
+    provider-unavailable behavior for this checkpoint while preserving the
+    internal fail-closed network, strict deployment-owned origin allowlist,
+    cleared proxy configuration, and absence of cloud or arbitrary egress.
+  - >-
+    Verified the owner decision introduces no proxy, sidecar, new deployable
+    service, host networking, privileged capability, general egress, or other
+    trust-boundary change requiring an ADR.
+  - >-
+    Verified provider availability is optional: local-judge unavailability
+    does not affect Core, Observatory API readiness, telemetry ingestion, or
+    ordinary evaluation dispatch and result consumption.
+  - >-
+    Verified all prior application architecture findings remain resolved:
+    Core and Observatory remain isolated; Observatory owns its state and
+    credentials; provider dependencies point inward through typed ports; the
+    worker entrypoint remains orchestration-only; evaluation-v1 remains
+    authoritative; and no frontend or public API boundary changed.
+  - >-
+    Work-item, changed-path, repository-shape, module-registry, and
+    service-isolation validators passed.
+findings: []

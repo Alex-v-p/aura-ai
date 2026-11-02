@@ -1,0 +1,33 @@
+agent: integration_maintainer
+work_item: AURA-0075
+status: integrated
+integrated_commits:
+  - d298c21
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0075-general.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0075-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0075.yaml
+  - work-items/handoffs/AURA-0075-core.yaml
+checks:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0075.yaml (passed before archival)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0075.yaml with scoped AURA-0075 paths
+    - implementation handoff and review verdict schema validation
+    - uv run pyright services/aura-core (0 errors, 0 warnings, 0 informations)
+    - uv run ruff check services/aura-core/src services/aura-core/tests/test_conversations.py
+    - uv run pytest services/aura-core/tests/test_conversations.py (71 passed)
+    - git diff --check
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The parent live-Qwen browser validation remains in progress and leaves its
+    explicitly excluded temporary fixture and Playwright files uncommitted in
+    the shared worktree; they are not part of AURA-0075.

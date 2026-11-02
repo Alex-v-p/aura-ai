@@ -1,0 +1,214 @@
+id: AURA-0081
+title: Deliver Observatory Web and full-stack acceptance
+status: approved
+change_class: repository_governance
+intent: >
+  Deliver a separate owner-only Angular Observatory product for live metadata
+  monitoring, trace inspection, component health, and manual retention, then
+  prove the complete Core-to-Collector-to-Observatory-to-browser flow without
+  making Core depend on Observatory availability.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved Observatory Web is a separate Angular product using the observatory-v1 generated transport client and same-origin owner BFF session.
+    - Owner-approved browser persistence is limited to static public shell assets; authenticated Observatory data is never persisted by Workbox or browser storage.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - OBS-002
+  - OBS-003
+  - OBS-006
+  - OBS-007
+  - OBS-008
+  - OBS-009
+  - OBS-010
+  - OBS-011
+  - OBS-025
+  - OBS-035
+  - OBS-036
+  - OBS-038
+  - OBS-039
+ownership_zones:
+  - contracts.openapi.observatory-v1
+  - frontend.platform.observatory-api-client
+  - services.aura-observatory.auth-session
+  - frontend.observatory-web.shell
+  - frontend.observatory.overview
+  - frontend.observatory.runs
+  - frontend.observatory.traces
+  - frontend.observatory.components
+  - frontend.observatory.retention
+  - frontend.observatory.live-state
+  - deployment.observatory-web
+  - deployment.build-context
+  - repository.module-registry
+  - evaluation.observatory-web-full-stack
+allowed_paths:
+  - work-items/active/AURA-0081.yaml
+  - work-items/archived/AURA-0081.yaml
+  - work-items/handoffs/AURA-0081-*.yaml
+  - work-items/reviews/AURA-0081-*.yaml
+  - work-items/integration/AURA-0081.yaml
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/apps/storybook/**
+  - frontend/libs/observatory/**
+  - frontend/libs/platform/observatory-api-client/**
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+  - frontend/eslint.config.mjs
+  - frontend/playwright.config.ts
+  - compose.yaml
+  - .dockerignore
+  - deploy/docker/observatory-web.Dockerfile
+  - deploy/docker/observatory-web.Dockerfile.dockerignore
+  - deploy/docker/aura-web.Dockerfile.dockerignore
+  - deploy/docker/observatory-web.nginx.conf
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - deploy/compose/test_topology.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/path-ownership.yaml
+  - tooling/architecture/validate-repository-shape.py
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/resources/component-manifests/live-updates.yaml
+  - services/aura-observatory/resources/component-manifests/retention.yaml
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/tests/test_aura0079_auth.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/observatory-v1.yaml
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.query_api
+    - aura.observatory.live_updates
+    - aura.observatory.retention
+  required_metrics:
+    - observatory_query_duration_ms
+    - observatory_query_outcome
+    - observatory_sse_connection_count
+    - observatory_sse_replay_count
+    - observatory_retention_action_count
+    - observatory_retention_deleted_count
+    - observatory_retention_failure_count
+  required_evaluators:
+    - observatory_web_accessibility
+    - observatory_web_live_reconciliation
+    - observatory_web_retention_workflow
+    - observatory_full_stack_trace
+    - observatory_outage_core_isolation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every page query live stream and retention command uses the same-origin configured-owner Observatory session and never places credentials in URLs or browser storage.
+    - Workbox Cache Storage localStorage sessionStorage IndexedDB URLs logs and screenshots never persist authenticated API SSE run trace component deployment or retention data.
+    - Retention controls display the affected time range require exact destructive confirmation CSRF and idempotency and expose asynchronous status without reflecting private error details.
+    - Observatory Web imports only Observatory feature libraries the generated transport client and generic shared UI and never imports Aura product features or calls Core directly.
+    - Loading empty disconnected stale partial rejected-data and unavailable states remain metadata-only keyboard accessible and responsive.
+  data_classes:
+    - operational_metadata
+    - opaque_trace_identifiers
+    - opaque_run_identifiers
+    - deployment_metadata
+    - retention_audit_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - frontend_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A separate Angular observatory-web shell and Observatory feature libraries use the observatory-v1 generated transport client and never import Aura product feature libraries.
+  - The overview presents system and ingest health with accepted rejected duplicate malformed and storage-failure state plus clear stale disconnected rejected-data and unavailable handling.
+  - The live and recent-run workspace supports status component model deployment and UTC time filters receives same-origin SSE catch-up from a REST snapshot and visibly marks stale or disconnected data.
+  - Run and trace detail present ordered parent-child spans in a responsive keyboard-accessible tree and waterfall with component duration outcome partial-state and missing-parent semantics.
+  - Component views present catalogue latency error and outcome summaries and trends without inventing or persisting captured content.
+  - Retention settings show the affected time range support delete-before and purge-all require destructive confirmation display asynchronous progress or sanitized failure and refresh every affected view after completion.
+  - Observatory Web persists no authenticated REST or SSE data in Workbox Cache Storage localStorage sessionStorage or IndexedDB and logout clears the owner session state.
+  - The Observatory Web production image serves the Angular shell through the existing loopback-only Compose service and preserves the isolated API database and ingest networks.
+  - Full-stack acceptance creates a real Core run observes its metadata through SSE opens its trace verifies component measurements exercises cutoff deletion and purge-all and confirms Core remains usable while Observatory is stopped.
+  - Responsive loading empty disconnected stale partial rejected-data and service-unavailable states are covered by unit Storybook accessibility and browser acceptance tests.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0081.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0081.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0081.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0081.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0081.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - cd services/aura-observatory && uv run pytest tests/test_aura0079_auth.py
+  - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+  - cd frontend && pnpm exec nx run observatory-api-client:check-generated
+  - cd frontend && pnpm exec nx run observatory-api-client:validate-contract
+  - cd frontend && pnpm exec nx run observatory-api-client:lint
+  - cd frontend && pnpm exec tsc -p libs/platform/observatory-api-client/tsconfig.lib.json --noEmit
+  - cd frontend && pnpm exec nx run observatory-web:lint
+  - cd frontend && pnpm exec nx run observatory-web:test
+  - cd frontend && pnpm exec nx run observatory-web:build:production
+  - cd frontend && pnpm exec tsc --noEmit -p apps/observatory-web/tsconfig.app.json
+  - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+  - cd frontend && pnpm exec nx run storybook:build-storybook
+  - python3 deploy/compose/test_topology.py
+  - docker compose --env-file .env --profile observatory config --quiet
+  - bash deploy/compose/run-observatory-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

@@ -1,0 +1,201 @@
+id: AURA-0037
+title: Add autonomous memory contracts and persistence foundation
+status: integrated
+change_class: repository_governance
+intent: >
+  Establish the versioned owner-scoped memory contract and Core persistence
+  foundation required for autonomous extraction, lifecycle management, hybrid
+  retrieval, and inspectable Aura Web experiences without implementing model
+  extraction, conversational recall, or the memory product UI in this item.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Autonomous Scoped Long-Term Memory plan
+    - Accepted memories use immutable revisions and preserve provenance correction supersession and lifecycle history
+    - Initial scopes are the authenticated owner-wide user scope and individual agent scopes only
+    - Every accepted memory revision receives an embedding while lifecycle metadata determines ordinary retrieval eligibility
+    - PostgreSQL owns canonical memory and embedding-generation state and pgvector remains behind a Core-owned port
+    - Memory records are never automatically deleted and explicit purge retains only content-free audit metadata
+    - Extraction recall maintenance agent memory policies and Aura Web memory surfaces are reserved for later work items
+    - Architecture review requires the new memory roots and dependency edges to be registered in the repository module registry before this checkpoint may integrate
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - MEM-002
+  - MEM-003
+  - MEM-004
+  - MEM-005
+  - MEM-006
+  - MEM-007
+  - MEM-008
+  - MEM-018
+  - MEM-019
+  - MEM-020
+  - MEM-021
+  - MEM-024
+  - MEM-025
+  - MEM-026
+  - AUI-013
+ownership_zones:
+  - aura-core.knowledge.memory
+  - aura-core.migrations
+  - aura-core.bootstrap
+  - aura-core.entrypoints.api
+  - aura-core.platform.database
+  - aura-core.platform.telemetry
+  - contracts.openapi.aura-v1
+  - aura-web.api-client
+  - repository.platform.compose
+  - architecture.module-registry
+allowed_paths:
+  - work-items/active/AURA-0037.yaml
+  - work-items/archived/AURA-0037.yaml
+  - contracts/openapi/aura-v1.yaml
+  - services/aura-core/migrations/versions/0008_memory_foundation.py
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/memories.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/memory-persistence.yaml
+  - services/aura-core/tests/test_memory_domain.py
+  - services/aura-core/tests/test_memory_persistence.py
+  - services/aura-core/tests/test_migration_0008_memory_foundation.py
+  - services/aura-core/tests/system/test_memory_api.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - compose.yaml
+  - deploy/compose/local-http.yaml
+  - deploy/compose/e2e/external-aura.yaml
+  - deploy/compose/e2e/local-aura.yaml
+  - deploy/compose/test_topology.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/tests/test_modules.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/interaction/**
+  - services/aura-core/src/aura_core/domains/execution/**
+  - services/aura-core/src/aura_core/runtime/**
+  - services/aura-core/src/aura_core/providers/**
+  - services/aura-core/src/aura_core/entrypoints/worker/**
+  - frontend/apps/**
+  - frontend/libs/aura/**
+  - frontend/libs/observatory/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.memory_persistence
+  required_metrics:
+    - memory_operation_duration_ms
+    - memory_operation_outcome
+    - memory_lifecycle_status
+    - memory_scope_type
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every read and mutation must remain bound to the authenticated owner issuer and subject
+    - Agent-scoped records must not become readable through an unscoped identifier or list query
+    - Memory text provenance and embeddings must never enter telemetry logs error payloads or content-free purge audit records
+    - Hard purge must require an explicit confirmation phrase and remove canonical text revisions provenance and embeddings transactionally
+    - Credential-like content is not accepted through the manual API and later automatic extraction cannot rely on this API to weaken that rule
+    - Optimistic versions and idempotency keys must prevent lost updates and duplicate revisions
+  data_classes:
+    - private durable memory content
+    - memory provenance and source identifiers
+    - semantic embeddings derived from private memory content
+    - owner and agent scope identifiers
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The OpenAPI contract adds backward-compatible owner-authenticated memory list search detail create correction status pin and purge resources with transport-only generated TypeScript types.
+  - Canonical memory records and immutable revisions remain separate from provenance evidence embedding generations and per-revision embeddings.
+  - Memory types cover episodic semantic procedural preference and system records while scopes are limited to user and agent.
+  - Lifecycle supports active dormant archived disabled disputed and superseded states plus manual pinning optional validity bounds confidence importance and half-life from 0.25 through 3650 days.
+  - PostgreSQL migrations upgrade from revision 0007 and fresh installations create the pgvector extension and Core-owned memory tables constraints indexes and transactional purge support.
+  - Every accepted revision may reference one embedding per generation with model identity digest dimension and timestamps while no provider model name is hard-coded.
+  - API mutations use CSRF idempotency optimistic versions and content-safe errors and all reads are scoped to the authenticated owner.
+  - Corrections append immutable revisions and preserve evidence while state changes do not overwrite canonical revision history.
+  - Purge requires the exact confirmation phrase removes content revisions evidence and embeddings atomically and leaves content-free audit metadata only.
+  - Persistence instrumentation emits stable metadata-only component measurements and never memory text provenance content or vector values.
+  - Compose development and end-to-end PostgreSQL services provide the accepted pgvector PostgreSQL 17 boundary without exposing a new host port or changing service ownership.
+  - In-memory and PostgreSQL adapters expose the same public application behavior and focused contract migration security observability and system tests pass.
+  - Every new Core memory bootstrap and route source has exactly one module-registry owner with reviewed public dependency edges and the module registry validator passes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0037.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0037.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0037.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest tooling.architecture.tests.test_modules -v
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0037.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0037.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run --directory services/aura-core alembic -c alembic.ini history
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

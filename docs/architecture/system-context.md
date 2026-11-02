@@ -42,11 +42,16 @@ Core owns agent, conversation, run, task, memory, knowledge, automation, integra
 
 Observatory owns the component and deployment catalogues, telemetry metadata, datasets, suites, experiments, results, baselines, regressions, dashboards, alerting, incidents, annotations, and retention configuration. High-volume traces and observations use ClickHouse; infrastructure metrics use Prometheus; logs use Loki; large captured artifacts use object storage.
 
-Core applies capture, sampling, and redaction policy before telemetry leaves its boundary. Ordinary Core requests must not depend on Observatory availability or query Observatory storage.
+Core applies capture, sampling, and redaction policy before telemetry leaves its boundary. Ordinary OTLP and SSE are metadata-only. When explicitly enabled by owner deployment policy, Core may also export closed, bounded, exact model-visible and executor-visible run evidence through the separate one-way asynchronous `run-evidence-v1` channel. Observatory stores manifests and deletion truth in its PostgreSQL database and bytes in a dedicated Garage bucket; ClickHouse remains content-free. Ordinary Core requests must not depend on Observatory availability or query Observatory storage.
 
 ## Communication rules
 
 Use direct application calls for ordinary synchronous work and events for decoupled reactions. Durable publication uses a transactional outbox, at-least-once delivery assumptions, idempotent consumers, stable schema versions, and explicit correlation and causation identifiers. The system is event-enabled, not fully event-sourced.
+
+The production run-evidence exporter is bounded and nonblocking. Queue
+pressure, transport loss, Observatory outages, and evidence storage failure
+produce content-free completeness signals and never alter normal execution.
+Aura Web has no Observatory or run-evidence dependency.
 
 ## Related working summaries
 

@@ -1,0 +1,256 @@
+id: AURA-0098
+title: Prove Observatory foundation and Core isolation
+status: integrated
+change_class: evaluation
+intent: >
+  Close the Observatory expansion foundation with disposable composed-stack
+  proof of the real Core-to-Observatory telemetry path, authenticated
+  run/trace/analytics browser behavior, metadata-only privacy controls,
+  deterministic orchestration checks, and Core/Observatory isolation. Live
+  evaluation completion, owner evaluation workflows, and the exhaustive
+  dependency-outage matrix are deferred to separately planned work.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - AURA-0078 through AURA-0097 own the implemented Core telemetry Observatory query evaluation experiment alert incident retention authentication storage and browser capabilities exercised here.
+    - Acceptance uses only disposable project-scoped Compose state fixture credentials and bounded stop restart pause and recovery actions. It never prunes Docker globally touches operator volumes or reads normal deployment secrets.
+    - Existing REST SSE NATS OTLP and object-storage contracts are exercised without additive public contract changes. A verified missing public capability returns ADR_REQUIRED or a separately planned contract item rather than an acceptance-only private seam.
+    - Deterministic orchestration is proven by the focused composed harness. Live browser evaluation completion, local-judge execution, artifact lifecycle, baseline promotion, and owner operations remain follow-up acceptance scope.
+    - Protected repository golden results baselines and thresholds remain unchanged.
+    - Core/Observatory isolation is proven through architecture checks, focused failure-isolation tests, and a real Core run observed through the disposable Observatory stack. Exhaustive dependency stop/restart recovery remains follow-up acceptance scope.
+    - Product fixes are permitted only when a composed acceptance scenario proves a defect in an already authorized AURA-0078 through AURA-0097 boundary; no new service framework package or cross-product dependency is authorized.
+    - Browser acceptance uses real rendered workflows with owner sessions REST snapshots authenticated SSE keyboard operation reduced motion forced colors responsive layouts and browser-persistence inspection.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/telemetry/v2/metadata-observation.schema.json
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/evaluation/v1/evaluation-runner-transport.schema.json
+    - contracts/events/evaluation/v1/evaluation-events.schema.json
+feature_references:
+  - OBS-005
+  - OBS-006
+  - OBS-007
+  - OBS-009
+  - OBS-025
+  - OBS-027
+  - OBS-030
+  - OBS-033
+  - OBS-035
+  - OBS-036
+  - OBS-038
+  - OBS-039
+  - EVA-023
+  - EVA-024
+  - EVA-027
+  - EVA-030
+  - EVA-037
+  - EVA-038
+  - EVA-039
+  - EVA-040
+  - CMP-022
+ownership_zones:
+  - deploy.compose.observatory-acceptance
+  - deploy.compose.evaluation-resilience
+  - services.aura-core.evaluation-acceptance
+  - services.aura-core.telemetry-resilience
+  - services.aura-observatory.evaluation-resilience
+  - services.aura-observatory.operations-resilience
+  - frontend.observatory.full-stack-browser-acceptance
+  - evaluation.aura0098-tests
+  - docs.observatory-operator-runbook
+allowed_paths:
+  - work-items/active/AURA-0098.yaml
+  - work-items/archived/AURA-0098.yaml
+  - work-items/handoffs/AURA-0098-*.yaml
+  - work-items/reviews/AURA-0098-*.yaml
+  - work-items/integration/AURA-0098.yaml
+  - compose.yaml
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - deploy/compose/run-evaluation-orchestration-e2e.sh
+  - deploy/compose/e2e/**
+  - deploy/compose/local-http.yaml
+  - deploy/docker/observatory-web.nginx.conf
+  - frontend/apps/observatory-web-e2e/playwright.config.ts
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-operations.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+  - frontend/libs/observatory/src/lib/**
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/platform/evaluation_transport.py
+  - services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  - services/aura-core/src/aura_core/entrypoints/evaluation_runner/**
+  - services/aura-core/src/aura_core/runtime/replay/**
+  - services/aura-core/tests/test_aura0098_*.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/alerting.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+  - services/aura-observatory/src/aura_observatory/evaluation_experiments.py
+  - services/aura-observatory/src/aura_observatory/evaluation_judges.py
+  - services/aura-observatory/src/aura_observatory/evaluation_live.py
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/evaluation_transport.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/resources/component-manifests/evaluation-orchestration.yaml
+  - services/aura-observatory/resources/component-manifests/alerting.yaml
+  - services/aura-observatory/src/aura_observatory/adapters/alerting.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_experiments.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/local_ollama.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  - services/aura-observatory/tests/test_aura0098_*.py
+  - docs/runbooks/observatory-reliability.md
+  - docs/README.md
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/**
+  - services/aura-core/migrations/**
+  - services/aura-observatory/migrations/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - aura-v1
+    - observatory-v1
+    - telemetry-v2
+    - evaluation-v1
+    - evaluation-runner-transport-v1
+    - evaluation-events-v1
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: true
+  affected_components:
+    - aura.platform.telemetry_export
+    - aura.evaluation.runner
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.query_api
+    - aura.observatory.evaluation_orchestration
+    - aura.observatory.deterministic_evaluators
+    - aura.observatory.evaluation_scheduler
+  required_metrics:
+    - telemetry_export_retry_count
+    - telemetry_export_dropped_count
+    - evaluation_runner_nats_recovery_count
+    - observatory_ingest_worker_heartbeat_age_ms
+    - observatory_query_outcome
+    - observatory_evaluation_dependency_outcome_count
+    - observatory_evaluation_scheduler_heartbeat_age_seconds
+  required_evaluators:
+    - telemetry_export_failure_isolation
+    - observatory_full_stack_trace
+    - evaluation_orchestration_retry_recovery
+    - evaluation_orchestration_core_independence
+  capture_policy: metadata_only production telemetry only
+security_privacy:
+  applicable: true
+  concerns:
+    - Fixture credentials are generated inside ignored mode-0600 disposable directories and never printed committed copied into reports or reused by normal deployments.
+    - Production telemetry SSE URLs logs metrics screenshots reports and browser persistence remain metadata-only and exclude prompts responses artifacts credentials bearer tokens owner identity and arbitrary attributes.
+    - Owner sessions use the existing separate audiences BFF cookies rotation logout CSRF and no-store behavior in the accepted browser path.
+    - Disposable stack actions are project-scoped reversible and bounded; cleanup never uses broad Docker deletion.
+  data_classes:
+    - operational_metadata
+    - evaluation_definition_metadata
+    - owner_session_state
+    - content_free_audit_records
+required_agents:
+  implementation:
+    - platform_worker
+    - core_worker
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A disposable project-scoped composed stack signs the owner into Core and Observatory and completes a real Core run observed through authenticated SSE REST run search ordered trace spans component measurements analytics and comparison without private data leakage.
+  - The accepted browser path covers responsive and accessible run search trace analytics stale partial disconnected and retention behavior, with focused desktop tablet and mobile coverage for adjacent states.
+  - Authenticated operational data remains memory-only and absent from Cache Storage service-worker caches localStorage sessionStorage IndexedDB URLs console output screenshots and acceptance reports.
+  - The focused composed evaluation-orchestration harness proves deterministic success cancellation deadlines duplicate delivery scheduler recovery PostgreSQL recovery NATS recovery and metadata-only diagnostics without requiring the unfinished live browser evaluation round trip.
+  - Core and Observatory retain separate products sessions databases migrations frontends and dependency directions; normal Core execution never imports queries or waits on Observatory.
+  - The disposable runner-ledger gate verifies the real evaluation-runner database identity and required ledger access inside a rolled-back transaction before browser acceptance.
+  - Operator documentation describes startup scoped health diagnosis privacy-safe log collection and disposable fixture cleanup using repository commands only.
+  - No public contract migration dependency protected baseline threshold new deployable host-network workaround external alert delivery cloud judge or broad Docker cleanup is introduced.
+  - Python lint type focused Core Observatory and contract tests frontend lint unit production and Storybook builds focused browser accessibility Compose topology shell validation architecture governance baseline protection foundation acceptance and diff checks pass.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0098.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0098.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0098.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0098.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0098.yaml
+  - bash -n deploy/compose/run-observatory-full-stack-e2e.sh deploy/compose/run-evaluation-orchestration-e2e.sh
+  - docker compose --profile observatory config --quiet
+  - uv run ruff check services/aura-core/src services/aura-core/tests services/aura-observatory/src services/aura-observatory/tests contracts/tests
+  - uv run pyright services/aura-core services/aura-observatory
+  - uv run pytest -q services/aura-core/tests/test_telemetry.py -k 'aura0079_otlp or aura0084_otlp or aura0088_otlp'
+  - uv run pytest -q services/aura-core/tests/test_aura0091_core.py services/aura-core/tests/test_aura0091_evaluation.py services/aura-core/tests/test_aura0092_nats_diagnostics.py services/aura-core/tests/test_aura0093_core.py
+  - uv run pytest -q services/aura-observatory/tests/test_aura0098_observability.py services/aura-observatory/tests/test_aura0098_score_projection.py services/aura-observatory/tests/test_aura0093_score.py services/aura-observatory/tests/test_aura0093_observability.py services/aura-observatory/tests/test_aura0092_orchestration.py services/aura-observatory/tests/test_aura0092_worker.py
+  - pnpm --dir frontend nx lint observatory-web
+  - pnpm --dir frontend nx test observatory
+  - pnpm --dir frontend nx test observatory-api-client
+  - pnpm --dir frontend nx build observatory-web --configuration=production
+  - pnpm --dir frontend nx build storybook --configuration=production
+  - pnpm --dir frontend nx e2e observatory-web-e2e
+  - ./deploy/compose/run-evaluation-orchestration-e2e.sh
+  - AURA_OBSERVATORY_ACCEPTANCE_SCOPE=foundation ./deploy/compose/run-observatory-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions:
+  - Live browser evaluation completion, local-judge execution, authorized artifact lifecycle, baseline and regression workflows, alert and incident workflows, session reset, and the exhaustive dependency outage/recovery matrix are explicitly deferred from AURA-0098 and must be planned as follow-up work before being claimed complete.
+  - The current NATS service remains shared Core infrastructure. A future outage item must report truthful Core dependency failure while that bus is stopped and may not claim normal-run availability.
+  - Any verified need for a new public endpoint event migration service package framework or cross-product dependency returns ADR_REQUIRED or a separately authorized work item; AURA-0098 does not infer that authority from deferred acceptance gaps.

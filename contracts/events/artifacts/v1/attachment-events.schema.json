@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/artifacts/v1/attachment-events.schema.json",
+  "title": "Aura image attachment lifecycle events v1",
+  "description": "Closed metadata-only image attachment lifecycle events carried by the transactional outbox and durable transport. Filenames, media types, byte counts, dimensions, owner identity, image bytes, EXIF, prompts, extracted content, checksums, object keys, storage endpoints, credentials, decoder diagnostics, and provider responses are prohibited.",
+  "$ref": "#/$defs/AttachmentEvent",
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "AttachmentLifecycleStatus": {
+      "type": "string",
+      "enum": ["uploading", "processing", "ready", "failed", "deleting", "deleted"]
+    },
+    "AttachmentEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "eventType",
+        "attachmentId",
+        "uploadId",
+        "status",
+        "attachmentVersion",
+        "storedObjectCount",
+        "occurredAt",
+        "correlationId",
+        "causationId"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "eventId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "eventType": {
+          "type": "string",
+          "enum": [
+            "attachment.upload.created",
+            "attachment.processing",
+            "attachment.ready",
+            "attachment.failed",
+            "attachment.deleting",
+            "attachment.deleted"
+          ]
+        },
+        "attachmentId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "uploadId": {
+          "oneOf": [
+            { "$ref": "#/$defs/Uuid" },
+            { "type": "null" }
+          ],
+          "description": "Opaque upload-session correlation, or null after lifecycle work is detached from the session."
+        },
+        "status": {
+          "$ref": "#/$defs/AttachmentLifecycleStatus"
+        },
+        "attachmentVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "storedObjectCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Bounded count of retained original and normalized derivative objects; no storage identity is exposed."
+        },
+        "occurredAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "correlationId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "causationId": {
+          "$ref": "#/$defs/Uuid"
+        }
+      }
+    }
+  }
+}

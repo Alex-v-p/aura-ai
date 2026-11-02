@@ -1,0 +1,65 @@
+agent: integration_maintainer
+work_item: AURA-0142
+status: integrated
+integrated_commits:
+  - 7d7e0e3
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0142-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0142-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0142-security.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0142-observability.yaml
+conflicts_resolved:
+  - >-
+    Mounted the reviewed artifact service and routes through the existing Core
+    AppState and FastAPI composition roots. No artifact business behavior was
+    added or changed.
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      Reviewed AURA-0142 commit 7d7e0e3 and all four recorded PASS verdicts;
+      no unresolved slice finding remains.
+    - >-
+      Commit-scoped changed-path validation for 7d7e0e3 passed for all 29
+      AURA-0142 paths; the final feature branch is clean, so the branch-wide
+      changed-path validator has no uncommitted paths to validate.
+    - >-
+      Testing AppState composition creates GeneratedArtifactService and
+      exposes every reviewed artifact route through OpenAPI.
+    - >-
+      Targeted Core route/composition import and runtime checks passed.
+    - >-
+      pyright and ruff passed for the integration composition paths.
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-work-item.py passed.
+    - python3 tooling/architecture/validate-contract-changes.py reported no
+      contract changes.
+    - python3 tooling/architecture/validate-generated-sync.py passed.
+    - python3 tooling/architecture/validate-observability.py passed.
+    - python3 tooling/architecture/validate-baseline-protection.py skipped with
+      no protected baseline changes.
+    - git diff --check
+    - >-
+      The exact isolated AURA-0142 artifact and migration suite passed 63 tests
+      with no skips against the repository-supported disposable PostgreSQL
+      dependency.
+    - docker compose config --quiet passed.
+    - >-
+      The aggregate full services/aura-core suite passed 2081 tests with 124
+      existing dependency-gated skips and one pre-existing Authlib warning.
+  failed:
+    []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks: []

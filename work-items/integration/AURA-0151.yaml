@@ -1,0 +1,57 @@
+agent: integration_maintainer
+work_item: AURA-0151
+status: integrated
+integrated_commits:
+  - 7b66f79
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0151-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0151-architecture.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0151-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The AURA-0151 implementation handoff is complete, and all three
+      schema-valid review verdicts are PASS with no findings.
+    - >-
+      The work item passed validation before archival, and changed-path
+      validation covered all nine authorized implementation and work-item
+      paths.
+    - python3 tooling/architecture/validate-contract-changes.py reported no contract changes.
+    - python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      Baseline protection was rerun in an isolated detached worktree containing
+      only AURA-0151 changes and reported no protected baseline or threshold
+      changes; the shared-worktree protected change belongs to concurrent
+      AURA-0148 validation.
+    - >-
+      NX_DAEMON=false pnpm exec nx run-many -t lint test
+      --projects=aura-research,aura-tasks,aura-artifacts passed all six tasks.
+    - NX_DAEMON=false pnpm exec nx run aura-web:build:production passed.
+    - >-
+      The exact three-project Playwright command passed 3 tests across desktop,
+      tablet, and mobile; every route had one main landmark and zero default
+      AxeBuilder violations.
+    - git diff --check passed.
+    - >-
+      The reviewed commit contains only AURA-0151 route templates, focused
+      regressions, its authorized browser discovery entry, and lifecycle
+      evidence; no AURA-0148 files were staged or changed by this integration.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared feature worktree intentionally retains unrelated uncommitted
+    AURA-0148 implementation and validation files, including the continuation
+    of the shared Playwright testMatch expression and the protected evaluation
+    threshold file; they were not staged or modified by AURA-0151 integration.

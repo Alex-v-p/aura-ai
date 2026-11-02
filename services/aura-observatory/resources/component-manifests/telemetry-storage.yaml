@@ -1,0 +1,131 @@
+component:
+  id: aura.observatory.telemetry_storage
+  version: 1.0.0
+  owner: observatory.telemetry_storage
+  category: persistence
+input:
+  schema: metadata-observation-v1-or-v2
+  replayable: true
+output:
+  schema: observatory-storage-result-v1
+dependencies:
+  - postgresql
+  - clickhouse
+metrics:
+  - telemetry_ingest_accepted_count
+  - telemetry_ingest_rejected_count
+  - telemetry_ingest_duplicate_count
+  - telemetry_ingest_storage_failure_count
+  - observatory_ingest_visibility_lag_count
+  - observatory_ingest_storage_duration_ms
+  - observatory_ingest_backlog_count
+  - observatory_ingest_reconciliation_count
+  - observatory_ingest_reconciliation_duration_ms
+metric_semantics:
+  telemetry_ingest_accepted_count: Metadata observations committed to Observatory-owned storage.
+  telemetry_ingest_rejected_count: Contract-invalid observations rejected before storage.
+  telemetry_ingest_duplicate_count: Completed receipt deliveries ignored by stable observation identifier.
+  telemetry_ingest_storage_failure_count: Failed or pending storage deliveries classified without retaining payloads.
+  observatory_ingest_visibility_lag_count: Count of non-contiguous visibility ledger entries behind the committed watermark.
+  observatory_ingest_storage_duration_ms: Bounded duration of storage operations owned by Observatory.
+  observatory_ingest_backlog_count: Count of pending Observatory receipt work, independent of Core and Collector queues.
+  observatory_ingest_reconciliation_count: Bounded recovery outcomes for stale pending receipts.
+  observatory_ingest_reconciliation_duration_ms: Bounded duration of one visibility recovery pass.
+metric_definitions:
+  - name: telemetry_ingest_accepted_count
+    type: counter
+    unit: observations
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: telemetry_ingest_rejected_count
+    type: counter
+    unit: observations
+    labels: []
+    dependencies: [postgresql]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: telemetry_ingest_duplicate_count
+    type: counter
+    unit: observations
+    labels: []
+    dependencies: [postgresql]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: telemetry_ingest_storage_failure_count
+    type: counter
+    unit: observations
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: observatory_ingest_visibility_lag_count
+    type: gauge
+    unit: observations
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: visibility_reconciliation
+    correlation: ingest_sequence
+    export: prometheus
+  - name: observatory_ingest_storage_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: storage_operation
+    correlation: observation_id
+    export: prometheus
+  - name: observatory_ingest_backlog_count
+    type: gauge
+    unit: observations
+    labels: []
+    dependencies: [postgresql]
+    trace: visibility_reconciliation
+    correlation: ingest_sequence
+    export: prometheus
+  - name: observatory_ingest_reconciliation_count
+    type: counter
+    unit: receipts
+    labels: [outcome]
+    dependencies: [postgresql, clickhouse]
+    trace: visibility_reconciliation
+    correlation: ingest_sequence
+    export: prometheus
+  - name: observatory_ingest_reconciliation_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: []
+    dependencies: [postgresql, clickhouse]
+    trace: visibility_reconciliation
+    correlation: worker_instance
+    export: prometheus
+evaluators:
+  - component_manifest_completeness
+  - component_dependency_integrity
+  - observatory_self_monitoring
+  - metadata_observation_contract_rejection
+  - metadata_v2_allowlist
+  - correlation_marker_privacy
+  - telemetry_ingestion_idempotency
+  - run_comparison_bounds
+  - trace_alignment_semantics
+  - observatory_comparison_retention
+  - observatory_service_isolation
+  - observatory_ingest_crash_window_recovery
+  - observatory_snapshot_visibility_consistency
+  - observatory_ingest_bounded_concurrency
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, observation_id]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, bearer, credential, password, private, hash, digest, owner_identity]
+export:
+  sink: clickhouse
+  cadence: per_batch
+  health_counters: [accepted, rejected, duplicate, malformed, storage_failure]

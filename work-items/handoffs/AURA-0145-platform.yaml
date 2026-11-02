@@ -1,0 +1,58 @@
+agent: platform_worker
+work_item: AURA-0145
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0145_platform
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: repository.research-module-registry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - tooling/architecture/modules.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0145.yaml
+    - >-
+      AURA_WORK_ITEM=AURA-0145 AURA_AGENT_ROLE=platform_worker
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0145.yaml --role platform_worker
+      --path tooling/architecture/modules.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Full AURA-0145 Core, migration, observability, and research evaluation
+      suites remain owned by the core and test/evaluation workers.
+decisions:
+  - >-
+    Registered one authoritative module owner for the research package,
+    public API, persistence mapping, and repository adapter. Research
+    coordinator and evaluation behavior are co-located in public.py in the
+    current implementation, so no speculative duplicate registry roots were
+    introduced.
+  - >-
+    Added only dependency edges required by existing imports: the database
+    mapping bootstrap, research UoW, API app and route, API state composition,
+    identifier-only research worker seam, and the durable worker composition
+    (artifact UoW, provider composition, research UoW, research consumer, and
+    task source adapter). The final Core integration also requires the
+    research UoW's task transport and provider-settings seams plus the
+    repository's task contracts and outbox command seams; these are declared
+    explicitly without changing the boundary direction.
+risks: []
+unresolved: []

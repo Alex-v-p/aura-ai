@@ -1,0 +1,73 @@
+agent: platform_worker
+work_item: AURA-0142
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0142_platform
+  worktree: shared-main
+scope:
+  ownership_zone: deploy.garage.generated-artifact-bucket
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/tests/test_aura0142_artifact_garage.py
+  - work-items/handoffs/AURA-0142-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 -m pytest -q -p no:cacheprovider deploy/tests/test_aura0142_artifact_garage.py (5 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check deploy/tests/test_aura0142_artifact_garage.py
+    - docker compose config --quiet (with required non-secret deployment placeholders)
+    - docker compose config --services (artifact bootstrap, Core API, Core worker, and Garage present)
+    - git diff --check
+    - implementation-handoff.schema.json validation for this handoff
+  # The shared feature branch contains concurrent unintegrated AURA-0143 and
+  # AURA-0144 paths, so the repository-wide scope validator reports those
+  # paths against this ticket. The owned paths themselves are all allowed.
+  failed:
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0142.yaml (shared-branch failure:
+      concurrent AURA-0143/AURA-0144 paths are outside this work item)
+  not_run:
+    - full AURA-0142 checks (Integration Maintainer scope)
+    - live Garage bootstrap (requires deployment credentials and state)
+decisions:
+  - >-
+    Added a separate aura-artifacts Garage bootstrap identity for Core. The
+    bucket name is fixed to aura-artifacts so composition cannot diverge from
+    the generated-artifact adapter. It is idempotent across existing key and bucket state, creates the bucket only
+    when absent, grants read/write for object lifecycle operations, denies
+    owner access, and verifies exactly one RW grant after mutation.
+  - >-
+    The bootstrap fails closed when the artifact bucket is absent, aliases the
+    documents, evaluation, or run-evidence bucket, or when the key has any
+    pre-existing unrelated bucket grant. It reads credentials only from
+    Docker secrets, suppresses Garage command output, and unsets secret
+    variables before exit.
+  - >-
+    Core API and worker receive the artifact identity only through file-backed
+    Docker secrets and explicit AURA_ARTIFACT_STORAGE_* settings. Browser,
+    scheduler, parser, provider, and Observatory services receive no artifact
+    credential or bucket configuration.
+  - >-
+    Deployment checks remain topology/static because no deployment secrets or
+    Garage state are available in the worker environment; the focused test
+    covers private networking, service wiring, grant separation, idempotency,
+    and credential non-leakage.
+risks:
+  - >-
+    The Core generated-artifact implementation must bind its storage adapter
+    to AURA_ARTIFACT_STORAGE_* settings and retain the existing document-store
+    identity separately; this handoff intentionally does not change Core code.
+unresolved: []

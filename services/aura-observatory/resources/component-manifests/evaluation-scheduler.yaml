@@ -1,0 +1,78 @@
+component:
+  id: aura.observatory.evaluation_scheduler
+  version: 1.0.0
+  owner: observatory.evaluation_scheduler
+  category: scheduling
+input:
+  schema: evaluation-schedule-metadata-v1
+  replayable: true
+output:
+  schema: evaluation-request-reference-v1
+  replayable: true
+dependencies:
+  - postgresql
+metrics:
+  - observatory_evaluation_worker_heartbeat_age_seconds
+  - observatory_evaluation_scheduler_heartbeat_age_seconds
+  - observatory_evaluation_scheduler_occurrence_count
+  - observatory_evaluation_dependency_outcome_count
+  - observatory_evaluation_operation_duration_ms
+metric_semantics:
+  observatory_evaluation_worker_heartbeat_age_seconds: Age of the dedicated evaluation worker heartbeat.
+  observatory_evaluation_scheduler_heartbeat_age_seconds: Age of the DB-only scheduler heartbeat.
+  observatory_evaluation_scheduler_occurrence_count: Bounded deterministic schedule materializations.
+  observatory_evaluation_dependency_outcome_count: Bounded scheduler dependency outcomes.
+  observatory_evaluation_operation_duration_ms: Duration of scheduler operations.
+metric_definitions:
+  - name: observatory_evaluation_worker_heartbeat_age_seconds
+    type: gauge
+    unit: seconds
+    labels: []
+    dependencies: [postgresql]
+    trace: evaluation_scheduler
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_scheduler_heartbeat_age_seconds
+    type: gauge
+    unit: seconds
+    labels: []
+    dependencies: [postgresql]
+    trace: evaluation_scheduler
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_scheduler_occurrence_count
+    type: counter
+    unit: occurrences
+    labels: [outcome]
+    dependencies: [postgresql]
+    trace: evaluation_scheduler
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_dependency_outcome_count
+    type: counter
+    unit: outcomes
+    labels: [operation, outcome]
+    dependencies: [postgresql]
+    trace: evaluation_scheduler
+    correlation: service
+    export: prometheus
+  - name: observatory_evaluation_operation_duration_ms
+    type: histogram
+    unit: milliseconds
+    labels: [operation]
+    dependencies: [postgresql]
+    trace: evaluation_scheduler
+    correlation: service
+    export: prometheus
+evaluators:
+  - evaluation_orchestration_lease_exclusivity
+  - evaluation_orchestration_core_independence
+capture_policy: metadata_only
+retention: manual_owner_delete_only
+cardinality:
+  metric_attributes: [operation, outcome]
+  trace_only: [trace_id, span_id, parent_span_id, dependency, error_code]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity, bearer, password, object_key, url, uri]
+export:
+  sink: otlp_http_metrics_and_traces
+  cadence: periodic_and_shutdown

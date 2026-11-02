@@ -1,0 +1,110 @@
+agent: test_evaluation_engineer
+work_item: AURA-0116
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0115_test
+  worktree: shared
+scope:
+  ownership_zone: evaluation.selected-run-refresh
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - work-items/handoffs/AURA-0116-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.live_updates
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      Added AURA-0116 browser regression coverage that holds the first selected
+      run detail request, emits 24 rapid run-correlated observation invalidations,
+      releases the first response, and asserts the selected inspector becomes
+      visible with the latest trailing projection.
+    - >-
+      The browser regression asserts exactly two selected-run detail requests
+      (initial plus one trailing refresh), preventing one-request-per-invalidation
+      fanout, and runs an accessibility scan after the latest state settles.
+    - >-
+      Browser regression passed against the root-provided manual Nx server:
+      AURA-0116 fences a late completion from run A after selecting run B;
+      run B remains selected with its 6.20 s projection, and no A refresh is
+      issued.
+    - >-
+      Browser regression passed against the root-provided manual Nx server:
+      AURA-0116 expires the session while a selected-run refresh is pending,
+      clears private navigation and selection, and emits no trailing detail
+      request after the held response is released.
+    - >-
+      Browser regression passed against the root-provided manual Nx server:
+      an invalidation queued while run A was settled is fenced after switching
+      to run B; after the two-second retry delay, A remains at one request and
+      B remains the authoritative 6.20 s selection.
+    - >-
+      Strengthened the bounded missing-trace browser scenario to assert that
+      the selected inspector exits its loading skeleton and exposes the
+      Trace lineage unavailable terminal state.
+    - >-
+      The bounded missing-trace browser scenario passed independently on the
+      manual server, including the non-loading terminal Trace lineage
+      unavailable assertion.
+    - >-
+      The deterministic final-reconciliation browser scenario passed on the
+      manual server: each retry was clock-driven only after its request was
+      observed, the live invalidation arrived while attempt 31 was in flight,
+      and exactly one trailing request produced the selected inspector at
+      attempt 32.
+    - >-
+      cd frontend && corepack pnpm exec nx test observatory --skip-nx-cache:
+      63 tests passed
+    - >-
+      cd frontend && corepack pnpm exec nx lint observatory-web-e2e
+      --skip-nx-cache: 0 errors; one pre-existing warning
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0116.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0116.yaml: changed paths validated
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0116.yaml: no contract changes
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0116.yaml: no protected baseline changes
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Kept the test entirely within the assigned e2e spec and did not edit
+    observatory-store.ts or observatory-store.spec.ts, per the ownership
+    boundary. The fixture's EventSource stub targets only the operational stream
+    and leaves evaluation/operations streams isolated.
+  - >-
+    The test version-tags the first and trailing RunDetail responses so the
+    assertion proves the latest projection wins, not merely that a refresh
+    occurred. It also checks the selected inspector heading before the latest
+    duration settles, covering first-snapshot visibility.
+risks:
+  - >-
+    The focused browser suite is now verified against the root-provided manual
+    server, including deterministic final-attempt ordering and terminal
+    unavailable recovery coverage.
+  - >-
+    The observability obligation now validates against the narrowed
+    aura.observatory.live_updates component identifier.
+unresolved:
+  - >-
+    None for the owned test/evaluation scope.

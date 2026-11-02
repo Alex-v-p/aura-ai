@@ -1,0 +1,59 @@
+agent: integration_maintainer
+work_item: AURA-0137
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0137-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0137-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0137-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0137-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - work-items/archived/AURA-0137.yaml
+  - work-items/integration/AURA-0137.yaml
+checks:
+  passed:
+    - >-
+      All five implementation handoffs are complete, authorized to their
+      ownership zones, schema-valid, and contain no unresolved items after the
+      final composition correction. All four required review artifacts are
+      schema-valid PASS verdicts with no findings.
+    - >-
+      Work-item, changed-path, contract-change, generated-sync,
+      import-boundary, service-isolation, frontend-boundary, module-registry,
+      repository-shape, observability, and baseline-protection checks passed;
+      baseline protection correctly reported no protected changes.
+    - >-
+      The exact required Core contract and workflow matrix passed 387 tests;
+      20 environment-gated tests were skipped. The additional workflow
+      platform-boundary suite passed 4 tests.
+    - >-
+      Required workflow Ruff passed and Pyright reported zero errors, warnings,
+      or informations.
+    - >-
+      Aura API client generation, generated-output verification, and client
+      lint passed. Git whitespace validation passed.
+    - >-
+      The archived work item, implementation handoffs, review verdicts, and
+      integration report validate against their repository schemas.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Four database-backed restart/replay recovery cases remain environment
+    skipped because AURA_0137_DATABASE_URL is not configured; the deterministic
+    in-memory and transaction-boundary coverage passed.
+  - >-
+    AURA-0137 delivers Core execution only. Aura Web Workflow Studio and
+    Observatory aggregate workflow monitoring remain separately governed
+    follow-on work items; per-instance Observatory projection remains ADR-gated.

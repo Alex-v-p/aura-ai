@@ -1,0 +1,342 @@
+id: AURA-0040
+title: Add the memory product experience
+status: integrated
+change_class: repository_governance
+intent: >
+  Let the authenticated Aura owner browse, inspect, correct, govern, review,
+  configure, and understand autonomous memory through versioned Core APIs,
+  generated transport clients, accessible Aura Web surfaces, and replayable
+  memory-activity events without widening memory scope or exposing private
+  content through telemetry or realtime metadata.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/open-decisions.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Autonomous Scoped Long-Term Memory plan
+    - AURA-0037 autonomous memory contracts and persistence foundation
+    - AURA-0038 autonomous extraction and maintenance
+    - AURA-0039 scoped hybrid memory recall
+    - Existing memory list detail creation correction lifecycle pin and purge resources are extended rather than replaced
+    - Existing immutable owner-scoped candidate policy model-configuration embedding-generation reindex recall-metadata and run-event stores remain authoritative
+    - No schema migration is required because this item exposes and composes existing Core-owned durable state and the generic persisted run-event payload
+    - Aura Web memory behavior belongs in a dedicated aura knowledge memory feature library while the shell only composes routes navigation and global providers
+    - The existing versioned run SSE stream gains additive identifier-only memory activity events and remains replayable with Last-Event-ID
+    - Private memory candidate evidence provenance and content are reconciled through owner-scoped HTTP snapshots and never duplicated into realtime event metadata
+    - The run SSE lifecycle may remain open after the conversational run reaches a terminal state only while its durable memory-processing activity is nonterminal and closes after a terminal memory settlement
+    - Reconnect always rebuilds memory activity from authoritative durable run recall processing candidate and memory state before applying later event identifiers
+    - Candidate review may approve an unchanged candidate approve an owner-edited candidate or reject it while reusing AURA-0038 validation embedding idempotency and purge fences
+    - Model selection is explicit and owner-scoped from compatible current Ollama inventory and no model name fallback or default is hard-coded
+    - The provider-neutral model inventory descriptor carries optional provider-observed revision digest capability-verification and embedding-dimension metadata while compatibility defaults remain distinguishable from verified inventory
+    - The Ollama model adapter normalizes provider-observed inventory metadata and the memory product fails closed instead of deriving an artifact digest from a model name or substituting a synthetic embedding dimension
+    - Extraction model changes affect future processing only while embedding model changes start the existing parallel resumable reindex flow and retain the prior active generation until atomic activation
+    - Memory policy edits create immutable policy revisions and an immutable agent revision pins the selected policy; fallback grants never invoke or delegate to the granted agent
+    - Authenticated memory responses event snapshots filters and form state are not persisted in browser offline storage and are excluded from Workbox caching
+    - Household workspace document knowledge delegation and world-model graph behavior remain out of scope
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - AGT-002
+  - AGT-008
+  - AGT-019
+  - RUN-002
+  - MOD-003
+  - MOD-014
+  - MOD-017
+  - MEM-007
+  - MEM-008
+  - MEM-011
+  - MEM-012
+  - MEM-014
+  - MEM-016
+  - MEM-017
+  - MEM-019
+  - MEM-020
+  - MEM-021
+  - MEM-022
+  - MEM-024
+  - MEM-025
+  - MEM-026
+  - MEM-034
+  - AUI-003
+  - AUI-008
+  - AUI-013
+  - AUI-014
+  - AUI-028
+  - AUI-030
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.runs.v1
+  - aura-core.knowledge.memory
+  - aura-core.interaction.agents
+  - aura-core.execution.runs
+  - aura-core.runtime.streaming
+  - aura-core.entrypoints.api
+  - aura-core.entrypoints.worker
+  - aura-core.bootstrap
+  - aura-core.platform.telemetry
+  - aura-web.api-client
+  - aura-web.knowledge.memory
+  - aura-web.interaction.agents
+  - aura-web.interaction.conversations
+  - aura-web.shell
+  - aura-web.e2e
+  - frontend.storybook
+  - architecture.module-registry
+allowed_paths:
+  - work-items/active/AURA-0040.yaml
+  - work-items/archived/AURA-0040.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/runs/v1/run-events.schema.json
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/postgres.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/sql_store.py
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  - services/aura-core/src/aura_core/domains/execution/runs/events.py
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/memories.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/agents.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/models.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/runtime/models/ports.py
+  - services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  - services/aura-core/src/aura_core/runtime/streaming/publisher.py
+  - services/aura-core/src/aura_core/runtime/streaming/subscriptions.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/memory-persistence.yaml
+  - services/aura-core/resources/component-manifests/memory-extraction.yaml
+  - services/aura-core/resources/component-manifests/memory-maintenance.yaml
+  - services/aura-core/resources/component-manifests/stream-delivery.yaml
+  - services/aura-core/resources/component-manifests/agent-configuration.yaml
+  - services/aura-core/tests/test_memory_domain.py
+  - services/aura-core/tests/test_memory_persistence.py
+  - services/aura-core/tests/test_memory_processing.py
+  - services/aura-core/tests/test_memory_maintenance.py
+  - services/aura-core/tests/test_memory_recall.py
+  - services/aura-core/tests/test_memory_evaluation.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/test_streaming.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_ollama.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/system/test_memory_api.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_observability_lifecycle.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - frontend/tsconfig.base.json
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/knowledge/memory/**
+  - frontend/libs/aura/interaction/agents/**
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/app.component.ts
+  - frontend/apps/aura-web/src/app/app.component.spec.ts
+  - frontend/apps/aura-web/src/app/shell/**
+  - frontend/apps/aura-web-e2e/src/memory-product.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/memory-product.stories.ts
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/tests/test_modules.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/**
+  - services/aura-core/src/aura_core/domains/knowledge/world_model/**
+  - services/aura-core/src/aura_core/domains/interaction/personas/**
+  - services/aura-core/src/aura_core/runtime/models/capacity.py
+  - services/aura-core/src/aura_core/runtime/models/gateway.py
+  - services/aura-core/src/aura_core/runtime/models/requests.py
+  - services/aura-core/src/aura_core/runtime/models/router.py
+  - services/aura-core/src/aura_core/runtime/models/streaming.py
+  - services/aura-core/src/aura_core/providers/embeddings/**
+  - services/aura-core/src/aura_core/providers/models/ollama/fake.py
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - frontend/libs/shared/**
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - satellites/**
+  - extensions/**
+  - deploy/**
+  - compose.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.memory_persistence
+    - aura.knowledge.memory_extraction
+    - aura.knowledge.memory_maintenance
+    - aura.interaction.agent_configuration
+    - aura.runtime.stream_delivery
+  required_metrics:
+    - memory_product_operation_duration_ms
+    - memory_product_operation_outcome
+    - memory_candidate_review_duration_ms
+    - memory_candidate_review_outcome
+    - memory_model_configuration_duration_ms
+    - memory_model_configuration_outcome
+    - memory_policy_configuration_duration_ms
+    - memory_policy_configuration_outcome
+    - memory_activity_delivery_duration_ms
+    - memory_activity_delivery_outcome
+    - memory_reindex_progress
+    - sse_reconnects
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every memory candidate configuration policy activity event and mutation read is bound to the authenticated issuer and subject before resolving any supplied identifier
+    - Cross-owner candidate memory run agent policy generation and model-configuration identifier guessing returns the same content-safe not-found outcome and never reveals existence
+    - Candidate approve edit and reject operations use CSRF idempotency optimistic versions and deterministic AURA-0038 credential sensitivity grounding conflict scope and purge-fence validation
+    - Candidate rejection and purged-memory activity never retain or restore rejected evidence content and delayed jobs cannot recreate a purged record
+    - Memory policy revisions and fallback grants remain immutable owner-scoped self-cycle and cross-owner safe and a grant never invokes delegates to or imports configuration from another agent
+    - Model configuration accepts only currently verified compatible local Ollama inventory and resolves provider-observed model revision and digest server-side rather than trusting browser-supplied identity
+    - Compatibility fallback capabilities cannot qualify a model for memory extraction or embedding and missing malformed ambiguous or conflicting provider identity metadata fails closed without a synthetic digest revision or dimension
+    - Embedding model changes retain the old active generation during reindex and mixed dimensions partial generations failed generations or stale configuration versions never become active
+    - Memory activity SSE payloads contain only bounded identifiers action lifecycle scope and reconciliation status and exclude memory text candidate text evidence provenance content vectors prompts responses credentials model payloads and owner subjects
+    - Last-Event-ID replay and activity snapshots require owner authorization deduplicate repeated worker outcomes and never allow an event cursor from another run or owner
+    - Browser filters search terms candidate edits memory content evidence settings and activity detail remain in authenticated memory only and are absent from URLs telemetry logs offline stores service-worker caches and error diagnostics
+    - State-changing API calls use same-origin cookie sessions and origin-aware CSRF protection and bearer credentials never appear in URLs browser storage or SSE parameters
+    - Hard purge remains owner-only requires the exact strong confirmation phrase presents an accessible consequence dialog and retains only content-free audit metadata
+    - Private content rendered in memory revisions evidence candidate review and activity popups is inert text and cannot execute markup issue commands widen policy or confirm an action
+  data_classes:
+    - private durable memory content revisions and correction reasons
+    - private provenance evidence source identifiers and validity history
+    - sensitive memory candidate content confidence scope and review decisions
+    - memory policy revisions and cross-agent fallback grants
+    - extraction and embedding model identity configuration and reindex state
+    - memory recall processing candidate run conversation agent and generation identifiers
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - platform_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 5
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The OpenAPI contract backward-compatibly extends owner-authenticated memory search and detail and adds candidate review memory-model configuration reindex-status agent-memory-policy and per-run memory-activity resources with transport-only generated TypeScript types.
+  - The memory list supports bounded filtering by literal text scope agent kind lifecycle provenance type confidence bounds and time while historical states remain opt-in and every query is owner-scoped before filtering.
+  - Memory detail shows immutable revision history provenance evidence validity decay inputs current relevance embedding generation and dispute or supersession relations without exposing vector values.
+  - Manual creation correction lifecycle disable reactivate archive pin dispute supersession and strong-confirmation purge reuse the established deterministic Core use cases with CSRF idempotency optimistic concurrency content-safe errors and mandatory embedding work for accepted revisions.
+  - Candidate list and detail expose only owner-scoped review candidates and their bounded grounding scope sensitivity confidence importance half-life validity and proposed action metadata.
+  - Candidate approve edit-and-approve and reject commands are idempotent and version-checked and edited candidates rerun credential sensitivity grounding scope conflict lifecycle relation and purge-fence policy before creating reinforcing disputing or superseding memory.
+  - Repeated candidate decisions duplicate HTTP commands worker redelivery and reconnect reconciliation converge on one durable decision one memory action and one activity outcome.
+  - The model-settings API returns current owner configuration compatible current Ollama extraction and embedding inventory active and building generation identity and resumable reindex progress without returning provider endpoints credentials or embedding vectors.
+  - The provider-neutral model descriptor exposes optional provider-observed model revision artifact digest explicit capability verification and embedding dimension without provider payload types or memory-specific semantics crossing the runtime port.
+  - Ollama inventory normalization validates bounded model identifiers digests revisions explicit capabilities and positive embedding dimensions from provider responses and returns unavailable or unverified metadata rather than inventing identity values.
+  - Memory inventory and configuration never hash a model identifier into an artifact digest never substitute dimension one and accept extraction or embedding selection only when the required provider-observed capability identity and dimension metadata is verified.
+  - Extraction selection accepts only an available model with the required structured-output capability and affects future jobs without rewriting prior extraction provenance.
+  - Embedding selection accepts only an available embedding-capable model starts or resumes the AURA-0038 parallel generation reindex records exact verified model identity and leaves the prior generation active until atomic completion.
+  - Repeated embedding-model configuration requests do not create duplicate generations and failed or canceled replacement work leaves the prior active generation available with a clear retryable status.
+  - Agent policy APIs list immutable revisions create a validated revision and attach the selected revision only through a new immutable agent revision using optimistic concurrency.
+  - Agent policy controls cover shared-user read current-agent read shared-user promotion fallback relevance threshold maximum memories context-budget fraction and explicit fallback-agent grants within the AURA-0039 ceilings.
+  - Fallback grant creation rejects self grants duplicates cycles nonexistent agents foreign-owner identifiers and any attempt to turn retrieval permission into delegation or invocation authority.
+  - Per-run memory activity reconciles created reinforced disputed recalled and queued-for-review outcomes from durable recall processing candidate and memory state and never infers successful activity from an undurable worker attempt.
+  - The versioned run-event schema adds an identifier-only memory activity event whose action status scope candidate memory revision policy generation and reconciliation fields are bounded and whose payload contains no private content.
+  - Worker activity publication persists before cross-process fan-out is idempotent for repeated settlements and preserves run conversation correlation causation trace and monotonic stream ordering.
+  - The existing run SSE stream replays memory activity after Last-Event-ID and keeps a terminal conversation stream available only while durable memory processing is nonterminal; snapshot reconciliation repairs missed duplicate reordered and expired-cursor delivery.
+  - A reconnect with an unavailable cursor receives the established content-safe 410 behavior and the Aura Web client reloads the authoritative run and memory-activity snapshots without losing transcript draft selection or popup state.
+  - Aura Web adds a responsive Memory destination implemented in a dedicated feature library with loading empty error retry pagination filter and stable-selection states.
+  - Memory filters cover scope agent kind lifecycle provenance confidence and time and private search and filter state stays in session memory rather than route URLs or durable browser storage.
+  - The Memory detail experience exposes revision comparison evidence validity relevance decay embedding generation relationships and accessible actions to correct pin disable archive dispute supersede or purge the authorized record.
+  - Candidate review supports keyboard-only and screen-reader approve edit reject rescope validation conflict and stale-version recovery without clearing an owner edit after a recoverable failure.
+  - Memory settings list only compatible available Ollama inventory and plainly warn that extraction changes affect future behavior while embedding changes trigger a full resumable reindex that preserves the current active generation until completion.
+  - Agent policy controls identify the immutable policy revision and effective agent revision and explain that foreign-agent fallback grants permit retrieval only and never contact or delegate to that agent.
+  - Assistant message footers show a very small accessible recall indicator only when recalled memory influenced that run and a creation or update indicator only when durable memory activity occurred or requires review.
+  - Activating either footer indicator opens a compact keyboard and screen-reader accessible popup with relevant record scope provenance status and links to inspect correct disable or review it and restores focus when closed.
+  - Popup layout remains usable at desktop tablet and mobile widths without hover-only content clipped actions background focus or inaccessible status changes.
+  - The UI treats memory content candidate evidence provenance and model-provided text as inert untrusted content and never interprets it as policy markup HTML commands or confirmations.
+  - Metadata-only spans metrics and errors distinguish memory browser candidate review configuration policy reindex activity publication delivery replay and reconciliation outcomes without memory text evidence vectors prompts responses credentials search terms or owner subjects.
+  - Contract Core frontend Storybook accessibility focused Playwright Docker Compose and local-identity full-stack tests cover memory browsing correction candidate review settings warnings policy grants indicators popup actions event reconnect and failure recovery.
+  - The generated client remains transport-only all domain decisions remain in Core or the Aura memory feature library and application routes shell and API entrypoints remain thin composition layers.
+  - No migration new deployable service package framework Observatory dependency household or workspace scope document knowledge delegation behavior world-model graph or authenticated offline cache is added.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0040.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0040.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0040.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest tooling.architecture.tests.test_modules -v
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0040.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0040.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_ollama.py services/aura-core/tests/test_memory_product_api.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run --directory services/aura-core alembic -c alembic.ini history
+  - node frontend/libs/platform/aura-api-client/tools/generate-client.mjs --check
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/memory-product.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts --config playwright.config.ts --project=desktop
+  - docker compose config --quiet
+  - docker compose build aura-core-worker aura-core-api aura-web
+  - AURA_E2E_MODE=local-identity sh deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

@@ -1,0 +1,60 @@
+agent: security_privacy_reviewer
+work_item: AURA-0098
+verdict: PASS
+checked:
+  - >-
+    Reviewed the reduced foundation work item, all 52 changed paths, worker
+    handoffs, and the recorded exit-zero foundation run. The accepted browser
+    path uses separate Core and Observatory OIDC clients, origins, session
+    endpoints, and cookies; Observatory mutations retain same-origin CSRF and
+    owner authorization checks.
+  - >-
+    Verified the foundation path remains metadata-only: the synthetic manifest
+    prohibits prompts, responses, content, filenames, tool arguments/results,
+    credentials, tokens, and owner identity; SSE contains invalidation metadata
+    only; retained diagnostics contain finite statuses, timings, counts, keys,
+    and allowlisted categories rather than response bodies or source log lines.
+  - >-
+    Verified browser privacy assertions fail closed across URLs, console output,
+    localStorage, sessionStorage, Cache Storage, IndexedDB, and bounded SSE
+    replay. The exit-zero composed evidence also reports successful service-log
+    and metrics sentinel scans and retention completion.
+  - >-
+    Verified service credentials are generated with cryptographic randomness,
+    written to ignored mode-0600 files, injected by file path, and removed by
+    the default cleanup trap. The deterministic fake-identity password is
+    confined to the disposable fixture. Session probe credentials use stdin,
+    are never placed in argv, and are revoked after use.
+  - >-
+    Verified cleanup is limited to the generated Compose project, label-owned
+    volumes and networks, and its fixture directories. No global prune,
+    operator secret, operator volume, host-network workaround, privilege
+    expansion, or external deployment exposure was introduced.
+  - >-
+    Verified no Aura Web product file changed and Core has no Observatory
+    implementation import or persistence access. Production integration remains
+    the existing one-way bounded OTLP metadata export; the acceptance browser
+    correlates the two public products only as disposable test automation.
+  - >-
+    Re-ran the foundation-scope, capture-boundary, session/credential safety,
+    metadata-only diagnostic, service-isolation, changed-path, and diff checks;
+    all passed. The recorded live foundation run exited zero with browser,
+    privacy, retention, runner-ledger, and project cleanup gates passing.
+findings: []
+risks:
+  - >-
+    AURA_OBSERVATORY_E2E_KEEP_ON_FAILURE=1 intentionally retains a disposable
+    stack and its mode-0600 secret directory for operator diagnosis. This is an
+    explicit opt-in documented with scoped removal steps; default success and
+    failure paths clean the project automatically.
+  - >-
+    Content-bearing evaluation and artifact workflows, owner operations,
+    session reset/restart, and the exhaustive dependency outage/recovery matrix
+    were not accepted by this reduced work item. They require separately
+    authorized follow-up work and fresh security/privacy review before being
+    represented as proven.
+unresolved:
+  - >-
+    No security/privacy blocker remains within the explicit foundation scope.
+    This PASS does not cover the deferred evaluation, artifact, operations, or
+    exhaustive outage/recovery acceptance paths.

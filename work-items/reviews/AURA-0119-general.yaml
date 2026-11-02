@@ -1,0 +1,57 @@
+agent: general_reviewer
+work_item: AURA-0119
+verdict: PASS
+checked:
+  - >-
+    Reviewed the active work item and complete current AURA-0119 implementation
+    across Observatory ingestion, PostgreSQL manifests and deletion state,
+    Garage object persistence, inspection projection, evidence streaming,
+    worker recovery, telemetry, migrations, and Compose topology. Aura Core,
+    Aura Web, frontend packages, contracts, and ClickHouse content storage
+    remain outside the implementation diff.
+  - >-
+    Verified captured evidence is admitted through the exact closed AURA-0117
+    envelope, canonical RFC 8785 bytes, digest and byte-count checks, stable-ID
+    duplicate/collision handling, and a durable orphan intent surrounding the
+    external object write. Concurrent deliveries serialize through PostgreSQL,
+    collisions remain durable, and authoritative captured manifests cannot be
+    committed before object persistence succeeds.
+  - >-
+    Verified inspection pagination uses the stable
+    sequence/captured-at/evidence-ID key, preserves same-step evidence across
+    page boundaries, and derives the page plus completeness summary from one
+    effective PostgreSQL REPEATABLE READ transaction. All summary statements
+    bind the requested run ID, so concurrent inserts cannot mix page and
+    aggregate truth.
+  - >-
+    Verified deletion uses a run-scoped session advisory lock, durable
+    idempotency state, restart recovery, and per-object manifest/count updates
+    in one database transaction after Garage acknowledges deletion. A manifest
+    or count rollback leaves the target captured and retryable, and speculative
+    counts are not persisted by the failure path. Completed deletion retains
+    only content-free manifests and audit state.
+  - >-
+    Verified evidence reads are owner-scoped, bounded and streamed from Garage
+    with digest and length enforcement, no-store and nosniff response policy,
+    approved media only, and correct zero-byte evidence behavior. Metadata-only
+    run invalidations use durable ordered event cursors and contain no evidence
+    content or object keys.
+  - >-
+    Verified adapter and application-service telemetry ownership does not
+    duplicate storage spans or latency samples. Required ingestion, storage,
+    deletion, inspection, failure, and outcome signals remain finite,
+    allowlisted, content-free, and run-correlated where source correlation is
+    available.
+  - >-
+    Re-ran the focused acceptance, regression, and topology suite after the
+    final rollback-count and telemetry fixes: 93 tests passed and one optional
+    environment-backed test skipped. Focused Ruff validation and repository
+    diff whitespace validation also passed.
+findings: []
+risks:
+  - >-
+    The skipped focused test requires its external PostgreSQL integration
+    environment. Production adapter transaction semantics are additionally
+    covered by SQL/connection-fidelity regressions, including the repeatable
+    read snapshot and deletion rollback boundaries.
+unresolved: []

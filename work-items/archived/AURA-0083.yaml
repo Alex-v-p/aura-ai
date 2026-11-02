@@ -1,0 +1,112 @@
+id: AURA-0083
+title: Restore local Observatory login and model-provider connectivity
+status: review
+change_class: infrastructure
+intent: >
+  Make the disposable local stack route both owner login flows and the configured
+  host Ollama provider reliably without weakening service or identity isolation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - Keep separate Core and Observatory OIDC clients, audiences, sessions, and control networks.
+    - Reserve an operator-configurable non-LAN subnet for the browser-facing Core network so local provider traffic cannot be captured by an overlapping Docker route.
+    - Allow the disposable local launcher to manage a loopback-only user service relay when Docker Desktop cannot route directly to an operator-configured LAN Ollama host.
+  contracts: []
+feature_references: []
+ownership_zones:
+  - deployment.local-http
+  - deployment.networking
+  - documentation.local-provider-routing
+  - evaluation.compose-topology
+allowed_paths:
+  - work-items/active/AURA-0083.yaml
+  - work-items/archived/AURA-0083.yaml
+  - work-items/handoffs/AURA-0083-*.yaml
+  - work-items/reviews/AURA-0083-*.yaml
+  - work-items/integration/AURA-0083.yaml
+  - compose.yaml
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/test_topology.py
+  - .env.example
+  - README.md
+  - docs/README.md
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/**
+  - services/**
+  - frontend/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - infra/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: true
+  affected_components:
+    - aura.identity
+    - aura.models.inference
+    - observatory.identity
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Core and Observatory must retain separate identity networks and audiences.
+    - Only the existing API services may reach identity and provider endpoints.
+    - No credentials or model endpoint details may be exposed through browser APIs or committed configuration.
+  data_classes:
+    - authentication_session_metadata
+    - model_inventory_metadata
+required_agents:
+  implementation:
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Observatory owner login returns an Authentik authorization redirect instead of an internal-server error in the disposable local stack.
+  - Aura owner login remains functional with its separate OIDC client and audience.
+  - Core API and worker can reach the operator-configured host Ollama endpoint even when the host LAN uses 192.168.0.0/24.
+  - When explicitly configured, the local launcher starts and stops a loopback-only Ollama relay without exposing the provider on a LAN interface.
+  - The local model inventory contains the models reported by the configured Ollama provider after owner authentication.
+  - Core, Observatory, Authentik, database, session, ingest, and browser-facing network boundaries remain isolated as documented.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0083.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0083.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 deploy/compose/test_topology.py
+  - docker compose --env-file .env --env-file .env.local-http -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml --profile local-identity --profile observatory config --quiet
+  - ./deploy/compose/local-http.sh up
+  - curl --fail-with-body --max-time 10 http://observatory.localhost:4300/api/v1/auth/login?return_to=%2F
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

@@ -1,0 +1,134 @@
+agent: platform_worker
+work_item: AURA-0129
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0129_platform
+  worktree: shared-main
+scope:
+  ownership_zone: platform.google-calendar-oauth; deploy.google-calendar-secrets-and-egress; repository.core-module-registry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/calendar_oauth.py
+  - .env.example
+  - deploy/compose/google-calendar.yaml
+  - tooling/architecture/modules.yaml
+  - work-items/handoffs/AURA-0129-platform.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0129.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0129.yaml (13 changed paths validated)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0129.yaml (no contract changes)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0129.yaml (no protected baseline changes)
+    - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v (27 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check assigned Python sources and focused tests
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/platform/auth.py
+      services/aura-core/src/aura_core/platform/calendar_oauth.py
+      services/aura-core/tests/test_aura0129_calendar_oauth_platform.py
+      services/aura-core/tests/test_security_configuration.py (0 errors)
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache uv run python
+      hidden-input validation for Settings ValidationError repr (inline secret,
+      client identifier, and secret path absent)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0129_calendar_oauth_platform.py
+      services/aura-core/tests/test_security_configuration.py -q (59 passed)
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache uv run
+      pytest -p no:cacheprovider deploy/tests/test_aura0129_calendar_oauth.py -q
+      (12 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      deploy/compose/test_topology.py::ComposeTopologyTests::test_calendar_secret_mounts_are_api_only_and_api_keeps_external_egress
+      deploy/compose/test_topology.py::ComposeTopologyTests::test_calendar_secret_definitions_are_file_only_and_values_never_rendered
+      deploy/compose/test_topology.py::ComposeTopologyTests::test_local_calendar_placeholders_are_owner_readable_only_and_generated_without_values
+      -q (3 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider deploy/compose/test_topology.py::ComposeTopologyTests::test_local_http_launcher_cleans_relay_on_failed_up_and_keeps_successful_relay -q (passed)
+    - bash -n deploy/compose/local-http.sh
+    - docker compose config --quiet
+    - >-
+      AURA_GOOGLE_CALENDAR_CLIENT_ID=compose-validation-client
+      AURA_GOOGLE_CALENDAR_CLIENT_SECRET_FILE=/dev/null
+      AURA_PROVIDER_CREDENTIAL_KEY_RING_FILE=/dev/null
+      docker compose -f compose.yaml -f deploy/compose/google-calendar.yaml config --quiet
+    - docker compose -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml config --quiet
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Kept the integration disabled by default and made Google client secrets and
+    the versioned credential key ring API-only mounted files; plaintext secret
+    settings are rejected even when disabled.
+  - >-
+    Fixed authorization, token, revocation, Calendar API, read-only scope, and
+    callback path constants in the platform module. No runtime endpoint,
+    discovery document, redirect, or scope override is accepted.
+  - >-
+    Enforced exact stable HTTPS production origins and the explicit
+    http://aura.localhost:4200 development overlay only. Callback values are
+    origin-derived and reject credentials, query, fragment, path, and
+    alternate-port variants.
+  - >-
+    Added a bounded JSON key ring with one active 32-byte key, up to seven
+    retained decrypt-only keys, safe unique identifiers, duplicate-member
+    rejection, and repr-safe key material. The policy records AES-256-GCM,
+    fresh 96-bit nonces, owner/connection associated data, and key versions;
+    cryptographic use and persistence remain AURA-0130 scope.
+  - >-
+    Added the two calendar secret mounts only to aura-core-api through the
+    explicit google-calendar.yaml opt-in overlay. Existing Core general
+    egress remains unchanged; no worker, scheduler, migration, browser,
+    evaluation, or Observatory receives calendar secret material.
+  - >-
+    Replaced secret-bearing dataclasses with immutable opaque wrappers that
+    reject pickle and copy protocols; dataclasses.asdict cannot traverse or
+    expose their secret fields. Key bytes remain available only through the
+    narrow key_bytes adapter property.
+  - >-
+    Configured SettingsConfigDict with hide_input_in_errors=True while
+    preserving the existing environment prefix, extra-field, and field-name
+    behavior so rejected secret inputs, client identifiers, and secret paths
+    remain absent from Pydantic validation error representations.
+  - >-
+    Changed file loading to descriptor-level O_RDONLY, O_NOFOLLOW and
+    O_CLOEXEC (when available), fstat regular-file validation, bounded reads,
+    and no lstat/open TOCTOU. Group/other write bits are rejected while
+    Compose-mounted 0444/0644 files remain valid; local placeholder policy is
+    independent and remains 0600.
+  - >-
+    Removed Calendar secret environment values, mounts, and secret definitions
+    from the base Compose stack. deploy/compose/google-calendar.yaml is the
+    explicit API-only enabled=true opt-in overlay; base and local-http remain
+    disabled without Calendar secret files.
+  - >-
+    Callback origin validation rejects controls and all whitespace and requires
+    the canonical origin string to equal the configured input exactly. Key-ring
+    version validation requires an actual integer value of 1, not a boolean.
+  - >-
+    Baseline evidence at parent checkpoint 99e497b records two unrelated
+    Pyright errors in test_aura0125_idle_memory_telemetry.py and one unrelated
+    Garage topology substring assertion. The revised AURA-0129 checks target
+    the assigned source/test files and focused topology nodes, so no baseline
+    code or test was changed or waived here. The local HTTP Compose check uses
+    the required compose.yaml, local-identity.yaml, local-http.yaml order.
+risks:
+  - None within the AURA-0129 platform ownership zone.
+unresolved: []

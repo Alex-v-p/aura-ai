@@ -1,0 +1,71 @@
+agent: platform_worker
+work_item: AURA-0131
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0131_platform
+  worktree: shared-main
+scope:
+  ownership_zone: repository.frontend-module-registry; repository.frontend-test-configuration
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+  - tooling/architecture/modules.yaml
+  - work-items/handoffs/AURA-0131-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0131.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0131.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0131.yaml (no contract changes; skipped)
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0131.yaml (no protected baseline changes; skipped)
+    - cd frontend && pnpm exec prettier --check tsconfig.base.json vitest.workspace.ts
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/integrations/calendar libs/aura/daily-action (5 test files,
+      21 tests passed)
+    - git diff --check
+  failed: []
+  not_run:
+    - Aura Web and calendar feature unit, build, Storybook, and Playwright checks owned by frontend and test-evaluation workers
+decisions:
+  - >-
+    Added the public TypeScript path alias
+    @aura/aura/integrations/calendar and the matching Vitest resolver alias,
+    both targeting the feature library's deliberate src/index.ts entrypoint.
+  - >-
+    Registered aura-web.integrations-calendar as a frontend feature depending
+    only on aura-web.api-client and aura-web.shared-ui. It has no dependency on
+    daily-action, Core internals, provider code, or Observatory.
+  - >-
+    Kept the existing daily-action registry edge unchanged because its agenda
+    projection is an injection-token seam and does not import the calendar
+    feature; any future direct consumer edge must point from daily-action to
+    integrations-calendar, never the reverse.
+risks:
+  - >-
+    Full Aura Web, Storybook, and Playwright validation remains owned by the
+    frontend and test-evaluation workers and is not repeated in this platform
+    configuration handoff.
+  - >-
+    A direct standalone tsc invocation for the new feature library reports the
+    same cross-library inferred-rootDir diagnostics seen when a library imports
+    the generated client; the repository's Nx targets remain the authoritative
+    frontend compilation path and must be included in aggregate validation.
+unresolved: []

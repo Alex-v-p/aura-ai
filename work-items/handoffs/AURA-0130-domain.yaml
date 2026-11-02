@@ -1,0 +1,270 @@
+agent: core_worker
+work_item: AURA-0130
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0130_domain
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-core.calendar; services.aura-core.calendar-postgresql
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0024_calendar_read_foundation.py
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/domains/integrations/__init__.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/__init__.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/application.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/internal.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/persistence.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/ports.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/public.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/repository.py
+  - services/aura-core/tests/test_aura0130_calendar_domain.py
+  - tooling/architecture/modules.yaml
+contracts:
+  changed: false
+migrations:
+  changed: true
+  revision: 0024_calendar_read_foundation
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0130_calendar_domain.py
+      services/aura-core/tests/test_migration_0024_calendar_read_foundation.py -q
+      (21 passed, 1 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check
+      services/aura-core/src/aura_core/domains/integrations (passed after lifecycle correction)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/integrations (0 errors after lifecycle correction)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check
+      services/aura-core/src/aura_core/domains/integrations
+      services/aura-core/src/aura_core/bootstrap/database.py
+      services/aura-core/migrations/versions/0024_calendar_read_foundation.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/integrations
+      services/aura-core/src/aura_core/bootstrap/database.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0130_calendar_lifecycle.py
+      services/aura-core/tests/test_aura0130_calendar_domain.py
+      services/aura-core/tests/test_aura0130_calendar_application.py
+      services/aura-core/tests/test_migration_0024_calendar_read_foundation.py -q --tb=short
+      (44 passed, 1 skipped after lifecycle-action contract correction)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0130_calendar_domain.py
+      services/aura-core/tests/test_aura0130_calendar_lifecycle.py -q --tb=short
+      (36 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/integrations/calendar/public.py
+      services/aura-core/tests/test_aura0130_calendar_domain.py
+      (0 errors, 0 warnings, 0 informations)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check
+      services/aura-core/src/aura_core/domains/integrations (passed after discovery-boundary
+      correction)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/integrations (0 errors after discovery-boundary
+      correction)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0130_calendar_domain.py
+      services/aura-core/tests/test_migration_0024_calendar_read_foundation.py -q
+      (28 passed, 1 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0130_calendar_domain.py
+      services/aura-core/tests/test_migration_0024_calendar_read_foundation.py
+      services/aura-core/tests/test_aura0130_calendar_lifecycle.py -q --tb=short
+      (51 passed, 1 skipped after lifecycle, conflict, and deadline correction)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check
+      services/aura-core/src/aura_core/domains/integrations
+      services/aura-core/migrations/versions/0024_calendar_read_foundation.py (passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/integrations (0 errors after lifecycle,
+      conflict, and deadline correction)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0130.yaml
+    - git diff --check
+    - >-
+      Current scoped Ruff and Pyright rerun after revocation leases, audit privacy, and
+      conflict observer correction: Ruff passed and Pyright reported 0 errors.
+    - >-
+      Handoff YAML parsed successfully after recording the correction evidence.
+    - >-
+      Revocation guard focused run: concurrent reservation and terminal uncertain
+      ciphertext-deletion cases passed; the remaining deadline-boundary assertion still expects
+      the superseded DISCONNECTED result.
+    - >-
+      Added and validated the owner-free ix_calendar_audit_time mapping/migration index; scoped
+      Ruff and Pyright remain clean.
+    - >-
+      Credential CAS-race correction: scoped Ruff and Pyright passed, git diff --check passed, and
+      the existing old-key lazy-reencryption test passed.
+    - >-
+      Current scoped Ruff and Pyright rerun after navigation/request-context correction: both
+      passed with no errors; existing authorization tests remain blocked until the bootstrap seam
+      and provider signatures are integrated.
+    - >-
+      Public-boundary correction rerun: Ruff, Pyright, changed-path validation, import-boundary,
+      and service-isolation validators passed after moving CalendarRequestContext to calendar.public.
+  failed:
+    - >-
+      The retrieval fixtures currently construct GoogleCalendarCredential without an absolute
+      expiry, which the corrected provider intentionally rejects before dispatch; provider/test
+      owners must refresh those fixtures. This is outside the domain ownership zone.
+    - >-
+      The current lifecycle and migration test files still assert the superseded contract that
+      terminal uncertainty becomes disconnected and that audit rows contain principal identity;
+      three lifecycle assertions and three migration assertions therefore fail until the test
+      owner updates them. One transient-store race test also requires bootstrap test-mode setup.
+  not_run:
+    - >-
+      Aggregate AURA-0130 architecture, API, provider, observability, and system checks remain
+      assigned to the Delivery Lead and integration maintainer.
+decisions:
+  - >-
+    Added a provider-neutral public calendar boundary containing lifecycle projections, bounded
+    query validation, event timezone normalization, and deterministic conflict evaluation. The
+    boundary has no provider or SQL imports and excludes provider identifiers from public calendar
+    metadata.
+  - >-
+    Added Core-owned SQL mappings and forward-only migration 0024 for owner-scoped connection,
+    credential ciphertext metadata, discovered-calendar metadata, explicit selection/version,
+    idempotency, revocation state, and content-free audit truth. No event-content table or field
+    is created.
+  - >-
+    Selection replacement uses expected-version concurrency, validates readable discovered UUIDs,
+    accepts an explicit empty set, and keeps newly discovered calendars unselected.
+  - >-
+    Added provider-neutral AttemptStore, CredentialCodec, CursorStore, lifecycle-provider,
+    and audit ports. The application boundary now owns ten-minute attempt creation, single-use
+    navigation/state/callback consumption, callback exchange handoff, atomic connected commit,
+    immediate revocation read-disable, bounded uncertain-revocation retries, credential load with
+    compare-and-swap lazy rewrite, opaque cursor wrapping, and content-free lifecycle audit.
+  - >-
+    Credential key_version is a bounded AURA-0129 string key identifier (VARCHAR(64)) rather than
+    an integer generation. The durable envelope stores only ciphertext, nonce, key identifier, and
+    associated-data digest; no plaintext or event content is persisted.
+  - >-
+    Discovery persistence upserts provider metadata behind owner-scoped Aura UUIDs and exposes
+    provider-calendar-ID resolution only through the repository port. New rows are never selected
+    implicitly; provider IDs remain absent from public DTOs.
+  - >-
+    Replaced duck-typed discovery results with internal CalendarDiscoveryRecord and
+    CalendarDiscoveryPage values. CalendarApplicationService now unwraps a
+    CalendarDiscoveryQuery-bound cursor through CalendarCursorStore, calls the provider with only
+    server-side continuation state, atomically upserts the page, and wraps the next state before
+    returning a public Aura-only projection. Event continuation handles now bind to the query
+    without its cursor as well.
+  - >-
+    Lifecycle start and reauthorization now use owner/operation/key fingerprints and durable
+    content-free claims whose transient OAuth attempt must still exist for replay; loss of the
+    transient attempt fails closed. Completion checks the exact active callback attempt, passes
+    the server-held nonce and PKCE verifier to exchange, and atomically commits credentials with
+    its final receipt. Selection mutation and its UUID idempotency receipt are committed in the
+    same owner-locked transaction.
+  - >-
+    Revocation establishes one fixed 24-hour deadline, honors the persisted due time and six
+    attempt bound, disables reads before provider dispatch, and atomically records terminal
+    status, credential deletion, and content-free audit truth. Each outbound attempt is reserved
+    under the locked connection row with an exact attempt number and lease before provider
+    dispatch; stale or superseded finalization cannot mutate state. Exhausted or deadline-expired
+    uncertain revocation retains REVOCATION_UNCERTAIN as non-connectable recovery truth until a
+    future explicit external-revocation acknowledgement exists.
+  - >-
+    CalendarAuditRow and migration audit storage contain only bounded action, outcome, category,
+    and time metadata; raw principal issuer and subject are deliberately absent. Application
+    audit calls retain owner only for authorization context and do not pass it to the SQL sink.
+  - >-
+    Conflict evaluation accepts an injected content-free observer. Its monotonic duration starts
+    immediately around local evaluate_conflicts work and excludes provider retrieval, replay, and
+    pagination; closed outcomes are emitted without changing domain results, and cancellation is
+    propagated.
+  - >-
+    The disconnect application boundary re-evaluates the persisted attempt count and fixed
+    deadline after any repository reservation and before provider dispatch. A legacy repository
+    returning a lease for an already terminal state is finalized as failed without an outbound
+    call; compatibility-only repositories also delete ciphertext and project terminal uncertainty
+    without reopening the connection.
+  - >-
+    Content-free audit rows retain a chronological occurred_at index named ix_calendar_audit_time;
+    no owner identity was restored to the mapping or migration.
+  - >-
+    Provider credential loading now treats a false compare-and-swap as a concurrent writer win:
+    it reloads the owner-bound current envelope, requires the active key identifier, authenticates
+    and decrypts only that current envelope, and fails closed when ownership, key freshness, or
+    authentication cannot be established. Stale plaintext is never returned.
+  - >-
+    Authorization navigation now requires the inward attempt-store
+    finalize_navigation_attempt(owner, session_id, attempt_id, handle) seam after asynchronous
+    provider URL generation. This exact, atomic current-attempt check prevents an older consumed
+    attempt from returning a redirect after a newer attempt supersedes it; absence of the seam
+    fails closed rather than relying on process-local state.
+  - >-
+    CalendarRequestContext is now accepted and propagated through discovery, callback token
+    exchange, and revocation provider calls. Context checks occur before dispatch and cancellation
+    or deadline exceptions are preserved; revocation reservations are finalized as failed before
+    re-raising cancellation/deadline failures.
+  - >-
+    CalendarRequestContext now lives on the public calendar application surface. Internal discovery
+    records and cursor state remain private; Core ports, bootstrap composition, and provider adapter
+    imports use the public context type without duplicating its definition.
+  - >-
+    Conflict queries page provider results without persisting event content. Server-only cursor
+    state contains only provider continuation, page count, and emitted relationship keys; the
+    public relationship cursor is bound to the normalized query and conflict limit. One monotonic
+    request context carries deadline and cancellation through every provider page, and provider
+    cancellation is never converted into a normal domain failure.
+  - >-
+    Timed events normalize to UTC while preserving event/display timezone provenance; all-day events
+    use half-open local-date intervals. Conflict evaluation excludes free and zero-duration events,
+    emits canonical positive-duration relationships once, and bounds output at 200.
+  - >-
+    Lifecycle attempt-store failures (missing, expired, superseded, replayed, owner, session, and
+    dependency failures) fail closed as CalendarAuthorizationRejected. Provider authentication
+    failures atomically mark the connection REAUTHORIZATION_REQUIRED with reads disabled before
+    returning CalendarNotConnected. Selection idempotency receipts are looked up and replayed
+    before expected-version mutation, with deterministic fingerprint conflicts.
+  - >-
+    Connection availableActions is a closed lifecycle command projection containing only connect,
+    complete_connection, reauthorize, or disconnect. Uncertain revocation resumes through
+    disconnect; retry and administrator guidance remain recovery metadata, while disabled and
+    unavailable states expose no public lifecycle operation.
+  - >-
+    Registered calendar domain mappings through the existing database metadata composition. Module
+    registry entries are shared with the parallel API/provider ownership slice and must be retained
+    exactly once during integration.
+risks:
+  - >-
+    The parallel provider/bootstrap/API workers must inject concrete AttemptStore, CursorStore,
+    CredentialCodec, and lifecycle-provider implementations into CalendarApplicationService.
+    The provider adapter must accept CalendarRequestContext on every retrieval and the bootstrap
+    cursor store must fingerprint CalendarConflictQuery in addition to event/discovery queries.
+    Bootstrap must also inject the conflict observer and align the revocation reservation/finalize
+    port; stale fixtures returning SelectableCalendarPage or expired-less credentials are no
+    longer supported.
+unresolved:
+  - >-
+    Provider/API/test owners must align the request, callback, conflict cursor, and revocation
+    reservation signatures, update terminal-uncertainty/audit-privacy assertions, and refresh
+    stale fixtures before aggregate checks can pass. Bootstrap must implement the atomic
+    finalize_navigation_attempt seam, and the provider/bootstrap owners must align request-context
+    parameters for discovery, exchange_code, and revoke. The test owner should add CAS-false and
+    interleaved-navigation probes. The API owner must change its CalendarRequestContext import from
+    calendar.internal to calendar.public to satisfy the aggregate public-boundary validator.
+    Bootstrap integration of the observer remains outside this worker's ownership zone.

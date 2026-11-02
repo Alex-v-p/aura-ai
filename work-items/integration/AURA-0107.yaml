@@ -1,0 +1,56 @@
+agent: integration_maintainer
+work_item: AURA-0107
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0107-general.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0107-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0107.yaml
+checks:
+  passed:
+    - >-
+      The corrected Observatory worker handoff and both required PASS reviews
+      were read and confirmed complete, with no unresolved blocking findings.
+    - >-
+      AURA-0107 work-item validation passed before archival, and explicit
+      seven-path changed-path validation passed while excluding concurrent
+      AURA-0098 paths from the shared checkout.
+    - >-
+      Definitions, migration, and PostgreSQL integration tests passed: 50
+      passed and 2 environment-gated PostgreSQL tests skipped because
+      AURA_AURA0093_POSTGRES_URL is not configured.
+    - >-
+      Ruff and Pyright passed with zero errors for the changed adapter and
+      focused tests.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      Contract-change and protected-baseline validation passed with no
+      contract or protected baseline changes.
+    - git diff --check passed.
+    - >-
+      The exact staged adapter diff contains only AURA-0107's case_declared
+      repair; AURA-0098's case_versions_for_selection additions remain
+      unstaged. No AURA-0098 path was staged.
+    - >-
+      A single focused Conventional Commit checkpoint was created after the
+      reviewed and validated AURA-0107 slice was staged; no push was performed.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared worktree remains dirty with independently owned AURA-0098
+    implementation files and the preserved overlapping adapter additions.
+    Those changes were not staged, modified, or claimed as AURA-0107.
+  - >-
+    The two live PostgreSQL acceptance tests remain environment-gated until
+    the composed integration environment supplies AURA_AURA0093_POSTGRES_URL.
+    AURA-0107 does not claim the broader AURA-0098 composed acceptance.

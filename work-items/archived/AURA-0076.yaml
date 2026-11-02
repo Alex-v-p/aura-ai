@@ -1,0 +1,277 @@
+id: AURA-0076
+title: Add conversation attachments and capability-gated Ollama vision
+status: integrated
+change_class: repository_governance
+intent: >
+  Let an authenticated owner attach ready PDF and DOCX documents plus safely
+  inspected PNG, JPEG, and static WebP images to immutable conversation turns,
+  ground answers in the active branch's attached documents, and use images only
+  with the explicitly selected Ollama model after a fresh verified vision-capability check.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved images belong to a new artifacts.attachments Core domain while PDF and DOCX ownership remains in knowledge.documents.
+    - Owner-approved message links store only source kind and opaque source ID without cross-domain database foreign keys.
+    - Owner-approved image inference is capability-gated and never silently changes or ignores the selected model.
+    - Owner-approved Ollama model recommendations are presentation guidance and no model identifier is hard-coded as provider behavior.
+    - Owner-approved attachment context follows only the active branch ancestor path and prioritizes current-message resources.
+    - Owner-approved capture is metadata-only and excludes bytes filenames EXIF prompts excerpts and model-visible content.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - ART-001
+  - ART-004
+  - ART-005
+  - ART-006
+  - ART-007
+  - ART-008
+  - ART-009
+  - RUN-004
+  - RUN-005
+  - RUN-011
+  - MOD-003
+  - MOD-019
+  - MOD-022
+  - KNO-019
+  - KNO-027
+  - AUI-003
+  - AUI-005
+  - AUI-018
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.artifacts.v1
+  - contracts.events.runs.v1
+  - aura-api-client.generated
+  - aura-core.artifacts.attachments
+  - aura-core.knowledge.documents.public
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.runtime.models
+  - aura-core.providers.models.ollama
+  - aura-core.platform.object-store
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.entrypoints.api
+  - aura-core.entrypoints.worker
+  - aura-core.platform.telemetry
+  - aura-web.interaction.conversations
+  - aura-web.knowledge.documents
+  - aura-web.e2e
+  - evaluation.conversation-attachments
+  - deploy.compose.e2e
+  - repository.module-registry
+allowed_paths:
+  - work-items/active/AURA-0076.yaml
+  - work-items/archived/AURA-0076.yaml
+  - work-items/handoffs/AURA-0076-*.yaml
+  - work-items/reviews/AURA-0076-*.yaml
+  - work-items/integration/AURA-0076.yaml
+  - docs/specifications/agents-and-execution.md
+  - docs/specifications/memory-and-knowledge.md
+  - docs/specifications/clients-and-voice.md
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/artifacts/v1/attachment-events.schema.json
+  - contracts/events/runs/v1/run-events.schema.json
+  - tooling/architecture/modules.yaml
+  - pyproject.toml
+  - uv.lock
+  - services/aura-core/migrations/versions/0022_conversation_attachments.py
+  - services/aura-core/src/aura_core/bootstrap/**
+  - services/aura-core/src/aura_core/domains/artifacts/**
+  - services/aura-core/src/aura_core/domains/interaction/conversations/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/evaluation.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/ports.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/persistence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/**
+  - services/aura-core/src/aura_core/runtime/models/**
+  - services/aura-core/src/aura_core/providers/models/ollama/**
+  - services/aura-core/src/aura_core/providers/object_storage/**
+  - services/aura-core/src/aura_core/platform/object_store/**
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/platform/outbox/**
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/errors.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/attachments.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/conversations.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/documents.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/models.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  - services/aura-core/src/aura_core/runtime/streaming/publisher.py
+  - services/aura-core/src/aura_core/entrypoints/worker/**
+  - services/aura-core/resources/component-manifests/attachment-*.yaml
+  - services/aura-core/resources/component-manifests/conversation-persistence.yaml
+  - services/aura-core/resources/component-manifests/document-retrieval.yaml
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/resources/component-manifests/model-inference.yaml
+  - services/aura-core/tests/**
+  - frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/libs/aura/knowledge/documents/**
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+  - frontend/apps/aura-web/project.json
+  - deploy/compose/e2e/**
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - frontend/libs/observatory/**
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/artifacts/v1/attachment-events.schema.json
+    - contracts/events/runs/v1/run-events.schema.json
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: artifacts.attachments
+observability:
+  applicable: true
+  affected_components:
+    - aura.artifacts.attachment_upload
+    - aura.artifacts.attachment_processing
+    - aura.artifacts.attachment_deletion
+    - aura.interaction.conversation_persistence
+    - aura.knowledge.document_retrieval
+    - aura.execution.run_coordinator
+    - aura.models.inference
+  required_metrics:
+    - attachment_upload_outcome
+    - attachment_processing_outcome
+    - attachment_deletion_outcome
+    - conversation_attachment_admission_outcome
+    - attached_document_retrieval_outcome
+    - model_vision_verification_outcome
+    - vision_inference_outcome
+  required_evaluators:
+    - conversation_attachment_branch_isolation
+    - attached_document_grounding_and_citation
+    - vision_capability_and_image_preservation
+    - attachment_capture_redaction
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every attachment metadata content preview deletion and conversation-link operation is owner-authorized without cross-owner existence disclosure.
+    - PNG JPEG and WebP acceptance is signature-verified and bounded against malformed content animation decompression bombs and images over forty megapixels.
+    - Original images are private owner downloads while model and preview paths use metadata-free color-normalized derivatives capped at 2048 pixels.
+    - Admission atomically rejects missing unavailable cross-owner duplicate excessive and non-ready resources without creating a message or run.
+    - Only active-branch ancestors can authorize retrieval or image bytes and every new or regenerated run re-authorizes them.
+    - Logs events traces metrics evaluations and browser durable storage exclude image bytes filenames EXIF prompts document excerpts and extracted content.
+    - Deletion removes image objects and derivatives but immutable message history retains only a content-free unavailable tombstone.
+  data_classes:
+    - private_document_content
+    - private_image_content
+    - user_supplied_filename
+    - image_metadata
+    - opaque_attachment_identifiers
+    - owner_identity
+    - model_capability_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - platform_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: fanout
+  max_parallel_agents: 8
+  max_parallel_writers: 5
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The owner can upload signature-verified PNG JPEG and non-animated WebP images up to 25 MB through resumable or idempotent sessions and can list inspect download preview reuse and idempotently delete them through /api/v1/attachments.
+  - Image inspection rejects malformed content animation decompression bombs and images above forty megapixels then preserves the authorized original and creates a metadata-free color-normalized derivative capped at 2048 pixels on its longest side.
+  - PDF and DOCX continue through knowledge.documents with the existing 100 MB lifecycle and are never duplicated into the attachment blob domain.
+  - Conversation creation run creation and edit-and-branch accept at most eight unique explicit attachment references including at most four images while remaining backward compatible when attachments are omitted.
+  - Non-empty user text and an entirely ready owner-authorized attachment set are persisted atomically with the user message and admitted run or nothing is created.
+  - Immutable message links and response summaries expose only the specified bounded metadata and preserve unavailable tombstones after document or image deletion.
+  - Edit-and-branch preselects the source message set but submits a new explicit set regeneration reuses the source user set and only active-branch ancestors enter authorization retrieval model input events and telemetry.
+  - Context selects no more than four most recent available ancestor images and searches no more than eight most recent unique ancestor documents with current-message attachments first.
+  - Attached-document retrieval is deterministically limited to the authorized document IDs registers fresh run-scoped evidence and uses existing citation validation without changing document.search@1 whole-library behavior.
+  - Provider-neutral messages carry bounded typed image parts and only the Ollama adapter converts their normalized bytes to native images fields for initial inference and later synthesis.
+  - Image runs require a fresh digest-identified provider descriptor advertising normalized vision capability and otherwise return typed 409 model_vision_required without changing the selected model or discarding draft attachments.
+  - The UI recommends qwen2.5vl:7b and may list gemma3:12b only as user-controlled guidance when verified but provider behavior contains no hard-coded model routing.
+  - Aura Web offers accessible Upload Documents and Images picker views progress retry removable chips thumbnails immutable message cards authorized previews deletion tombstones responsive limits and explicit vision guidance without durable caching of authenticated image bytes.
+  - Attachment lifecycle events and all telemetry evaluation and error paths contain only opaque identifiers states bounded counts versions timestamps and safe error classes.
+  - Full-stack acceptance covers PDF DOCX PNG JPEG and WebP upload readiness attachment grounded citations verified image inference branch regeneration deletion and immutable historical tombstones.
+  - Scanned-PDF OCR embedded DOCX images GIF HEIC SVG image-derived memory generated artifacts automatic model routing cloud vision automated retention and a standalone artifact-management page are not introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0076.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0076.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0076.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0076.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0076.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run pyright services/aura-core
+  - uv run ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e
+  - uv run pytest services/aura-core/tests
+  - uv run pytest deploy/compose/e2e
+  - pnpm --dir frontend exec nx check-generated aura-api-client
+  - pnpm --dir frontend exec nx lint aura-api-client
+  - pnpm --dir frontend exec nx test aura-conversations
+  - pnpm --dir frontend exec nx lint aura-conversations
+  - pnpm --dir frontend exec nx test aura-documents
+  - pnpm --dir frontend exec nx lint aura-documents
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

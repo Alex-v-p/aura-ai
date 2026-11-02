@@ -1,0 +1,185 @@
+agent: contract_steward
+work_item: AURA-0137
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: deep
+  agent_thread_id: /root/aura0137_contract
+  worktree: dev
+scope:
+  ownership_zone: contracts.aura-api.workflows
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/automation/v1/workflow-events.schema.json
+  - contracts/tests/test_aura0137_workflow_execution_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - work-items/handoffs/AURA-0137-contract.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward after AURA-0137 explicitly
+    authorized the Aura v1 workflow OpenAPI surface, automation workflow-events
+    v1 schema, focused contract test, and generated Aura TypeScript transport.
+    No workflow authorization, transition, retry, persistence, feature-flag, or
+    orchestration behavior was placed in schemas or generated code.
+  compatibility: backward_compatible
+  definitions:
+    - id: aura-v1
+      version: 1.22.0
+      source: contracts/openapi/aura-v1.yaml
+      changes:
+        - >-
+          Additively exposed owner-scoped definition and revision retirement
+          commands with established CSRF, UUID idempotency, optimistic version,
+          no-store response, and problem-envelope error contracts.
+        - >-
+          Added revision lifecycle status, optimistic version, and nullable
+          retirement time while preserving immutable published definition
+          content and every existing workflow operation.
+        - >-
+          Declared controlled 503 problem responses for only workflow publication
+          and manual instance admission when deployment policy disables new
+          admissions. Reads, recovery, cancellation, retirement, and deletion
+          operations retain their prior availability contract.
+        - >-
+          Added the owner-scoped metadata-only workflow SSE resource with UUID
+          Last-Event-ID replay, persisted lifecycle event variants, heartbeat,
+          cursor reconciliation errors, no-store, and disabled proxy buffering.
+        - >-
+          Corrected the REST instance step projection so an unstarted pending
+          step may omit stepExecutionId, while every running, waiting, recovery,
+          or terminal step state requires a UUID execution identity. Persisted
+          step lifecycle events continue to require their UUID identity.
+    - id: automation-workflow-events
+      version: 1
+      source: contracts/events/automation/v1/workflow-events.schema.json
+      changes:
+        - >-
+          Additively added workflow.revision.retired to the closed definition
+          lifecycle family. Published and retired revision events require an
+          exact UUID revisionId; definition retirement requires revisionId to
+          be null. The event remains metadata-only and schema version 1.
+  compatibility_notes:
+    - >-
+      Aura v1 remains at 1.22.0 and evolves additively within the already
+      introduced bounded-workflow resource family. Existing paths, request
+      bodies, success statuses, and legacy workflow fields remain present.
+    - >-
+      Additional required response metadata is producer-owned and additive on
+      the wire; existing JSON clients that ignore unknown response fields remain
+      compatible. The regenerated typed client exposes the complete producer
+      response shape to new consumers.
+    - >-
+      Workflow SSE variants mirror the existing automation-workflow-events v1
+      required fields and contain identifiers, closed statuses, versions,
+      ordinals, outcomes, capabilities, and timestamps only. Heartbeats have no
+      event identifier and cannot advance a replay cursor.
+    - >-
+      The revision-retirement lifecycle addition is backward-compatible: every
+      previously valid v1 event remains valid unchanged, while consumers may
+      now receive one additional closed eventType with the same bounded fields.
+    - >-
+      Making stepExecutionId optional for pending REST projections admits the
+      producer's previously unrepresentable initial state without rejecting any
+      previously valid payload. All non-pending projections retain stronger
+      UUID lineage requirements.
+    - >-
+      Schedules, branches, loops, parallel execution, provider selection,
+      arbitrary expressions, executor concepts, and business decisions remain
+      unrepresentable in this contract extension.
+  producers:
+    - Aura Core workflow application and HTTP entrypoint
+    - Aura Core persisted workflow lifecycle event repository
+  consumers:
+    - Aura Web generated API transport
+    - Future AURA-0138 Workflow Studio and instance management consumers
+    - Core workflow API and contract drift tests
+    - Core workflow lifecycle event serializers and replay readers
+  rollout:
+    - >-
+      Deploy the Core producer and forward-only 0028 migration before enabling
+      workflow publication or manual admission. Keep workflow_admission_enabled
+      false until the producer satisfies the full response, revision-retirement
+      event, and replay contract.
+    - >-
+      Deploy the regenerated Aura transport client with or after Core. Older
+      clients remain compatible because existing operations and response fields
+      are preserved and all resources remain under Aura v1.
+    - >-
+      Rollback disables new publication and admission while leaving reads,
+      cancellation, recovery, retirement, deletion, and already-admitted
+      execution available. Persisted lifecycle truth is never reinterpreted.
+  generated_outputs:
+    - source: contracts/openapi/aura-v1.yaml
+      generator: frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+migrations:
+  changed: false
+  notes: >-
+    The contract zone did not author migration 0028. The Core persistence worker
+    owns the authorized forward-only migration and its rollout validation.
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0137.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0137.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0137.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0137.yaml
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0137.yaml (completed with no protected changes;
+      validator status skipped)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check contracts/tests/test_aura0137_workflow_execution_contract.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0137_workflow_execution_contract.py -q (9 passed)
+    - cd frontend && node libs/platform/aura-api-client/tools/generate-client.mjs > libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+    - cd frontend && pnpm exec nx run aura-api-client:generate
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated
+    - cd frontend && pnpm exec nx run aura-api-client:lint
+    - git diff --check for the four contract-zone product files
+    - work-items/schema/implementation-handoff.schema.json validation for this handoff
+  failed: []
+  not_run:
+    - >-
+      The aggregate Core ruff, pyright, migration, service, system, and worker
+      pytest checks remain assigned to their owning workers and the Integration
+      Maintainer after concurrent zones converge.
+decisions:
+  - >-
+    Reused WorkflowVersionCommand for both retirement resources so optimistic
+    concurrency stays consistent without adding command behavior to the schema.
+  - >-
+    Returned the full WorkflowDefinition and WorkflowRevision resources after
+    retirement so consumers can reconcile authoritative lifecycle metadata in
+    one no-store response; the Core producer must not return a partial object.
+  - >-
+    Mirrored the existing workflow-events v1 families in the SSE envelope and
+    added only a content-free heartbeat. Persisted lifecycle rows, rather than
+    ephemeral wakeups, remain replay truth.
+  - >-
+    Kept revision publication and retirement in one closed lifecycle family and
+    constrained both to UUID revision lineage through an object-level schema
+    union; definition retirement is the only variant that permits null lineage.
+  - >-
+    Represented pre-execution identity by omission rather than null. The closed
+    WorkflowStepState union permits pending steps to omit stepExecutionId and
+    requires a UUID for every other status; generated clients therefore expose
+    an optional string without embedding status-transition behavior.
+  - >-
+    Kept Aura v1 at 1.22.0 because this is an additive completion of the
+    workflow family introduced at that contract version, not a new API family
+    or incompatible wire revision.
+risks: []
+unresolved: []

@@ -1,0 +1,198 @@
+agent: test_evaluation_engineer
+work_item: AURA-0130
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0130_tests
+  worktree: shared-main
+scope:
+  ownership_zone: evaluation.calendar-planning
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/resources/component-manifests/calendar-connection.yaml
+  - services/aura-core/resources/component-manifests/google-calendar-provider.yaml
+  - services/aura-core/resources/component-manifests/calendar-retrieval.yaml
+  - services/aura-core/resources/component-manifests/calendar-conflict.yaml
+  - services/aura-core/tests/test_aura0130_calendar_application.py
+  - services/aura-core/tests/test_aura0130_calendar_composition.py
+  - services/aura-core/tests/test_aura0130_calendar_domain.py
+  - services/aura-core/tests/test_aura0130_calendar_lifecycle.py
+  - services/aura-core/tests/test_aura0130_calendar_provider.py
+  - services/aura-core/tests/test_aura0130_calendar_retrieval.py
+  - services/aura-core/tests/test_aura0130_calendar_transient.py
+  - services/aura-core/tests/test_aura0130_evaluator_mappings.py
+  - services/aura-core/tests/test_aura0130_observability.py
+  - services/aura-core/tests/test_migration_0024_calendar_read_foundation.py
+  - services/aura-core/tests/system/test_aura0130_calendar_api.py
+  - work-items/handoffs/AURA-0130-test-evaluation.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.integration.calendar_connection
+    - aura.provider.google_calendar
+    - aura.integration.calendar_retrieval
+    - aura.automation.calendar_conflict
+  metrics_added: []
+verification:
+  passed:
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/tests/test_aura0130_*.py services/aura-core/tests/test_migration_0024_calendar_read_foundation.py services/aura-core/tests/system/test_aura0130_calendar_api.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/tests/test_aura0130_*.py services/aura-core/tests/test_migration_0024_calendar_read_foundation.py services/aura-core/tests/system/test_aura0130_calendar_api.py (0 errors)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0130.yaml
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0130.yaml
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_telemetry.py::test_component_manifest_versions_match_runtime_catalogue
+      -q (1 passed)
+    - >-
+      Manifest identifiers verified against the repository's runtime catalogue;
+      component versions remain 1.0.0 in the separate manifest version field.
+    - >-
+      uv run pytest -q services/aura-core/tests/test_aura0130_calendar_transient.py
+      services/aura-core/tests/test_aura0130_calendar_lifecycle.py
+      services/aura-core/tests/test_aura0130_calendar_provider.py
+      services/aura-core/tests/test_aura0130_observability.py
+      services/aura-core/tests/test_aura0130_evaluator_mappings.py
+      services/aura-core/tests/test_migration_0024_calendar_read_foundation.py
+      (76 passed, 1 skipped.)
+    - >-
+      uv run pytest -q services/aura-core/tests/test_aura0130_*.py
+      services/aura-core/tests/test_migration_0024_calendar_read_foundation.py
+      services/aura-core/tests/system/test_aura0130_calendar_api.py
+      (133 passed, 1 skipped; complete AURA-0130 focused acceptance suite.)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0130_calendar_lifecycle.py
+      services/aura-core/tests/test_aura0130_calendar_composition.py -q
+      (14 passed.)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0130.yaml
+    - git diff --check
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/tests/test_aura0130_calendar_retrieval.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/tests/test_aura0130_calendar_retrieval.py (0 errors)
+    - >-
+      Public CalendarRequestContext import regression suite: 58 passed;
+      targeted Ruff, Pyright, import-boundary, work-item, changed-path, and
+      git diff checks passed.
+    - >-
+      Cross-client Valkey pipeline supersession regression: 7 transient tests
+      passed after the production atomic-create implementation landed; the
+      attempt fixture now uses a current future expiry and still exercises the
+      normal expiration guard.
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Added adversarial provider-neutral domain tests for owner-scoped read gating,
+    selection allowlists, half-open range and timeout bounds, DST transitions,
+    bounded deterministic conflict relationships, and Core/provider isolation.
+  - >-
+    Added cryptographic adapter tests for AES-GCM owner and connection binding,
+    retained-key rotation, opaque non-serializable credential material, fixed
+    endpoints, redirect-free requests, malformed and oversized upstream pages,
+    safe retry limits, rate-limit exhaustion, cancellation, and encoded IDs.
+  - >-
+    Added migration assertions for the linear 0024 successor, forward-only
+    behavior, owner-scoped metadata tables and indexes, revocation bounds, and
+    the absence of event-content durable storage.
+  - >-
+    Added route composition and privacy checks for all nine v1.19.0 calendar
+    operations, no-store middleware coverage, thin application composition, and
+    exclusion of provider/persistence rules from the route module.
+  - >-
+    Added four versioned metadata-only component manifests with the required
+    metrics, evaluators, low-cardinality dimensions, and prohibited private data
+    fields. Manifest identifiers follow the repository's unversioned-ID and
+    separate-version convention.
+  - >-
+    Added behavioral lifecycle and composition tests for same-session single-use
+    authorization, supersession, prefetch/replay races, owner/session isolation,
+    callback completion, confirmed and uncertain revocation, Valkey loss, provider
+    auth expiry, AURA-0129 string-key lazy CAS rotation, discovery persistence,
+    idempotent selection, opaque query-bound pagination, and enabled-provider
+    composition. The settled production implementation passes this acceptance slice.
+  - >-
+    Added real-adapter evaluation for server-side discovery persistence and stable
+    Aura UUID projection, owner/query-bound discovery cursor TTL and replay
+    rejection, multi-calendar event continuation on the originating calendar,
+    opaque cursor wrapping, and owner/query mismatch, replay, and Valkey-loss
+    rejection.
+  - >-
+    Updated application and lifecycle fakes to use the explicit internal
+    CalendarDiscoveryPage/CalendarDiscoveryRecord provider port and repository
+    upsert_discovered seam, preserving owner-scope and non-selection assertions.
+  - >-
+    Added adversarial tests for stale/expired/duplicate/mismatched OAuth attempts,
+    PKCE verifier enforcement, absolute credential expiry without refresh, retained
+    key CAS conflict reload, concurrent selection idempotency fingerprint conflicts,
+    fixed revocation deadline guards, cross-page/cross-calendar conflict cursor
+    deduplication, invalid IANA/all-day boundaries, exact privacy headers, runtime
+    span parentage, retained/rejected telemetry, complete calendar metric emission,
+    and executable synthetic evaluator mappings.
+  - >-
+    Updated lifecycle expectations so terminal revocation uncertainty remains
+    REVOCATION_UNCERTAIN and non-connectable after ciphertext deletion; updated
+    migration safeguards to reject raw owner issuer/subject in audit rows and to
+    require only the content-free occurred_at time index; explicitly rejected
+    revocationTerminal from the public connection schema.
+  - >-
+    Added an interleaved OAuth navigation regression requiring an old in-flight
+    navigation to fail after supersession while the newer attempt remains
+    current and navigable. Added application-service CAS-loss regressions proving
+    reload of the current active-key owner-bound envelope and fail-closed behavior
+    for retained-key reloads.
+  - >-
+    Added fail-closed transient cursor tests for typed conflict-state JSON
+    reconstruction, owner/query/conflict-limit binding, replay, malformed values,
+    expiry, and non-testing composition without Valkey; added deterministic
+    in-flight callback supersession and retained-key CAS reload assertions.
+  - >-
+    Added revocation reservation-concurrency bounds, terminal uncertainty guards,
+    provider-stream cancellation closure, sanitized exception-graph checks, and
+    a slow-provider conflict observer test proving local evaluation timing excludes
+    network retrieval; synthetic evaluator mappings execute versioned positive and
+    negative public-behavior fixtures.
+  - >-
+    Added discovery, OAuth exchange, and revocation disconnect/deadline preflight
+    regressions plus malformed Valkey byte/JSON exception-graph redaction checks.
+    Reconciled manifests to component ownership: connection health is connection
+    scoped, rate-limit state is provider scoped, and conflict cardinality is finite.
+  - >-
+    Replaced shallow provider and lifecycle evaluator fixtures with deterministic
+    Google adapter HTTP behavior, retry exhaustion, expiry/auth rejection, and
+    owner-bound credential sealing/key rotation fixtures, including negatives;
+    the lifecycle evaluator now invokes CalendarApplicationService for confirmed
+    revocation and terminal retry/deadline exhaustion with ciphertext deletion.
+  - >-
+    Observability assertions consume the production terminal-outcome and
+    error-class vocabularies and inspect actual emitted snapshots, including
+    provider retry/rate-limit dimensions and component-specific metric ownership.
+  - >-
+    Updated request-context test seams to import CalendarRequestContext from
+    the public calendar boundary; internal imports remain limited to
+    provider-neutral discovery records and genuinely transient white-box state.
+  - >-
+    Added live API timeout and provider-deadline regressions, including exact
+    timeout/deadline classification, complete emitted span and metric checks,
+    zero telemetry rejections, and successful HTTP 204 revocation telemetry.
+  - >-
+    Added a controlled two-client Valkey pipeline interleaving regression that
+    requires the newest OAuth attempt to be the sole current/active marker and
+    rejects mixed supersession state; the production optimistic pipeline
+    transaction now passes this controlled race.
+  - >-
+    Kept the interleaving attempt fixture expiry relative to the current clock,
+    avoiding a historical fixed timestamp while preserving production expiry
+    enforcement.
+risks:
+  - >-
+    Lifecycle persistence, Valkey attempt/cursor handling, and API behavior remain
+    integration-sensitive; the tests target public seams and metadata-only
+    invariants without modifying production paths.
+unresolved: []

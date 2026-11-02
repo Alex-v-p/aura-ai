@@ -1,0 +1,92 @@
+agent: integration_maintainer
+work_item: AURA-0084
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0084-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0084-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0084-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0084-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0084-ux-ui.yaml
+  - reviewer: contract_steward
+    status: PASS
+    verdict: work-items/handoffs/AURA-0084-contracts.yaml
+  - reviewer: core_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0084-core.yaml
+  - reviewer: frontend_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0084-frontend.yaml
+  - reviewer: observatory_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0084-observatory.yaml
+  - reviewer: observatory_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0084-retention.yaml
+  - reviewer: platform_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0084-platform.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0084-tests.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0084-outage.yaml
+conflicts_resolved:
+  - >-
+    Corrected the retention implementation handoff's missing empty verification
+    failed and not_run arrays. This was a report-schema-only mechanical repair;
+    the handoff recorded no failed checks or unresolved work.
+generated_outputs:
+  - work-items/archived/AURA-0084.yaml
+checks:
+  passed:
+    - >-
+      Work-item, implementation-handoff, and review-verdict schema validation
+      passed for the archived work item, 8 implementation handoffs, and 5
+      required review verdicts.
+    - >-
+      Active work-item validation and changed-path validation passed before
+      archival for all 50 changed paths within the approved AURA-0084 scope.
+    - >-
+      Archived work-item validation passed after the active-to-archive
+      transition.
+    - >-
+      Repository-shape, module-registry, service-isolation, frontend-boundary,
+      observability, contract-change, generated-sync, and diff-hygiene checks
+      passed; baseline protection correctly reported no protected changes.
+    - >-
+      Platform topology and runtime wiring checks passed: 48 tests.
+    - >-
+      Observatory validation passed: 297 service tests, Ruff, and Pyright;
+      Core validation passed: 131 tests with 1 skip; frontend Observatory
+      lint, unit tests, and production builds passed for all six configured
+      targets.
+    - >-
+      Mocked browser acceptance passed 75 tests across desktop, tablet, and
+      mobile, including authentication recovery, keyboard/focus, responsive,
+      privacy, reduced-motion, retention, and accessibility coverage.
+    - >-
+      Scoped Docker full-stack acceptance exited 0 after exercising real owner
+      authentication, Core telemetry, SSE, trace detail, component health,
+      cutoff deletion, purge-all, shipped Compose down/up session preservation,
+      scoped session reset and reauthentication, Observatory-stop/Core
+      usability, and disposable-resource cleanup.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    No integration commit was created. The reviewed and validated working tree
+    is ready for the Delivery Lead's focused AURA-0084 Conventional Commit;
+    no push is authorized.

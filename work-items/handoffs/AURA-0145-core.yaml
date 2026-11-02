@@ -1,0 +1,313 @@
+agent: core_worker
+work_item: AURA-0145
+status: complete
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: /root/aura0145_core
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: services.aura-core.knowledge.research
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0032_governed_research.py
+  - services/aura-core/resources/component-manifests/research-cancellation.yaml
+  - services/aura-core/resources/component-manifests/research-citation-validation.yaml
+  - services/aura-core/resources/component-manifests/research-coordinator.yaml
+  - services/aura-core/resources/component-manifests/research-deletion.yaml
+  - services/aura-core/resources/component-manifests/research-evidence-validation.yaml
+  - services/aura-core/resources/component-manifests/research-planner.yaml
+  - services/aura-core/resources/component-manifests/research-synthesis.yaml
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/bootstrap/research_providers.py
+  - services/aura-core/src/aura_core/bootstrap/research_uow.py
+  - services/aura-core/src/aura_core/domains/knowledge/research/__init__.py
+  - services/aura-core/src/aura_core/domains/knowledge/research/persistence.py
+  - services/aura-core/src/aura_core/domains/knowledge/research/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/research/repository.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/research.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/research.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/test_migration_0032_governed_research.py
+  - services/aura-core/tests/test_research_api.py
+  - services/aura-core/tests/test_research_coordinator.py
+  - services/aura-core/tests/test_research_persistence.py
+  - services/aura-core/tests/test_research_worker.py
+contracts:
+  changed: false
+  notes: >-
+    Consumes the approved AURA-0141 research, artifact, and Task Center public
+    contracts without editing contract or generated-client files.
+migrations:
+  changed: true
+  revision: 0032_governed_research
+  down_revision: 0031_memory_reindex_task_version
+  notes: >-
+    Additive PostgreSQL tables cover owner settings, durable research tasks,
+    checkpoints, evidence, citations, operation attempts, identifier-only
+    dispatch outbox state, deletion cleanup state, and idempotency. Existing
+    records are preserved and downgrade removes only this revision's tables.
+observability:
+  components:
+    - aura.research.coordinator@1
+    - aura.research.cancellation@1
+    - aura.research.planner@1
+    - aura.research.evidence_validation@1
+    - aura.research.citation_validation@1
+    - aura.research.synthesis@1
+    - aura.research.deletion@1
+  metrics_added:
+    - research_coordinate_outcome_count
+    - research_coordinate_latency_ms
+    - research_checkpoint_count
+    - research_queue_lag_ms
+    - research_cancel_command_outcome_count
+    - research_cancel_command_latency_ms
+    - research_cancel_settlement_lag_ms
+    - research_plan_outcome_count
+    - research_plan_latency_ms
+    - research_evidence_validation_outcome_count
+    - research_evidence_validation_latency_ms
+    - research_evidence_rejected_count
+    - research_citation_validation_outcome_count
+    - research_citation_validation_latency_ms
+    - research_citation_rejected_count
+    - research_synthesis_outcome_count
+    - research_synthesis_latency_ms
+    - research_unsupported_claim_count
+    - research_deletion_outcome_count
+    - research_deletion_latency_ms
+    - research_budget_wall_time_consumed_ms
+    - research_budget_sources_consumed_count
+    - research_budget_searches_consumed_count
+    - research_budget_browser_pages_consumed_count
+    - research_budget_model_calls_consumed_count
+    - research_budget_exhaustion_count
+    - research_static_fetch_settled_count
+    - research_static_to_browser_fallback_count
+    - research_static_to_browser_fallback_ratio
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests -q (2006 passed, 124 skipped, 1 warning).
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache AURA_TEST_DEPENDENCIES_ISOLATED=1
+      uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_research_*.py
+      services/aura-core/tests/test_migration_0032_governed_research.py -q
+      (217 passed).
+    - >-
+      Closed-entity and telemetry regression probes:
+      test_provider_telemetry_classifications_and_declared_manifest_metrics_round_trip,
+      test_research_telemetry_matrix_rejects_cross_component_operation_status_and_domain_errors,
+      test_coordinator_component_and_all_required_metrics_are_registered, and
+      test_internal_and_cross_component_metrics_are_rejected_by_closed_ownership_matrix
+      (4 passed). The hostile prefixed claim is rejected, a safe multi-token
+      entity is accepted, provider redirect/resource classifications round-trip,
+      evidence redirect_blocked is accepted, planner deleted and provider
+      cleanup_unknown are rejected, and coordinator child-metric leakage is
+      rejected.
+    - >-
+      Research span tuple probes cover static success/resource_exhausted
+      rejection, static failed/resource_exhausted acceptance, and deletion
+      partial/cleanup_unknown acceptance (3 direct probes passed).
+    - >-
+      Eleventh remediation probes cover exact entity-resolver run correlation:
+      run-a/run-a and None/None resolve, while run-a/None and None/run-a fail
+      closed. The shared deletion tuple table admits the canonical statusless
+      failed/deletion_failed span alongside success and partial cleanup, and
+      cleanup exceptions emit one outcome, latency, and span measurement with
+      no rejection (71 focused telemetry/deletion tests passed). The
+      statusless failed/storage_unavailable tuple is accepted for both the
+      deletion metric and span, while unknown/storage_unavailable and
+      statusful undeclared combinations remain rejected.
+    - >-
+      Dispatch-lease race probes:
+      test_cancel_after_search_operation_reload_fences_dispatch_and_cancels_exact_id,
+      test_cancel_committed_after_operation_reload_prevents_static_provider_call,
+      and test_kill_switch_narrowing_after_fetch_claim_blocks_provider_call
+      (3 passed, 39 deselected; revoked claims made zero provider calls).
+    - >-
+      Worker import and projection checks:
+      services/aura-core/tests/test_research_worker.py
+      services/aura-core/tests/test_task_projection_sources.py -q
+      (22 passed, 3 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check assigned research, API, worker, and telemetry source
+      paths (production source clean).
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright assigned research,
+      repository, API, and worker paths (0 errors)
+    - >-
+      Production Ruff and git diff --check passed for assigned Core source,
+      telemetry, bootstrap, API, and worker paths.
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0145.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0145.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0145.yaml
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0145.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0145.yaml
+    - git diff --check
+    - app construction smoke test with create_app(testing=True)
+  failed: []
+  not_run:
+    - Live PostgreSQL restart/race acceptance outside the local full-suite checks
+decisions:
+  - >-
+    Provider implementation imports were kept behind the bootstrap/provider
+    boundary; the coordinator uses provider-neutral request DTOs and accepts
+    only the reviewed inward provider ports.
+  - >-
+    Provider admission and outbound research remain fail-closed and disabled
+    by default; synthetic fixtures are used only in deterministic tests.
+  - >-
+    Extension admission can raise a lowered budget once, but only to the
+    immutable operator envelope; settlement validates all consumption counters
+    against the admitted envelope.
+  - >-
+    Evidence and citations are task-scoped and validated at every transition;
+    terminal or deleted tasks reject checkpoint mutation. Provider operation
+    identities are durably claimed and settled to fence replay after restart;
+    settled operation responses carry bounded evidence for restart recovery.
+  - >-
+    Absolute deadlines are checked at each provider admission barrier, final
+    provider URLs are revalidated, cancellation sends the exact deterministic
+    operation request IDs, and cleanup substates are persisted with proof-gated
+    retry/reconciliation.
+  - >-
+    Admission persists an initial checkpoint and shared platform identifier
+    command atomically in SQL; the worker consumes the public command and
+    acknowledges only after settlement.
+  - >-
+    Runtime observations use generated admitted trace lineage for spans while
+    metrics remain correlation-free; terminal budget fields and settlement
+    latency are emitted once after the authoritative save.
+  - >-
+    Owner settings are versioned and persisted through the research repository
+    boundary, while generated reports use only the generated-artifact public
+    application API and Task Center uses the source snapshot boundary.
+  - >-
+    Public failureClass serialization is restricted to the OpenAPI
+    ResearchFailureClass enum. Internal coordinator failure details are mapped
+    at settlement; wall-clock expiry uses public timeout with budget_exhausted
+    outcome and telemetry status/error budget_exhausted.
+  - >-
+    API admission receives a non-network provider capability/settings snapshot
+    through the bootstrap seam; worker execution intersects that immutable
+    admission snapshot with current narrowing switches.
+  - >-
+    Terminal budget fields describe a durably successful settlement; exhausted
+    runs retain status budget_exhausted and error class budget_exhausted rather
+    than being reported as unknown metric outcomes.
+  - >-
+    Lexical/token and denylist synthesis was removed. Research now accepts only
+    a trusted injected synthesis port result, and validates exact task-scoped
+    source IDs and bounded spans before citations or report artifacts exist.
+  - >-
+    Settings, extend, cancel, task-command, and deletion finalization receipts
+    are claimed and persisted in the same memory/SQL repository mutation as
+    expected-version state changes and Task Center invalidation staging.
+  - >-
+    Provider operation rows are dispatch leases: cancellation, current
+    capability narrowing, deadline, and operation identity are checked while
+    the repository claim is serialized; late operation settlements are ignored.
+  - >-
+    Five-minute static/browser fallback cohorts are source-owned durable rows,
+    not MetadataMetrics or coordinator process state; the ratio is derived from
+    the shared numerator/denominator.
+  - >-
+    Research telemetry now applies component-specific dependency matrices and
+    rejects coordinator model-gateway/conversation-store/scope dimensions while
+    preserving admitted trace lineage only on spans.
+  - >-
+    Trusted synthesis preserves the adapter's sufficient flag; insufficient
+    validated claims settle PARTIAL and never create a report artifact.
+    Claim support uses a closed v1 question/relation parser with bounded terms,
+    exact task/source/span checks, and instruction-bearing spans fail closed.
+  - >-
+    Provider dispatch receives a typed current-capability callback and evaluates
+    it inside the serialized Memory/SQL dispatch gate; the coordinator never
+    authorizes dispatch from a precomputed boolean.
+  - >-
+    Fallback cohort persistence is outcome-isolated from research settlement;
+    SQL first-writer races retry after unique-key conflict and retain both
+    numerator and denominator.
+  - >-
+    Research telemetry rejects error classes outside the closed manifest union;
+    phase spans cover actual planner/validator/synthesis actions, with durable
+    checkpoints persisted after the phase span.
+  - >-
+    Claim support is now a single closed declarative sentence relation: the
+    supported question grammar extracts relation/object, the evidence sentence
+    extracts subject/relation/object, and only an exact normalized relation is
+    rendered into the report. Multi-sentence, mixed-clause, imperative, and
+    unsupported forms fail closed without lexical denylist authority.
+  - >-
+    Coordinator telemetry owns only coordination, checkpoint/queue, budget, and
+    fallback metrics; planner, cancellation, evidence, citation, synthesis, and
+    deletion metrics remain owned by their child components. MetadataMetrics
+    enforces metric ownership plus exact operation/dependency/outcome/error
+    matrices.
+  - >-
+    Fallback ratio is emitted only when the durable cohort read/write succeeds;
+    repository outage never fabricates a zero ratio while settled and fallback
+    counters remain truthful.
+  - >-
+    Claim entities use a closed bounded v1 grammar: each subject and object is
+    a normalized one-to-eight-token proper-noun or numeric phrase with safe
+    punctuation. Pronoun, modal, imperative, lowercase, multi-clause, and
+    mixed-instruction prefixes are rejected; report text is rendered only from
+    parsed subject/relation/object fields, never from the original subject span.
+  - >-
+    Provider search/static/browser/extraction components advertise aligned
+    partial, canceled, redirect_blocked, and resource_exhausted classifications
+    while rejecting unrelated cleanup_unknown errors. Planner deleted status is
+    rejected, evidence redirect_blocked is accepted, and MetadataMetrics keeps
+    the closed component ownership matrix without child-metric leakage.
+  - >-
+    EntityPhrase is a typed closed DTO with one or two normalized proper-name
+    or numeric tokens and bounded internal punctuation. The parser has no
+    pronoun, imperative, or blocked-word denylist; hostile prefixes fail by
+    complete-shape validation, while Paris and New Delhi normalize and render
+    through the DTO only.
+  - >-
+    Research telemetry uses exact per-metric tuple guards: planner metrics only
+    admit planning status, provider resource_exhausted requires a failed or
+    rejected provider outcome, and linked-artifact deletion_pending admits only
+    partial plus cleanup_unknown. Deletion manifests advertise the partial
+    cleanup tuple; cleanup_unknown/deleted combinations outside their canonical
+    states are rejected.
+  - >-
+    Structured claims now require a separate ResearchEntityResolutionPort
+    result after synthesis. The typed result must exactly match the normalized
+    candidate, establish a bounded entity type/provenance and non-empty bounded
+    identity, and correlate to the task and applicable run. Missing, malformed,
+    mismatched, or unavailable resolution settles PARTIAL without citations or
+    report artifacts.
+  - >-
+    Research span recording applies the same exact tuple guard as metrics:
+    static success/resource_exhausted spans reject, failed or rejected provider
+    resource exhaustion is accepted, and deletion partial/cleanup_unknown spans
+    remain accepted.
+  - >-
+    Deletion telemetry admits the manifest-declared statusless
+    failed/storage_unavailable tuple for both metric and span recording; it does
+    not broaden acceptance to unknown/storage_unavailable or undeclared
+    statusful combinations.
+risks:
+  - >-
+    Real provider rollout remains gated by AURA-0144's independent egress,
+    image-provenance, and capability switches.
+  - >-
+    Full-stack live database, restart, and cross-worker race acceptance must be
+    rerun during AURA-0148 integration.
+unresolved: []

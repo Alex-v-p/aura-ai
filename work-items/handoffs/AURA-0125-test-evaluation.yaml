@@ -1,0 +1,62 @@
+agent: test_evaluation_engineer
+work_item: AURA-0125
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0125_evaluation
+  worktree: shared-main
+scope:
+  ownership_zone: evaluation.aura0125
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_aura0125_idle_memory_telemetry.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.knowledge.memory_maintenance
+    - aura.knowledge.memory_extraction
+    - aura.runtime.stream_delivery
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      .venv/bin/python -m pytest services/aura-core/tests/test_aura0125_idle_memory_telemetry.py
+      services/aura-core/tests/test_memory_processing.py services/aura-core/tests/test_memory_maintenance.py
+      services/aura-core/tests/test_memory_evaluation.py services/aura-core/tests/test_telemetry.py -q
+      (308 passed, 1 skipped)
+    - .venv/bin/ruff check services/aura-core/tests/test_aura0125_idle_memory_telemetry.py
+    - git diff --check
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0125.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0125.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0125.yaml (no contract changes; skipped)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0125.yaml
+  failed: []
+  not_run:
+    - >-
+      Full AURA-0125 architecture, service-isolation, frontend-boundary, privacy, restarted-stack
+      sampling, and integration checks remain owned by the Delivery Lead and Integration Maintainer.
+decisions:
+  - >-
+    Use MemoryStore with a manually advanced clock to cover empty and active no-op housekeeping,
+    lifecycle decay, due and not-due retry jobs, lease settlement, and retry backoff without wall
+    clock sleeps.
+  - >-
+    Exercise run_memory_once through a real identifier-only OutboxCommand envelope so malformed
+    transport assumptions cannot make the acceptance seam pass accidentally.
+  - >-
+    Use EventPublisher durable event history to assert queued and terminal memory.activity events
+    remain deterministic across first and duplicate deliveries; provider payloads and content are
+    never introduced.
+  - >-
+    Keep failure assertions bounded to error classes and retry delay rather than incidental
+    exception text; the required behavior is immediate failure visibility and bounded redelivery.
+risks:
+  - >-
+    Full-stack idle-rate reduction and restart recovery are intentionally outside this evaluation
+    handoff and require the integration acceptance sample after the local stack is restarted.
+unresolved: []

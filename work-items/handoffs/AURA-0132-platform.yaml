@@ -1,0 +1,66 @@
+agent: platform_worker
+work_item: AURA-0132
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0132_platform
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: repository.module-registry; aura-core.notification-delivery-observability
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - tooling/architecture/modules.yaml
+  - work-items/handoffs/AURA-0132-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.automation.notification_delivery@1.1.0
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0132.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0132.yaml --role platform_worker --path
+      tooling/architecture/modules.yaml (passed; one platform-owned path)
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0132.yaml
+    - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v (27 passed)
+    - git diff --check -- tooling/architecture/modules.yaml services/aura-core/resources/component-manifests/notification-delivery.yaml
+  failed: []
+  not_run:
+    - >-
+      Aggregate Core, contract, frontend, generated-client, migration, and
+      browser checks remain owned by their respective AURA-0132 workers and
+      the integration maintainer.
+decisions:
+  - >-
+    Registered the new versioned automation briefing lifecycle event contract
+    as aura-contract.automation-briefing-events, pointing to the public v1
+    JSON Schema without adding runtime dependencies or a new deployable module.
+  - >-
+    Kept the existing notification module dependency graph unchanged because
+    Core notification code consumes its public domain types and does not import
+    contract files directly; the generated API client likewise consumes the
+    OpenAPI contract only.
+  - >-
+    Kept aura.automation.notification_delivery at version 1.1.0 and left its
+    component manifest unchanged. The source union is additive within the
+    existing aura-notification-events-v1 delivery boundary, while the existing
+    metadata-only capture policy, finite dimensions, metrics, and evaluators
+    remain valid. Briefing identifiers are not added as telemetry dimensions.
+  - >-
+    No scheduler, execution, briefing persistence, deployment, Observatory,
+    dependency, or framework logic was added in this platform slice.
+risks:
+  - >-
+    Final aggregate validation must run after the concurrent contract, Core,
+    and frontend changes settle in the shared worktree.
+unresolved:
+  []

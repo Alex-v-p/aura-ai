@@ -1,0 +1,118 @@
+agent: observatory_worker
+work_item: AURA-0098
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0098_observatory_worker
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.evaluation-resilience
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  - services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/resources/component-manifests/alerting.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-orchestration.yaml
+  - services/aura-observatory/tests/test_aura0098_observability.py
+  - services/aura-observatory/tests/test_aura0098_score_projection.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.observatory.deterministic_evaluators
+    - aura.observatory.evaluation_orchestration
+  metrics_added: []
+verification:
+  passed:
+    - python3 -m py_compile services/aura-observatory/src/aura_observatory/evaluation_evaluators.py services/aura-observatory/src/aura_observatory/evaluation_orchestration.py services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+    - uv run pytest -q services/aura-observatory/tests/test_aura0098_score_projection.py services/aura-observatory/tests/test_aura0093_score.py services/aura-observatory/tests/test_aura0093_observability.py (19 passed)
+    - uv run pytest -q services/aura-observatory/tests/test_aura0092_orchestration.py services/aura-observatory/tests/test_aura0092_worker.py (21 passed)
+    - uv run pytest -q combined focused Observatory projection/orchestration/evaluator tests (44 passed)
+    - uv run pytest -q services/aura-observatory/tests/test_aura0098_observability.py (1 passed)
+    - uv run ruff check services/aura-observatory/src/aura_observatory/evaluation_evaluators.py services/aura-observatory/src/aura_observatory/evaluation_orchestration.py services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py services/aura-observatory/tests/test_aura0098_score_projection.py
+    - uv run pyright services/aura-observatory/src/aura_observatory/evaluation_evaluators.py services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py services/aura-observatory/src/aura_observatory/evaluation_orchestration.py services/aura-observatory/src/aura_observatory/composition.py services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py (0 errors)
+    - uv run pyright services/aura-core services/aura-observatory (0 errors)
+    - uv run pyright services/aura-observatory (0 errors)
+    - uv run pyright services/aura-observatory/tests/test_aura0098_score_projection.py services/aura-observatory/src/aura_observatory/evaluation_evaluators.py (0 errors)
+    - uv run pytest -q services/aura-observatory/tests/test_aura0098_score_projection.py (10 passed)
+    - uv run pytest -q services/aura-observatory/tests/test_aura0098_score_projection.py services/aura-observatory/tests/test_aura0093_score.py services/aura-observatory/tests/test_aura0093_observability.py services/aura-observatory/tests/test_aura0092_orchestration.py services/aura-observatory/tests/test_aura0092_worker.py (40 passed)
+    - uv run ruff check on all changed Observatory source and test files
+    - uv run pyright services/aura-observatory/tests/test_aura0098_observability.py (0 errors)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0098.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0098.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - full composed Docker acceptance (owned by aggregate integration)
+    - complete Observatory test suite (owned by aggregate integration)
+decisions:
+  - >-
+    Exposed case_versions_for_selection on the existing typed
+    EvaluationDefinitionRepository port and call it directly from result
+    scoring; the previous dynamic adapter lookup was removed so exact
+    membership resolution remains an explicit, service-owned boundary.
+  - >-
+    Resolved selected case versions through the existing Observatory-owned
+    definition repository boundary and the exact dataset membership rows,
+    including non-1.0.0 versions. Missing or inconsistent membership now
+    raises permanent validation, while repository failures remain storage
+    failures for retryable redelivery; completed results cannot be acknowledged
+    with silently missing score coverage.
+  - >-
+    Added an optional result-scorer port to orchestration. Completed runner
+    results settle first, then invoke deterministic scoring through the
+    existing definition and ClickHouse score ports; projection failures are
+    bounded and cannot reopen jobs or delay Core activity.
+  - >-
+    Used a deterministic UUID derived from result and case identity and the
+    existing ReplacingMergeTree score store so retries and duplicate result
+    deliveries remain idempotent.
+  - >-
+    Converted only the closed runner provenance projection into score
+    provenance. The runner carries no typed replay content, so the initial
+    projection records explicit not_observed coverage rather than fabricating
+    evidence or persisting content.
+  - >-
+    Preserved local-judge admission and execution as an existing independent
+    worker path; no endpoint, contract, migration, provider, or artifact
+    boundary was added.
+  - >-
+    Replaced cross-test private helper imports with self-contained typed
+    definition builders and completed the local repository and score-store
+    protocol doubles, keeping aggregate Pyright strict without ignores.
+  - >-
+    Terminal-result acknowledgement is now deferred until the durable
+    result projection and deterministic score projection succeed. Retryable
+    PostgreSQL/ClickHouse failures propagate without acknowledgement so NATS
+    redelivery repairs missing scores; permanent definition validation is
+    acknowledged safely. Stable score IDs make redelivery, restart, and
+    duplicate delivery converge without duplicate terminal state.
+  - >-
+    Declared ClickHouse as the evaluation-orchestration score-projection
+    dependency and included it in the bounded dependency and result-consumption
+    metric definitions. The deterministic evaluator manifest already owns its
+    definition-state and ClickHouse score-store dependency; orchestration now
+    reflects the existing injected projection port without adding a component,
+    contract, or provider edge.
+risks:
+  - >-
+    The v1 runner request carries case IDs without case versions; the
+    Observatory definition repository therefore resolves the immutable case
+    version from the admitted dataset membership rather than expanding the
+    transport contract.
+  - >-
+    Full-stack score persistence still depends on the composed ClickHouse
+    service and seeded definitions; Docker startup and browser acceptance are
+    aggregate integration responsibilities.
+  - >-
+    ClickHouse score failures already emit their application-level storage
+    metric/span; the orchestration retry wrapper preserves that single
+    attribution and does not add a second dependency count.
+unresolved: []

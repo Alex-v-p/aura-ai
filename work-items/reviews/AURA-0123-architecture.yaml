@@ -1,0 +1,20 @@
+agent: architecture_guardian
+work_item: AURA-0123
+verdict: PASS
+checked:
+  - Final AURA-0123 work-item scope, decisions, ownership zones, allowed paths, forbidden paths, handoffs, reviews, and complete current diff.
+  - The added adapters/query.py change is explicitly authorized under the Observatory live-event projection ownership zone.
+  - componentId is read from Observatory-owned, content-free ClickHouse metadata and remains internal to the query projection.
+  - _query_live_event_payload deliberately excludes componentId, traceId, prompts, responses, evidence identifiers, owner identity, and arbitrary observation attributes.
+  - Public SSE output remains the existing closed seven-field envelope with schemaVersion, eventId, eventType, occurredAt, resourceType, resourceId, and capturePolicy.
+  - Public SSE capturePolicy remains metadata_only and REST snapshots remain authoritative.
+  - Existing LiveEvent and RunInspectionInvalidationEvent schemas already authorize run-scoped observation.changed invalidations, so no contract change or ADR is required.
+  - Observatory self-observations retain observation identity and cannot create a run-refresh feedback loop; ordinary run-correlated observations retain run invalidation identity.
+  - Observatory data ownership remains intact; no Core database, Core implementation, provider, deployment, or migration dependency was introduced.
+  - Aura Web and shared frontend boundaries remain untouched; all browser behavior stays in Observatory Web and its Observatory feature library.
+  - Application-shell changes remain route-lifecycle composition while refresh, cancellation, coalescing, and state behavior remain in feature stores.
+  - Latest acceptance edits are test-only and introduce no production dependency or public contract.
+  - Work-item, changed-path, contract-change, generated-sync, import-boundary, service-isolation, frontend-boundary, repository-shape, module-registry, focused backend tests, and git diff checks passed.
+findings: []
+risks: []
+unresolved: []

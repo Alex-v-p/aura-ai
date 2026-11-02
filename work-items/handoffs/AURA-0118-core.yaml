@@ -1,0 +1,155 @@
+agent: core_worker
+work_item: AURA-0118
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0118_core
+  worktree: shared
+scope:
+  ownership_zone: aura-core.execution.runs,aura-core.platform.run-evidence,aura-core.entrypoints.api-composition,aura-core.entrypoints.worker,aura-core.bootstrap.evaluation-runner,aura-core.platform.configuration,aura-core.platform.telemetry,architecture.module-registry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0015_notification_delivery.py
+  - services/aura-core/src/aura_core/platform/run_evidence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/bootstrap/evaluation_runner.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/run-evidence-export.yaml
+  - tooling/architecture/modules.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.platform.run_evidence_export
+    - aura.execution.run_coordinator
+  metrics_added:
+    - run_evidence_export_outcome_count
+    - run_evidence_export_dropped_count
+    - run_evidence_serialize_latency_ms
+    - run_evidence_queue_offer_latency_ms
+    - run_evidence_transport_latency_ms
+    - run_evidence_queue_depth
+    - run_evidence_queue_capacity
+verification:
+  passed:
+    - >-
+      Independent run-evidence suite: 73 passed. Full Core suite: 1235 passed,
+      106 skipped, 1 warning.
+    - >-
+      PYTHONPATH=services/aura-core/src uv run --project services/aura-core
+      pytest -p no:cacheprovider services/aura-core/tests -q: 1235 passed,
+      106 skipped, 1 warning.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core:
+      0 errors, 0 warnings, 0 informations.
+    - >-
+      python3 -m unittest tooling.architecture.tests.test_modules -v: 14 passed.
+    - >-
+      Work-item, changed-path, observability, import-boundary,
+      module-registry, service-isolation, frontend-boundary, repository-shape,
+      and baseline-protection validators passed; contract changes correctly
+      skipped because this item consumes the already integrated contract.
+    - docker compose config --quiet: passed.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core: passed after the authorized
+      Python-only SQL string wrap in migration 0015.
+    - git diff --check: passed.
+    - >-
+      Core capture is disabled unless AURA_RUN_EVIDENCE_CAPTURE_POLICY is
+      exactly full_content; it is injected into API, worker, and evaluation
+      composition roots and uses a detached bounded publisher on
+      aura.runs.evidence.v1. DisabledRunEvidenceRecorder is inert and exposes
+      enabled=false so coordinator call sites skip payload construction and
+      attachment encoding entirely.
+    - >-
+      Real MetadataMetrics retains serialize, queue_offer, and
+      transport_publish spans with distinct operation/attempt span IDs,
+      source-span parent lineage, finite dimensions, and run correlation;
+      queue pressure, transport exhaustion, and shutdown timeout retain
+      bounded content-free per-run drop signals. Queue depth is observed on
+      offer, dequeue, and shutdown.
+    - >-
+      Fresh coordinator replay produces identical immutable evidence tuples:
+      durable run timestamps, deterministic boundary span IDs, stable run-root
+      parent lineage, sequence, admission attestation, and logical IDs.
+      Native tool boundary slots follow routing/context/retrieval/prompt/
+      attachment/tool-arguments/policy/tool-result order; execution_outcome
+      is emitted only by actual tool execution.
+    - >-
+      Disabled-path production guards cover every evidence payload builder;
+      no evidence dict, JSON serialization, or attachment base64 encoding is
+      constructed when the injected recorder reports enabled=false.
+    - >-
+      Security probes reject JSON-encoded password, authorization/basic,
+      session, session_id, and private_key material, including bounded
+      admission/policy identifiers; sequence bool/float/negative/unsafe
+      integer values are rejected as non-schema integers.
+    - >-
+      Native tool evidence follows arguments, policy, result, execution
+      outcome, then synthesis/terminal settlement; deterministic per-call
+      blocks and bounded per-chunk synthesis ordinals prevent repeated-tool
+      collisions, while evaluation composition guards recorder.enabled before
+      constructing evidence payloads.
+    - >-
+      Native-capable direct-text responses emit generation_output once per
+      model text chunk without duplicating tool-path evidence; bounded nested
+      JSON scanning fails closed at depth exhaustion and rejects encoded
+      credential keys.
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Core owns only the closed producer port and explicit serializers. It never
+    imports an Observatory adapter, URL, client, persistence layer, telemetry
+    payload, or run-event transport.
+  - >-
+    Evidence uses stable UUID5 event/evidence identities derived only from run,
+    sequence, step category, and kind, so changed immutable content is a
+    content-free collision; each retry gets a new delivery identity while
+    preserving the actual initial delivery ID.
+  - >-
+    Restart-sensitive boundaries use deterministic sequence slots (including
+    approval-resume and terminal settlement ranges); native tool ordering is
+    reflected in per-call slots; dynamic stream chunks
+    retain the bounded allocator for their in-process ordinal sequence. The
+    evaluation input/output boundaries use stable 0 and 9,200,000,000,000
+    slots; terminal settlement uses the reserved 9e12 band and approval
+    settlement uses 9.1e12.
+  - >-
+    Secret-bearing fields, provider-hidden reasoning, malformed or unsupported
+    media, incomplete media admission, and oversized payloads are rejected as
+    whole items before queueing.
+  - >-
+    Explicit boundary coverage includes admitted request/trigger, worker input
+    and output, context, memory/document retrieval, compiled prompt, routing,
+    model-visible attachments, displayed thinking, generation, tools, policy,
+    approval resume, persistence, delivery, synthesis, and evaluation input/
+    output where applicable.
+risks:
+  - >-
+    Image and PDF attachments are rejected whole as partial until an authorized
+    Core parser/OCR attestation exists; text/JSON attachments require an
+    explicit validated admission and all decoded bytes are scanned for secrets.
+    Observatory ingestion/storage and full downstream media conformance remain
+    follow-up work items.
+  - >-
+    The pre-existing migration Ruff finding was cleared by a Python-only
+    adjacent-string wrap; AST comparison confirms the evaluated SQL string is
+    byte-for-byte unchanged.
+unresolved:
+  - >-
+    Observatory JetStream ingestion, PostgreSQL manifests, Garage evidence
+    storage, inspection API, deletion, UI, and full-stack acceptance remain
+    sequential follow-up work under AURA-0119/AURA-0120.

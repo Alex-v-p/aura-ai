@@ -1,0 +1,14 @@
+agent: architecture_guardian
+work_item: AURA-0108
+verdict: PASS
+checked:
+  - Verified bounded advisory-lock advancement never skips a missing or invisible sequence and every periodic pass can continue a quiescent tail without a new producer event.
+  - Verified the 2001-row regression reaches the final watermark across bounded sections with truthful interim and final lag.
+  - Verified reconciliation remains isolated alongside queue intake, heartbeat, cancellation, and restart handling.
+  - Verified run and trace detail cursors clamp to a fresh PostgreSQL watermark and fail closed before ClickHouse when it is unavailable.
+  - Focused AURA-0108 suite passed with 22 tests; repository, module, import, isolation, observability, contract, baseline, and diff checks passed.
+  - Confirmed no Core, Aura Web, Observatory frontend, public contract, migration, deployable, shared database, or forbidden dependency was added.
+findings: []
+risks:
+  - Shared AURA-0098 edits overlap composition.py and ports.py; integration must stage AURA-0108 hunks precisely.
+unresolved: []

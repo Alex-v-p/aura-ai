@@ -1,0 +1,94 @@
+agent: platform_worker
+work_item: AURA-0085
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0085_platform
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: deployment.observatory-metrics, repository.observability-governance
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - compose.yaml
+  - deploy/compose/test_topology.py
+  - tooling/architecture/validate-observability.py
+  - tooling/architecture/tests/test_observability.py
+  - work-items/handoffs/AURA-0085-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+    - aura.observatory.query_api
+    - aura.observatory.live_updates
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      python3 -m pytest -q deploy/compose/test_topology.py
+      deploy/tests/test_aura0079_runtime_wiring_regressions.py (49 passed)
+    - >-
+      python3 -m unittest tooling.architecture.tests.test_observability
+      (8 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0085-uv uv run ruff check
+      deploy/compose/test_topology.py
+      deploy/tests/test_aura0079_runtime_wiring_regressions.py
+      tooling/architecture/validate-observability.py
+      tooling/architecture/tests/test_observability.py
+    - >-
+      python3 -m py_compile deploy/compose/test_topology.py
+      deploy/tests/test_aura0079_runtime_wiring_regressions.py
+      tooling/architecture/validate-observability.py
+      tooling/architecture/tests/test_observability.py
+    - >-
+      python3 tooling/architecture/validate-observability.py
+      --work-item work-items/active/AURA-0085.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0085.yaml --role platform_worker
+      --path compose.yaml --path deploy/compose/test_topology.py
+      --path deploy/tests/test_aura0079_runtime_wiring_regressions.py
+      --path tooling/architecture/validate-observability.py
+      --path tooling/architecture/tests/test_observability.py
+      --path work-items/handoffs/AURA-0085-platform.yaml
+      (all assigned paths passed)
+    - >-
+      git diff --check -- compose.yaml deploy/compose/test_topology.py
+      tooling/architecture/validate-observability.py
+      tooling/architecture/tests/test_observability.py
+  failed: []
+  not_run:
+    - >-
+      Docker-backed ingest/scrape acceptance remains integration-owned; the
+      service now reads cross-process histogram series from Observatory-owned
+      PostgreSQL rather than a shared filesystem.
+decisions:
+  - >-
+    Removed the obsolete shared metrics bind, environment override, and
+    Compose user override after the owning service moved cross-process
+    histogram exposition to its PostgreSQL health port. The topology regression
+    now proves API and worker do not depend on /state metric paths and that API
+    exposition uses the persisted provider-backed series.
+  - >-
+    Strengthened the repository observability validator only for the four
+    AURA-0085 typed Observatory component IDs. It now checks metric-definition
+    identity, closed metric types, units, bounded labels, dependencies,
+    trace/correlation, Prometheus export, evaluator/replay metadata,
+    metadata-only capture, manual retention, and required content/privacy
+    redaction fields while preserving compatibility for legacy manifests.
+  - >-
+    Added validator regression tests for valid manifests and metric,
+    replay/capture, evaluator, retention, and redaction drift.
+risks:
+  - >-
+    Docker-backed full-stack acceptance must still verify the real API scrape
+    after worker ingestion; service and topology checks cover the provider
+    wiring without requiring a shared filesystem.
+unresolved: []

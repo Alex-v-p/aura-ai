@@ -1,0 +1,18 @@
+agent: general_reviewer
+work_item: AURA-0125
+verdict: PASS
+checked:
+  - Re-reviewed the complete current diff and all previously blocking execution paths.
+  - Verified authoritative durable duplicate lookup executes inside the governed publication error boundary.
+  - Independently reproduced a failing event-store lookup and observed exactly one bounded persistence-error span, one error outcome metric, no success sample, and the original exception re-raised.
+  - Verified a fresh publisher over the same durable store suppresses repeated activity events and publication-success observations.
+  - Verified quiet housekeeping context is bounded to discovery and claim operations; real processing and embedding claims execute in non-suppressing child contexts with lineage preserved.
+  - Verified transient-to-successful redelivery emits one queued event and one terminal event.
+  - Verified durable retryable settlement is ACKed, while due housekeeping completion or failure reconciles terminal activity through durable status.
+  - Verified deterministic activity IDs, direct housekeeping candidate fields, duplicate suppression, transient NAK behavior, and non-durable NAK behavior remain correct.
+  - Independently ran the focused Core suite successfully with 308 passed and 1 skipped.
+  - Independently passed Ruff, work-item validation, changed-path validation, contract-change validation, observability validation, and git diff checking.
+findings: []
+risks: []
+unresolved:
+  - The restarted-stack two-minute observation-rate acceptance remains an integration check.

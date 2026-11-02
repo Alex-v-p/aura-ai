@@ -1,0 +1,27 @@
+agent: integration_maintainer
+work_item: AURA-0074
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0074-general.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0074.yaml
+checks:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0074.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0074.yaml
+    - implementation handoff and general review schemas validated
+    - uv run pyright services/aura-core
+    - uv run ruff check services/aura-core/src services/aura-core/tests/test_settings.py
+    - uv run pytest services/aura-core/tests/test_settings.py (6 passed)
+    - docker compose --env-file .env config --quiet
+    - git diff --check
+    - focused AURA-0073 regression (39 passed, 1 skipped)
+    - additional Ollama/document reliability regression (92 passed)
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks: []

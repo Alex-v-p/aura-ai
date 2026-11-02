@@ -1,0 +1,15 @@
+agent: architecture_guardian
+work_item: AURA-0118
+verdict: PASS
+checked:
+  - Current settled AURA-0118 diff and all architecture, contract, ownership, and isolation sources.
+  - Direct native-text and displayed-thinking capture with exact unique ordered chunks and no provider-path duplication.
+  - Closed schema-compatible serializers, RFC 8785 bytes, immutable replay tuples, stable logical identifiers, and retry delivery lineage.
+  - Repeated tool, policy, result, execution-outcome, synthesis, terminal, approval-resume, and evaluation ordering without collisions.
+  - Recursive nested JSON and Unicode-escaped credential rejection with bounded fail-closed depth behavior.
+  - Core-to-Observatory one-way dependency direction, Aura Web isolation, module ownership, and public API boundaries.
+  - Focused suite 76 passed; full Core 1238 passed and 106 skipped; architecture, Ruff, Pyright, Compose, and diff checks passed.
+findings: []
+risks:
+  - Observatory ingestion, storage, deletion, query, and presentation remain intentionally assigned to sequential follow-up work items.
+unresolved: []

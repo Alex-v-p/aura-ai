@@ -1,0 +1,188 @@
+agent: core_worker
+work_item: AURA-0137
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0137_runtime
+  worktree: shared
+scope:
+  ownership_zone: services.aura-core.run-coordinator-workflow-lineage
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/execution/runs/models.py
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/tests/test_workflow_run_recovery.py
+contracts:
+  changed: false
+  notes: >-
+    Added a public execution-domain workflow-agent request/result seam and a
+    provider-bound composition adapter backed by an explicit narrow
+    provider-bearing execution port and a durable workflow-agent recovery
+    port. No wire contract or persistence mapping was changed in this
+    ownership slice.
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.execution.run_coordinator
+    - aura.automation.workflow_step.agent_run
+  metrics_added:
+    - workflow_agent_run_step_duration_ms
+  notes: >-
+    Workflow identifiers are trace-only. Workflow evidence uses the existing
+    closed automation_input and automation_output variants and is best-effort.
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run ruff check
+      services/aura-core/src/aura_core/domains/execution/runs/models.py
+      services/aura-core/src/aura_core/domains/execution/runs/ports.py
+      services/aura-core/src/aura_core/domains/execution/runs/public.py
+      services/aura-core/src/aura_core/domains/execution/runs/service.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/execution/runs/models.py
+      services/aura-core/src/aura_core/domains/execution/runs/ports.py
+      services/aura-core/src/aura_core/domains/execution/runs/public.py
+      services/aura-core/src/aura_core/domains/execution/runs/service.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_run_events.py
+      services/aura-core/tests/test_run_evidence.py
+      services/aura-core/tests/test_telemetry.py
+      services/aura-core/tests/test_conversations.py -q
+      services/aura-core/tests/test_workflow_execution_handlers.py -q
+      services/aura-core/tests/test_workflow_execution_integration.py -q
+      (25 passed in focused workflow integration/handler run; prior run suite
+      remains 280 passed, 1 skipped)
+    - >-
+      Inline recovery smoke: a shared durable-fence double across two
+      RunCoordinator instances invoked the provider once and replayed the
+      terminal result; a cancellation race returned canceled without provider
+      completion.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_workflow_run_recovery.py
+      services/aura-core/tests/test_workflow_execution_integration.py -q
+      (13 passed, 4 skipped; SQL recovery cases require the opt-in
+      AURA_0137_DATABASE_URL disposable PostgreSQL database.)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_workflow_run_recovery.py
+      services/aura-core/tests/test_workflow_execution_integration.py
+      services/aura-core/tests/test_workflow_execution_handlers.py
+      services/aura-core/tests/test_telemetry.py -q
+      (94 passed, 5 skipped.)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0137_workflow_execution_contract.py
+      services/aura-core/tests/test_workflow_state_machine.py
+      services/aura-core/tests/test_workflow_repository.py
+      services/aura-core/tests/test_workflow_contract_state_evaluation.py
+      services/aura-core/tests/test_workflow_execution_handlers.py
+      services/aura-core/tests/test_workflow_execution_integration.py
+      services/aura-core/tests/test_workflow_api.py
+      services/aura-core/tests/test_workflow_worker.py
+      services/aura-core/tests/test_workflow_run_recovery.py
+      services/aura-core/tests/test_migration_0028_workflow_execution.py
+      services/aura-core/tests/test_migrations.py
+      services/aura-core/tests/test_run_events.py
+      services/aura-core/tests/test_run_evidence.py
+      services/aura-core/tests/test_settings.py
+      services/aura-core/tests/test_telemetry.py
+      services/aura-core/tests/test_approvals.py
+      services/aura-core/tests/test_approval_stream.py
+      services/aura-core/tests/test_notifications.py
+      services/aura-core/tests/test_notification_api.py
+      services/aura-core/tests/system/test_workflow_execution.py -q
+      (last clean aggregate run: 380 passed, 20 skipped; a later rerun
+      reached 379 passed, 20 skipped with two concurrent evaluator assertion
+      failures in test_workflow_execution_integration.py.)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0137.yaml
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - git diff --check
+  failed:
+    - >-
+      The latest aggregate rerun has two failures in the concurrently edited
+      workflow evaluator expectations (test_all_eight_workflow_evaluators_are_declared_and_executable
+      and test_public_workflow_evaluator_rejects_tampered_selected_cases in
+      services/aura-core/tests/test_workflow_execution_integration.py). The
+      Run Coordinator telemetry-focused suite remains green; this ownership
+      slice did not modify the workflow evaluator domain.
+  not_run:
+    - Full AURA-0137 frontend, generated-client, and aggregate architecture checks remain the delivery lead's responsibility.
+decisions:
+  - >-
+    Workflow agent execution has a dedicated public coordinator seam and does
+    not use conversation persistence, provider adapters, executor state, tools,
+    memory, or nested runs.
+  - >-
+    Workflow composition receives RunCoordinatorWorkflowAdapter, whose
+    provider, model identifier, and exact model-policy revision are selected
+    at the entrypoint and checked against every Run-owned request before a
+    provider call. The adapter depends on the explicit
+    WorkflowAgentRunExecutionPort rather than a concrete/private coordinator
+    implementation, preserving test-double and composition compatibility.
+  - >-
+    Workflow agent admission now requires a composition-provided durable
+    WorkflowAgentRunRecoveryPort. It atomically reserves the complete step
+    lineage before provider invocation, replays terminal results, returns an
+    unknown outcome for an unresolved prior reservation, and persists terminal
+    settlement. Process-local caches remain only an optimization.
+  - >-
+    Provider execution clamps the effective deadline to five minutes from the
+    truthful coordinator start timestamp while still honoring an earlier
+    workflow instance deadline; an instance's multi-day deadline is never
+    used as the provider execution timeout.
+  - >-
+    SqlWorkflowAgentRunRecovery reserves the complete workflow lineage in the
+    existing Run row before provider invocation, persists bounded terminal
+    metadata only, and treats completed-without-workflow-output as unknown on
+    restart so the workflow owner must reconcile rather than replay content.
+  - >-
+    The request requires complete workflow lineage and a pinned agent/model
+    policy identity, while the result is closed to completed, failed, canceled,
+    or unknown outcomes; agent-run effects are never replayable.
+  - >-
+    A bounded process-local task/result cache suppresses duplicate provider
+    calls only while a worker is alive. Durable workflow state remains the
+    authority for restart recovery and settlement.
+  - >-
+    Cancellation is fenced by the same complete lineage: durable cancellation
+    wins only while the Run reservation is running, while terminal settlement
+    remains immutable; the in-flight event is also signaled for prompt local
+    provider cancellation.
+  - >-
+    Provider text is bounded to 8 KiB, hidden reasoning and tool calls are
+    discarded/rejected, and deadlines are capped at five minutes.
+  - >-
+    Workflow agent telemetry propagates the admitted request trace to both
+    the step duration metric and run.execute span. Provider failures map to
+    the finite approved error classes (provider, provider_protocol, budget,
+    or capability) rather than unconstrained outcome text.
+  - >-
+    Repository-backed recovery tests exercise reservation-before-effect,
+    unresolved restart UNKNOWN without provider replay, durable terminal
+    failure replay, exact-lineage cancellation, and the truthful five-minute
+    deadline cap. SQL cases use only the explicitly supplied disposable
+    AURA_0137_DATABASE_URL.
+risks:
+  - >-
+    The workflow application must replace its local request shape with the
+    public Run-owned WorkflowAgentRunRequest/WorkflowAgentRunResult values and
+    receive the provider-bound RunCoordinatorWorkflowAdapter at composition;
+    the handler should pass one request argument (not a provider object).
+  - >-
+    The workflow worker must call the new coordinator seam from its identifier
+    consumer; this slice intentionally does not edit worker or workflow files.
+unresolved: []

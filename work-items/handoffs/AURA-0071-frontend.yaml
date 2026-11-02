@@ -1,0 +1,129 @@
+agent: frontend_worker
+work_item: AURA-0071
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: dev
+scope:
+  ownership_zone: aura-web.interaction.conversations, aura-web.e2e, aura-api-client.generated
+  allowed_paths_respected: true
+commits:
+  - 215454c feat(conversations): add immutable branching and regeneration
+files_changed:
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/branch-edit-focus.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/branch-edit-focus.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/branch-navigation.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-api.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-branching.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.css
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/branch-action-focus.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/project.json
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+contracts:
+  changed: true
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0071.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0071.yaml --path frontend/apps/aura-web-e2e/src/aura-web.spec.ts --path frontend/apps/aura-web-e2e/src/full-stack.spec.ts --path frontend/libs/aura/interaction/conversations/src/lib/branch-edit-focus.spec.ts --path frontend/libs/aura/interaction/conversations/src/lib/branch-edit-focus.ts --path frontend/libs/aura/interaction/conversations/src/lib/branch-navigation.ts --path frontend/libs/aura/interaction/conversations/src/lib/conversation-api.ts --path frontend/libs/aura/interaction/conversations/src/lib/conversation-branching.spec.ts --path frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.css --path frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html --path frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts --path frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts --path frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts --path frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0071.yaml
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0071.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0071.yaml
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - >-
+      pnpm --dir frontend exec nx test aura-conversations (passed after changing
+      the Vitest 5 target from workspace --dir selection to a positional project
+      path)
+    - NX_DAEMON=false pnpm --dir frontend exec nx check-generated aura-api-client (passed)
+    - NX_DAEMON=false pnpm --dir frontend exec nx lint aura-api-client (passed)
+    - NX_DAEMON=false pnpm --dir frontend exec nx lint aura-conversations (passed)
+    - NX_DAEMON=false pnpm --dir frontend run lint (13 projects passed)
+    - pnpm --dir frontend test -- --runInBand (24 files, 221 tests passed)
+    - NX_DAEMON=false pnpm --dir frontend run build:production (passed)
+    - NX_DAEMON=false pnpm --dir frontend run build-storybook (passed)
+    - git diff --check (passed)
+    - >-
+      NX_DAEMON=false NX_ISOLATE_PLUGINS=false AURA_WEB_E2E_WORKERS=1 pnpm
+      --dir frontend exec playwright test --config=playwright.config.ts
+      apps/aura-web-e2e/src/aura-web.spec.ts --project=desktop --grep
+      "shows a branch-list error and retries the branch action" (passed)
+    - >-
+      Focused desktop Playwright coverage for local interruption and deferred
+      draft routing passed after adding explicit conversation readiness gating.
+    - >-
+      Focused desktop Playwright renders-a-completed-local-reply case passed
+      1/1 after moving composer fill behind the readiness gate.
+    - >-
+      Focused tablet Playwright Shift+Enter composer rerun passed 1/1 after a
+      transient all-project-suite flake.
+    - >-
+      Focused conversation recovery unit suite passed: 3 files, 116 tests,
+      including definitive edit/regenerate permission failures, retry-action
+      suppression, and exact regeneration payload replay.
+    - NX_DAEMON=false pnpm --dir frontend exec nx test aura-conversations --outputStyle=static (passed)
+    - NX_DAEMON=false pnpm --dir frontend exec nx lint aura-conversations --outputStyle=static (passed)
+    - >-
+      Focused desktop Playwright branch navigation and branch-recovery cases
+      passed: 2 tests.
+  failed:
+    - >-
+      The all-project Playwright suite completed with 241 passed, 343 skipped,
+      and 1 transient failure in the tablet Shift+Enter composer case;
+      immediate focused tablet rerun passed 1/1. This is retained as exact
+      verification history; the focused rerun is green.
+    - >-
+      The first in-sandbox Playwright attempt could not start Nx web servers due
+      to Unix socket restrictions; the approved escalated retry ran the suite
+      and produced the result above.
+  not_run:
+    - bash ./deploy/compose/run-full-stack-e2e.sh (owned by integration/full-stack validation)
+    - uv run pyright services/aura-core (backend-owned)
+    - uv run ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e/fake_provider.py (backend-owned)
+    - backend pytest checks listed by AURA-0071 (backend-owned)
+decisions:
+  - >-
+    The frontend slice now preserves one idempotency key per edit/regenerate
+    intent, reconciles ambiguous outcomes before retry, gates send and
+    configuration while branch state loads, maps branch failures to safe copy,
+    restores action focus, and removes root-only branch chrome after recovery.
+    Reconciliation may advance the conversation version without changing the
+    original retry key; a new edit draft starts a new intent.
+  - >-
+    Branch controls use generated API operations, owner-safe opaque URL query
+    state, session-only branch data, and explicit focus restoration for edit,
+    cancel, conflict retry, and branch navigation.
+  - >-
+    Definitive branch action failures (401/403/404) now clear pending intent,
+    use operation-specific safe copy, and expose no retry; list/select
+    permission and not-found failures likewise suppress impossible retries.
+  - >-
+    The aura-conversations Nx target uses a positional Vitest project path so
+    Vitest 5 resolves the workspace include globs correctly; the exact required
+    target now passes.
+risks:
+  - >-
+    The all-project browser run recorded one transient tablet Shift+Enter
+    failure; the immediate focused rerun passed and no persistent frontend
+    failure remains.
+unresolved:
+  []

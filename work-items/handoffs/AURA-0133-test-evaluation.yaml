@@ -1,0 +1,58 @@
+agent: test_evaluation_engineer
+work_item: AURA-0133
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: evaluation.scheduled-briefings-core
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_aura0133_scheduler.py
+  - services/aura-core/tests/test_aura0133_execution.py
+  - services/aura-core/tests/test_aura0133_observability.py
+  - services/aura-core/tests/test_aura0133_outbox.py
+  - services/aura-core/tests/test_aura0133_cancellation_authority.py
+  - services/aura-core/tests/test_briefing_repository_evaluation.py
+  - services/aura-core/tests/test_migration_0026_briefing_execution.py
+  - services/aura-core/tests/system/test_scheduled_briefing.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.automation.briefing_scheduler
+    - aura.execution.briefing_admission
+    - aura.execution.briefing_context
+    - aura.automation.briefing_persistence
+    - aura.automation.briefing_cancellation
+    - aura.automation.briefing_delivery
+  metrics_added: []
+verification:
+  passed:
+    - uv run ruff check services/aura-core/tests/test_aura0133_*.py services/aura-core/tests/test_briefing_*.py services/aura-core/tests/test_migration_0026_briefing_execution.py services/aura-core/tests/system/test_scheduled_briefing.py (all checks passed)
+    - uv run pyright services/aura-core/tests/test_aura0133_*.py services/aura-core/tests/test_briefing_*.py services/aura-core/tests/test_migration_0026_briefing_execution.py services/aura-core/tests/system/test_scheduled_briefing.py (0 errors)
+    - uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_*.py services/aura-core/tests/test_briefing_*.py services/aura-core/tests/test_migration_0026_briefing_execution.py services/aura-core/tests/system/test_scheduled_briefing.py -q (72 passed, 1 skipped)
+    - uv run pytest -q services/aura-core/tests/test_aura0133_execution.py (19 passed; hostile source-id/label/value delimiter regression coverage)
+    - git diff --check
+  failed:
+    []
+  not_run:
+    - PostgreSQL-backed migration and concurrent claim tests; AURA_0055_DATABASE_URL was not configured in this environment
+    - Repository-wide AURA-0133 aggregate checks; Delivery Lead owns the final aggregate gate
+decisions:
+  - Tests use only public briefing value objects, application ports, and generic outbox envelopes; they do not inspect persistence implementation details except migration and manifest invariants.
+  - The seven `briefing.*.v1` evaluators are repository-local deterministic bindings in `test_aura0133_observability.py`, following the existing evaluation-test pattern; they are not a production evaluator registry or framework.
+  - Each evaluator executes a bounded success plus failure, completeness, terminal-settlement, duplicate, cancellation, or delivery replay fixture and emits a stable structured metadata-only result.
+  - DST overlap assertions select the earlier UTC instant, while DST gaps assert movement to the first valid instant.
+  - Hostile evidence remains present as data inside a closed untrusted section; tests assert fencing rather than sanitizing or deleting source values.
+  - Hostile calendar, reminder, and document source identifiers, labels, and values must preserve their data while producing exactly one section opener and one closer.
+  - Manual deletion tests assert separate schedule, occurrence-history, and result-content scopes and preserve tombstoned schedule/history truth.
+  - The production-composed observability evaluation runs BriefingExecutionApplication.process_command with MemoryBriefingRepository and real durable state transitions. It verifies correlated context/admission/persistence/delivery spans, helper-derived parent IDs, zero rejected telemetry, all five run-evidence phases, and unchanged settlement/delivery when the recorder rejects writes.
+risks:
+  - PostgreSQL row-lock, foreign-key, and concurrent redelivery behavior remains environment-dependent and requires the aggregate PostgreSQL gate.
+unresolved:
+  []

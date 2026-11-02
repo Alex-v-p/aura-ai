@@ -1,0 +1,21 @@
+agent: observability_steward
+work_item: AURA-0137
+verdict: PASS
+checked:
+  - >-
+    Verified provider-failure agent metrics and Run spans share the persisted
+    trace, use bounded error classes, and produce zero telemetry rejection.
+  - >-
+    Verified all eight evaluators pass valid component-specific race and replay
+    fixtures, reject tampered cases, and emit deterministic replay keys; manifest
+    evaluator IDs exactly match the executable registry.
+  - >-
+    Verified future-wait worker continuation retains one trace, accepted finite
+    statuses, real wait-resume spans, exact component metrics, and zero rejection.
+  - >-
+    Verified schema-valid persisted lifecycle and SSE replay, governed automation
+    evidence, bounded metadata-only capture, and Core/Observatory isolation.
+  - >-
+    Focused observability tests passed 145 with 5 environment-gated skips;
+    observability, isolation, import-boundary, work-item, and diff checks passed.
+findings: []

@@ -1,0 +1,9 @@
+agent: general_reviewer
+work_item: AURA-0071
+verdict: PASS
+checked:
+  - Legacy create-run requests without branchId resolve the unique root branch in both in-memory and SQL stores.
+  - Explicit branch selection, immutable branch creation, regeneration, optimistic versions, and idempotency remain covered by the affected API and domain tests.
+  - The correction preserves backward-compatible contracts and does not rewrite source messages or runs.
+  - Focused backend and frontend regression suites, type checking, linting, and architecture validation passed.
+findings: []

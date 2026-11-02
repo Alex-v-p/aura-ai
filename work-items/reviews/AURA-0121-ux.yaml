@@ -1,0 +1,81 @@
+agent: aura_ux_ui_reviewer
+work_item: AURA-0121
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the complete corrected AURA-0121 frontend diff against the work
+    item, governed-evidence owner decisions, generated run-inspection contract,
+    and the repository design guidance in docs/design/README.md,
+    foundations.md, components-and-interactions.md,
+    failure-and-recovery-states.md, reference-research.md, and
+    sidebar-and-management-surfaces.md.
+  - >-
+    Reverified the shell-copy finding. The persistent header now says “Private
+    operational monitoring · governed evidence is owner-disclosed,” while the
+    Trace route explains that exact evidence is separate, explicitly disclosed,
+    governed capture. It no longer represents the entire product as
+    metadata-only.
+  - >-
+    Reverified inspection and trace hierarchy. Both bounded timelines expose
+    tree/treeitem semantics, level, sibling-relative position and set size,
+    explicit parent step/span or root labels, run-relative start offsets,
+    duration, state, and parallel-branch presentation. Unit coverage verifies
+    lineage, sibling grouping, and parallel branches; current desktop/mobile
+    browser locators resolve the corrected trees.
+  - >-
+    Reverified semantic icon cleanup across the changed Observatory surfaces.
+    The obsolete trace pseudo-icons and Unicode state/branch glyphs are removed;
+    Trace continuation/status/branches and the Operations firing/recovered/
+    suppressed legend now use ObservatoryIconComponent with adjacent text.
+    A repository scan found none of the reviewed ambiguous glyph or pseudo-icon
+    patterns remaining in Observatory application, feature, or story sources.
+  - >-
+    Reverified bounded selected-run recovery. Detail, inspection, and trace
+    requests share an AbortController and a 10-second deadline; timeout aborts
+    the work, suppresses automatic retry churn, exposes calm bounded copy, and
+    presents a keyboard-reachable “Retry selected run” action. Run changes and
+    teardown also abort the outstanding request.
+  - >-
+    Reverified the Runs historical-projection finding. Rows missing an
+    authoritative model or trace now show a warning SVG and “Limited
+    projection,” with screen-reader text naming the missing fields and stating
+    that the stored duration is shown as received. The UI does not invent a
+    duration threshold or rewrite authoritative data.
+  - >-
+    Reverified Storybook destination/state coverage. The new destination matrix
+    adds Runs, Components, and Analytics loading, empty, ready, stale,
+    disconnected, partial/error, large, limited-projection, and narrow-screen
+    fixtures as applicable. Trace adds deleted-evidence, large-inspection,
+    narrow, partial-lineage, and retry states; the existing stories cover the
+    other Observatory destinations.
+  - >-
+    Reverified compact navigation at 390 by 844: the drawer is hidden and inert
+    while closed, keyboard-contained while open, closes after every destination
+    selection, preserves a visible current destination, and creates no page
+    overflow. Focus, explicit status text, forced-color/reduced-motion styles,
+    lazy inert evidence, deletion, stale/partial/deleted states, and bounded
+    progressive disclosure remain intact.
+  - >-
+    Independently reran the final code checks: Observatory unit tests passed
+    74/74, the Observatory Web production build passed, Storybook production
+    build passed, and git diff whitespace validation passed. AURA-0114 desktop
+    acceptance passed 1/1. The acceptance handoff reports the complete
+    AURA-0121 desktop/mobile slice passing 16/16; an independent full rerun
+    passed 15 scenarios with one mobile invalidation poll timing out, and that
+    exact scenario passed immediately in isolation. The final corrected
+    inspector and SVG paths then passed 4/4 across desktop and mobile.
+  - >-
+    Reverified the earlier truthfulness concerns remain corrected: a rejected
+    Experiment source plus fulfilled empty sources renders partial rather than
+    whole-page unavailable, and evidence coverage derives captured, excluded,
+    partial, dropped, deleted, unavailable, and not-observed labels from the
+    authoritative inspection manifests.
+findings: []
+risks:
+  - >-
+    The independent run-scoped invalidation test showed one timing-sensitive
+    mobile poll before passing in isolation; the acceptance worker's final
+    serialized desktop/mobile run passed all 16 scenarios. Integration should
+    retain the complete browser matrix and composed-stack checks as required by
+    the work item.
+unresolved: []

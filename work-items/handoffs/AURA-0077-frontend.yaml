@@ -1,0 +1,67 @@
+agent: frontend_worker
+work_item: AURA-0077
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/impl_0077_frontend
+  worktree: dev
+scope:
+  ownership_zone: aura-web.interaction.conversations
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+  evaluators: []
+verification:
+  passed:
+    - pnpm --dir frontend exec vitest run --config vitest.workspace.ts libs/aura/interaction/conversations (167 passed)
+    - pnpm --dir frontend exec eslint libs/aura/interaction/conversations (0 errors; existing warnings only)
+    - NX_DAEMON=false pnpm --dir frontend exec nx build aura-web --configuration=production --skip-nx-cache
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0077.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0077.yaml
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - git diff --check
+  failed: []
+  not_run:
+    - full repository, Core, Compose, and browser suites are integration-owned
+decisions:
+  - Conversation hydration leaves the attachment picker selection untouched during same-conversation branch editing, preventing a refresh/loading transition from replacing the source turn's explicit attachments with the draft map.
+  - When re-entering a retained branch edit after switching conversations, hydration reconstructs both picker and branch selections from the destination conversation's source turn, preventing cross-conversation attachment leakage.
+  - Branch additions and removals are retained in a component-private conversation/message keyed map, cleaned on explicit cancel or successful submission, and left intact for conflict/ambiguous retry so the original request remains exact.
+  - Successful edit retries clear the same scoped key before focus restoration; failed/conflict retries retain it for exact replay.
+  - The reactive selected-attachment effect also writes the scoped map, so asynchronous picker mutations such as image deletion cannot resurrect stale branch items after a conversation switch.
+  - Owner/session reset clears the scoped map and live branch selection together with the attachment cache, preventing unsent private choices from crossing logout or account changes.
+  - Component destruction performs the same scoped-map/live-selection cleanup.
+  - The ordinary composer is disabled and hard-guarded during branch editing, while its attachment control remains available with an explicit “Add branch attachments” label so the branch picker remains usable.
+  - A pre-existing ordinary draft cannot submit while branch editing is active; the branch editor remains the only text submission path and Create branch continues using its explicit attachment set.
+  - The ordinary composer attachment chips are suppressed during branch editing; the branch form remains the sole selection surface while the shared picker remains available for add/select operations.
+  - Branch textarea focus uses the existing post-render pending-focus mechanism; cancel and successful completion continue restoring focus to the initiating edit action.
+  - Edit retries accept the panel's current scoped branch attachment set; after a 409 conflict, the retry forwards the explicit additions/removals instead of reconstructing the source message's original set. List and regeneration retries remain argument-free.
+  - Successful edit retries use the same full finish cleanup as direct edits, restoring the live picker and ordinary composer draft attachment state before focus restoration; the 409 regression verifies both exact request replay and cleared edit state.
+  - Edit entry snapshots the ordinary composer attachment set per conversation/message before replacing it with the branch set. Cancel and successful direct/retry completion restore that snapshot through both the live picker and store draft, while owner reset and destruction clear the snapshots.
+  - Branch-edit UI and guards derive directly from `selectedBranch().editingMessageId` through the panel's `branchEditActive()` method, avoiding the stale computed `store.branchEditing()` observed in the rebuilt browser. Ordinary chips, textarea, options, send, attachment labeling, upload routing, and hard submit guard now share this predicate while the branch picker remains available.
+  - Route restoration re-reads the branch query whenever the selected conversation changes, forces branch detail hydration when the requested branch head is absent from the rendered turns, and only retains an edit ID when its source user turn exists. An unresolved orphan clears the edit and restores the ordinary composer safely.
+  - Branch detail responses merge against the latest conversation state after the await; cancelling an edit while branch loading is in flight therefore wins over the stale pre-request snapshot and cannot resurrect the editor.
+  - Retryable requested-branch failures consume the automatic deep-link request once while retaining the edit draft and explicit retry action. Confirmed orphan recovery stores the edited text in an owner-scoped recoverable state and notice without overwriting an existing ordinary composer draft.
+  - Orphaned edit recovery is reachable from the composer notice: an empty composer can explicitly restore the edit, while a non-empty composer requires the separate “Replace current draft” action; dismissing leaves the ordinary draft untouched. Store coverage verifies both paths.
+  - Retryable branch-detail failure coverage confirms one failed read retains the editing message, draft text, and explicit select retry action; automatic route retry consumption remains panel-owned.
+  - Branch-detail rejection state is scoped to the request's origin conversation, so navigating A→B while A loads cannot paint A's error or retry action onto B; a regression verifies both ownership and destination cleanliness.
+  - Branch reads capture the session guard and discard late success or failure after logout/principal reset, preventing prior-owner branch text or orphan recovery state from being repopulated after management-state clearing.
+  - Orphan recovery is a dedicated neutral status surface rather than a generic composer error: it does not set composer invalid state or overwrite unrelated notices. Replace and discard are two-step, explicit actions; recovery actions return focus to the composer, and dismiss is labeled as destructive.
+  - Entering replace/discard confirmation transfers focus after render to the confirmation cancel control; cancelling restores focus to the initiating action, while completed recovery/discard returns focus to the composer. Conversation and owner transitions clear pending orphan focus/action state.
+risks:
+  - The panel regression exercises the shared hydration decision helper rather than instantiating the full panel with Angular effects; store regressions exercise persisted turn attachment conversion, 409 recovery, and explicit retry forwarding.
+unresolved: []

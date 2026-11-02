@@ -1,0 +1,8 @@
+# Provider-image-only dependencies. Keep this input separate from the shared
+# production project and regenerate the hash-locked output during image review.
+fastapi==0.142.2
+httpcore==1.0.9
+httpx==0.28.1
+pydantic==2.13.5
+cryptography==50.0.2
+trafilatura==2.0.0

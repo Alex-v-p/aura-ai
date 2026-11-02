@@ -1,0 +1,142 @@
+id: AURA-0030
+title: Register title generation module dependencies
+status: integrated
+change_class: repository_governance
+intent: >
+  Repair the module-registry failures introduced by integrated AURA-0028 by
+  atomically decoupling a type-only run DTO import and registering the reviewed
+  title-generation ownership and dependency edges without changing behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+    - docs/development/architecture-enforcement.md
+  specifications: []
+  decisions:
+    - User-approved Responsive Navigation and AI Conversation Titles plan
+    - The approved plan authorizes a governance-only commit when module-registry or boundary-summary metadata changes
+    - Integrated AURA-0028 owns title generation inside the existing interaction conversations runtime and provider boundaries
+    - The run DTO type-only conversation import must target the already-public conversations DTO surface so title registration does not add cyclic reachability or SCC membership
+    - The core worker owns only the TYPE_CHECKING import correction and the platform worker owns only registry tests and boundary-summary metadata
+    - Registry metadata records reviewed ownership and dependency direction and adds no product behavior
+    - "This governance closure is delivered as commit chore(governance): register title generation dependencies"
+  contracts: []
+feature_references:
+  - DEV-005
+  - DEV-006
+  - DEV-018
+ownership_zones:
+  - repository.governance
+  - architecture.module-registry
+  - aura-core.execution.runs
+allowed_paths:
+  - work-items/active/AURA-0030.yaml
+  - work-items/archived/AURA-0030.yaml
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/tests/test_modules.py
+  - docs/architecture/module-boundaries.md
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - frontend/**
+  - services/aura-observatory/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/interaction/**
+  - services/aura-core/src/aura_core/providers/**
+  - services/aura-core/src/aura_core/runtime/**
+  - services/aura-core/src/aura_core/entrypoints/**
+  - services/aura-core/src/aura_core/bootstrap/**
+  - deploy/**
+  - compose.yaml
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Registry dependencies must describe only reviewed public or same-module surfaces and must not authorize private implementation imports
+    - The TYPE_CHECKING import correction must not affect runtime behavior data or serialization
+    - Core and Observatory service and data isolation must remain unchanged
+    - Governance metadata must not change title prompts transcript handling telemetry capture or any product behavior
+  data_classes:
+    - module ownership and dependency metadata
+required_agents:
+  implementation:
+    - core_worker
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 2
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: false
+  escalation_reason_required: true
+acceptance_criteria:
+  - The title-generation source file conversations/titles.py has exactly one module-registry owner within the existing conversations boundary.
+  - The conversations public and store modules declare their reviewed dependency on the title-generation module.
+  - The Ollama adapter declares its reviewed dependency on execution.runs.ports without importing private run persistence or service implementation.
+  - The TYPE_CHECKING import in execution/runs/dto.py imports Conversation and Message from interaction.conversations.dto instead of interaction.conversations.public with no runtime surface or behavior change.
+  - The registered title-generation module is outside every cyclic strongly connected component.
+  - Registered title-generation ownership and dependencies add no cyclic reachability or strongly connected component membership compared with HEAD.
+  - Existing cyclic strongly connected components are reduced or unchanged and are never expanded by this closure.
+  - The registered graph has no duplicate owner private cross-boundary edge or unauthorized Core Observatory dependency introduced by this closure.
+  - The module-boundary summary is updated only if needed to match the registered reviewed implementation.
+  - The module-registry validator module tests and every repository architecture validator pass together in the atomic closure commit.
+  - Aggregate Core frontend contract generated-client migration observability and full-stack checks for integrated AURA-0026 through AURA-0029 remain green.
+  - No product behavior API contract database schema deployment topology telemetry capture policy or protected baseline changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0030.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0030.yaml
+  - python3 -m unittest tooling.architecture.tests.test_modules -v
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/archived/AURA-0028.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/archived/AURA-0028.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0030.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run --directory services/aura-core alembic -c alembic.ini history
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config playwright.config.ts
+  - docker compose config --quiet
+  - AURA_E2E_MODE=external sh deploy/compose/run-full-stack-e2e.sh
+  - AURA_E2E_MODE=local-identity sh deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

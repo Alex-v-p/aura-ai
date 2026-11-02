@@ -1,0 +1,178 @@
+id: AURA-0080
+title: Add Observatory query live-update and retention API
+status: integrated
+change_class: repository_governance
+intent: >
+  Provide the owner-only Observatory query, live metadata notification, and
+  manual retention surface over Observatory-owned data, with a versioned
+  OpenAPI contract and generated transport-only Angular client.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved retention remains indefinite until an explicit owner-authorized deletion command executes.
+    - Owner-approved live updates use authenticated same-origin SSE with persisted observation identifiers for catch-up.
+  contracts:
+    - contracts/telemetry/v1/metadata-observation.schema.json
+feature_references:
+  - OBS-002
+  - OBS-003
+  - OBS-004
+  - OBS-005
+  - OBS-006
+  - OBS-007
+  - OBS-008
+  - OBS-009
+  - OBS-010
+  - OBS-011
+  - OBS-035
+  - OBS-036
+ownership_zones:
+  - contracts.openapi.observatory-v1
+  - frontend.platform.observatory-api-client
+  - aura-observatory.query
+  - aura-observatory.live-notifications
+  - aura-observatory.retention
+  - aura-observatory.persistence
+  - aura-observatory.migrations
+  - repository.module-registry
+  - evaluation.observatory-query-retention
+allowed_paths:
+  - work-items/active/AURA-0080.yaml
+  - work-items/archived/AURA-0080.yaml
+  - work-items/handoffs/AURA-0080-*.yaml
+  - work-items/reviews/AURA-0080-*.yaml
+  - work-items/integration/AURA-0080.yaml
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/**
+  - frontend/tsconfig.base.json
+  - services/aura-observatory/**
+  - tooling/architecture/modules.yaml
+  - pyproject.toml
+  - uv.lock
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/telemetry/**
+  - contracts/events/**
+  - services/aura-core/**
+  - frontend/apps/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - deploy/**
+  - compose.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/observatory-v1.yaml
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: query-retention
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.query_api
+    - aura.observatory.live_updates
+    - aura.observatory.retention
+  required_metrics:
+    - observatory_query_duration_ms
+    - observatory_query_outcome
+    - observatory_sse_connection_count
+    - observatory_sse_replay_count
+    - observatory_retention_action_count
+    - observatory_retention_deleted_count
+    - observatory_retention_failure_count
+  required_evaluators:
+    - observatory_query_contract
+    - observatory_sse_catch_up
+    - observatory_retention_idempotency
+    - observatory_retention_preservation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every browser query live-update and retention endpoint requires the configured Observatory owner session and never accepts bearer credentials in URLs.
+    - Query responses SSE events logs metrics and audit records contain metadata only and never expose provider tokens service credentials owner identity or arbitrary captured attributes.
+    - Retention commands require same-origin anti-CSRF idempotency explicit confirmation and preserve immutable content-free audit records.
+    - Cutoff deletion uses a required UTC instant and exact less-than semantics while purge-all cannot be inferred from an omitted cutoff.
+    - Deletion removes observations receipts and derived run projections but preserves component and deployment definitions service configuration sessions and deletion audit records.
+  data_classes:
+    - operational_metadata
+    - opaque_trace_identifiers
+    - opaque_run_identifiers
+    - deployment_metadata
+    - retention_audit_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Observatory OpenAPI 1.0 is versioned at observatory-v1 and generates a transport-only Angular client without importing Aura product feature libraries.
+  - Owner-authorized REST exposes system and ingest overview cursor-paginated run search run and trace detail ordered parent-child spans component catalogue health summaries deployment catalogue and retention action creation and status.
+  - Run search filters status component model deployment and UTC time bounds with opaque stable cursors and deterministic ordering under concurrent ingestion.
+  - The authenticated same-origin SSE endpoint begins from a REST snapshot accepts Last-Event-ID catches up from persisted observations and emits metadata-only change notifications without credentials in URLs.
+  - Delete-before and purge-all are distinct asynchronous idempotent commands requiring owner authorization same-origin CSRF idempotency keys exact confirmation and a content-free audit record.
+  - Delete-before removes observations strictly older than its required UTC cutoff while purge-all removes every observation and both remove associated receipts and derived run projections.
+  - Retention retries and worker recovery are safe under concurrent or repeated requests and expose queued running succeeded and failed status without duplicate destructive execution.
+  - Component and deployment definitions service configuration sessions and deletion audit records survive all retention actions and no automatic TTL or scheduled purge is introduced.
+  - Query retention and SSE code remains Observatory-owned and does not import Core or read Core tables.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0080.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0080.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0080.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0080.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0080.yaml
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+  - uv lock --check
+  - uv run pyright services/aura-observatory
+  - uv run ruff check services/aura-observatory
+  - uv run pytest services/aura-observatory/tests
+  - cd frontend && pnpm exec nx run observatory-api-client:check-generated
+  - cd frontend && pnpm exec nx run observatory-api-client:lint
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

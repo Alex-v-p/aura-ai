@@ -1,0 +1,221 @@
+id: AURA-0057
+title: Repair delayed model streams and expose live model thinking
+status: integrated
+change_class: repository_governance
+intent: >
+  Prevent delayed tool-selection and synthesis streams from being canceled by
+  cancellation polling, and let authenticated owners observe bounded thinking
+  deltas from capable models in Aura Web without persisting, replaying, or
+  treating that private reasoning as assistant transcript content.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved user-visible streaming of thinking-model reasoning in Aura Web
+    - Owner-approved live-only reasoning transport with no PostgreSQL replay transcript telemetry audit outbox or JetStream retention
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - RUN-008
+  - RUN-009
+  - RUN-010
+  - RUN-012
+  - RUN-013
+  - RUN-021
+  - RUN-023
+  - AUI-003
+  - AUI-006
+  - AUI-007
+  - MOD-005
+  - MOD-008
+  - MOD-014
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.runs.v1
+  - aura-core.execution.runs
+  - aura-core.runtime.models
+  - aura-core.runtime.streaming
+  - aura-core.providers.models.ollama
+  - aura-core.entrypoints.api
+  - aura-core.entrypoints.worker
+  - aura-core.platform.nats
+  - aura-core.platform.telemetry
+  - aura-web.api-client
+  - aura-web.interaction.conversations
+  - aura-web.e2e
+  - frontend.storybook
+  - evaluation.model-streaming
+allowed_paths:
+  - work-items/active/AURA-0057.yaml
+  - work-items/archived/AURA-0057.yaml
+  - tooling/architecture/modules.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/runs/v1/run-events.schema.json
+  - services/aura-core/src/aura_core/runtime/models/**
+  - services/aura-core/src/aura_core/providers/models/ollama/**
+  - services/aura-core/src/aura_core/domains/execution/runs/**
+  - services/aura-core/src/aura_core/runtime/streaming/**
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/runs.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/model-inference.yaml
+  - services/aura-core/resources/component-manifests/stream-delivery.yaml
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/resources/component-manifests/tool-selection.yaml
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_ollama.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_streaming.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_tool_evaluation.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+  - frontend/apps/aura-web-e2e/src/conversation-productivity.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - compose.yaml
+  - deploy/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: execution.runs
+observability:
+  applicable: true
+  affected_components:
+    - aura.runtime.model_inference
+    - aura.runtime.tool_selection
+    - aura.execution.run_coordinator
+    - aura.runtime.stream_delivery
+  required_metrics:
+    - thinking_stream_outcome
+    - tool_selection_outcome
+    - provider_errors
+    - time_to_first_token_ms
+  required_evaluators:
+    - delayed_first_tool_event_preservation
+    - delayed_first_synthesis_event_preservation
+    - thinking_transport_privacy
+    - thinking_frontend_reconciliation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Thinking deltas may contain private prompt context memory system instructions tool arguments or inferred user data and are authorized only to the run owner.
+    - Thinking is live-only and must not be persisted in PostgreSQL replayed after reconnect appended to assistant messages copied into audit outbox JetStream telemetry logs errors or Observatory.
+    - Core NATS may carry only the bounded transient thinking envelope on a non-JetStream subject and must never retain it as business state.
+    - Thinking payloads require strict field validation per-chunk and per-run bounds and ordered offsets before transport and browser display.
+    - Aura Web must render thinking as inert escaped text with no Markdown HTML links scripts or content-driven actions.
+    - Thinking appears separately from the final answer is labeled as model reasoning and collapses when the run becomes terminal.
+    - Providers that do not expose thinking retain existing behavior and existing SSE clients may ignore the additive event safely.
+    - Cancellation lease loss timeout and reconnect must not cause stale thinking from one attempt or run to appear under another response.
+  data_classes:
+    - private_ephemeral_model_reasoning
+    - owner_conversation_and_run_identifiers
+    - model_stream_lifecycle_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - platform_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Delayed first native tool-selection and tools-disabled synthesis events preserve their pending provider reads while cancellation and lease-loss polling remain responsive.
+  - A thinking-capable provider normalizes thinking frames into a provider-neutral bounded delta in plain inference native tool selection and tools-disabled synthesis without leaking provider-native response shapes.
+  - Thinking deltas never count as visible answer text never participate in mixed text or tool protocol decisions and never enter the assistant message or title input.
+  - Core publishes ordered bounded thinking deltas over an ephemeral non-JetStream NATS subject to active owner-authorized run SSE clients without PostgreSQL persistence Last-Event-ID cursor advancement or reconnect replay.
+  - OpenAPI 1.10.0 and the additive run-event v1 schema describe the transient model.thinking.delta event and the generated Aura TypeScript transport client remains synchronized.
+  - Aura Web safely accumulates ordered thinking deltas per active run renders them as inert text in an accessible labeled disclosure and automatically collapses but does not merge them into the transcript when the run becomes terminal.
+  - Missing duplicate stale out-of-order oversized and over-budget thinking deltas fail closed without affecting the final answer stream.
+  - Existing text-only tool-call approval cancellation retry durable event replay heartbeat and generated-client behavior remain backward compatible.
+  - Telemetry records only bounded thinking stream outcomes and lifecycle metadata and contains no thinking text prompt context memory tool arguments credentials or owner identity.
+  - Unit contract frontend accessibility browser and full-stack tests cover delayed events thinking parsing transient transport owner isolation no replay safe rendering terminal behavior and regression of ordinary runs.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0057.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0057.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0057.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0057.yaml
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts
+  - docker compose config --quiet
+  - python3 deploy/compose/test_topology.py
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

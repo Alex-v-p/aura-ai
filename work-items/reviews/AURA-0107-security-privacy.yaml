@@ -1,0 +1,64 @@
+agent: security_privacy_reviewer
+work_item: AURA-0107
+verdict: PASS
+checked:
+  - >-
+    Re-read the Aura review skill, approved AURA-0107 work item, relevant
+    architecture and Observatory specification, ADR-0013, the worker handoff,
+    the complete scoped diff, and the correction to the previously blocked
+    PostgreSQL regression. Treated concurrent case_versions_for_selection and
+    other AURA-0098 changes as unrelated shared-worktree state.
+  - >-
+    Verified PostgresEvaluationDefinitionRepository.case_declared returns only
+    a boolean and scopes immutable array membership to the exact dataset_id and
+    dataset_version. The case identifier, dataset identifier, and version are
+    SQL parameters rather than interpolated values, and no definition,
+    authorization, artifact, or content field is returned.
+  - >-
+    Traced EvaluationDefinitionService.admit_case through exact dataset lookup,
+    source and capture-policy binding, case_declared, capture-authorization
+    validation, opaque artifact-metadata validation, and only then
+    repository.create_case. Missing or mismatched dataset versions and
+    undeclared case identifiers fail before persistence.
+  - >-
+    Re-verified the unchanged transactional create_case implementation: it
+    share-locks and rechecks the exact dataset declaration, locks existing
+    versions for the case identifier, rejects cross-version and cross-dataset
+    bindings, inserts the case and derived membership through one transaction,
+    rejects a zero-row membership upsert, preserves exact-fingerprint replay,
+    and records bounded content-free audits.
+  - >-
+    Verified the corrected isolated-PostgreSQL regression starts with an empty
+    derived-membership table and drives the first case through
+    EvaluationDefinitionService.admit_case backed by the production PostgreSQL
+    repository. It exercises the repaired declaration query with undeclared
+    and valid cases and rejects wrong dataset and wrong version bindings
+    through the service's exact lookup boundary.
+  - >-
+    Verified the same production-path regression admits the first declared
+    case, replays the same fingerprint idempotently, rejects a conflicting
+    case version, and then asserts PostgreSQL contains exactly the original
+    case and one exact dataset-version membership. This demonstrates rollback
+    left no conflicting or partially admitted case or membership state and
+    resolves the prior blocking finding.
+  - >-
+    Confirmed no public contract, migration, repository protocol, error
+    classification, retention rule, owner identity, session, credential,
+    Core dependency, or frontend boundary is changed by AURA-0107. PostgreSQL
+    remains limited to bounded definition and authorization metadata and
+    opaque artifact references; evaluation content and provider diagnostics
+    do not enter this path.
+  - >-
+    The focused suite completed with 50 passed and two opt-in live PostgreSQL
+    tests skipped because AURA_AURA0093_POSTGRES_URL is not configured. Ruff,
+    Pyright, work-item validation, repository shape, module registry, service
+    isolation, contract-change validation, baseline protection, and git diff
+    validation passed.
+  - >-
+    validate-changed-paths reports only concurrent AURA-0098 paths outside
+    AURA-0107 allowed_paths. The AURA-0107 implementation remains confined to
+    its authorized repository lookup, focused tests, and governance artifacts,
+    so the shared-worktree result is not an AURA-0107 finding.
+findings: []
+risks: []
+unresolved: []

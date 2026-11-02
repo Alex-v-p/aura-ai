@@ -1,0 +1,38 @@
+agent: architecture_guardian
+work_item: AURA-0141
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the final OpenAPI, run-event and task-event schemas, generated
+    client, module registry, focused contract tests, compatibility allowances,
+    and updated handoff against every prior architecture finding and the
+    approved AURA-0140 boundary design.
+  - >-
+    Verified Run.citations and Message.citations remain byte-for-byte equal to
+    origin/dev, while webCitations, task and artifact references, research
+    origin and activity, and admission fields are optional additive surfaces
+    absent from legacy required sets.
+  - >-
+    Verified the closed exact and cursor TaskProjectionSnapshotQueryV1,
+    TaskProjectionSnapshotV1, page, and result contracts exist only in
+    contracts/events/execution/v1/task-events.schema.json. They are absent from
+    public Aura OpenAPI and the generated browser client, including
+    ownerScopeId and task_projection:read authority.
+  - >-
+    Verified focused tests directly validate live and rebuild query/result
+    instances against task-events.schema.json, reject mixed modes and private
+    content, and assert the internal definitions cannot enter public OpenAPI or
+    generated TypeScript. The published invalidation remains exactly the
+    standard envelope plus source kind, source ID, and source version.
+  - >-
+    Verified research, artifact, and durable-task detail responses are valid
+    closed flattened or discriminated schemas; deletion tombstones cannot
+    expose private content; the three new event contracts are metadata-only
+    and explicitly registered as dependency-free contract modules.
+  - >-
+    Work-item, changed-path, contract-change, generated-sync, import-boundary,
+    service-isolation, frontend-boundary, module-registry, repository-shape,
+    baseline-protection, focused contract, compatibility, generated-client
+    check, generated-client lint, and diff validation all passed or returned
+    the declared baseline skip.
+findings: []

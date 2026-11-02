@@ -1,0 +1,62 @@
+agent: architecture_guardian
+work_item: AURA-0114
+verdict: PASS
+checked:
+  - >-
+    Re-read the corrected backend diff, focused regressions, implementation
+    handoff, ownership registry, public Observatory and telemetry contracts,
+    and the applicable architecture, specification, ADR, and AURA-0098
+    boundaries.
+  - >-
+    Verified the production run-list cursor now encodes latest_at and run_id,
+    exactly matching the private ORDER BY/HAVING tuple while lifecycle
+    finishedAt remains the stable public terminal field.
+  - >-
+    Verified run-detail headers are derived from the full immutable snapshot:
+    the reference path projects all run observations and the ClickHouse path
+    computes window aggregates inside the snapshot fence before applying the
+    observation-page cursor and limit. Only observations and nextCursor remain
+    page-scoped.
+  - >-
+    Verified lifecycle trace selection is deterministic and production now
+    preserves the established newest-trace fallback only for lifecycle-free
+    legacy runs, matching the reference path.
+  - >-
+    Verified Core's producer spelling canceled is normalized to the public
+    Observatory cancelled vocabulary, running lifecycle rows do not acquire a
+    synthetic finish, and model headers remain on execution evidence rather
+    than later correlated background rows.
+  - >-
+    Verified all product changes remain Observatory-owned and metadata-only:
+    no Core implementation, Core database, Aura Web, Aura feature library,
+    public contract, migration, deployment topology, provider binding,
+    entrypoint, or cross-product browser communication changed.
+  - >-
+    Focused AURA-0114 backend regressions passed with 16 tests. Work-item,
+    changed-path, repository-shape, module-registry, import-boundary,
+    service-isolation, observability, contract-change, baseline-protection,
+    and whitespace checks passed after correction.
+  - >-
+    Re-reviewed the final discovery-filter qualification change. Production
+    now builds one conjunction of component, model, deployment, from, and to
+    predicates inside a single countIf, matching the reference path's
+    same-observation qualification before full-run projection. Status and
+    cursor conditions remain separate authoritative predicates.
+findings: []
+risks:
+  - >-
+    The full-snapshot production detail projection uses ClickHouse windowed
+    countIf, minIf, and argMaxIf aggregates. Aggregate integration should
+    exercise the deployed ClickHouse version; the focused tests validate the
+    query contract and mapping through the production adapter test seam.
+  - >-
+    Generic production status normalization remains outcome-first while the
+    reference lifecycle helper is status-first. The current Core run_status
+    producer emits status without outcome, so authoritative production
+    lifecycle behavior is aligned; future producers that emit both bounded
+    dimensions should receive an explicit parity regression.
+  - >-
+    Rich prompt, chunk, generation, displayed-thinking, and tool-payload
+    evidence remains deliberately outside this metadata-only work item and
+    still requires the separately governed evidence architecture.
+unresolved: []

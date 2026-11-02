@@ -1,0 +1,89 @@
+agent: integration_maintainer
+work_item: AURA-0087
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0087-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0087-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0087-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0087-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0087-ux-ui.yaml
+  - reviewer: contract_steward
+    status: PASS
+    verdict: work-items/handoffs/AURA-0087-contract.yaml
+  - reviewer: frontend_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0087-frontend.yaml
+  - reviewer: observatory_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0087-observatory.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0087-test-evaluation.yaml
+conflicts_resolved: []
+generated_outputs:
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - work-items/archived/AURA-0087.yaml
+checks:
+  passed:
+    - >-
+      All four implementation handoffs and all five required review verdicts
+      were present, schema-valid, complete, PASS, and free of unresolved
+      findings; the later final review evidence supersedes earlier interim
+      not_run notes in the observatory handoff.
+    - >-
+      Work-item and changed-path validation passed for 34 changed paths, all
+      within the approved AURA-0087 scope; no forbidden path, Core path,
+      migration, dependency, protected baseline, or unrelated authority was
+      introduced.
+    - >-
+      Repository-shape, module-registry, service-isolation,
+      frontend-boundary, observability, contract-change, generated-sync,
+      baseline-protection, and git diff hygiene checks passed. Baseline
+      protection correctly reported no protected changes.
+    - >-
+      Observatory aggregate checks passed: Ruff, Pyright, and 417 tests with
+      3 declared environment-gated provider skips and 2 warnings.
+    - >-
+      Frontend aggregate checks passed: observatory and observatory-web lint
+      and tests, observatory-web production build, and Storybook production
+      build.
+    - >-
+      Final host browser evidence passed 168 of 168 mocked Chromium cases
+      across desktop, tablet, and mobile, including accessibility, keyboard,
+      responsive, dark-theme, reduced-motion, zoom, privacy, bounded series,
+      stale/disconnected, rejection, and recovery scenarios.
+    - >-
+      Final scoped full-stack evidence passed pinned ClickHouse 25.8 direct
+      and ProductionObservatoryStore quantile parity, the real 1,000,001-row
+      scan-limit partial, overview/run, Core/SSE/analytics/retention, session
+      restart/reset, and Core usability after Observatory stop; all disposable
+      stacks and fixtures were cleaned up.
+    - >-
+      No product or generated-output conflict required resolution; the
+      OpenAPI source and generated transport client are synchronized.
+  failed: []
+  not_run:
+    - >-
+      The exact required Storybook browser command could not be invoked because
+      frontend/apps/observatory-web-e2e/storybook.config.ts does not exist in
+      this repository. Storybook production build passed and the final 168-test
+      Observatory browser matrix supplied the applicable browser acceptance.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    No Conventional Commit was created in this integration pass because the
+    parent task explicitly prohibits committing here. The reviewed,
+    validated working tree is ready for the Delivery Lead's focused
+    Conventional Commit; no push is authorized.

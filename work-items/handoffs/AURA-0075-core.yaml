@@ -1,0 +1,53 @@
+agent: core_worker
+work_item: AURA-0075
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: fix/aura-0072-compose-network-routing
+scope:
+  ownership_zone: aura-core.execution.runs
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/tests/test_conversations.py
+  - work-items/handoffs/AURA-0075-core.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0075.yaml
+    - uv run pytest services/aura-core/tests/test_conversations.py -q (71 passed)
+    - uv run ruff check services/aura-core/src services/aura-core/tests/test_conversations.py
+    - uv run pyright services/aura-core (0 errors, 0 warnings)
+    - git diff --check
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0075.yaml with the six scoped work-item
+      paths (passed; unrelated parent live-E2E files excluded)
+    - implementation handoff and review verdict schemas validated
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Successful document.search synthesis now receives a trusted, same-run marker
+    protocol listing only complete UUID-backed evidence IDs from that result;
+    document names, locators, and excerpts remain explicitly untrusted evidence.
+  - >-
+    Empty, failed, denied, canceled, timed-out, malformed, and incomplete search
+    results receive no citation instruction; existing settlement still validates
+    markers against process-local same-run evidence and strips raw markers.
+  - >-
+    The protocol requires exactly one [[document:<evidenceId>]] marker for each
+    document result cited and prohibits invented or cross-run identifiers.
+risks:
+  - >-
+    Full workspace changed-path discovery remains affected by unrelated parent-agent
+    live-E2E fixture and Playwright files; those files are outside this work item.
+unresolved: []

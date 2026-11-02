@@ -1,0 +1,178 @@
+id: AURA-0067
+title: Validate conversational reminders through the real browser approval flow
+status: integrated
+change_class: contract
+intent: >
+  Correct the owner approval transport and Aura Web approval surface for the
+  conversational reminder tools introduced by AURA-0066, then add deterministic
+  full-stack browser coverage that drives a native provider tool call through
+  pending approval, one owner decision, durable worker resume, and recurring
+  series creation without changing closed event schema versions.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - Owner-requested real browser end-to-end validation of Automation v2 behavior.
+    - Approval metadata remains version 1 and metadata-only; its additive toolId domain includes every always-confirmed reminder command.
+    - Owner-authorized approval detail may expose a bounded private command summary while SSE NATS run events logs audit metadata and telemetry remain content-free.
+    - The fake Ollama provider may emit a native tool call only for a unique test prompt and only when tools are enabled; resumed synthesis must be tools-disabled.
+    - Existing reminder.create approval payloads and UI behavior remain backward compatible.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - AUT-002
+  - AUT-003
+  - AUT-004
+  - AUT-013
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - aura-api-client.generated
+  - aura-core.governance.approvals
+  - aura-web.governance.approvals
+  - platform.compose-e2e-fixtures
+  - aura-web.full-stack-e2e
+allowed_paths:
+  - work-items/active/AURA-0067.yaml
+  - work-items/archived/AURA-0067.yaml
+  - contracts/openapi/aura-v1.yaml
+  - services/aura-core/src/aura_core/domains/governance/approvals/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/tool-execution.yaml
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/test_approvals.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_telemetry.py
+  - frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/platform/aura-api-client/src/lib/aura-api-client.ts
+  - frontend/libs/platform/aura-api-client/src/index.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approval-models.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-api.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approval-store.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-page.component.ts
+  - frontend/libs/aura/governance/approvals/src/lib/approvals-page.component.html
+  - frontend/libs/aura/governance/approvals/src/lib/approval-workspace.spec.ts
+  - frontend/apps/aura-web-e2e/src/approvals.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - deploy/compose/e2e/fake_provider.py
+  - deploy/compose/e2e/external-aura.yaml
+  - deploy/compose/e2e/local-aura.yaml
+  - deploy/compose/run-full-stack-e2e.sh
+  - deploy/compose/test_topology.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/events/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/runtime/**
+  - services/aura-observatory/**
+  - frontend/libs/aura/automation/**
+  - frontend/libs/aura/interaction/**
+  - frontend/libs/aura/knowledge/**
+  - frontend/libs/observatory/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: governance.approvals
+observability:
+  applicable: true
+  affected_components:
+    - aura.governance.approval_workflow
+    - aura.runtime.tool_execution
+  required_metrics: []
+  required_evaluators:
+    - conversational_reminder_approval_before_side_effect
+    - conversational_reminder_metadata_only_capture
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Approval list and stream remain metadata-only and owner-scoped; private command summaries are available only from protected owner-authorized detail.
+    - Browser approval submits exactly one CSRF-protected UUID-idempotent decision with the authoritative expected version.
+    - Fake-provider behavior is test-only and activates only for one explicit prompt marker while provider tools are enabled.
+    - Full-stack assertions must not print reminder content recurrence arguments owner identity due times or raw tool results into operational events or telemetry.
+  data_classes:
+    - private_reminder_content
+    - private_recurrence_configuration
+    - owner_scoped_approval_detail
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Aura OpenAPI additively describes legacy reminder.create and all AURA-0066 reminder command approvals, their metadata-only stream events, and the owner-authorized typed proposal detail without changing event schema versions.
+  - The generated TypeScript client is synchronized and Aura Web accepts metadata-only lifecycle events for every supported reminder command while rejecting unknown tools and malformed events.
+  - Approval rows and detail dialogs render readable command labels and a bounded owner-authorized summary, retain technical disclosure, keyboard focus, decision-state recovery, and legacy reminder.create behavior.
+  - The deterministic fake provider advertises native tool support and emits reminder.series.create exactly once for the explicit E2E marker; tools-disabled synthesis emits text and cannot create a second proposal.
+  - A real browser authenticates, starts the marked conversation with a pinned IANA timezone, observes one pending reminder.series.create approval, reviews and approves it once, observes completed execution, and verifies exactly one active series plus its generated next reminder.
+  - The full-stack policy scenario expects the complete additive tool catalog and built-in conversational policy while retaining historical and custom deny-by-default assertions where exposed.
+  - Approval stream NATS run events logs audit metadata and telemetry remain free of command content recurrence arguments target queries raw results timezone and due values.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0067.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0067.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0067.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0067.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0067.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e/fake_provider.py
+  - uv run --project services/aura-core pytest services/aura-core/tests/test_approvals.py services/aura-core/tests/system/test_contract_and_deployment.py
+  - pnpm --dir frontend exec nx check-generated aura-api-client
+  - pnpm --dir frontend exec nx test aura-approvals
+  - pnpm --dir frontend exec nx lint aura-approvals
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/approvals.spec.ts
+  - python3 deploy/compose/test_topology.py
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

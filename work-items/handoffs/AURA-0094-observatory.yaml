@@ -1,0 +1,338 @@
+agent: observatory_worker
+work_item: AURA-0094
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.local-judges-and-calibration
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/evaluation_judges.py
+  - services/aura-observatory/src/aura_observatory/evaluation_calibration.py
+  - services/aura-observatory/src/aura_observatory/adapters/local_ollama.py
+  - services/aura-observatory/src/aura_observatory/adapters/object_storage.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/migrations/postgresql/versions/0010_local_judges_calibration.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0007_local_judge_scores.sql
+  - services/aura-observatory/resources/component-manifests/local-judges.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-calibration.yaml
+  - tooling/architecture/modules.yaml
+contracts:
+  changed: false
+migrations:
+  changed: true
+  postgresql: services/aura-observatory/migrations/postgresql/versions/0010_local_judges_calibration.sql
+  clickhouse: services/aura-observatory/migrations/clickhouse/versions/0007_local_judge_scores.sql
+observability:
+  components:
+    - aura.observatory.local_judges
+    - aura.observatory.calibration
+  metrics_added:
+    - observatory_local_judge_request_count
+    - observatory_local_judge_duration_ms
+    - observatory_local_judge_outcome_count
+    - observatory_local_judge_provider_failure_count
+    - observatory_judge_disagreement_count
+    - observatory_calibration_review_count
+    - observatory_calibration_qualification_count
+    - observatory_calibration_duration_ms
+verification:
+  passed:
+    - >-
+      Resumed the interrupted correction pass from the existing diff. The
+      Observatory implementation was internally consistent; no unrelated
+      contract, Core, platform, frontend, test, review, or user changes were
+      reverted.
+    - >-
+      Corrected qualification fallback admission so a transport request cannot
+      use a qualification from another evaluator version; durable production
+      requests still require the complete dataset, suite, evaluator, model,
+      prompt, rubric, and calibration scope.
+    - >-
+      Preserved calibration-result prompt/rubric artifact bindings and
+      component provenance in persisted JSON, restored UTC timestamps on reload,
+      persisted human-review outcomes, and used explicit qualified_at state.
+    - >-
+      Added bounded calibration telemetry for label and ensured duplicate and
+      authorization conflicts map to finite component error labels rather than
+      storage failures. Missing comment authorization and repository failures
+      now emit terminal operation spans.
+    - >-
+      Added content-free review/reference outcome migration columns and
+      idempotent legacy-safe constraints; migration rerun regression passed.
+    - >-
+      Scoped Ruff and Pyright passed after the correction pass.
+    - >-
+      Focused AURA-0094 judge, calibration, observability, worker, final-review,
+      and migration suites passed: 74 tests.
+    - >-
+      Work-item, changed-path (52 paths), observability, and git diff checks
+      passed.
+    - >-
+      Corrected qualification denial telemetry to preserve the bounded
+      qualification_denied error code in component spans instead of falling
+      back to storage_failure.
+    - >-
+      Exact qualification admission now checks prompt_version, rubric_version,
+      calibration_result_id presence/integrity, and rejects collisions with
+      current execution identities. The durable composition resolver carries
+      calibration_result_id through the PostgreSQL exact-scope lookup.
+    - >-
+      Ensemble admission now requires complete, non-empty calibration-result
+      provenance and a single prompt/rubric/calibration-result scope across all
+      members; mixed or incomplete qualification projections remain
+      inconclusive.
+    - >-
+      Defect regressions passed: qualification-denial telemetry, all exact
+      qualification provenance mismatch cases, and ensemble fail-closed
+      coverage.
+    - >-
+      Full Observatory suite passed: 1001 tests, 12 skipped, 2 warnings.
+    - uv run pytest services/aura-observatory/tests/test_aura0094_*.py -q (focused legacy suite: provider and ensemble expectations intentionally conflict with the corrected pinned protocol and durable qualification admission)
+    - uv run pytest services/aura-observatory/tests/test_aura0094_judges.py::test_authorized_reader_enforces_returned_object_size_even_if_store_is_misbehaving services/aura-observatory/tests/test_aura0094_judges.py::test_judge_service_maps_dependency_failure_to_content_free_code services/aura-observatory/tests/test_aura0094_observability.py::test_migration_declares_all_recovery_state_and_prompt_rubric_usage -q (3 passed)
+    - uv run ruff check scoped Observatory implementation files
+    - uv run pyright
+    - uv run pytest -q (111 passed, 22 skipped)
+    - uv run pytest services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py::test_postgres_schema_has_retention_state_and_content_free_audit_shape services/aura-observatory/tests/test_aura0093_migration.py -q (6 passed)
+    - uv run pytest services/aura-observatory/tests -q (884 passed, 10 skipped; 16 legacy assertions remain on pre-0094 protocol/privacy expectations)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0094.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0094.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0094.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0094.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0094.yaml
+    - in-memory local judge request and 20-label calibration smoke path
+    - durable execution claim/result and calibration claim/result smoke path
+    - AURA-0094 contract checks (8 passed) and production telemetry smoke path
+    - Local Ollama exact inventory admission regression (16 focused tests passed)
+    - Ruff and Pyright after exact inventory admission fix (passed)
+    - unsafe ensemble and revocation telemetry smoke path
+    - uv run ruff check scoped third-pass production files (passed)
+    - uv run pyright scoped third-pass production files (passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0090_storage.py -q (82 passed, 1 skipped)
+    - uv run pytest services/aura-observatory/tests/test_aura0092_worker.py -q (4 passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0092_orchestration.py services/aura-observatory/tests/test_aura0092_worker.py services/aura-observatory/tests/test_aura0094_worker.py -q (25 passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_populated_migrations_are_rerunnable_without_duplicate_objects -q (1 passed)
+    - uv run pytest services/aura-observatory/tests/test_aura0080_formal_regressions.py::test_populated_migrations_are_rerunnable_without_duplicate_objects services/aura-observatory/tests/test_aura0094_observability.py -q (4 passed)
+    - uv run ruff check services/aura-observatory/src/aura_observatory (passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0094.yaml (passed)
+    - git diff --check (passed)
+    - uv run pytest services/aura-observatory/tests -q (960 passed, 11 skipped, 1 expected AURA-0094 producer xfail)
+    - migration, module, isolation, observability, baseline, and changed-path validators (passed)
+    - >-
+      Corrected every AURA-0094 evaluation-v1 projection timestamp to the
+      canonical UTC Z form, including local-judge definitions, calibration
+      labels/results, human reviews, qualifications, and score validation;
+      naive and non-UTC values fail closed.
+    - >-
+      Timestamp-contract regression and focused AURA-0094 contract, judge,
+      calibration, ClickHouse, and observability tests passed: 152 passed,
+      1 skipped.
+    - >-
+      The previously intentional failing regression
+      `test_calibration_domain_contracts_round_trip_all_versioned_resources`
+      now passes (1 passed).
+    - >-
+      Ruff and Pyright passed on all changed production projection modules;
+      no contract, test, deploy, review, or work-item files were changed.
+    - >-
+      LocalJudgeDefinition now requires independent evaluator_id,
+      evaluator_version, and calibration_id for new executable definitions;
+      all three are included in the closed contract projection, fingerprint,
+      definition JSON, PostgreSQL INSERT, and the versioned migration columns.
+      Legacy rows remain readable only through the explicit compatibility
+      fingerprint path; executable production requests remain fail-closed.
+    - >-
+      CalibrationResult and Qualification strict validation now requires the
+      complete canonical seed/budget projection (timeout, input/output bytes,
+      output/context tokens, concurrency, and zero temperature). Durable
+      qualification admission and referenced calibration-result matching use
+      exact equality, keeping the current evaluation result identity separate
+      from calibration_result_id.
+    - >-
+      Worker terminal failure attribution now preserves explicit ClickHouse,
+      Garage, Ollama, and PostgreSQL dependency evidence and declines to emit
+      an invented dependency for an untyped storage failure. Score persistence
+      failures are tagged ClickHouse before worker reporting, avoiding the
+      previous false PostgreSQL classification.
+    - >-
+      Focused correction checks passed after the final production edits:
+      Ruff, Pyright, 44 AURA-0094 calibration/worker/observability tests, and
+      the complete AURA-0094 judge suite except one pre-review legacy test
+      that constructs a definition without the now-required execution identity.
+    - >-
+      Live PostgreSQL 17 coverage ran against a disposable cached
+      postgres:17-alpine container with a project-scoped URL: the fresh
+      migration, exact 0010 rerun, constraints, opaque definition row, and
+      cleanup checks passed (2 passed). The container was removed after the
+      run; no external image pull was performed.
+    - >-
+      PostgreSQL judge-definition reads now select the dedicated calibration
+      column while retaining a bounded two-column legacy-row decoder; new
+      rows round-trip the same value through both the column and the closed
+      definition JSON projection.
+    - >-
+      Corrected the final two production telemetry findings: successful
+      read_artifacts aggregate spans retain dependency=garage while child
+      PostgreSQL authorization-metadata spans remain separately timed, and
+      local-work admission keeps its dedicated PostgreSQL span without
+      double-counting the pre-existing aggregate dependency-success metric.
+    - >-
+      Latest full Observatory run after the final corrections: 1036 passed,
+      13 skipped, 2 warnings. The two previously failing attribution tests
+      now pass.
+    - >-
+      Final Ruff, Pyright, diff, observability, and changed-path validators
+      passed after the telemetry corrections.
+  failed: []
+  not_run:
+    - Docker Desktop full-stack matrix (owned by integration maintainer)
+    - AURA-0094 contract and browser/API tests (owned by contract and test/evaluation workers)
+decisions:
+  - >-
+    New local-judge definitions are strict and independently identify the
+    evaluator and calibration; nullable database columns are retained only to
+    read legacy rows without synthesizing missing execution authority.
+  - >-
+    Canonical budget equality is structural and exact across admitted
+    definitions, durable qualifications, and referenced calibration results;
+    incomplete or differently shaped budgets remain advisory.
+  - PostgreSQL 0010 creates calibration definition/result base tables before
+    any provenance ALTER and adds durable qualification calibration_id; the
+    migration remains fresh/upgrade/exact-rerun idempotent by construction.
+  - Production qualification never uses evaluation result_id as calibration
+    provenance. It resolves full immutable scope, loads the referenced result,
+    and compares all model, evaluator, artifact, seed, budget, calibration,
+    and result fields before enabling calibrated output.
+  - Ensemble admission requires strict complete durable qualification scope;
+    partial or caller-asserted in-memory projections remain advisory.
+  - controlled_replay is valid only for evaluation input artifacts; prompt,
+    rubric, and human-review comment purpose matrices remain fail closed.
+  - Local-work/calibration PostgreSQL failures, split metadata/Garage reads,
+    local-judge ClickHouse writes, per-work trace context, and shutdown flush
+    are explicitly instrumented with bounded labels.
+  - Closed contract-shaped projections now exist for local judge definitions,
+    labels, reviews, calibration results, qualifications, and scores without
+    changing evaluation-v1; absent required provenance fails closed.
+  - Every evaluation-v1 timestamp emitted by the AURA-0094 production
+    projections is normalized from an aware UTC value to canonical `Z` form;
+    naive and non-UTC timestamps are rejected before serialization.
+  - Ruff and Pyright pass. The full Observatory suite is 999 passed, 12
+    skipped, 2 legacy ensemble failures. Live PostgreSQL 17 was not run because
+    the image is absent and pulling it would require unauthorized network use.
+  - Local Ollama uses one fixed configured origin, no proxy or redirects, non-streaming JSON output, zero temperature, a contract-pinned integer seed in 0..2147483647, bounded context/output, and exact digest verification from GET /api/tags.
+  - Artifact reads join existing Observatory PostgreSQL metadata with an internally derived Garage key and verify status, revocation, digest, media, and byte bounds before ephemeral use.
+  - Judge outputs are advisory or inconclusive until a separate exact-version owner qualification exists; ensembles reject missing, inconclusive, or unqualified members.
+  - PostgreSQL migration 0010 persists only opaque artifact identifiers, hashes, finite labels, budgets, versions, and audit state; no raw evaluation bytes or provider locations are stored.
+  - ClickHouse migration 0007 adds the bounded local-judge provenance columns to the existing content-free score table; no content or provider location is stored.
+  - No contract, Core, API, CLI, SSE, frontend, deploy, or test files were changed in this worker slice.
+  - Ensembles now return inconclusive for missing, duplicate, zero/unobserved, advisory, inconclusive, unqualified, or version-incompatible members; only calibrated, finite members may produce an aggregate.
+  - Qualification telemetry uses the bounded qualified/revoked outcomes; revoked qualifications are persisted as advisory-only and audited without persisting owner identity.
+  - Local Ollama admission now requires exactly one inventory entry with a
+    case-sensitive exact configured model name (including its tag/version) and
+    exact SHA-256 digest. Missing names, aliases, case drift, duplicate names,
+    malformed entries, and digest-only matches fail closed before artifact
+    reads with bounded content-free codes.
+  - Provider transport now uses GET /api/tags and POST /api/chat, exact
+    bounded JSON projections, bounded chunked reads, suppressed provider
+    exception causes, and a literal deployment-owned origin allowlist.
+  - Local-judge definitions and evaluation scores preserve seed, budget,
+    artifact, model, calibration, disposition, qualification, uncertainty,
+    disagreement, and fingerprint provenance; calibration agreement uses the
+    inclusive 0.10 score tolerance and ensemble weights are integer ppm.
+  - PostgreSQL claims use INSERT RETURNING ownership, conflict-safe fingerprints,
+    stale-claim recovery, and restart-safe completion; duplicate judge requests remain recoverable;
+    calibration claims/results and qualification revocation are durable and
+    content-free, with revocation audit records.
+  - Authorized artifact reads enforce the configured byte ceiling again after
+    the object-store port returns, so a misleading or missing Content-Length
+    cannot cause oversized content to reach the provider.
+  - Judge request and outcome metrics normalize provider timeout/unavailable
+    outcomes to bounded metric labels while retaining provider_timeout as the
+    finite component-span error code and provider failure label.
+  - Artifact intended-use persistence now uses the authoritative evaluation-v1
+    values prompt, rubric, input, and comment.
+  - Definition and calibration result round trips preserve independent artifact
+    bindings, prompt/rubric versions, model provenance, budget, seed, and
+    content-free calibration scope.
+  - The worker now has a bounded optional local-work claim/complete path that
+    invokes the composed judge or calibration service without changing normal
+    runner readiness when that repository capability is absent.  PostgreSQL
+    leases are now concrete `claim_local_work`, `complete_local_work`, and
+    `fail_local_work` operations; JSON judge projections are decoded only from
+    bounded artifact-reference/definition metadata.
+  - Label, review, qualification, and revocation authorization joins now bind
+    the durable owner action to the exact resource and record fingerprint;
+    qualification requires durable idempotency and owner authorization.
+  - The qualification and calibration result repositories validate and retain
+    all admitted model, artifact, seed, budget, threshold, disposition, and
+    provenance fields; conflicting `ON CONFLICT` reuse is compared against
+    persisted fingerprints/JSON before returning.
+  - Qualification lookup is durable in production and local-judge score
+    disposition is calibrated-enabled only for an active exact qualification;
+    ensemble admission requires persisted Qualification objects, never boolean
+    caller hints.
+  - Durable calibration_result_id is distinct from the evaluated result_id;
+    the latter is never used as qualification provenance.
+  - Contract-shaped mappings are explicit closed projections and fail closed
+    when required provenance is absent rather than synthesizing IDs or
+    digests.
+  - Local work now has a bounded LocalWorkAdmission projection.  Production
+    PostgreSQL derives judge work from persisted admitted jobs, evaluator
+    definitions, judge definitions, attempts, and artifact metadata; pending
+    calibration definitions are materialized separately.  Work is inserted
+    with immutable fingerprint comparison and idempotency keys, then the
+    existing lease/claim/complete/fail worker path consumes it.
+  - Judge enqueue now requires prompt and rubric references from the persisted
+    definition, joins both against authoritative Observatory artifact and
+    authorization metadata, compares version/digest/media/purpose/context/
+    retention fields, and fails closed when any join is missing or mismatched.
+  - PostgreSQL migration 0010 widens the qualification action-mode column
+    before backfilling the contract value manual_owner_action. This preserves
+    existing values without truncation and makes fresh, upgraded, and exact
+    rerun paths safe on PostgreSQL 17.
+risks:
+  - Docker/Ollama integration must verify the pinned /api/tags inventory and /api/chat response shape against the deployment image.
+  - >-
+    Seed conflict: the active AURA-0094 work item and evaluation-v1 permit any
+    pinned integer 0..2147483647 with temperature exactly zero; one security
+    review requested seed zero. This worker preserved the authoritative range
+    and did not silently tighten it; owner/reviewer resolution is still needed.
+unresolved:
+  - >-
+    ADR_REQUIRED: the platform-owned Compose/host relay route must prove that
+    the evaluation worker's judge network can reach only the deployment-owned
+    local Ollama boundary. The production adapter rejects every origin outside
+    its literal allowlist; no public-network workaround was introduced.
+  - Public REST/CLI/SSE/browser workflows remain AURA-0095 scope.
+    - >-
+      Live ClickHouse migration and deletion-recovery integration remains
+      unrun because no cached ClickHouse image/endpoint is available. Live
+      PostgreSQL 17 migration coverage is complete for this pass; production
+      repository round-trip coverage beyond the migration fixture remains
+      integration-owner work.
+  - >-
+    The producer regression fixture remains an expected failure when its
+    persisted prompt/rubric artifact joins are intentionally incomplete; the
+    production path rejects that incomplete state rather than enqueueing.
+  - >-
+    Two legacy test expectations remain outside this ownership zone: a
+    definition fixture without execution identity and an old PostgreSQL metric
+    count that predates the required admitted-work success span.
+  - >-
+    Independent reviewers must re-verify the exact qualification, lossless
+    provenance, authorization, and telemetry corrections before integration.

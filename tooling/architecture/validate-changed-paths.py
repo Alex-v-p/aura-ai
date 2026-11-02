@@ -4,7 +4,14 @@ from __future__ import annotations
 import argparse
 import os
 
-from common import emit, git_changed_paths, resolve_work_item, scope_errors, semantic_work_item_errors, validate_document
+from common import (
+    emit,
+    git_changed_paths,
+    resolve_work_item,
+    scope_errors,
+    semantic_work_item_errors,
+    validate_document,
+)
 
 
 def main() -> int:
@@ -25,7 +32,12 @@ def main() -> int:
     if not paths:
         return emit("skipped", "changed-paths", ["No changed paths to validate."])
     errors = scope_errors(paths, item, args.role)
-    return emit("failed" if errors else "passed", "changed-paths", errors or [f"Validated {len(paths)} changed paths."], paths=paths)
+    return emit(
+        "failed" if errors else "passed",
+        "changed-paths",
+        errors or [f"Validated {len(paths)} changed paths."],
+        paths=paths,
+    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,27 @@
+agent: observability_steward
+work_item: AURA-0144
+verdict: PASS
+checked:
+  - >-
+    Core propagates canonical W3C traceparent headers and static and browser
+    providers validate admitted lineage through the real extraction boundary.
+  - >-
+    Extraction metrics contain no trace or correlation object; only the
+    research.extract span contains traceId, spanId, and parentSpanId.
+  - >-
+    Exact extraction outcome, latency, and rejection metrics use count and
+    millisecond units and serialize content-free metadata-observation-v2 data.
+  - >-
+    Bounded queues, exactly three exporter attempts, periodic and shutdown
+    draining, and dropped, rejected, export_failures, and abandoned_batches
+    accounting match the accepted component manifest.
+  - >-
+    Repository-wide provider dimensions use a finite vocabulary; research uses
+    the stricter searxng, static_fetcher, browser_fetcher, and none subset, and
+    arbitrary, private, content, URL, path, UUID, and exception-shaped labels
+    are rejected while established legacy labels remain accepted.
+  - >-
+    The observability validator passed, the exact AURA-0144 aggregate passed
+    133 tests, and the full Core suite passed 1819 tests with 124 explicit
+    dependency-gated skips.
+findings: []

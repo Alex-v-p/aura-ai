@@ -1,0 +1,97 @@
+agent: core_worker
+work_item: AURA-0134
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0134_core
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: services.aura-core.briefing-capability-query
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/execution.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py
+  - services/aura-core/tests/test_briefing_api.py
+  - work-items/handoffs/AURA-0134-core.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run ruff check
+      services/aura-core/src/aura_core/domains/automation/briefings
+      services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py
+      services/aura-core/tests/test_briefing_api.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/automation/briefings
+      services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py
+      services/aura-core/tests/test_briefing_api.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_briefing_api.py -q (3 passed)
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0134.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0134.yaml
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0134.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0134.yaml
+    - git diff --check
+  failed:
+    - >-
+      The required combined contract/Core subset reported four legacy system
+      test assertions expecting OpenAPI 1.20.0 while the separately authorized
+      additive capability contract is now 1.21.0; the capability API tests and
+      contract-focused tests pass.
+  not_run:
+    - >-
+      Frontend lint, unit, build, Storybook, Playwright, and aggregate Core
+      checks remain assigned to their respective AURA-0134 owners and delivery
+      integration.
+decisions:
+  - >-
+    Added one immutable BriefingCapabilities DTO and one application-boundary
+    get_capabilities query. Its values are projected from the canonical fixed
+    BriefingExecutionPolicy rather than duplicated in the API route.
+  - >-
+    Exposed only the exact contract fields: policy UUID and textual revision,
+    fixed deadline/token/character budgets, daily cadence, and explicit false
+    memory/tools flags. Provider, model, prompt, grants, owner, sources, and
+    runtime state remain absent.
+  - >-
+    Added GET /api/v1/briefing-capabilities behind the existing owner session
+    dependency and explicit Cache-Control: no-store handling. No CSRF or
+    idempotency header is required for this read-only query.
+  - >-
+    Added contract drift, canonical-value, authentication, no-store, and
+    private-field omission tests in test_briefing_api.py.
+risks:
+  - >-
+    Existing non-owned Core tests still assert OpenAPI 1.20.0 and need the
+    contract steward or integration maintainer to reconcile those additive
+    version expectations with the approved 1.21.0 contract.
+unresolved:
+  - >-
+    None within the Core briefing capability ownership zone; no commit created
+    per worker instructions.

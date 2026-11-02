@@ -1,0 +1,57 @@
+agent: test_evaluation_engineer
+work_item: AURA-0124
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0124_evaluation
+  worktree: shared-main
+scope:
+  ownership_zone: evaluation.aura0124
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0124_idle_telemetry.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.evaluation_scheduler
+    - aura.observatory.evaluation_orchestration
+  metrics_added: []
+verification:
+  passed:
+    - .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0124_idle_telemetry.py -q (8 passed)
+    - >-
+      .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0124_idle_telemetry.py
+      services/aura-observatory/tests/test_aura0092_orchestration.py
+      services/aura-observatory/tests/test_aura0092_metrics.py
+      services/aura-observatory/tests/test_aura0092_worker.py
+      services/aura-observatory/tests/test_aura0094_worker.py
+      services/aura-observatory/tests/test_aura0094_observability.py -q (49 passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0124.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Full AURA-0124 governance and cross-service checks are owned by the integration maintainer.
+decisions:
+  - >-
+    Use deterministic repository seams and an injectable monotonic heartbeat
+    clock so empty, non-empty, failure, and thirty-second boundary behavior is
+    tested without wall-clock sleeps or changing polling cadence.
+  - >-
+    Assert only public service behavior: repository operations still execute
+    on every cycle, while successful spans and dependency counters are absent
+    for zero-work cycles and retained for meaningful work.
+  - >-
+    Exercise both evaluation scheduler and orchestration heartbeat services,
+    including immediate failure visibility and repeated database heartbeat
+    calls inside a sparse telemetry window.
+risks:
+  - >-
+    The acceptance file intentionally does not assert implementation-private
+    helper names; full-stack rate reduction remains an integration check.
+unresolved: []

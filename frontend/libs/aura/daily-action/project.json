@@ -1,0 +1,10 @@
+{
+  "name": "aura-daily-action",
+  "projectType": "library",
+  "sourceRoot": "libs/aura/daily-action/src",
+  "tags": ["scope:aura", "type:feature"],
+  "targets": {
+    "test": { "executor": "nx:run-commands", "options": { "command": "vitest run --config vitest.workspace.ts libs/aura/daily-action" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "eslint libs/aura/daily-action" } }
+  }
+}

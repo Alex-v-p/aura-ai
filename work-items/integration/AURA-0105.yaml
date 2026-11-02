@@ -1,0 +1,54 @@
+agent: integration_maintainer
+work_item: AURA-0105
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0105-general.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0105-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0105.yaml
+checks:
+  passed:
+    - >-
+      The platform implementation handoff and both required review verdicts
+      were read and confirmed complete, with PASS reviews and no unresolved
+      blocking findings.
+    - >-
+      AURA-0105 work-item validation passed before archival, and the staged
+      five-path scope validation passed while excluding concurrent AURA-0098
+      paths from the shared checkout.
+    - >-
+      The focused Garage topology regression passed, and the complete static
+      Compose topology suite passed all 50 tests.
+    - UV_CACHE_DIR=/tmp/aura-0105-uv uv run ruff check deploy/compose/test_topology.py passed.
+    - >-
+      Docker Compose Observatory configuration rendered successfully with
+      stable synthetic owner/OIDC inputs and an isolated temporary state root.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      Contract-change and protected-baseline validation passed with no
+      contract or protected baseline changes.
+    - git diff --cached --check passed.
+    - >-
+      The exact staged diff contains only deploy/compose/test_topology.py and
+      AURA-0105 governance artifacts; all AURA-0098 files remain unstaged.
+    - >-
+      A single focused Conventional Commit checkpoint was created after the
+      reviewed and validated AURA-0105 slice was staged; no push was performed.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared worktree remains dirty with independently owned AURA-0098
+    implementation files. They were not staged, modified, or claimed as part
+    of AURA-0105 integration.
+  - >-
+    AURA-0105 corrects only the Garage topology test's service-block scope and
+    does not claim any other AURA-0098 acceptance gate.

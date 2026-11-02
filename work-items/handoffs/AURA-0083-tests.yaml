@@ -1,0 +1,108 @@
+agent: test_evaluation_engineer
+work_item: AURA-0083
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: evaluation.compose-topology, evaluation.local-runtime-probes
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/handoffs/AURA-0083-tests.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.identity
+    - aura.models.inference
+    - observatory.identity
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0083.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0083.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 -m py_compile deploy/compose/test_topology.py
+    - timeout 90s python3 deploy/compose/test_topology.py (41 passed)
+    - bash -n deploy/compose/local-http.sh
+    - >-
+      Docker Compose config rendered successfully with local-identity and
+      observatory profiles, including the local bootstrap profile.
+    - >-
+      Rendered Compose JSON confirms aura-frontend uses 10.254.241.0/24,
+      outside the operator LAN 192.168.0.0/24, and the configured Core
+      provider URL is not exposed through browser-facing services.
+    - >-
+      Static relay assertions pass: strict IPv4 target/port validation,
+      argument-array socat invocation, loopback-only TCP-LISTEN binding,
+      host.docker.internal relay URL generation, no eval, and down/reset
+      cleanup coverage.
+    - >-
+      Observatory login endpoint returned HTTP 307 with an Authentik authorize
+      redirect using client_id=aura-observatory and the exact callback
+      http://observatory.localhost:4300/api/v1/auth/callback; no URI error was
+      returned.
+    - >-
+      Core login endpoint returned HTTP 302 with the separate client_id=aura-web
+      and exact callback http://aura.localhost:4200/api/v1/auth/callback.
+    - >-
+      Observatory, Core, and Authentik readiness probes returned HTTP 200;
+      every running Core, Authentik, database, session, ingest, and
+      browser-facing Compose service was running, with health checks healthy
+      wherever declared.
+    - >-
+      The unauthenticated Core model inventory endpoint returned HTTP 401,
+      confirming model inventory remains owner-protected rather than leaking
+      provider metadata.
+    - >-
+      A read-only request from the running Core API container to its configured
+      host.docker.internal:11435 relay returned an Ollama /api/tags payload
+      containing exactly 12 models.
+    - >-
+      A read-only request to the configured provider endpoint returned HTTP
+      200 and exactly 12 models, matching the Core relay result.
+    - >-
+      The canonical ./deploy/compose/local-http.sh up acceptance run completed
+      with exit 0; Core, Observatory, Authentik, database, session, ingest,
+      and browser-facing services were healthy, and the required migration and
+      bootstrap jobs completed successfully.
+    - >-
+      Browser-capable owner acceptance completed: Observatory login followed
+      Authentik explicit consent and returned to
+      http://observatory.localhost:4300/ with an authenticated owner session,
+      rendered Overview, and exposed Sign out. Core then authenticated through
+      its separate client/session and rendered Connected. The authenticated
+      model selector listed exactly 12 models, matching the configured
+      provider and Core relay inventory.
+    - >-
+      A non-escalated docker Compose configuration probe was attempted in the
+      current sandbox; client-side static rendering remained available and the
+      required graph checks passed without changing Docker resources.
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Runtime probes were read-only against the already-running stack; no Compose
+    startup, stop, reset, rebuild, or configuration mutation was performed.
+  - >-
+    The Core container relay probe is the provider-connectivity acceptance
+    evidence: it exercises the exact URL injected into the running Core API and
+    verifies the provider-reported model count without exposing model payloads
+    in this handoff.
+  - >-
+    Authentication validation records both distinct authorize redirects, the
+    protected inventory response, and the browser-mediated owner completion;
+    the authenticated selector count is consistent with the provider and
+    Core relay inventories.
+  - >-
+    No escalated permission or user input was requested. The launcher was
+    deliberately not forced through a preflight failure because that would not
+    validate runtime behavior and could leave the configured relay stopped;
+    canonical launcher acceptance evidence is recorded above.
+risks: []
+unresolved: []

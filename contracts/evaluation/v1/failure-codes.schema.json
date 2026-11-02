@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/evaluation/v1/failure-codes.schema.json",
+  "title": "Aura evaluation failure-code taxonomy v1",
+  "description": "Finite, content-free, provider-neutral evaluation failure categories. Producers map internal failures to these stable codes before publication; exception text, provider diagnostics, payload excerpts, credentials, endpoints, and content-derived codes are prohibited.",
+  "type": "string",
+  "enum": [
+    "REQUEST_INVALID",
+    "DEADLINE_EXCEEDED",
+    "RESOURCE_LIMIT_EXCEEDED",
+    "DEPENDENCY_UNAVAILABLE",
+    "EXECUTION_FAILED",
+    "RESULT_VALIDATION_FAILED",
+    "STORAGE_FAILED",
+    "INTERNAL_FAILURE"
+  ]
+}

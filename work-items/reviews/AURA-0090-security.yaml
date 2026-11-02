@@ -1,0 +1,11 @@
+agent: security_privacy_reviewer
+work_item: AURA-0090
+verdict: PASS
+checked:
+  - PostgreSQL authorization projections are alias-qualified and enforce request, dataset, purpose, context, capture classification, retention, and revocation on reservation, retry, and publication.
+  - Artifact uploads bind the expected SHA-256 into the signed SigV4 payload hash and remove failed or mismatched objects before publication.
+  - Evaluation score component IDs and evaluator/component versions enforce bounded, metadata-safe formats with negative coverage.
+  - A partial unique live-target index and global-ownership regression enforce one provider deletion and a combined deleted count of one across overlapping commands.
+  - Garage bootstrap removes preexisting read and owner grants, grants write only, verifies read and owner are absent or explicitly disabled, requires write enabled, rejects unexpected buckets, and keeps credentials worker-only.
+  - Focused Garage topology validation and git diff validation passed.
+findings: []

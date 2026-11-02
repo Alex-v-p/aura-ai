@@ -1,0 +1,182 @@
+id: AURA-0131
+title: Add the Aura Web calendar planner
+status: integrated
+change_class: repository_governance
+intent: >
+  Add owner-safe Google Calendar connection management and a read-only daily
+  agenda to Aura Web by consuming the existing v1.19.0 generated client,
+  preserving the current Today experience when calendar data is unavailable,
+  and keeping lifecycle and conflict authority in Aura Core.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - work-items/archived/AURA-0127.yaml
+    - work-items/archived/AURA-0128.yaml
+    - work-items/archived/AURA-0129.yaml
+    - work-items/archived/AURA-0130.yaml
+    - The owner authorized implementation of all four initiative stages on 2026-10-26; AURA-0131 activates only Stage 2 slice 4.
+    - The existing v1.19.0 calendar OpenAPI contract and generated Aura client are authoritative and unchanged by this frontend slice.
+    - One integrations-calendar feature library owns generated-client adaptation, ephemeral calendar state, lifecycle UI, discovery, and explicit selection. The daily-action library may consume its public agenda projection, but integrations-calendar never depends on daily-action.
+    - The shell owns only routes, navigation, focus behavior, and provider composition. It does not infer connection actions, conflict relationships, or calendar business rules.
+    - Calendar event content is held only in authenticated in-memory state and is cleared on owner-session reset, authorization failure, logout, route teardown where applicable, or explicit refresh replacement. It never enters URLs, router state, browser storage, service-worker caches, logs, telemetry, or Observatory.
+    - OAuth authorizationPath is opaque, same-origin, used only after an explicit owner action, and is never prefetched, persisted, logged, parsed, or copied into router state.
+    - readsEnabled and availableActions are authoritative. The browser renders server conflict relationships and never calculates or repairs conflicts locally.
+    - The agenda uses the browser-resolved IANA timezone for the bounded visible day unless the owner explicitly selects another timezone for the current in-memory view; no durable timezone preference is introduced.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AUI-001
+  - AUI-002
+  - AUI-019
+  - AUI-023
+  - INT-007
+  - AUT-014
+  - AUT-016
+ownership_zones:
+  - frontend.aura-web.integrations-calendar
+  - frontend.aura-web.daily-planning
+  - frontend.aura-web.shell
+  - repository.frontend-module-registry
+  - repository.frontend-test-configuration
+  - evaluation.calendar-planning
+  - delivery.aura0131
+allowed_paths:
+  - work-items/active/AURA-0131.yaml
+  - work-items/archived/AURA-0131.yaml
+  - work-items/handoffs/AURA-0131-*.yaml
+  - work-items/reviews/AURA-0131-*.yaml
+  - work-items/integration/AURA-0131.yaml
+  - frontend/libs/aura/integrations/calendar/**
+  - frontend/libs/aura/daily-action/**
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.spec.ts
+  - frontend/apps/storybook/src/calendar-planning.stories.ts
+  - frontend/apps/storybook/src/daily-action.stories.ts
+  - frontend/apps/aura-web-e2e/src/calendar-planning.spec.ts
+  - frontend/apps/aura-web-e2e/src/today.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - services/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - frontend/libs/platform/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/aura-web/src/sw.js
+  - frontend/apps/aura-web/src/styles.css
+  - frontend/apps/aura-web/src/index.html
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - package.json
+  - pnpm-lock.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected:
+    - contracts/openapi/aura-v1.yaml calendar integration resources consumed by Aura Web
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Calendar names, event titles, descriptions, attendees, locations, provider identifiers, request ranges, cursor values, timezone selections, OAuth paths, credentials, and owner identity must not enter URLs, browser persistence, service-worker caches, logs, telemetry, Storybook artifacts, screenshots committed to the repository, or Observatory.
+    - Lifecycle and selection mutations require the existing owner session, origin-aware CSRF behavior, UUID idempotency, optimistic selection versioning, explicit owner action, and closed sanitized recovery states.
+    - The browser must not receive or infer provider tokens, authorization code, state, nonce, credential references, provider page tokens, lifecycle transitions, or conflict relationships beyond the approved public projections.
+    - Private calendar state must be cleared on session replacement, logout, authorization failure, permission loss, and owner change without clearing independently available reminder, notification, approval, or conversation state.
+    - Provider event text is untrusted display content and cannot become HTML, instructions, memory, tool input, policy, or client-side authority.
+  data_classes:
+    - owner-private calendar connection and selectable-calendar metadata
+    - transient owner-private normalized event content and conflict relationships
+    - owner-private reminder content already authorized for Today
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 3
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A registered integrations-calendar frontend feature library consumes only the existing generated Aura client and approved shared UI surfaces, exposes a deliberate public API, and never depends on daily-action, Core internals, provider code, or Observatory.
+  - The shell adds /integrations and /integrations/calendar routes plus an accessible Connect navigation group while retaining every existing deep link, mobile inertness, focus restoration, keyboard behavior, themes, reduced motion, and responsive navigation semantics.
+  - The integration UI renders the authoritative connection state, readsEnabled, availableActions, lastError, and recovery guidance and supports explicit connect, callback completion, reauthorize, and disconnect flows without persisting or exposing authorizationPath or provider material.
+  - Calendar discovery presents at most the contract-bounded readable set, newly discovered calendars remain unselected, and explicit empty or bounded selection replacement uses the complete Aura calendar UUID set, current expectedVersion, CSRF, and UUID idempotency while preserving recoverable version conflicts.
+  - The calendar store suppresses stale responses, bounds pagination and refresh behavior, retains no event content outside authenticated in-memory state, and clears private state on owner-session reset, authorization failure, logout, permission loss, and owner change.
+  - Today adds one chronological agenda with timezone and date context, all-day events before timed rows, explicit text-and-icon source labels, cross-timezone provenance, and server-returned conflict explanations without browser-side conflict calculation.
+  - Existing reminder, notification, approval, and conversation sections remain independently useful when calendar is disconnected, expired, rate-limited, partial, stale, empty, unavailable, canceled, or failed; calendar recovery never erases unrelated Today content.
+  - Loading, connected, disconnected, connecting, reauthorization-required, revocation-uncertain, disabled, unavailable, partial-calendar, stale, rate-limited, permission-denied, empty, offline, and reconnecting states have focused accessible recovery behavior and tests.
+  - OAuth return restores focus to the connection-status heading or exact actionable error, and selection, refresh, disconnect, and retry actions preserve valid state and return focus predictably.
+  - Unit, Storybook, and Playwright coverage verifies desktop, tablet, mobile, keyboard-only operation, accessible names and status announcements, touch targets, light and dark themes, reduced motion, 200 percent reflow, private-content containment, session reset, and request amplification bounds.
+  - No OpenAPI, generated client, Core, migration, deployment, dependency, service-worker, runtime telemetry, event contract, protected baseline, or durable browser-storage behavior changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0131.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0131.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0131.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0131.yaml
+  - cd frontend && pnpm exec nx lint aura-web
+  - cd frontend && pnpm exec nx test aura-web
+  - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/integrations/calendar libs/aura/daily-action
+  - cd frontend && pnpm exec nx build aura-web --configuration=production
+  - cd frontend && pnpm exec nx run storybook:build-storybook
+  - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/calendar-planning.spec.ts apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

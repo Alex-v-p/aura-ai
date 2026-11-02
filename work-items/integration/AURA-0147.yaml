@@ -1,0 +1,70 @@
+agent: integration_maintainer
+work_item: AURA-0147
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0147-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0147-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0147-security-privacy.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0147-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      Verified the three complete implementation handoffs, all four required
+      review verdicts, empty findings, and approved changed-path scope. No
+      unresolved blocking review remains.
+    - >-
+      python3 tooling/architecture/validate-work-item.py passed for the
+      approved AURA-0147 item before archival.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py passed for 67
+      changed paths within the approved AURA-0147 scope.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py reported no
+      contract changes.
+    - python3 tooling/architecture/validate-generated-sync.py passed.
+    - python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py reported
+      no protected baseline or threshold changes.
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated passed.
+    - >-
+      The exact five-project Nx lint and test run passed for
+      aura-research, aura-artifacts, aura-tasks, aura-conversations, and
+      aura-web.
+    - cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production passed.
+    - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook passed.
+    - >-
+      The exact Storybook Playwright configuration passed 251 accessibility
+      tests across the repository and Research/Tasks/Artifacts stories.
+    - >-
+      The exact Aura Web Playwright configuration passed 117 tests across
+      desktop, tablet, and mobile projects using synthetic governed fixtures.
+    - git diff --check passed.
+    - >-
+      Same-origin relative transports and synthetic acceptance run over
+      loopback HTTP; no Cloudflare, Nginx, provider credential, provider image,
+      or public artifact publication was added.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The feature worktree is intentionally uncommitted and unpushed; this
+    integration pass did not publish artifacts or push the feature branch.
+  - >-
+    Real research provider acceptance remains environment-gated and disabled
+    under the accepted provider rollout decision; synthetic browser coverage
+    is the validated path for this slice.

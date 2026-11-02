@@ -1,0 +1,133 @@
+id: AURA-0082
+title: Make the disposable local stack reliable on Docker Desktop
+status: approved
+change_class: infrastructure
+intent: >
+  Make the canonical disposable local launcher start Core, Authentik, and
+  Observatory together using Docker-managed state that does not stall on
+  Docker Desktop host-file sharing, and document the single start command.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - The owner explicitly authorizes discarding current disposable local data and selecting fresh Docker-managed named volumes.
+    - Normal HTTPS and operator deployments retain encrypted AURA_STATE_ROOT bind mounts; only the explicit disposable local HTTP overlay uses named volumes.
+  contracts: []
+feature_references: []
+ownership_zones:
+  - deployment.local-http
+  - deployment.local-state
+  - documentation.local-start
+  - evaluation.compose-topology
+  - observatory_worker:services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - observatory_worker:services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - observatory_worker:services/aura-observatory/src/aura_observatory/adapters/query.py
+  - observatory_worker:services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+  - test_evaluation_engineer:services/aura-observatory/tests/test_aura0079_clickhouse_auth_regressions.py
+  - test_evaluation_engineer:services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - test_evaluation_engineer:services/aura-observatory/tests/test_aura0080_formal_regressions.py
+  - test_evaluation_engineer:services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py
+allowed_paths:
+  - work-items/active/AURA-0082.yaml
+  - work-items/archived/AURA-0082.yaml
+  - work-items/handoffs/AURA-0082-*.yaml
+  - work-items/reviews/AURA-0082-*.yaml
+  - work-items/integration/AURA-0082.yaml
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/observatory-collector.yaml
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0079_runtime_wiring_regressions.py
+  - deploy/tests/test_aura0079_observatory_topology.py
+  - deploy/docker/aura-observatory.Dockerfile
+  - deploy/docker/observatory-web.nginx.conf
+  - compose.yaml
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+  - services/aura-observatory/tests/test_aura0079_clickhouse_auth_regressions.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0080_formal_regressions.py
+  - services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py
+  - README.md
+  - docs/README.md
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/**
+  - services/aura-core/**
+  - frontend/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - infra/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: telemetry.ingestion
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Disposable named volumes must remain project-scoped and must not weaken production encrypted-state requirements.
+    - Runtime credentials remain file-injected and no secret value may enter Compose files, documentation, logs, or Git.
+    - Local Core and Observatory identity audiences, owner subjects, origins, and private networks remain separate.
+  data_classes:
+    - disposable_local_state
+required_agents:
+  implementation:
+    - platform_worker
+    - observatory_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The single documented command ./deploy/compose/local-http.sh up starts Core, local Authentik, and Observatory with their loopback Web origins.
+  - The disposable local overlay replaces every database, broker, object-store, identity-media, and Observatory host state bind with project-scoped named volumes while preserving required read-only source/configuration binds.
+  - The launcher records the same generated owner subject for Core and Observatory and preserves separate OIDC clients and audiences.
+  - Normal Compose and stable HTTPS deployment behavior remain unchanged and continue to require encrypted AURA_STATE_ROOT storage.
+  - Startup reaches healthy long-running services and completed migration/bootstrap jobs without using the discarded host-bound local state.
+  - Documentation identifies Aura, Observatory, and Authentik URLs and explains normal stop versus explicit disposable-state reset.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0082.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0082.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - bash -n deploy/compose/local-http.sh
+  - python3 deploy/compose/test_topology.py
+  - >-
+    PYTHONPATH=services/aura-observatory/src .venv/bin/python -m
+    aura_observatory.entrypoints.cli --help
+  - docker compose --env-file .env --env-file .env.local-http -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml --profile local-identity --profile observatory config --quiet
+  - ./deploy/compose/local-http.sh up
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

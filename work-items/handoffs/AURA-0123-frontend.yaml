@@ -1,0 +1,94 @@
+agent: frontend_worker
+work_item: AURA-0123
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0123_frontend
+  worktree: shared-main
+scope:
+  ownership_zone: observatory-web.live-refresh
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web/src/app/app.component.ts
+  - frontend/apps/observatory-web/src/app.component.spec.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.store.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: [observatory-web.live-refresh]
+  metrics_added: []
+verification:
+  passed:
+    - pnpm --dir frontend exec nx lint observatory-web
+    - pnpm --dir frontend exec nx test observatory-web
+    - pnpm --dir frontend exec nx test observatory
+    - >-
+      Observatory unit suite: 81 tests passed, including the queued-refresh
+      deactivation race and evidence-deletion lifecycle preservation.
+    - pnpm --dir frontend exec nx build observatory-web
+    - git diff --check
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0123.yaml
+    - >-
+      AURA-0123 mocked Playwright acceptance: 12 passed across desktop, tablet,
+      and mobile (AURA_OBSERVATORY_WEB_E2E_APP_PORT=4315).
+  failed:
+    - >-
+      The pre-existing "keeps active Runs reconciliation alive after an open SSE
+      same-count response" browser test still expects identity-only polling
+      without a concrete gap; it timed out after the bounded active-Runs
+      correction. The new semantics intentionally require an invalidation or
+      disconnected/rejected projection signal before another read.
+    - >-
+      The pre-existing "starts a fresh Runs reconciliation window after the
+      initial window caps" browser test still expects idle Overview to poll
+      while SSE is disconnected; it observed only the initial request. The
+      corrected semantics keep Overview passive and start recovery on Runs
+      activation, so this assertion needs semantic alignment by its test owner.
+  not_run: []
+decisions:
+  - >-
+    The app shell now mounts only the selected workspace. Root-provided stores
+    retain workspace state; route transitions explicitly stop the operations
+    stream and selected-run refresh work while preserving their snapshots.
+  - >-
+    Generic observation.changed events are ignored for REST refresh purposes.
+    Run/trace invalidations drive bounded shared, analytics, and comparison
+    refreshes; health history has a slower cadence and heartbeats do not read.
+  - >-
+    Run reconciliation compares the overview count only when the run page has
+    no continuation cursor, avoiding projection-lag retries on a complete
+    pagination state.
+  - >-
+    Operations loads use an in-flight plus one-pending guard and a 500 ms live
+    debounce so operation events cannot overlap full workspace loads.
+  - >-
+    Overview remains passive when its stream reports an error or projections
+    disagree; active Runs owns bounded reconciliation, while stable SSE event
+    IDs are deduplicated across native reconnect replay and dual event delivery.
+  - >-
+    A selected-run invalidation received during an in-flight load is retained
+    and produces one trailing refresh at the live cadence; projection-gap
+    retries retain the slower bounded recovery cadence.
+  - >-
+    Analytics and Comparison live refreshes are route-active only; leaving a
+    workspace cancels its coalesced coordinator and invalidates in-flight
+    generations while preserving the last in-memory result for re-entry.
+  - >-
+    Evidence-deletion polling is cancelled when Trace deactivates and resumes
+    only on Trace activation while the durable deletion key/status remains in
+    memory; clearing disclosed bytes on Trace destruction preserves an accepted
+    deleting state, and timer/completion gates prevent hidden reads after
+    navigation.
+risks:
+  - >-
+    Full-stack acceptance remains owned by the Observatory and test/evaluation
+    workers; this handoff covers the frontend mocked acceptance and unit/build
+    checks only. One legacy same-count/open-stream E2E assertion needs semantic
+    alignment with concrete-gap-only reconciliation.
+unresolved: []

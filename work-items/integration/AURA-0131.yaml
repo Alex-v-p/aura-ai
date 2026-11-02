@@ -1,0 +1,77 @@
+agent: integration_maintainer
+work_item: AURA-0131
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0131-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0131-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0131-security-privacy.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0131-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0131.yaml
+  - work-items/integration/AURA-0131.yaml
+checks:
+  passed:
+    - >-
+      All four implementation handoffs are complete with no unresolved items;
+      all four required review artifacts are PASS with no findings, including
+      the post-fix general and UX/UI re-verification.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0131.yaml passed before archival.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0131.yaml passed for 44 authorized changed paths
+      before archival.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0131.yaml passed with no contract changes
+      detected; the check was skipped as not applicable.
+    - python3 tooling/architecture/validate-generated-sync.py passed.
+    - python3 tooling/architecture/validate-import-boundaries.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0131.yaml passed with no protected baseline
+      changes detected; the check was skipped as not applicable.
+    - cd frontend && pnpm exec nx lint aura-web passed.
+    - cd frontend && pnpm exec nx test aura-web passed with 10 tests.
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/integrations/calendar libs/aura/daily-action passed with 28
+      tests.
+    - cd frontend && pnpm exec nx build aura-web --configuration=production passed.
+    - cd frontend && pnpm exec nx run storybook:build-storybook passed.
+    - >-
+      cd frontend && pnpm exec playwright test
+      apps/aura-web-e2e/src/calendar-planning.spec.ts
+      apps/aura-web-e2e/src/today.spec.ts
+      apps/aura-web-e2e/src/aura-web.spec.ts
+      apps/aura-web-e2e/src/storybook-a11y.spec.ts passed on isolated local
+      ports with 412 passed, 0 failed, and 479 expected skips.
+    - git diff --check passed.
+    - >-
+      The archived work item was validated after archival, and changed-path
+      validation remained valid for the final authorized tree.
+    - >-
+      No semantic conflicts, contract changes, generated-client changes,
+      service changes, dependency changes, migrations, protected baselines, or
+      unrelated paths were introduced during integration.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    This is a local integration checkpoint only; no remote push was performed.

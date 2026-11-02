@@ -1,0 +1,76 @@
+agent: frontend_worker
+work_item: AURA-0134
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: standard
+  agent_thread_id: /root/aura0134_frontend
+  worktree: shared
+scope:
+  ownership_zone: frontend.aura-web.briefings
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/aura/automation/briefings/project.json
+  - frontend/libs/aura/automation/briefings/tsconfig.lib.json
+  - frontend/libs/aura/automation/briefings/src/index.ts
+  - frontend/libs/aura/automation/briefings/src/lib/briefing-models.ts
+  - frontend/libs/aura/automation/briefings/src/lib/briefing-models.spec.ts
+  - frontend/libs/aura/automation/briefings/src/lib/briefing-api.ts
+  - frontend/libs/aura/automation/briefings/src/lib/briefing-store.ts
+  - frontend/libs/aura/automation/briefings/src/lib/briefing-store.spec.ts
+  - frontend/libs/aura/automation/briefings/src/lib/briefing-pages.component.ts
+  - frontend/libs/aura/automation/briefings/src/lib/briefing-pages.component.html
+  - frontend/libs/aura/automation/briefings/src/lib/briefing-pages.component.css
+  - frontend/libs/aura/automation/notifications/src/lib/notification-models.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notifications-page.component.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notifications-page.component.html
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/storybook/src/briefing-management.stories.ts
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+  - tooling/architecture/modules.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability: {components: [], metrics_added: []}
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0134.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0134.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - cd frontend && pnpm exec nx lint aura-briefings --skip-nx-cache
+    - cd frontend && pnpm exec nx lint aura-web --skip-nx-cache
+    - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/automation/briefings libs/aura/automation/notifications libs/aura/daily-action (46 tests, including 5 executable deferred/fake-store cases)
+    - cd frontend && pnpm exec nx build aura-web --configuration=production --skip-nx-cache
+    - cd frontend && pnpm exec nx lint storybook --skip-nx-cache (existing warnings only)
+    - cd frontend && pnpm exec nx build storybook --skip-nx-cache
+    - git diff --check
+  failed: []
+  not_run:
+    - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/briefings.spec.ts apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+decisions:
+  - "Briefing capability discovery uses generated operation getBriefingCapabilities and rejects non-daily, memory-enabled, or tool-enabled capability responses before creation."
+  - "Drafts, source selections, schedule metadata, occurrence metadata, and result content remain in Angular signals only; no browser persistence, URL result identifiers, or Observatory dependency was introduced."
+  - "Notification deep-link construction is constrained to schedule and occurrence identifiers; result identifiers remain out of router paths."
+  - "Briefing source hydration uses CalendarStore.load so connection authorization is established before selected-calendar filtering."
+  - "Source projections fail closed until current calendar/document authority is complete; submit revalidates every selected identifier against those projections."
+  - "Route detail state is cleared before each async inspection, and mutation epochs prevent late responses from repopulating a reset owner session."
+  - "Logical mutation idempotency keys are retained across ambiguous transport failures and cleared on success, known rejection, draft change, discard, or session reset."
+  - "Briefing styles use Aura semantic tokens only, and Storybook supplies an explicit router plus in-memory store fixture."
+  - "Capability/source hydration is session-epoch scoped independently from list/detail request cancellation; source recovery exposes retry and paginated document loading actions."
+  - "Mutation attempts bind UUID ownership to the session epoch, mutation epoch, and exact request fingerprint; stale failures cannot clear replacement keys."
+  - "Client error copy is bounded by status-class mapping and never forwards arbitrary transport error messages."
+  - "Source recovery distinguishes document pagination loading from schedule loading, offers sign-in for expired source authorization, and keeps destructive dialog cancel labels scoped to the pending action."
+  - "Calendar pagination continues through CalendarStore.discoverCalendars(false, true), while disconnected calendars and denied documents expose navigation to their owning recovery surfaces instead of retry loops."
+  - "Calendar continuation is authority-gated by connected, non-error calendar state and refuses discovery when that authority is absent."
+  - "Initial calendar loading is announced before disconnected guidance, and source retry/connect/continuation actions remain suppressed until the relevant public store settles."
+  - "BriefingStore uses the standard Angular Injectable decorator for production AOT/JIT compatibility; Vitest applies a narrowly scoped TypeScript legacy-decorator transform only to this store's behavioral test import."
+  - "Briefing routes render inside the shell main as a labeled section, eliminating nested main landmarks while preserving layout and heading focus behavior."
+risks:
+  - "Notification source route rendering depends on the additive schedule and occurrence fields in the generated notification response."
+unresolved:
+  - "Playwright acceptance remains with the delivery/evaluation owner; no browser run was performed by this worker."

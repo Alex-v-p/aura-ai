@@ -1,0 +1,98 @@
+agent: test_evaluation_engineer
+work_item: AURA-0101
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0101_tests
+  worktree: shared
+scope:
+  ownership_zone: evaluation.core-fresh-stream-startup
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_aura0101_nats_stream.py
+  - deploy/tests/test_aura0091_topology.py
+  - work-items/handoffs/AURA-0101-test-evaluation-engineer.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0101.yaml
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pytest
+      -q services/aura-core/tests/test_aura0101_nats_stream.py (7 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core ruff
+      check services/aura-core/src/aura_core/platform/outbox/nats.py
+      services/aura-core/tests/test_aura0101_nats_stream.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pyright
+      services/aura-core/src/aura_core/platform/outbox/nats.py
+      services/aura-core/tests/test_aura0101_nats_stream.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0101-uv uv run pytest -q
+      deploy/tests/test_aura0091_topology.py (17 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0101-uv uv run ruff check
+      deploy/tests/test_aura0091_topology.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0101-uv uv run pyright
+      deploy/tests/test_aura0091_topology.py
+    - bash -n deploy/docker/nats-entrypoint.sh
+    - git diff --check -- services/aura-core/tests/test_aura0101_nats_stream.py work-items/handoffs/AURA-0101-test-evaluation-engineer.yaml
+    - >-
+      python3 -c "import yaml; yaml.safe_load(open('work-items/handoffs/AURA-0101-test-evaluation-engineer.yaml'))"
+  failed:
+  - >-
+    AURA_WORK_ITEM=AURA-0101 python3
+    tooling/architecture/validate-changed-paths.py --work-item
+    work-items/active/AURA-0101.yaml; the shared worktree contains
+    unrelated AURA-0098/AURA-0100 paths and AURA-0101 implementation paths
+    outside this test/evaluation ownership zone.
+  not_run:
+    - >-
+      Bounded live Docker verification; aggregate integration owns the
+      supported fresh and repeated launcher checks.
+    - >-
+      Full repository architecture checks; aggregate integration owns those
+      checks and this shared worktree contains unrelated changes.
+decisions:
+  - >-
+    Replaced stale account-info and legacy normal-client ACL assertions with
+    identity-scoped checks for the exact current Core JetStream matrix: stream
+    info/list/create/update plus five durable/filter consumer pairs. The
+    tests reject API/consumer wildcards, deletion/purge access, and obsolete
+    normal durable-create grants while preserving the three exact legacy
+    durable-create subjects used by evaluation bootstrap.
+  - >-
+    Added static ACL topology coverage for dispatch and runner identities to
+    ensure they receive no Core account, stream-list, or AURA_RUNS consumer
+    grants. No broker-backed negative test was added because the bounded
+    topology suite already validates the generated identity policy and live
+    ACL behavior is owned by the platform/live integration checks.
+  - >-
+    Added provider doubles that record add, lookup, update, and delete calls
+    so tests assert stream reconciliation preserves existing subjects and
+    never deletes or reassigns the Core-owned stream.
+  - >-
+    Covered the bounded lost-create lookup race with an injectable sleep and
+    asserted both recovery after delayed visibility and identity preservation
+    of the original provider error when visibility never occurs.
+  - >-
+    Tested malformed subject metadata and differently named stream metadata
+    as fail-closed cases with no update or delete mutation.
+risks:
+  - >-
+    The test doubles validate adapter call shape and reconciliation policy;
+    the required live Docker startup check remains an integration concern.
+unresolved:
+  - >-
+    Aggregate integration must rerun the AURA-0101 required checks after
+    reconciling the shared worktree and reviewing the Core implementation.

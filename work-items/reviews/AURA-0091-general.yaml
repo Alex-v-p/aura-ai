@@ -1,0 +1,61 @@
+agent: general_reviewer
+work_item: AURA-0091
+verdict: PASS
+checked:
+  - >-
+    Re-read the approved AURA-0091 work item, repository review rules, current
+    implementation and test handoffs, prior general findings and PASS, and the
+    final exact platform/harness diff. No reviewed implementation or test code
+    was edited.
+  - >-
+    Reconfirmed the corrected production behavior: mixed request concurrency
+    honors the strictest active ceiling; document replay consumes authorized
+    input through the public DocumentService seam and charges one input plus
+    one output exactly once; synthetic execution traverses the public
+    RunCoordinator with isolated established Core ports; adapter-owned fixture
+    revisions resolve by execution kind and mismatched deployment pins fail
+    closed; SQL receipt and cancellation share an attempt-scoped transaction
+    advisory lock.
+  - >-
+    Verified production Compose retains every encrypted AURA_STATE_ROOT bind.
+    The acceptance harness alone generates a project-scoped override using
+    implicit named volumes for PostgreSQL, NATS, Garage, ClickHouse, and session
+    state. It declares no external or explicit volume names, includes the
+    override in all scoped Compose operations, and removes only the project and
+    its volumes during cleanup.
+  - >-
+    Verified the Observatory PostgreSQL healthcheck source contains literal
+    escaped backslash-zero shell characters and no NUL bytes. The supplied
+    rendered-Compose regression confirms the container command contains
+    `tr -d '\000'`, matching the safe Core PostgreSQL healthcheck.
+  - >-
+    Verified every E2E request derives deploymentRevision from the same bounded
+    AURA_TELEMETRY_DEPLOYMENT_ID injected into the runner. The fixture rejects
+    empty, oversized, unsafe, or sensitive identifiers, and the final runtime
+    evidence therefore compares the declared and observed deployment identity
+    rather than the former hard-coded local value.
+  - >-
+    Verified the Collector/API outage probe publishes a validated request and
+    consumes the reused durable result stream until the exact attemptId is
+    observed. It acknowledges only unrelated allowlisted terminal messages,
+    fails closed on malformed or unrelated non-terminal messages, rejects a
+    non-completed target terminal, and emits only bounded diagnostic classes.
+  - >-
+    Verified shell success and failure semantics are no longer inverted: the
+    outage compose-run enters its success branch only on zero status, exits
+    nonzero on probe failure, and cleanup preserves the original failure unless
+    cleanup itself is the first failure. Bash syntax validation passed.
+  - >-
+    Ran five focused non-Docker platform regressions covering exact outage
+    catch-up, both shell statuses, production-bind/disposable-volume separation,
+    deployment provenance, and narrow teardown; all passed. Confirmed the
+    Compose sources contain zero NUL bytes and the expected escaped sequences.
+  - >-
+    Considered the final passing evidence: telemetry-enabled Docker Desktop
+    full-stack acceptance completed every phase with scoped cleanup; 33
+    repository tests, 49 legacy topology tests, Core Ruff and Pyright, 64
+    focused tests with 3 PostgreSQL dependency-gated skips, the latest full
+    Core suite with 1147 passed and 106 skipped, and all governance, Compose
+    configuration, shell, and diff checks passed. No remaining
+    general-correctness defect was found.
+findings: []

@@ -1,0 +1,70 @@
+agent: integration_maintainer
+work_item: AURA-0115
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0115-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0115-architecture.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0115-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0115-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0115.yaml
+  - work-items/integration/AURA-0115.yaml
+checks:
+  passed:
+    - >-
+      All three implementation handoffs were read and now report complete
+      status, authorized ownership paths, no contract or migration changes,
+      and no unresolved items. All four required review artifacts are schema
+      valid PASS verdicts with no findings.
+    - >-
+      The archived work item and changed paths passed work-item, changed-path,
+      repository-shape, module-registry, Python import-boundary,
+      service-isolation, observability, contract-change, baseline-protection,
+      and whitespace checks.
+    - >-
+      The focused Observatory backend suite passed 2 tests. Ruff and Pyright
+      passed for the changed backend and focused tests.
+    - >-
+      The Observatory frontend suite passed 63 tests. Observatory lint and
+      Observatory Web E2E lint passed with only pre-existing warnings and no
+      errors.
+    - >-
+      The focused AURA-0115 Playwright acceptance was run against a manually
+      served Observatory using Node 24 and pnpm 12 with the configured server
+      bypass. Both desktop scenarios passed, including accessibility checks.
+    - >-
+      Review evidence confirms the foreground timeline stops at the
+      authoritative terminal lifecycle boundary, late metadata is presented as
+      a collapsed bounded continuation, duration normalization is limited to
+      run_duration_ms, and Core, Aura Web, contracts, migrations, deployment,
+      and SSE payloads remain unchanged.
+    - >-
+      Handoff, review, archived work-item, and integration-report documents
+      validate against their repository schemas.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Core retry/redelivery behavior that produced the historical volume remains
+    outside this narrowed Observatory-only change; this item bounds the
+    presentation but does not reduce stored observations or change Core
+    transport semantics.
+  - >-
+    The continuation summary is bounded by the existing RunDetail page and
+    explicitly reports partial or page-bounded semantics; it does not add a
+    server-side total aggregate or a new continuation endpoint.
+  - >-
+    Full-stack live acceptance against independently stopped infrastructure was
+    not part of AURA-0115 required_checks and remains a separate integration
+    concern.

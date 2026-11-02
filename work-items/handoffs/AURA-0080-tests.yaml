@@ -1,0 +1,375 @@
+agent: test_evaluation_engineer
+work_item: AURA-0080
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: evaluation.observatory-query-retention
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py
+  - services/aura-observatory/tests/test_aura0080_api.py
+  - services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py
+  - services/aura-observatory/tests/test_aura0080_query_retention.py
+  - services/aura-observatory/tests/test_aura0080_formal_regressions.py
+  - work-items/handoffs/AURA-0080-tests.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.live_updates
+    - aura.observatory.retention
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      Supplied capped validation results recorded: focused safety/lifecycle
+      regressions passed (8 passed) under ulimit -v 524288 with a 45-second
+      timeout; equal-timestamp deterministic regressions passed (4 passed).
+    - >-
+      Supplied capped validation results recorded: the complete formal
+      AURA-0080 regression file passed (94 passed) under ulimit -v 524288 with
+      a 120-second timeout.
+    - >-
+      Supplied capped validation results recorded: the complete Observatory
+      suite passed (209 passed) under ulimit -v 524288 with a 210-second
+      timeout. All runs had only the existing Authlib deprecation warning.
+    - >-
+      Updated the production run-status regression to evaluate generated
+      normalized SQL semantics and both filter RHS values: outcome-only raw
+      success, completed, and ok rows normalize to succeeded, while raw error
+      normalizes to failed. The executable fake requires the generated
+      multiIf branches and evaluates the requested succeeded/failed RHS;
+      direct raw Map fallback assertions were removed.
+    - >-
+      Under ulimit -v 524288 and a 90-second timeout, the focused normalized
+      run-status and component-outcome Map regressions passed: 2 passed with
+      one existing Authlib deprecation warning.
+    - >-
+      Under ulimit -v 524288 and a 150-second timeout, the complete formal
+      AURA-0080 regression file passed: 82 passed with one existing Authlib
+      deprecation warning.
+    - >-
+      Under ulimit -v 524288 and a 210-second timeout, the complete Observatory
+      test suite passed: 197 passed with one existing Authlib deprecation
+      warning.
+    - >-
+      RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py and
+      pyright on the same file: all checks passed; Pyright 0 errors, 0
+      warnings.
+    - >-
+      Added executable ClickHouse Map-semantics fakes for production run and
+      component-health queries: an outcome-only observation participates in
+      status filtering and returns succeeded in the run summary, while a
+      status-only observation contributes a failed component outcome. Missing
+      Map keys are evaluated as empty strings, so the regressions distinguish
+      the coalesce(nullIf(...)) fallback from direct-key lookups.
+    - >-
+      Under ulimit -v 524288 and a 90-second timeout, the focused Map
+      semantics regressions passed: 2 passed with one existing Authlib
+      deprecation warning.
+    - >-
+      Under ulimit -v 524288 and a 150-second timeout, the complete formal
+      AURA-0080 regression file passed: 82 passed with one existing Authlib
+      deprecation warning.
+    - >-
+      Under ulimit -v 524288 and a 210-second timeout, the complete Observatory
+      test suite passed: 197 passed with one existing Authlib deprecation
+      warning.
+    - >-
+      RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py and
+      pyright on the same file: all checks passed; Pyright 0 errors, 0
+      warnings.
+    - >-
+      Strengthened the production-shaped component-health regression with a
+      provider-semantic fake: it evaluates the generated argMaxIf duration
+      predicate over an earlier duration_ms=18/milliseconds row and a later
+      queue_time_ms=99/milliseconds row on the same span. The exact primary
+      predicate returns 18; the legacy broad milliseconds predicate would
+      select 99. No production files were changed.
+    - >-
+      Under ulimit -v 524288 and a 90-second timeout, the focused
+      production-shaped and reference component-health regressions passed (3
+      passed) with one existing Authlib deprecation warning.
+    - >-
+      Under ulimit -v 524288 and a 150-second timeout, the complete formal
+      AURA-0080 regression file passed: 80 passed with one existing Authlib
+      deprecation warning after the provider-semantic fake update.
+    - >-
+      Under ulimit -v 524288 and a 210-second timeout, the complete Observatory
+      test suite passed: 195 passed with one existing Authlib deprecation
+      warning after the provider-semantic fake update.
+    - >-
+      RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py and
+      pyright on the same file: all checks passed; Pyright 0 errors, 0
+      warnings.
+    - >-
+      Under ulimit -v 524288 and a 90-second timeout, the focused histogram
+      and component-health regressions passed (5 passed): Prometheus histogram
+      assertions parse TYPE, cumulative buckets, sum, and count with
+      label-order-insensitive matching and reject an unsuffixed base sample;
+      both the reference store and production-shaped query preserve an earlier
+      duration_ms/milliseconds latency when a later same-span token_count row
+      is present.
+    - >-
+      Under ulimit -v 524288 and a 150-second timeout, the complete formal
+      AURA-0080 regression file passed: 80 passed with one existing Authlib
+      deprecation warning.
+    - >-
+      Under ulimit -v 524288 and a 210-second timeout, the complete Observatory
+      test suite passed: 195 passed with one existing Authlib deprecation
+      warning.
+    - >-
+      RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py:
+      all checks passed.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py:
+      0 errors, 0 warnings.
+    - >-
+      Under ulimit -v 524288 and a 90-second timeout, the adversarial security
+      regressions passed (3 passed): authenticated malformed, apostrophe,
+      backslash, and control inputs across all query/status/identity/cursor
+      and Last-Event-ID surfaces are rejected before query dispatch with fixed
+      errors; ClickHouse literals escape apostrophes and backslashes; and the
+      production retention adapter keeps no action/idempotency cache while
+      releasing active guard references.
+    - >-
+      Under ulimit -v 524288 and a 150-second timeout, the complete formal
+      AURA-0080 regression file passed: 78 passed with one existing Authlib
+      deprecation warning.
+    - >-
+      Under ulimit -v 524288 and a 210-second timeout, the complete Observatory
+      test suite passed: 193 passed with one existing Authlib deprecation
+      warning.
+    - >-
+      Under ulimit -v 524288 and a 60-second timeout, the Postgres claim
+      lifecycle regression passed: duplicate and pending claims close their
+      contexts and release advisory locks; acquired claims retain the guard
+      until complete or abort, then release it; ingest and sequence guard maps
+      remain empty after every terminal path.
+    - >-
+      Under ulimit -v 524288 and a 120-second timeout, the complete formal
+      AURA-0080 regression file passed: 75 passed with one existing Authlib
+      deprecation warning.
+    - >-
+      Under ulimit -v 524288 and a 180-second timeout, the complete Observatory
+      test suite passed: 190 passed with one existing Authlib deprecation
+      warning.
+    - >-
+      Under ulimit -v 524288 and a 60-second timeout, the final component SQL
+      and cyclic-trace regressions passed (4 passed): exact spanless
+      duration_ms filtering, plus self-parent, two-node, and multi-node cycle
+      preservation with deterministic partial roots.
+    - >-
+      Under ulimit -v 524288 and a 120-second timeout, the complete formal
+      AURA-0080 regression file passed: 74 passed with one existing Authlib
+      deprecation warning.
+    - >-
+      Under ulimit -v 524288 and a 180-second timeout, the complete Observatory
+      test suite passed: 189 passed with one existing Authlib deprecation
+      warning.
+    - >-
+      Under ulimit -v 524288 and a 120-second timeout, the complete formal
+      AURA-0080 regression file passed: 70 passed with one existing Authlib
+      deprecation warning. The histogram assertion is label-order-insensitive,
+      matching Prometheus semantics without changing production rendering.
+    - >-
+      Under ulimit -v 524288 and a 60-second timeout, the focused retention
+      regressions passed (5 passed): projection rebuild retry, receipt commit
+      gap retry, immutable target recovery, and bounded/interleaved target
+      paging. Test database fakes now advance keyset cursors to an empty page
+      and assert the expected bounded page-call counts, preventing an
+      unbounded fake-pagination loop.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests -q: 177 passed; the complete assigned
+      Observatory suite is green (one existing Authlib deprecation warning).
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py -q:
+      62 passed; all fourth-batch ordering, heartbeat, migration-ledger,
+      retention, query-port, trace, metric, component-health, adapter-split,
+      partial-response, and session-revocation regressions are green.
+    - >-
+      Focused fourth-batch runtime regressions (migration ledger, sequence and
+      watermark, query metrics, retention restart/audit, HTTP partial responses,
+      and SSE revocation): 6 passed.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests: all checks passed.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright
+      services/aura-observatory/tests: 0 errors, 0 warnings.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0080.yaml: validated AURA-0080.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0080.yaml: 47 changed paths validated.
+    - git diff --check -- services/aura-observatory/tests work-items/handoffs/AURA-0080-tests.yaml
+    - >-
+      Fourth-batch independent regressions are present in
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py;
+      test-file Ruff and Pyright pass.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py -q:
+      37 passed; remaining failures are production corrections from the
+      fourth-batch audit.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests -q: 177 passed (complete Observatory
+      suite after the final production correction round).
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py -q:
+      62 passed (all formal AURA-0080 regressions).
+    - >-
+      The second formal AURA-0080 regression batch is present in
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py;
+      test-only Ruff/Pyright checks pass. The full suite is currently blocked
+      by a concurrent production syntax artifact (a literal '+class' in
+      services/aura-observatory/src/aura_observatory/adapters/query.py).
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests -q: 132 passed (full Observatory suite;
+      includes all formal AURA-0080 regressions and the closed observatory-v1
+      retention request shape)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests -q: 113 passed (full Observatory suite;
+      includes lease-claim recovery, run projection maintenance/removal, live
+      SSE catch-up, deletion recovery, and metadata-only privacy regressions)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests/test_aura0080_query_retention.py
+      services/aura-observatory/tests/test_aura0080_api.py
+      services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py
+      -q (25 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py
+      -q (5 passed; frozen standard OTLP fixtures run without importing Core)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests/test_aura0078_review_fixes.py
+      -q (27 passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests (all checks passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright
+      services/aura-observatory/tests
+      (0 errors, 0 warnings)
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0080.yaml (validated AURA-0080)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0080.yaml (32 changed paths validated)
+    - git diff --check -- services/aura-observatory/tests/test_aura0080_api.py services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py services/aura-observatory/tests/test_aura0080_query_retention.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py
+      (all checks passed)
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py
+      (0 errors, 0 warnings)
+    - >-
+      Final production-shaped regression pass: 177 Observatory tests and 62
+      formal AURA-0080 tests passed. Coverage includes cancellation after
+      sequence allocation and ClickHouse acceptance, commit-boundary guard
+      release, immutable bounded retention targets, source/projection/receipt
+      retry recovery, projection rebuild from surviving observations, shared
+      worker/API metrics, spanless metric deduplication, mixed legacy sequence
+      watermark synchronization, SQL-valid setval, and partial 0002 migration
+      reruns.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory
+      and uv run pyright services/aura-observatory/src
+      services/aura-observatory/tests: all checks passed (Pyright 0 errors,
+      0 warnings).
+    - >-
+      Repository governance, contract, observability, isolation, module,
+      frontend-boundary, baseline, unittest, JSON, lockfile, generated-client,
+      and changed-path validators passed; git diff --check passed. Nx emitted
+      only the known sandbox daemon-socket warning while running in-process.
+  failed: []
+  not_run:
+    - >-
+      Updated the production component-health semantic regression to require
+      argMaxIf ordering by (observed_at, observation_id), matching the
+      deterministic tuple tie-breaker; runtime execution remains pending.
+    - >-
+      Added equal-timestamp deterministic regressions in both reference and
+      production-shaped paths: lower observation_id success versus higher
+      observation_id failure resolves to failed for run status and component
+      outcome, while component latency remains the exact duration value.
+      Runtime execution remains pending per instruction.
+    - >-
+      Corrected the production run-transition fake to model status filtering in
+      HAVING after GROUP BY run_id: the generated WHERE is asserted free of the
+      status predicate, the normalized RHS is extracted from HAVING, and the
+      newest normalized row is evaluated. Pytest remains intentionally pending.
+    - >-
+      Newly added transition, same-span component outcome, and non-advancing
+      retention-page regressions were intentionally not run in this turn per
+      scheduling instruction; one capped focused pytest run is pending.
+    - >-
+      RAYON_NUM_THREADS=1 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check
+      services/aura-observatory/tests/test_aura0080_formal_regressions.py and
+      pyright on the same file were run as static validation only: Ruff passed
+      and Pyright reported 0 errors, 0 warnings.
+    - >-
+      Full AURA-0080 architecture, contract, generated-client, and frontend
+      checks remain integration-owned while the contract and Observatory
+      implementation workers finish.
+decisions:
+  - >-
+    Tests use valid opaque UUID run identifiers and metadata-only observations,
+    with deterministic timestamps and stable observation IDs so cursor and
+    cutoff behavior is reproducible.
+  - >-
+    Retention tests assert strict less-than cutoff semantics, explicit purge-all
+    intent, asynchronous terminal status, concurrent idempotency, failure
+    reporting, and preservation of component/deployment catalogue definitions.
+  - >-
+    API tests exercise the owner cookie/session boundary, CSRF and confirmation
+    headers, REST cursor/filter resources, SSE Last-Event-ID replay, and the
+    absence of private values from responses and event payloads.
+  - >-
+    AURA-0079 OTLP regression tests now use frozen standard OTLP JSON fixtures;
+    the Observatory-only test command no longer imports aura_core across the
+    service-isolation boundary.
+  - >-
+    Added regressions for normalized outcomes, bounded failure codes, real
+    p50/p95 percentiles with UTC time bounds, partial trace spans, deployment
+    service-role unions, exact observation/receipt/run deletion counts, SSE
+    live delivery and unknown/deleted cursor reset, atomic retention races,
+    recovery claims, receipt observed_at, and projection cleanup.
+  - >-
+      Migration checks are shape-level and rerun-safe: both service-owned chains
+      require idempotent create/index statements, forbid executable TTL clauses,
+      and retain content-free retention/audit state.
+  - >-
+      Runtime regressions execute the real migration CLI, PostgreSQL sequence and
+      advisory-guard port, externally rendered metrics endpoint, durable
+      retention restart state, HTTP partial-detail resources, and revocation-aware
+      SSE stream; no source-token-only assertions substitute for behavior.
+risks: []
+unresolved: []

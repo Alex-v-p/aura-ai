@@ -1,0 +1,99 @@
+agent: test_evaluation_engineer
+work_item: AURA-0115
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0115_test
+  worktree: shared
+scope:
+  ownership_zone: evaluation.completed-run-inspection
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/handoffs/AURA-0115-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+    - frontend.observatory.run-inspector
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0115-uv uv run --project services/aura-observatory
+      pytest -q services/aura-observatory/tests/test_aura0115_*.py
+      services/aura-observatory/tests/test_aura0114_backend.py: 18 passed
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0115-uv uv run --project services/aura-observatory
+      ruff check services/aura-observatory/src/aura_observatory/query.py
+      services/aura-observatory/src/aura_observatory/adapters/query.py
+      services/aura-observatory/tests/test_aura0115_*.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0115-uv uv run --project services/aura-observatory
+      pyright services/aura-observatory/src/aura_observatory/query.py
+      services/aura-observatory/src/aura_observatory/adapters/query.py
+      services/aura-observatory/tests/test_aura0115_*.py
+    - >-
+      cd frontend && corepack pnpm exec nx test observatory --skip-nx-cache: 62
+      tests passed
+    - >-
+      cd frontend && corepack pnpm exec nx lint observatory --skip-nx-cache: 0
+      errors; 5 existing warnings
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0115.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0115.yaml: changed paths validated
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0115.yaml
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0115.yaml: no contract changes
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0115.yaml: no protected baseline changes
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - >-
+      Aura Web isolation scan: no Observatory imports, routes, links, hostnames,
+      or non-test references in frontend/apps/aura-web or frontend/libs/aura
+    - git diff --check
+    - >-
+      With Node 24 and pnpm 12, a manually served Observatory on port 4311 was
+      exercised using AURA_OBSERVATORY_WEB_E2E_SKIP_SERVER=1 and
+      AURA_OBSERVATORY_WEB_E2E_BASE_URL; both focused AURA-0115 desktop
+      scenarios passed with accessibility checks.
+  failed: []
+  not_run:
+    - >-
+      Full-stack live acceptance against running Core/NATS/ClickHouse/Observatory
+      services was not run by this evaluation worker; it remains integration-owned.
+decisions:
+  - >-
+    Evaluated only the narrowed Observatory scope. Core retry/transport behavior
+    is intentionally excluded and requires a separate contract/API follow-up.
+    The current tests cover canonical duration compatibility, terminal/duration
+    emission ordering, terminal cutoff, bounded continuation preview, and
+    metadata-only presentation behavior.
+  - >-
+    Removed the out-of-scope Core malformed-command regression and kept this
+    evaluation metadata-only; no production code, contracts, or Core files are
+    part of the narrowed work item.
+risks:
+  - >-
+    Browser-level AURA-0115 acceptance is still unverified until the supported
+    Node and pnpm toolchain is available.
+  - >-
+    Full-stack live-refresh behavior still requires the delivery integration
+    environment; unit and component checks cannot prove service wiring or
+    transport timing.
+unresolved: []

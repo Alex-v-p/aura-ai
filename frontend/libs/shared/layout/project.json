@@ -1,0 +1,7 @@
+{
+  "name": "shared-layout",
+  "projectType": "library",
+  "sourceRoot": "libs/shared/layout/src",
+  "tags": ["scope:shared", "type:layout"],
+  "targets": { "lint": { "executor": "nx:run-commands", "options": { "command": "eslint libs/shared/layout" } } }
+}

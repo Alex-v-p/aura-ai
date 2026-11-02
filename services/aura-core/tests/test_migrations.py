@@ -1,0 +1,147 @@
+import importlib.util
+from pathlib import Path
+from typing import Any
+
+import pytest
+from alembic import command
+from aura_core.domains.execution.runs.persistence import RunEventRow, RunRow
+from aura_core.domains.interaction.agents.persistence import AgentRevisionRow
+from aura_core.domains.interaction.conversations.persistence import (
+    ConversationRow,
+    MessageRow,
+)
+from aura_core.entrypoints.cli import alembic_config
+from aura_core.platform.auth import Settings
+
+MIGRATION_DIR = Path(__file__).parents[1] / "migrations" / "versions"
+
+
+def _migration_0004() -> Any:
+    path = Path(__file__).parents[1] / "migrations" / "versions" / "0004_agent_persona_revisions.py"
+    spec = importlib.util.spec_from_file_location("aura_migration_0004", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_real_alembic_config_runs_offline_without_logging_sections(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = alembic_config(
+        Settings(database_url="postgresql+psycopg://aura:aura@database.invalid/aura")
+    )
+
+    # The first real revision is sufficient to execute migrations/env.py and
+    # exercise the same Config produced by the CLI without requiring a live
+    # PostgreSQL connection in this focused regression.
+    command.upgrade(config, "0001_core_foundation", sql=True)
+
+    output = capsys.readouterr().out
+    assert "fk_conversations_agent_profile_id_agent_profiles" in output
+    assert "fk_runs_conversation_id_conversations" in output
+
+
+def test_runtime_mappings_only_link_tables_within_their_own_domain() -> None:
+    assert not ConversationRow.principal_id.foreign_keys
+    assert not ConversationRow.agent_profile_id.foreign_keys
+    assert not ConversationRow.agent_revision_id.foreign_keys
+    assert not RunRow.conversation_id.foreign_keys
+    assert not RunRow.user_message_id.foreign_keys
+    assert not RunRow.agent_revision_id.foreign_keys
+    assert not RunRow.model_policy_revision_id.foreign_keys
+    assert not RunEventRow.conversation_id.foreign_keys
+
+    assert MessageRow.conversation_id.foreign_keys
+    assert RunEventRow.run_id.foreign_keys
+    assert AgentRevisionRow.agent_profile_id.foreign_keys
+
+
+def test_agent_persona_migration_has_a_single_stable_upgrade_path_and_seed_ids() -> None:
+    migration = _migration_0004()
+    assert migration.revision == "0004_agent_persona_revisions"
+    assert migration.down_revision == "0003_idempotency_issuer"
+    assert len({
+        migration._PROFILE,
+        migration._REVISION,
+        migration._POLICY,
+        migration._PERSONA,
+        migration._PERSONA_REVISION,
+        migration._PLATFORM,
+        migration._GOVERNANCE,
+        migration._BUNDLE,
+    }) == 8
+    source = (
+        Path(__file__).parents[1]
+        / "migrations"
+        / "versions"
+        / "0004_agent_persona_revisions.py"
+    ).read_text()
+    assert "ON CONFLICT (id) DO NOTHING" in source
+    assert "conversation_agent_assignments" in source
+    assert "WHERE NOT EXISTS" in source
+
+
+def test_migration_revision_identifiers_fit_alembic_version_column() -> None:
+    revision_paths = sorted(MIGRATION_DIR.glob("*.py"))
+    assert revision_paths
+
+    for path in revision_paths:
+        spec = importlib.util.spec_from_file_location(
+            f"aura_migration_{path.stem}",
+            path,
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        revision = getattr(module, "revision", None)
+        assert isinstance(revision, str), path.name
+        assert len(revision) <= 32, f"{path.name}: {revision!r} exceeds Alembic's varchar(32)"
+
+        if path.name.startswith("0005_"):
+            assert revision == "0005_persona_overrides"
+            assert module.down_revision == "0004_agent_persona_revisions"
+
+
+def test_governed_tool_runtime_is_the_forward_head_after_personal_first() -> None:
+    path = MIGRATION_DIR / "0013_governed_tool_runtime.py"
+    assert path.exists()
+    spec = importlib.util.spec_from_file_location("aura_migration_0013", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0013_governed_tool_runtime"
+    assert module.down_revision == "0012_memory_personal_first"
+
+
+def test_notification_delivery_migration_follows_reminder_foundation() -> None:
+    path = MIGRATION_DIR / "0015_notification_delivery.py"
+    spec = importlib.util.spec_from_file_location("aura_migration_0015", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0015_notification_delivery"
+    assert module.down_revision == "0014_reminder_foundation"
+
+
+def test_recurring_reminder_migration_follows_approval_backed_reminder_tool() -> None:
+    path = MIGRATION_DIR / "0017_recurring_reminders.py"
+    assert path.exists()
+    spec = importlib.util.spec_from_file_location("aura_migration_0017", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0017_recurring_reminders"
+    assert module.down_revision == "0016_approval_reminder_tool"
+
+
+def test_conversation_branching_migration_is_current_forward_head() -> None:
+    path = MIGRATION_DIR / "0021_conversation_branching.py"
+    assert path.exists()
+    spec = importlib.util.spec_from_file_location("aura_migration_0021", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "0021_conversation_branching"
+    assert module.down_revision == "0020_document_search_citations"

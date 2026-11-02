@@ -1,0 +1,265 @@
+id: AURA-0133
+title: Implement Core scheduled briefing execution
+status: integrated
+change_class: repository_governance
+intent: >
+  Implement the existing owner-scoped scheduled-briefing contracts inside Aura
+  Core: durable daily schedules, occurrences and results; deterministic
+  polling and admission; bounded source assembly; Aura-owned run execution and
+  recovery; and idempotent notification delivery, without adding frontend,
+  provider, deployment, Observatory, or public-contract behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/agents-and-execution.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - work-items/archived/AURA-0132.yaml
+    - work-items/integration/AURA-0132.yaml
+    - On 2026-10-27 the owner approved calendar events reminders and explicitly owner-selected documents as the closed initial briefing source set; memory is excluded.
+    - On 2026-10-27 the owner approved one daily local-time cadence with an explicit validated IANA timezone.
+    - On 2026-10-27 the owner approved delivery through an owner-private notification linking to a dedicated durable briefing result and manual-only retention until explicitly deleted.
+    - AURA-0133 implements only the existing create read pause resume and scope-named deletion operations; schedule editing is not authorized.
+    - AURA-0133 adds no owner-facing occurrence cancellation operation. Schedule deletion and recovery may cancel an already admitted run only through the existing Aura-owned run cancellation boundary and must durably settle the occurrence.
+    - The scheduler is polling-only and carries no owner authority. It claims due work and invokes the briefing application; it does not assemble context or call a model.
+    - Briefings may consume only public calendar reminder document execution and notification APIs and may not read their tables repositories adapters or provider payloads.
+    - The existing generic transactional-outbox identifier envelope may wake a worker. A new cross-process public event or command contract is not authorized; if the existing seam is insufficient implementation stops with a contract or ADR blocker.
+    - Existing transactional-outbox rehydration may be extended only to preserve and publish the already-versioned exact briefing lifecycle event payload on its separate event subject; this does not authorize changing the lifecycle contract or the identifier-only worker wake envelope.
+    - One Core Worker owns the briefing domain migration repository API and deletion semantics; a second Core Worker owns bounded context execution admission and run lineage; a third Core Worker owns scheduler worker notification handoff and recovery composition. Their handoffs must name their exact ownership zones and may not repair another zone without Delivery Lead reassignment.
+    - The Platform Worker owns only the module-registry and briefing component-manifest changes. The Test and Evaluation Engineer owns only independent AURA-0133 tests and evaluators and does not repair product implementation.
+    - AURA-0134 owns Aura Web briefing creation management history and result presentation after this Core slice is integrated.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/automation/v1/briefing-events.schema.json
+    - contracts/events/automation/v1/notification-events.schema.json
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - AUT-004
+  - AUT-011
+  - AUT-013
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUT-020
+ownership_zones:
+  - services.aura-core.domains.automation.briefings-state
+  - services.aura-core.briefing-persistence-and-migration
+  - services.aura-core.briefing-api
+  - services.aura-core.briefing-scheduler-admission
+  - services.aura-core.briefing-context
+  - services.aura-core.execution.briefing-run-seam
+  - services.aura-core.briefing-worker-settlement
+  - services.aura-core.briefing-cancellation-recovery-deletion
+  - services.aura-core.notification-public-handoff
+  - services.aura-core.briefing-observability
+  - repository.module-registry
+  - evaluation.scheduled-briefings-core
+  - delivery.aura0133
+allowed_paths:
+  - work-items/active/AURA-0133.yaml
+  - work-items/archived/AURA-0133.yaml
+  - work-items/handoffs/AURA-0133-*.yaml
+  - work-items/reviews/AURA-0133-*.yaml
+  - work-items/integration/AURA-0133.yaml
+  - services/aura-core/migrations/versions/0026_briefing_execution.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/**
+  - services/aura-core/src/aura_core/domains/automation/__init__.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/public.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/public.py
+  - services/aura-core/src/aura_core/bootstrap/briefing_uow.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/bootstrap/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/errors.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/outbox/__init__.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/outbox/service.py
+  - services/aura-core/src/aura_core/platform/outbox/repository.py
+  - services/aura-core/src/aura_core/platform/run_evidence.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/runtime/prompting/public.py
+  - services/aura-core/resources/component-manifests/briefing-*.yaml
+  - services/aura-core/tests/test_aura0133_*.py
+  - services/aura-core/tests/test_briefing_*.py
+  - services/aura-core/tests/test_migration_0026_briefing_execution.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_notification_evaluation.py
+  - services/aura-core/tests/test_notifications.py
+  - services/aura-core/tests/test_run_evidence.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_system_contracts.py
+  - services/aura-core/tests/system/test_scheduled_briefing.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_notification_delivery.py
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - frontend/**
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/src/aura_core/domains/integrations/calendar/internal.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/persistence.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/ports.py
+  - services/aura-core/src/aura_core/domains/integrations/calendar/repository.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/repository.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/repository.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/persistence.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  - services/aura-core/src/aura_core/providers/**
+  - services/aura-observatory/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - existing aura-v1 scheduled briefing resources
+    - existing automation briefing lifecycle events v1
+    - existing automation notification events v1
+    - existing run lifecycle and generic outbox envelopes
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: automation.briefings
+observability:
+  applicable: true
+  affected_components:
+    - aura.automation.briefing_scheduler
+    - aura.execution.briefing_admission
+    - aura.execution.briefing_context
+    - aura.execution.run_coordinator
+    - aura.automation.briefing_persistence
+    - aura.automation.briefing_cancellation
+    - aura.automation.briefing_delivery
+  required_metrics:
+    - briefing_schedule_lag_ms
+    - briefing_schedule_claim_duration_ms
+    - briefing_admission_duration_ms
+    - briefing_context_assembly_duration_ms
+    - briefing_result_persistence_duration_ms
+    - briefing_cancellation_duration_ms
+    - briefing_delivery_duration_ms
+    - briefing_outcome_count
+    - briefing_budget_exhaustion_count
+  required_evaluators:
+    - briefing.schedule-admission.v1
+    - briefing.authorization.v1
+    - briefing.source-completeness.v1
+    - briefing.execution.v1
+    - briefing.result-persistence.v1
+    - briefing.cancellation.v1
+    - briefing.delivery.v1
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every API query and command is owner-scoped; CSRF idempotency optimistic versions and no-store responses remain mandatory where the existing contract requires them.
+    - Scheduler and worker identities carry no owner authority. Admission and recovery revalidate the immutable owner principal selected calendar and document grants agent revision and pinned policy references before use.
+    - Memory is unrepresentable in briefing source assembly and the briefing execution seam must disable ambient automatic recall and memory-search grants for the run.
+    - Calendar reminder and document values are private untrusted evidence fenced from system instructions policies permissions grants tools confirmation decisions and execution control; hostile indirect prompt injection receives explicit tests.
+    - Context and result content source values owner identity document identifiers calendar identifiers prompts responses provider material credentials and raw errors must not enter lifecycle events outbox envelopes logs ordinary telemetry SSE notification payloads or URLs.
+    - Result content is owner-private no-store data retained until explicit deletion. Schedule deletion cannot cascade history or results and history or result deletion preserves content-free audit and lineage truth.
+    - Duplicate polling transport redelivery worker retry cancellation timeout and recovery must never produce a second run result or inbox notification for one occurrence.
+    - Governed run evidence remains optional nonblocking and whole-item closed-serialized under ADR-0017; capture rejection or outage cannot change briefing execution or settlement.
+  data_classes:
+    - owner-private briefing schedule definitions and source grants
+    - owner-private occurrence result and run lineage
+    - owner-private calendar reminder and document context
+    - owner-private generated briefing result content
+    - metadata-only lifecycle outbox notification and observability records
+required_agents:
+  implementation:
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 7
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Migration 0026 creates Core-owned owner-scoped briefing schedule occurrence result command-receipt and lineage persistence with foreign keys uniqueness checks optimistic versions manual-only retention and transactional-outbox participation; downgrade removes only its own objects and migration tests pass on PostgreSQL when configured.
+  - The briefing application implements the existing create list get pause resume schedule-delete occurrence list/get history-delete result get and result-content-delete resources with exact contract states owner isolation no-store behavior CSRF idempotency stale-version handling and explicit scope semantics; no edit or occurrence-cancel operation is added.
+  - Daily due calculation validates an explicit IANA timezone preserves local wall time across offset changes moves a DST-gap time to the first valid instant emits an overlap once at its earlier instant and gives each due local date exactly one stable occurrence identity.
+  - Polling claims are bounded and use PostgreSQL row locks or equivalent transactional coordination; duplicate scans restarts stale claims and redelivery admit at most one run per occurrence. Recovery runs at most one overdue occurrence records every older missed due date as skipped and schedules only the next future occurrence.
+  - Pause prevents future admission without canceling an admitted occurrence; resume continues the original cadence with bounded missed handling. Schedule deletion atomically prevents future admission and requests cancellation of any nonterminal associated run through the public Run Coordinator boundary while retaining occurrence and result records.
+  - Admission pins the immutable owner household workspace agent revision execution prompt model and tool policy references plus source provenance deadlines and resource budgets; current owner authorization source readiness and policy validity are revalidated at admission and recovery and no scheduler or worker identity widens authority.
+  - A dedicated additive Aura-owned execution seam creates and executes a briefing run with stable occurrence and run lineage outside conversation history, uses the existing provider-neutral Run Coordinator and cancellation behavior, enforces the pinned deadline and budgets, and disables memory recall memory writes and memory-facing tools.
+  - Context assembly queries only the public calendar reminder and document application APIs for the occurrence-local day and explicitly selected grants, uses fixed per-source and total size/count/time limits, records complete partial unavailable or unknown truthfully, and never reads a foreign table repository adapter or provider payload.
+  - Context serialization places every calendar reminder and document value in a closed delimited untrusted-evidence section that cannot alter instructions policy tools or execution control; hostile calendar and document prompt-injection fixtures remain inert and memory content is absent.
+  - Worker processing uses the existing generic identifier-only outbox envelope, acknowledges transport only after a durable occurrence/result settlement, retries transient failures with bounded policy, reconciles terminal run states after crashes, and creates at most one terminal result per occurrence. If this cannot be achieved without a new public cross-process contract implementation stops and reports the blocker.
+  - Terminal completed partial failed canceled and unknown outcomes persist the contracted result occurrence source-completeness timestamps versions and run lineage without fabricating content. Partial and failed outcomes never silently omit a required source.
+  - A settled deliverable result invokes NotificationApplicationService through CreateBriefingNotification only; deterministic idempotency prevents duplicate inbox rows and the Briefings domain never reads notification persistence.
+  - Schedule history and result content have no automatic expiry. Schedule deletion does not cascade, occurrence-history and result-content deletion are separate owner-authorized idempotent commands, and content-free deletion audit and lineage remain inspectable.
+  - The seven declared Aura-owned components have registered manifests finite low-cardinality outcomes and error classes active-operation spans and the required metrics/evaluators; identifiers are trace-only where allowed and no private or content-derived value is a metric label or ordinary telemetry field.
+  - Optional ADR-0017 evidence for briefing admission source assembly execution persistence and delivery uses explicit closed serializers rejects prohibited or secret-bearing items whole and remains nonblocking; no Observatory code dependency or browser-visible evidence is introduced.
+  - Deterministic tests and evaluations cover DST gaps and overlaps duplicate claim and delivery restart and stale-claim recovery bounded missed occurrences pause resume deletion cancellation deadlines budgets authorization and source revocation hostile content source completeness notification idempotency manual deletion and metadata-only observability.
+  - No OpenAPI event generated-client frontend memory provider deployment infrastructure Observatory protected-baseline dependency framework service package or top-level-directory change occurs.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0133.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0133.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0133.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0133.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0133.yaml
+  - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules tooling.architecture.tests.test_observability -v
+  - UV_CACHE_DIR=.local-state/uv-cache uv lock --check
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/domains/execution/runs services/aura-core/src/aura_core/bootstrap/briefing_uow.py services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py services/aura-core/src/aura_core/entrypoints/scheduler/app.py services/aura-core/src/aura_core/entrypoints/worker/app.py services/aura-core/src/aura_core/platform/telemetry.py services/aura-core/tests/test_aura0133_*.py services/aura-core/tests/test_briefing_*.py services/aura-core/tests/test_migration_0026_briefing_execution.py services/aura-core/tests/system/test_scheduled_briefing.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/domains/execution/runs services/aura-core/src/aura_core/bootstrap/briefing_uow.py services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py services/aura-core/src/aura_core/entrypoints/scheduler/app.py services/aura-core/src/aura_core/entrypoints/worker/app.py services/aura-core/tests/test_aura0133_*.py services/aura-core/tests/test_briefing_*.py services/aura-core/tests/test_migration_0026_briefing_execution.py services/aura-core/tests/system/test_scheduled_briefing.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0132_briefing_contract.py services/aura-core/tests/test_aura0133_*.py services/aura-core/tests/test_briefing_*.py services/aura-core/tests/test_migration_0026_briefing_execution.py services/aura-core/tests/test_migrations.py services/aura-core/tests/test_notifications.py services/aura-core/tests/test_notification_evaluation.py services/aura-core/tests/test_run_events.py services/aura-core/tests/test_run_evidence.py services/aura-core/tests/system/test_scheduled_briefing.py services/aura-core/tests/system/test_contract_and_deployment.py services/aura-core/tests/system/test_notification_delivery.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

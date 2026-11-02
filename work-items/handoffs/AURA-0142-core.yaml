@@ -1,0 +1,226 @@
+agent: core_worker
+work_item: AURA-0142
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0142_core
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: services.aura-core.generated-artifacts
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0029_generated_artifacts.py
+  - services/aura-core/src/aura_core/domains/artifacts/generated/__init__.py
+  - services/aura-core/src/aura_core/domains/artifacts/generated/evaluation.py
+  - services/aura-core/src/aura_core/domains/artifacts/generated/persistence.py
+  - services/aura-core/src/aura_core/domains/artifacts/generated/ports.py
+  - services/aura-core/src/aura_core/domains/artifacts/generated/public.py
+  - services/aura-core/src/aura_core/domains/artifacts/generated/repository.py
+  - services/aura-core/src/aura_core/providers/object_storage/generated_artifacts.py
+  - services/aura-core/src/aura_core/bootstrap/artifact_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/artifacts.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/artifact-persistence.yaml
+  - services/aura-core/resources/component-manifests/artifact-deletion.yaml
+  - services/aura-core/tests/test_generated_artifacts.py
+  - services/aura-core/tests/test_generated_artifact_storage.py
+  - services/aura-core/tests/test_generated_artifact_api.py
+  - services/aura-core/tests/test_generated_artifact_deletion.py
+  - services/aura-core/tests/test_migration_0029_generated_artifacts.py
+contracts:
+  changed: false
+  notes: >-
+    AURA-0141 contracts were consumed without modifying contract or generated
+    client files. Runtime events are emitted in the closed generated-artifact
+    lifecycle shape.
+migrations:
+  changed: true
+  revision: 0029_generated_artifacts
+  down_revision: 0028_workflow_execution
+  notes: >-
+    Additive Core-owned artifact, revision, idempotency, lifecycle-event,
+    tombstone, create/append admission reservations, and durable cleanup-work
+    tables with leased claims; no cross-domain foreign keys or cascades.
+    Revision 0030 remains outside this ownership slice.
+observability:
+  components:
+    - aura.artifacts.persistence@1
+    - aura.artifacts.deletion@1
+  metrics_added:
+    - artifact_write_outcome_count
+    - artifact_write_latency_ms
+    - artifact_deletion_outcome_count
+    - artifact_deletion_latency_ms
+  notes: >-
+    Active operations emit metadata-only metrics and spans with fixed-width
+    admitted trace/parent/link lineage and bounded operation,
+    outcome/dependency/error attributes; latency observations carry the same
+    approved dimensions. Component manifests declare the typed V1 boundaries,
+    exact span names, count/millisecond units, four required evaluators, and
+    prohibit content, owner, digest, object, lineage, exception, and identifier
+    values.
+verification:
+  passed:
+    - >-
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_generated_artifacts.py
+      services/aura-core/tests/test_generated_artifact_storage.py
+      services/aura-core/tests/test_generated_artifact_api.py
+      services/aura-core/tests/test_generated_artifact_deletion.py
+      services/aura-core/tests/test_generated_artifact_observability.py
+      services/aura-core/tests/test_migration_0029_generated_artifacts.py
+      services/aura-core/tests/test_migrations.py
+      deploy/tests/test_aura0142_artifact_garage.py -q (63 passed, no skips)
+    - >-
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_generated_artifacts.py
+      services/aura-core/tests/test_generated_artifact_storage.py
+      services/aura-core/tests/test_generated_artifact_api.py
+      services/aura-core/tests/test_generated_artifact_deletion.py
+      services/aura-core/tests/test_migration_0029_generated_artifacts.py
+      services/aura-core/tests/test_migrations.py -q (36 passed)
+    - >-
+      Production MetadataMetrics regression coverage confirms generic cleanup
+      settlement failures emit exactly one counter, latency metric, and span
+      per boundary with unknown/settlement_unknown classification; the
+      amended full suite and focused suite include this case.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/src/aura_core/domains/artifacts/generated
+      services/aura-core/src/aura_core/providers/object_storage/generated_artifacts.py
+      services/aura-core/src/aura_core/bootstrap/artifact_uow.py
+      services/aura-core/src/aura_core/entrypoints/api/routes/artifacts.py
+      services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/tests/test_generated_artifacts.py
+      services/aura-core/tests/test_generated_artifact_storage.py
+      services/aura-core/tests/test_generated_artifact_api.py
+      services/aura-core/tests/test_generated_artifact_deletion.py
+      services/aura-core/tests/test_migration_0029_generated_artifacts.py (passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/artifacts/generated
+      services/aura-core/src/aura_core/providers/object_storage/generated_artifacts.py
+      services/aura-core/src/aura_core/bootstrap/artifact_uow.py
+      services/aura-core/src/aura_core/entrypoints/api/routes/artifacts.py
+      services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/tests/test_generated_artifacts.py
+      services/aura-core/tests/test_generated_artifact_storage.py
+      services/aura-core/tests/test_generated_artifact_api.py
+      services/aura-core/tests/test_generated_artifact_deletion.py
+      services/aura-core/tests/test_migration_0029_generated_artifacts.py (0 errors)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0142.yaml
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - >-
+      python3 tooling/architecture/validate-observability.py
+      --work-item work-items/active/AURA-0142.yaml
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py
+      --work-item work-items/active/AURA-0142.yaml
+    - docker compose config --quiet
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Content is canonicalized and bounded before publication; JSON is sorted and
+    compact UTF-8, while Markdown/plain text require valid UTF-8. SHA-256 and
+    byte count are verified on every read.
+  - >-
+    Artifact IDs are opaque and object keys contain no owner, title, digest, or
+    lineage values. Public routes expose no create or append operation.
+  - >-
+    Deletion transitions immediately to an unavailable content-free state,
+    preserves integrity truth, treats missing objects as absent, and separates
+    known failure retry from unknown-outcome reconciliation.
+  - >-
+    The Garage adapter fixes the bucket to aura-artifacts and reads only the
+    dedicated artifact identity settings; it never falls back to document-store
+    credentials.
+  - >-
+    Artifact manifests prohibit exception_text and trace identifiers from
+    metric capture, while keeping trace-only lineage fields. Deletion
+    instrumentation separates approved outcome values from the bounded
+    validation_failed, conflict, storage_unavailable, cleanup_unknown,
+    delivery_failed, settlement_unknown, and timeout error classes.
+  - >-
+    Repository admission is durable before object publication; immutable object
+    keys are digest-qualified, conditional/no-overwrite, and every publication
+    is read back and verified. Provider timeout-after-write is reconciled by
+    digest; conflicting writes cannot overwrite an existing revision. Append
+    admission additionally reserves one source version and binds the winning
+    digest, media type, object key, creator, predecessor, and receipt; losing
+    concurrent appends are rejected rather than acknowledged. Create and
+    append command fingerprints include owner, kind, title, media, creator,
+    lineage, expected version, digest, and byte count; publication
+    revalidates the winning reservation before acknowledging any existing row.
+  - >-
+    Cleanup admission records separate delete, retry_cleanup, and
+    reconcile_cleanup receipts plus durable cleanup-work status. Owner,
+    lifecycle, expected version, and command fingerprint are checked before
+    cleanup; recorded outcomes replay without repeating provider operations.
+    Reconciliation is read-only: it reads and verifies an existing object and
+    settles deletion_failed without deleting it; a missing object proves
+    absence and settles deleted. Cleanup work supports
+    owner-scoped claim/resume after restart, and replay verifies both
+    fingerprint and receipt artifact identity.
+  - >-
+    SQL listing hydrates current revisions before media filtering and paging;
+    tombstone summaries include lineage, integrity, and deletion audit fields.
+    Preview responses report the selected revision media type, while encoded
+    and malformed markup is decoded, stripped, and escaped into inert text.
+    Canonical JSON rejects duplicate keys and non-finite constants.
+  - >-
+    Artifact persistence and deletion are registered in the production
+    MetadataMetrics vocabulary with approved metrics/spans, dependency and
+    error dimensions, and no artifact identifiers in trace attributes.
+  - >-
+    Public Core mutation APIs expose only admission (admit_delete,
+    admit_retry_cleanup, and admit_reconcile_cleanup). Provider deletion is
+    reachable only from the claim-token-bearing resume worker; synchronous
+    service delete/retry/reconcile methods were removed. GeneratedArtifact
+    aggregates and transport revisions expose GeneratedArtifactRevision only;
+    the storage-key-bearing StoredRevision remains internal to repository and
+    provider execution paths.
+  - >-
+    Cleanup idempotency receipts distinguish the admitted phase from terminal
+    settlement outcomes. Claimed retry/reconcile work therefore executes once,
+    while terminal receipts replay and stale claim tokens are rejected.
+  - >-
+    Artifact operation telemetry carries caller-admitted trace context when
+    present, fixed 32-hex trace IDs, 16-hex span IDs, parent and bounded link
+    IDs, and no disconnected random trace roots. Persistence and deletion
+    metrics use the closed operation/outcome/error/dependency dimensions; a
+    lifecycle-delivery failure is classified as delivery_failed rather than a
+    false success. Operation dimensions remain the exact component span names
+    artifact.revision_write and artifact.delete.
+  - >-
+    Cleanup claims are atomically validated and renewed immediately before
+    every provider read/delete. The 180-second lease exceeds the bounded
+    provider operation window; settlement still requires the current matching
+    token and may complete after that token's lease expires during I/O, while
+    a replaced token cannot perform destructive I/O.
+  - >-
+    Four deterministic metadata-only evaluators are registered in the Core
+    generated-artifact facade. Their typed results contain bounded scores,
+    closed outcomes, fixture/replay identifiers, and allowlisted counts only;
+    payload export never includes bytes, owner identity, object keys, or
+    exception text.
+risks:
+  - >-
+    AppState/API router and worker composition intentionally remain unmodified;
+    the Integration Maintainer must wire artifact_service and the route after
+    reviewed AURA-0142 handoffs are integrated.
+  - >-
+    Aggregate validators must be rerun after concurrent AURA-0143/AURA-0144
+    paths and the independent AURA-0142 test/evaluation work are reconciled.
+unresolved: []

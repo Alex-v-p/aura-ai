@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/evaluation/v1/evaluation-events.schema.json",
+  "title": "Aura evaluation lifecycle events v1",
+  "description": "Closed content-free durable evaluation lifecycle events. Exactly requested, completed, cancelled, and failed are defined. Raw input, output, prompt, rubric, comment, artifact content, credentials, endpoints, provider object keys, filenames, owner identity, exception text, arbitrary attributes, and hidden reasoning are prohibited.",
+  "oneOf": [
+    { "$ref": "#/$defs/RequestedEvent" },
+    { "$ref": "#/$defs/CompletedEvent" },
+    { "$ref": "#/$defs/CancelledEvent" },
+    { "$ref": "#/$defs/FailedEvent" }
+  ],
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$"
+    },
+    "Version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+    },
+    "IdempotencyKey": {
+      "$ref": "#/$defs/Uuid",
+      "description": "Service-generated non-secret UUID. It must never be supplied by a user or provider or derived from content, credentials, or owner identity."
+    },
+    "Sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "CaptureClassification": { "type": "string", "enum": ["metadata_only", "hashed", "redacted", "sampled_content", "full_content"] },
+    "EventProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestVersion", "requestDigest", "datasetId", "datasetVersion", "suiteId", "suiteVersion"],
+      "properties": {
+        "requestVersion": { "$ref": "#/$defs/Version" },
+        "requestDigest": { "$ref": "#/$defs/Sha256" },
+        "datasetId": { "$ref": "#/$defs/Uuid" },
+        "datasetVersion": { "$ref": "#/$defs/Version" },
+        "suiteId": { "$ref": "#/$defs/Uuid" },
+        "suiteVersion": { "$ref": "#/$defs/Version" }
+      }
+    },
+    "RequestedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["captureClassification", "deadlineAt", "maxAttempts"],
+      "properties": {
+        "captureClassification": { "$ref": "#/$defs/CaptureClassification" },
+        "deadlineAt": { "$ref": "#/$defs/Timestamp" },
+        "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 10 }
+      }
+    },
+    "CompletedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resultId", "resultDigest", "artifactReferenceIds"],
+      "properties": {
+        "resultId": { "$ref": "#/$defs/Uuid" },
+        "resultDigest": { "$ref": "#/$defs/Sha256" },
+        "artifactReferenceIds": { "type": "array", "maxItems": 10000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" }, "description": "Opaque references only; no provider object keys or storage locations." }
+      }
+    },
+    "CancelledData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reasonCode"],
+      "properties": {
+        "reasonCode": { "type": "string", "enum": ["OWNER_REQUESTED", "DEADLINE_EXCEEDED", "SUPERSEDED", "DEPENDENCY_UNAVAILABLE"] }
+      }
+    },
+    "FailedData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failureCode", "retryable"],
+      "properties": {
+        "failureCode": { "$ref": "../../../evaluation/v1/failure-codes.schema.json" },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "RequestedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "occurredAt", "correlationId", "causationId", "requestId", "jobId", "attemptId", "idempotencyKey", "provenance", "data"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "const": "evaluation.requested" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "correlationId": { "$ref": "#/$defs/Uuid" },
+        "causationId": { "$ref": "#/$defs/Uuid" },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "jobId": { "$ref": "#/$defs/Uuid" },
+        "attemptId": { "$ref": "#/$defs/Uuid" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "provenance": { "$ref": "#/$defs/EventProvenance" },
+        "data": { "$ref": "#/$defs/RequestedData" }
+      }
+    },
+    "CompletedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "occurredAt", "correlationId", "causationId", "requestId", "jobId", "attemptId", "idempotencyKey", "provenance", "data"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "const": "evaluation.completed" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "correlationId": { "$ref": "#/$defs/Uuid" },
+        "causationId": { "$ref": "#/$defs/Uuid" },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "jobId": { "$ref": "#/$defs/Uuid" },
+        "attemptId": { "$ref": "#/$defs/Uuid" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "provenance": { "$ref": "#/$defs/EventProvenance" },
+        "data": { "$ref": "#/$defs/CompletedData" }
+      }
+    },
+    "CancelledEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "occurredAt", "correlationId", "causationId", "requestId", "jobId", "attemptId", "idempotencyKey", "provenance", "data"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "const": "evaluation.cancelled" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "correlationId": { "$ref": "#/$defs/Uuid" },
+        "causationId": { "$ref": "#/$defs/Uuid" },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "jobId": { "$ref": "#/$defs/Uuid" },
+        "attemptId": { "$ref": "#/$defs/Uuid" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "provenance": { "$ref": "#/$defs/EventProvenance" },
+        "data": { "$ref": "#/$defs/CancelledData" }
+      }
+    },
+    "FailedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "occurredAt", "correlationId", "causationId", "requestId", "jobId", "attemptId", "idempotencyKey", "provenance", "data"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "const": "evaluation.failed" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "correlationId": { "$ref": "#/$defs/Uuid" },
+        "causationId": { "$ref": "#/$defs/Uuid" },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "jobId": { "$ref": "#/$defs/Uuid" },
+        "attemptId": { "$ref": "#/$defs/Uuid" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "provenance": { "$ref": "#/$defs/EventProvenance" },
+        "data": { "$ref": "#/$defs/FailedData" }
+      }
+    }
+  }
+}

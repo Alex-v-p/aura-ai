@@ -1,0 +1,236 @@
+id: AURA-0088
+title: Add metadata-safe run comparison and deployment correlation
+status: integrated
+change_class: contract
+intent: >
+  Let the Observatory owner compare a bounded set of production runs and
+  correlate operational differences with versioned deployment component model
+  configuration and policy metadata while keeping telemetry content-free and
+  preserving Core independence.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/foundations.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Introduce a versioned metadata-observation v2 contract rather than widening the closed v1 payload in place; Observatory continues accepting v1 during coordinated rollout and Core emits v2 only through the optional asynchronous exporter.
+    - The v2 extension may carry only bounded image and configuration versions plus an explicit closed set of model agent prompt and policy revision markers already known to Core; prompt text hashes derived from content arbitrary attributes and owner or conversation content are prohibited.
+    - Store v2 markers as nullable explicit ClickHouse columns through an idempotent Observatory-owned migration; do not encode high-cardinality revision identifiers as metric labels or copy them into PostgreSQL catalogues.
+    - Compute comparisons on demand through a purpose-built bounded query port; do not persist comparison snapshots hydrate unbounded observation history or introduce a general-purpose query language.
+    - Compare exactly two distinct run identifiers with deterministic left and right roles maximum observation span and measurement limits a fixed scan limit and an execution deadline.
+    - Align spans using stable component operation and structural lineage keys while preserving duplicate unmatched missing-parent cyclic truncated and partially retained evidence explicitly; never infer absent spans or revision markers.
+    - Correlation reports distinguish equal changed missing and unavailable markers and expose only metadata-safe git image configuration component model and policy versions.
+    - Existing metadata SSE remains an invalidation signal only; comparison results are fetched through owner-authorized no-store REST and remain memory-only in the browser.
+    - Follow repository-pinned OpenTelemetry JSON Schema OpenAPI ClickHouse Angular and WCAG guidance linked from the authoritative technology stack without adding or upgrading dependencies.
+    - Observability review identified aura.observatory.telemetry_storage as an already declared affected component whose manifest still names only metadata-observation-v1 and lacks the AURA-0088 comparison privacy evaluators; authorize the bounded manifest alignment to the accepted v1-or-v2 metadata contract and required evaluator declarations without changing its ownership capture retention dependency or metric boundaries.
+  contracts:
+    - contracts/telemetry/v1/metadata-observation.schema.json
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - OBS-009
+  - OBS-025
+  - OBS-026
+ownership_zones:
+  - contracts.metadata-observation-v2
+  - contracts.observatory-api
+  - services.aura-core.telemetry-export
+  - services.aura-observatory.run-comparison
+  - services.aura-observatory.telemetry-storage
+  - frontend.observatory.run-comparison
+  - deploy.observatory-metadata
+  - evaluation.observatory-comparison
+allowed_paths:
+  - work-items/active/AURA-0088.yaml
+  - work-items/archived/AURA-0088.yaml
+  - work-items/handoffs/AURA-0088-*.yaml
+  - work-items/reviews/AURA-0088-*.yaml
+  - work-items/integration/AURA-0088.yaml
+  - contracts/telemetry/v2/**
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/telemetry-export.yaml
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  - services/aura-core/tests/test_settings.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-observatory/src/aura_observatory/contract.py
+  - services/aura-observatory/src/aura_observatory/otlp.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/adapters/memory.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/migrations/clickhouse/versions/0004_comparison_markers.sql
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - services/aura-observatory/tests/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/apps/storybook/src/observatory*.stories.ts
+  - compose.yaml
+  - .env.example
+  - deploy/compose/test_topology.py
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/telemetry/v1/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/**
+  - services/aura-core/src/aura_core/providers/**
+  - services/aura-observatory/migrations/postgresql/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - deploy/compose/local-http.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - infra/**
+  - tooling/architecture/**
+contracts:
+  changes_allowed: true
+  affected:
+    - metadata-observation-v2
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: telemetry-storage
+observability:
+  applicable: true
+  affected_components:
+    - aura.platform.telemetry_export
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  required_metrics:
+    - telemetry_export_accepted_count
+    - telemetry_export_dropped_count
+    - telemetry_ingest_accepted_count
+    - telemetry_ingest_rejected_count
+    - observatory_query_duration_ms
+    - observatory_query_outcome
+    - observatory_query_freshness_lag_ms
+  required_evaluators:
+    - metadata_v2_allowlist
+    - run_comparison_bounds
+    - trace_alignment_semantics
+    - correlation_marker_privacy
+    - run_comparison_accessibility
+    - observatory_self_monitoring
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Metadata v2 remains a closed allowlist and rejects prompts responses memories documents filenames tool arguments results credentials endpoints bearer tokens owner identity arbitrary attributes and free-form revision values.
+    - Prompt correlation uses only an immutable prompt bundle revision identifier and never prompt content compiled text or a content-derived value exposed through the comparison API.
+    - Model configuration image and policy markers are bounded validated identifiers and remain high-cardinality query fields rather than metric labels logs URLs SSE payloads or browser persistence.
+    - Every comparison resource requires the existing configured-owner session and accepts only two validated run UUIDs with bounded parameterized ClickHouse work.
+    - Missing and unavailable markers remain explicit so absence cannot be misrepresented as equality and partial retention cannot be presented as a complete comparison.
+    - Authenticated comparison responses use no-store remain memory-only and contain no telemetry payload text source identifiers beyond selected run trace component deployment and approved revision metadata.
+    - Retention immediately removes source observations and therefore removes their comparison evidence without preserving a derived service or browser copy.
+    - Core exporter failure buffering retry and drops remain isolated so Observatory or Collector failure cannot delay Core startup readiness requests workers or scheduling.
+  data_classes:
+    - operational_telemetry_metadata
+    - deployment_version_metadata
+    - configuration_revision_metadata
+    - policy_revision_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - observatory_worker
+    - platform_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A closed JSON Schema 2020-12 metadata-observation v2 adds only bounded optional deployment image configuration model agent prompt-bundle and policy revision markers while v1 remains unchanged and Observatory accepts both versions during coordinated rollout.
+  - Core exports v2 markers only from already validated deployment configuration and internal trace metadata through the independent bounded OTLP path and never adds them to metric labels structured logs or synchronous request dependencies.
+  - An idempotent ClickHouse migration upgrades empty and existing Observatory schemas with nullable explicit marker columns and reruns safely without changing PostgreSQL or Core storage.
+  - Observatory ingestion maps both normalized and standard OTLP forms into the correct contract rejects unknown marker attributes malformed identifiers content-like values and mixed-version payloads and preserves duplicate malformed rejection and storage-failure accounting.
+  - The backward-compatible observatory-v1 API compares exactly two distinct owner-selected run UUIDs using fixed observation span measurement scan and execution bounds and returns Cache-Control no-store.
+  - Comparison results expose each side status timing outcome model deployment git image configuration component-version and approved policy revision metadata together with deterministic equal changed missing and unavailable states.
+  - Component measurements compare only matching declared measurement and unit pairs preserve zero separately from missing values and provide absolute deltas only when both finite values and units are compatible.
+  - Trace alignment is deterministic and represents left-only right-only missing-parent cyclic duplicate truncated and retained-partial spans explicitly without fabricating lineage or collapsing incompatible component operations.
+  - Unsupported or absent correlation metadata is reported as unavailable rather than inferred from deployment IDs component versions providers or observation order.
+  - Query work remains parameterized and bounded in ClickHouse behind the Observatory query port; the application process never hydrates sorts or joins unbounded observation history and PostgreSQL remains uninvolved in high-cardinality comparisons.
+  - Comparison query duration outcome partial state freshness scan limits and unavailable-marker counts use existing bounded self-monitoring without high-cardinality labels or metadata values in logs.
+  - Observatory Web provides a dedicated Run comparison workspace with keyboard-operable left and right run selection clear swap and reset actions dense but readable summary component measurement and aligned-trace views and accessible text or tables equivalent to visual timing differences.
+  - The comparison workspace preserves selection and focus through refresh uses text and structure in addition to colour and supports narrow mobile tablet desktop 200 percent and 400 percent zoom dark mode and prefers-reduced-motion.
+  - Browser behavior covers loading empty same-run validation partial stale disconnected malformed rejected unavailable-marker and service-unavailable states with bounded retry and no authenticated API persistence or sensitive URL parameters.
+  - Metadata-only SSE invalidation refreshes an open comparison without carrying run IDs markers or comparison data and cannot create an unbounded refresh loop.
+  - Retention deletion removes comparison evidence on the next snapshot while component and deployment catalogues service configuration sessions and content-free deletion audits remain preserved.
+  - Unit contract migration exporter ingest adapter privacy frontend accessibility mocked-browser and real full-stack tests cover v1 compatibility v2 allowlists outage isolation two-run bounds comparison math trace alignment missing markers retention responsive keyboard screen-reader and reduced-motion behavior.
+  - No Core domain database provider dependency package image protected golden result repository baseline cloud integration or external source-control registry call is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0088.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0088.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0088.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0088.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0088.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - cd services/aura-core && uv run ruff check src tests
+  - cd services/aura-core && uv run pyright
+  - cd services/aura-core && uv run pytest tests/test_settings.py tests/test_telemetry.py
+  - cd services/aura-observatory && uv run ruff check src tests
+  - cd services/aura-observatory && uv run pyright
+  - cd services/aura-observatory && uv run pytest tests
+  - python3 -m unittest deploy.compose.test_topology
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+  - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook
+  - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+  - bash deploy/compose/run-observatory-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

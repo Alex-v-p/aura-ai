@@ -1,0 +1,52 @@
+agent: general_reviewer
+work_item: AURA-0111
+verdict: PASS
+checked:
+  - >-
+    Re-read the corrected implementation, focused tests, amended worker
+    handoff, active work item, architecture baseline, Observatory
+    specification, ADR-0013, unchanged observatory-v1 UtcInstant and Cursor
+    schemas, and actual adapter diff while excluding unrelated AURA-0098
+    shared-worktree changes.
+  - >-
+    Verified the prior ClickHouse score-pagination blocker is resolved:
+    _scores now canonicalizes trusted DateTime64('UTC') JSON values at the
+    provider projection boundary before exposing createdAt or encoding a
+    cursor, including the provider's timezone-less space-separated form.
+  - >-
+    Verified untrusted cursor decoding remains separate and strict. Naive,
+    malformed, and non-string cursor instants still raise only the bounded
+    cursor error before PostgreSQL or ClickHouse access; offset-aware values
+    normalize to the equivalent UTC instant with deterministic fractional
+    precision.
+  - >-
+    Traced all PostgreSQL collection families through the shared
+    _decode_storage_cursor, collection response, and _encode_storage_cursor
+    boundaries, plus the dedicated history and ClickHouse score paths. New
+    page snapshots and cursor snapshot/timestamp fields use RFC3339 T/Z output
+    while the decoded UTC snapshot remains the provider-query fence.
+  - >-
+    Verified the provider-shaped score test uses ClickHouse's established
+    `YYYY-MM-DD HH:MM:SS.sss` JSON representation, returns canonical
+    createdAt and cursor state, decodes the first cursor, and sends its exact
+    UTC timestamp and score identifier on the second-page query without a
+    skipped or repeated item.
+  - >-
+    Verified legacy ev1 history continuation remains readable and emits an
+    ev2 canonical successor; ev2 remains kind-bound, size-bounded,
+    canonical-base64 checked, and duplicate-key rejecting. Detail reads and
+    their field projectors are unchanged by the diff.
+  - >-
+    Re-ran the focused AURA-0111 suite (11 passed) and the AURA-0095 backend
+    regression suites with AURA-0111 (71 passed). Ruff, Pyright, and scoped
+    diff-whitespace validation also passed.
+findings: []
+risks:
+  - >-
+    The opt-in live ClickHouse integration remains environment-gated, but the
+    focused test now reproduces its exact DateTime64 JSON timestamp shape and
+    exercises the full first-page/continuation adapter path.
+  - >-
+    The shared checkout contains unrelated AURA-0098 changes; integration must
+    stage only AURA-0111 paths and preserve those edits.
+unresolved: []

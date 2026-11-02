@@ -1,0 +1,177 @@
+id: AURA-0062
+title: Redesign Reminders and Notifications as calm temporal workspaces
+status: integrated
+change_class: feature
+intent: >
+  Recompose Aura Web Reminders into a readable agenda and Notifications into a
+  lightweight delivery inbox with route-backed contextual detail, explicit
+  lifecycle actions, accessible responsive behavior, and honest recovery while
+  preserving the existing automation contracts, owner scopes, and delivery
+  semantics.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/reference-research.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved Reminders agenda grouped into Today Tomorrow This week and Later with terminal History separated
+    - Owner-approved Notification inbox with Unread and History views and durable route-backed detail
+    - Existing Aura v1 Reminder and Notification APIs are sufficient; this work item introduces no contract persistence or recurrence change
+    - Browser-local timezone presentation uses the existing UTC dueAt instant and does not introduce persisted timezone semantics
+    - Reminder and Notification details are route-backed contextual drawers on wide desktop and focused full-page representations on mobile
+    - Notification payloads remain metadata-only and reminder content continues to load through the separately authorized Reminder API
+    - Transient source-loading failure remains visible and recoverable without inventing a persisted reminder failure status
+    - Consequential reminder transitions and notification acknowledgement are never retried automatically after an uncertain outcome
+    - ReminderStore and NotificationStore join the application-composed management-session reset port so private detail drafts cached CSRF stream cursors and owner-scoped collections do not cross accepted-session changes
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AUT-001
+  - AUT-002
+  - AUT-003
+  - AUI-001
+  - AUI-004
+  - AUI-005
+  - AUI-008
+ownership_zones:
+  - aura-web.automation.reminders
+  - aura-web.automation.notifications
+  - aura-web.application.routes
+  - aura-web.application.composition
+  - aura-web.e2e
+  - frontend.storybook
+allowed_paths:
+  - work-items/active/AURA-0062.yaml
+  - work-items/archived/AURA-0062.yaml
+  - frontend/libs/aura/automation/reminders/**
+  - frontend/libs/aura/automation/notifications/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web-e2e/src/reminders.spec.ts
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/reminder-management.stories.ts
+  - frontend/apps/storybook/src/notification-centre.stories.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - frontend/libs/platform/**
+  - frontend/libs/aura/interaction/**
+  - frontend/libs/aura/knowledge/**
+  - frontend/libs/aura/governance/**
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-web/src/app/shell/**
+  - frontend/apps/aura-web/src/styles.css
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - deploy/**
+  - infra/**
+  - tooling/architecture/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: automation.reminders
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Reminder content detail notification metadata selected records composer drafts and stream cursors remain owner-authorized memory-only state and do not enter durable browser storage logs telemetry URLs or unrelated feature state.
+    - Notification responses and SSE remain metadata-only; the frontend must not copy reminder content into notification persistence transport events or telemetry.
+    - Direct detail routes preserve backend authorization and never briefly publish stale content from another route owner or accepted session.
+    - Complete cancel acknowledge and mark-complete actions preserve CSRF optimistic-version and idempotency semantics and are never automatically retried after an uncertain response.
+    - Authentication and principal changes clear private state cached CSRF reconnect cursors timers and local composer state before old requests can repopulate them.
+    - Error presentation uses bounded status-based messages and never renders provider server or transport payloads.
+  data_classes:
+    - private_reminder_content
+    - owner_scoped_notification_metadata
+    - owner_scoped_automation_identifiers
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Reminders presents Upcoming as an agenda grouped into Today Tomorrow This week and Later while completed and canceled reminders appear in a distinct History view.
+  - Agenda rows prioritize readable reminder content due time timezone and state with technical identifiers versions and exact timestamps disclosed only when useful.
+  - Reminder creation remains a focused one-shot composer for content and local due date and time explicitly names the active timezone retains the draft after recoverable failure and does not introduce recurrence.
+  - Selecting a reminder navigates to /reminders/:id; wide desktop presents a contextual drawer and mobile presents a focused full-screen detail page with a clear return path and no horizontal scrolling.
+  - Direct reminder routes communicate loading authentication permission not-found conflict uncertain-outcome and recoverable failure states without briefly exposing stale detail from another record or principal.
+  - Reminder detail makes timezone due time status completion and cancellation explicit and exposes lifecycle actions only after detail review with destructive cancellation clearly distinguished.
+  - Notifications presents Unread and History views and keeps the server-authoritative unread count correct and visible through all existing shell navigation modes.
+  - Selecting a notification navigates to /notifications/:id; desktop uses a focus-managed contextual drawer and mobile uses a focused full-screen detail with route-backed close and Back behavior.
+  - Notification detail supports Acknowledge Mark reminder complete and Open reminder while preserving separate authorization for reminder content and never erasing source reminder failure state.
+  - A notification whose source reminder cannot be loaded communicates that limitation and offers recovery rather than silently substituting generic reminder content.
+  - Route-owned detail loads list refreshes stream events and mutations use request identity or generation guards so late responses cannot repopulate a newer route or accepted session.
+  - Notification streaming remains globally single-owned reconnects from the last metadata-only event cursor reconciles 410 responses and does not create duplicate page streams.
+  - Authentication and principal changes reset Reminder and Notification collections detail errors drafts reconnect cursors cached CSRF and timers while leaving no private data in durable browser storage.
+  - Drawers and confirmations trap focus where appropriate close with Escape return focus to the invoking control and keep visible keyboard focus and screen-reader names.
+  - Loading empty authentication permission validation conflict offline reconnecting unknown-outcome and success states use semantic text and structure in addition to color and never contradict the underlying source state.
+  - Light and dark Storybook stories cover agenda History composer reminder detail Unread History notification detail loading empty and recovery states using approved semantic tokens.
+  - Automated validation covers 1440x900 iPad Mini and iPhone 13-equivalent widths keyboard operation focus return 200 percent zoom reflow reduced motion non-color communication and axe checks for both landing and detail surfaces.
+  - Existing Reminder and Notification API requests owner scopes immutable timestamps optimistic versions delivery ordering unread count and source separation remain behaviorally backward compatible.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0062.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0062.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0062.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0062.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0062.yaml
+  - pnpm --dir frontend exec nx test aura-reminders
+  - pnpm --dir frontend exec nx lint aura-reminders
+  - pnpm --dir frontend exec nx test aura-notifications
+  - pnpm --dir frontend exec nx lint aura-notifications
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/reminders.spec.ts apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

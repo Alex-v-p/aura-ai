@@ -1,0 +1,79 @@
+agent: test_evaluation_engineer
+work_item: AURA-0095
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0095_tests
+  worktree: shared
+scope:
+  ownership_zone: evaluation.aura0095-tests
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0095_backend.py
+  - services/aura-observatory/tests/test_aura0095_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0094_contract.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0095_backend_comprehensive.py
+  - services/aura-observatory/tests/test_aura0095_clickhouse_integration.py
+  - frontend/apps/observatory-web-e2e/playwright.config.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+  - frontend/apps/storybook/src/observatory-evaluation.stories.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-dto-adapter.spec.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.spec.ts
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.evaluation_api
+    - aura.observatory.evaluation_live_events
+  metrics_added: []
+verification:
+  passed:
+    - "AURA-0094 migration assertions now retain explicit 0010 coverage while recognizing contiguous forward migration 0011."
+    - "Owner-only API coverage passes for unauthenticated requests and a configured non-owner session."
+    - "State-changing API coverage passes for missing CSRF, cross-origin CSRF, no-store responses, deterministic idempotency reuse, bounded page sizes, malformed cursors, metadata-only SSE payloads, and Last-Event-ID catch-up."
+    - "The backend API suite covers all owner-bounded evaluation collection routes and their closed no-store page envelopes (26 passing tests)."
+    - "Deletion repeat coverage confirms the same idempotency key returns the same action identifier."
+    - "Optional local judge provider coverage confirms the Observatory health endpoint remains available in a testing composition without provider availability."
+    - "PostgreSQL integration includes fresh 0011, upgraded 0010-to-0011, idempotent rerun, constraint, and restart/replay scenarios (opt-in when AURA_AURA0095_POSTGRES_URL is configured)."
+    - "Cached postgres:17-alpine execution passes all four AURA-0095 PostgreSQL migration and restart/Last-Event-ID tests; the scoped disposable container was stopped and removed after validation."
+    - "uv run ruff check services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_postgres_integration.py services/aura-observatory/tests/test_aura0094_contract.py services/aura-observatory/tests/test_aura0094_postgres_integration.py"
+    - "uv run pyright services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_postgres_integration.py"
+    - "Frontend test-only additions are ESLint-clean, including the evaluation DTO, API-client parity, Playwright, and Storybook files."
+    - "Observatory Angular production build passes with the evaluation workspace included."
+    - "Storybook production build passes and includes the evaluation Loading, Empty, Partial, Stale, Disconnected, Unauthorized, ProviderUnavailable, FailedJob, CancelledJob, ServiceUnavailable, Ready, and destructive-confirmation stories."
+    - "Existing desktop Observatory browser acceptance remains green: 68 existing tests passed; the single new evaluation test is reported below."
+    - "The new evaluation browser fixture passes on desktop, tablet, and mobile, including dataset rendering, keyboard retention navigation, destructive confirmation, progress, memory-only storage, and axe checks."
+    - "Focused evaluation transport tests pass: 7 tests covering generated-client response parity, closed DTO/privacy envelopes, malformed inputs, metadata-only SSE, auth-generation clearing, and memory-only persistence."
+    - "The evaluation deletion browser flow now passes the strict DELETE_EVALUATION_ARTIFACTS confirmation, CSRF, idempotency, asynchronous progress, memory-only, keyboard, and axe assertions on desktop, tablet, and mobile."
+    - "The evaluation cancellation confirmation is now contract-aligned as cancel-job in the production workspace; no cancellation regression remains in the inspected implementation."
+    - "The complete frontend browser matrix passes: 207 Playwright tests across desktop, tablet, and mobile."
+    - "The complete Observatory backend suite passes: 1,128 passed, 19 skipped; the previously blocking strict-field and provenance tests are now green."
+    - "Backend Ruff and Pyright pass with zero errors; OpenAPI generated-client check, contract validation, and all repository/module/isolation/observability/baseline/contract validators pass."
+    - "The independent continuous evaluation SSE tests pass for 1,001-event bounded paging, post-connect transitions, exclusive reconnect cursors, bounded heartbeats, session revocation, metadata-only payloads, and provider-independent 503 envelopes."
+    - "The independent backend comprehensive module passes all 22 tests, including owner authorization on every evaluation command route, deterministic bounded cursors/order, CLI credential boundary, provider isolation, deletion-event preservation, and live wait bounds."
+    - "The independent CLI/module-boundary tests pass for credential-free help, unsupported-provider isolation, bounded cursor ordering, deletion notification preservation, and bounded live waits."
+    - "The opt-in AURA-0095 ClickHouse test covers legacy-row unavailable projection and new provenance round-trip/privacy (validated against ClickHouse 25.8 with an isolated generated database)."
+  failed: []
+  not_run:
+    - "Live-provider Ollama acceptance remains environment-dependent and was not claimed by this provider-free test pass."
+decisions:
+  - "Kept the AURA-0094 migration assertions explicit: 0010 remains asserted as the local-judge migration and 0011 is asserted as the newest contiguous migration."
+  - "Used ASGITransport with in-memory owner sessions for deterministic API boundary tests; no network, credentials, or content-bearing fixtures are used."
+  - "Used the existing persisted-event integration fixture to exercise restart-safe Last-Event-ID replay, with an explicit upgrade-from-0010 test for the new forward-only migration."
+  - "Retained the deletion conflict and persisted restart/replay tests as blocking regressions rather than weakening their expected contracts; both now pass after the owner corrections."
+  - "Added browser fixtures and Storybook coverage for evaluation-specific metadata rendering, keyboard retention navigation, destructive confirmation headers, asynchronous deletion progress, memory-only persistence, axe checks, and failed/cancelled/provider/service-unavailable states."
+  - "Kept the new frontend assertions blocking: responseMode, closed DTO envelopes, and browser dataset rendering are contract/privacy requirements rather than incidental implementation details."
+risks:
+  - "The deletion conflict correction returns the contract-required 409."
+  - "Persisted Last-Event-ID catch-up uses one parameterized query with deterministic bounded replay."
+  - "Production provider acceptance remains environment-dependent; the health independence test is deliberately provider-free and does not claim live Ollama connectivity."
+  - "Storybook build emits existing bundle-size and tsconfig include warnings but completes successfully; no warning was promoted to a failure."
+  - "The AURA-0094 ClickHouse legacy-row test is opt-in and uses an isolated database; cleanup drops only that generated database."
+  - "The Storybook build reports existing bundle-size and tsconfig/deprecation warnings but completes successfully; no warning was promoted to a failure."
+unresolved: []

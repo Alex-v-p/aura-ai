@@ -1,0 +1,24 @@
+component:
+  id: aura.research.synthesis@1
+  version: 1.0.0
+  owner: knowledge.research
+  category: synthesis
+input: {schema: ResearchSynthesisInputV1, replayable: false, replay_reason: Synthesis input is owner-private evidence and is never captured.}
+output: {schema: ResearchSynthesisResultV1, capture: {content: none, metadata: allowlisted}}
+boundaries: {accepts: [ResearchSynthesisInputV1], emits: [ResearchSynthesisResultV1], excludes: [question, query, excerpt, report, content, owner_identity, task_id, source_id, payload, exception]}
+dependencies: [model_gateway, citation_validator, artifacts_public_api]
+span: {operation: research.synthesize, dependency: model_gateway, capture: metadata_only}
+outcomes: [success, partial, rejected, timeout, failed, unknown]
+errors: [validation_failed, citation_invalid, budget_exhausted, provider_unavailable, timeout]
+metrics: [research_synthesis_outcome_count, research_synthesis_latency_ms, research_unsupported_claim_count]
+metric_definitions:
+  - {name: research_synthesis_outcome_count, type: counter, unit: count, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_synthesis_latency_ms, type: histogram, unit: milliseconds, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_unsupported_claim_count, type: counter, unit: count, labels: [operation, outcome, status, error_class, dependency]}
+metric_semantics: {research_synthesis_outcome_count: synthesis outcomes, research_synthesis_latency_ms: synthesis latency, research_unsupported_claim_count: unsupported claim count}
+capture_policy: metadata_only
+evaluators: [research_claim_support@1, research_citation_precision@1, research_privacy@1]
+cardinality: {metric_attributes: [operation, outcome, status, error_class, dependency], trace_only: [trace_id, span_id, parent_span_id, link_span_ids, run_id, conversation_id], prohibited: [question, query, url, excerpt, report, content, payload, owner_identity, task_id, research_id, source_id, exception]}
+privacy: {capture: metadata_only, content: forbidden, owner_identity: forbidden, credentials: forbidden}
+retention: {process_buffer: bounded, overflow: drop_oldest_and_count, export_failure: retry_three_times_then_drop_and_count}
+export: {sinks: [structured_container_log, otlp], cadence: periodic_and_shutdown, health_counters: [dropped, rejected, export_failures, abandoned_batches]}

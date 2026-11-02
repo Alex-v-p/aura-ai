@@ -1,0 +1,58 @@
+agent: general_reviewer
+work_item: AURA-0088
+verdict: PASS
+checked:
+  - >-
+    Re-read the active work item, prior BLOCK verdict, actual complete current
+    diff, authoritative architecture and specification sources, telemetry v1/v2
+    contracts, observatory-v1 OpenAPI, generated transport, Core exporter,
+    Observatory ingest/query/storage paths, browser runtime parser, state
+    lifecycle, and all focused correction tests.
+  - >-
+    Re-verified the former scan and observation-bound finding. Production
+    records ClickHouse physical progress, treats absent or exhausted progress
+    conservatively as scan_limit, recognizes provider read and execution
+    limits, and exact versus one-past 10,000-observation behavior is consistent
+    through top-level, side, and component partial state.
+  - >-
+    Re-verified the former trace-alignment finding. Structural signatures are
+    fixed-size, timing-independent digests; reordered roots and siblings align,
+    indistinguishable repeated siblings remain incompatible, traversal is
+    iterative and memoized, and the 5,000-span-per-run chain completes within
+    the fixed execution budget without recursion or quadratic signature growth.
+  - >-
+    Re-verified metadata schema provenance, marker availability, tagged local
+    model export, bounded revision privacy grammar, generated-client parity,
+    browser numeric/unit/duration/span/freshness limits, unique integrity and
+    partial reasons, 10,000 aligned rows, 512-character keys, repeated-row
+    identity, malformed-response handling, and memory-only comparison state.
+  - >-
+    Ran Observatory Ruff, Pyright, and the focused AURA-0088 suites successfully
+    (68 passed); Pyright reports 0 errors and every parameterized _query_rows
+    test override and comparison assertion now type-checks.
+  - >-
+    Ran Core Ruff, Pyright, settings tests, and telemetry tests successfully
+    (114 passed, 1 skipped). Ran Observatory and Observatory Web lint and unit
+    targets plus the Observatory Web production build successfully.
+  - >-
+    Ran work-item, changed-path, repository-shape, module-registry,
+    service-isolation, frontend-boundary, observability, baseline-protection,
+    contract-change, generated-sync, Compose-topology, and git diff checks
+    successfully; 44 topology tests passed and no protected baseline changed.
+  - >-
+    Re-reviewed the two late acceptance corrections against the current diff.
+    The frontend now limits comparison invalidation to observation.changed and
+    retention.changed, suppresses invalidation during an initial comparison
+    load, and keeps heartbeat events from refreshing the live snapshot. The
+    focused Observatory frontend unit and lint targets and changed-file ESLint
+    completed successfully.
+  - >-
+    Re-ran Observatory Ruff and Pyright with no findings and ran the focused
+    retention and comparison suites successfully (42 retention tests and 25
+    comparison tests). The former aggregate-lag finding is resolved:
+    prepare_retention now counts distinct non-null run IDs from the immutable
+    PostgreSQL target ledger, persists that authoritative value, and the
+    deletion result and audit path consume the persisted target count. The lag
+    regression models a zero ClickHouse aggregate with one captured observation
+    and run and asserts both authoritative target counts.
+findings: []

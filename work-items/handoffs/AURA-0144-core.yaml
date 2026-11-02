@@ -1,0 +1,121 @@
+agent: core_worker
+work_item: AURA-0144
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: aura0144_core
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: services.aura-core.research-provider-clients
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/providers/research/__init__.py
+  - services/aura-core/src/aura_core/providers/research/contracts.py
+  - services/aura-core/src/aura_core/providers/research/signing.py
+  - services/aura-core/src/aura_core/providers/research/client.py
+  - services/aura-core/src/aura_core/bootstrap/research_providers.py
+  - services/aura-core/src/aura_core/platform/research_provider_settings.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/research-search.yaml
+  - services/aura-core/resources/component-manifests/research-static-fetch.yaml
+  - services/aura-core/resources/component-manifests/research-browser-fetch.yaml
+  - services/aura-core/resources/component-manifests/research-extraction.yaml
+  - services/aura-core/tests/test_research_provider_clients.py
+  - services/aura-core/tests/test_research_provider_settings.py
+  - services/aura-core/tests/test_research_provider_observability.py
+  - services/aura-research-static-fetcher/src/aura_research_static_fetcher/app.py
+  - services/aura-research-static-fetcher/src/aura_research_static_fetcher/fetcher.py
+  - services/aura-research-static-fetcher/src/aura_research_static_fetcher/telemetry.py
+  - services/aura-research-static-fetcher/tests/test_policy_and_fetcher.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/app.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/fetcher.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/models.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/telemetry.py
+  - services/aura-research-browser-fetcher/tests/test_policy_and_models.py
+  - services/aura-core/src/aura_core/providers/research/evaluation.py
+  - deploy/research/egress_probe.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.research.search@1
+    - aura.research.static_fetch@1
+    - aura.research.browser_fetch@1
+    - aura.research.extraction@1
+  metrics_added:
+    - research_search_outcome_count
+    - research_search_latency_ms
+    - research_search_candidate_count
+    - research_static_fetch_outcome_count
+    - research_static_fetch_latency_ms
+    - research_static_fetch_limit_rejection_count
+    - research_browser_fetch_outcome_count
+    - research_browser_fetch_latency_ms
+    - research_browser_fetch_limit_rejection_count
+    - research_extraction_outcome_count
+    - research_extraction_latency_ms
+    - research_extraction_rejected_count
+verification:
+  passed:
+    - "validate-work-item: AURA-0144 approved work item"
+    - "validate-contract-changes: provider contract changes explicitly classified"
+    - "validate-import-boundaries: Python import boundaries hold"
+    - "ruff check assigned Core provider/settings/bootstrap/test paths"
+    - "pyright assigned Core provider/settings/bootstrap/test paths"
+    - "uv run pytest -q assigned Core research provider tests (29 passed, including signed controls, traceparent transport, typed inadequate-extraction round-trip, extraction trace lineage, error-envelope, bounded sink, and executable evaluator cases)"
+    - "Core static provider client round-trips signed health through the real provider FastAPI/ASGI route with deterministic egress-policy fixture"
+    - "Core search client round-trips signed health and limits through the integrated SearXNG ASGI route"
+    - "validate-observability: research manifests satisfy declared obligations"
+    - "validate-import-boundaries, validate-service-isolation, validate-repository-shape, contract-change, and baseline checks pass"
+    - "validate-module-registry: module roots and dependency rules valid after evaluator dependency reconciliation"
+    - "python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v: 27 passed"
+    - "docker compose -f compose.yaml -f deploy/compose/research-providers.yaml config --quiet"
+    - "git diff --check and UV lock --check pass"
+    - "Provider static/browser suites and research security/limits tests: 71 security/limits tests passed; all assigned aggregate checks report 132 passed"
+    - "provider DTOs model-validated against shared v1 conformance fixtures (positive cases plus negative closure cases)"
+    - "Core transport uses POST for search/fetch/limits/health; cancellation remains only on static/browser audiences permitted by the v1 contract"
+    - "Core provider clients use folded Compose DNS names, per-request lowered deadlines, and truthful unavailable readiness"
+    - "Research component manifests register exact @1 IDs, closed metrics/spans, privacy dimensions, evaluators, synthetic replay, bounded deployment retention, and structured-log/OTLP sinks"
+    - "Correlated provider error envelopes are parsed before HTTP status fallback, preserving bounded size/type/destination/deadline classes"
+    - "Extraction telemetry is emitted only by the static Trafilatura/plain-text and browser DOM extraction boundaries; transport/admission failures do not emit extraction observations, and extraction elapsed time is measured independently from fetch latency"
+    - "ProviderErrorCode telemetry classification is exhaustive, including audience mismatch, unsupported method, extraction failure, and draining; success never maps to provider_unavailable"
+    - "Reusable provider clients accept immutable per-call trace contexts; missing context emits no invented root span, valid context propagates only to spans, and metrics remain correlation-free"
+    - "Core emits canonical W3C traceparent headers; static/browser providers validate them and pass the admitted context through the real extraction boundary, where only the extraction span carries trace lineage"
+    - "Static signed-health ASGI test clears import-time provider modules before import and restores them afterward, making module-level switch behavior deterministic across suite order"
+    - "Both fetch provider transports preserve the typed inadequate_extraction result for browser fallback instead of converting it to extraction_failed"
+    - "Production static/browser apps register bounded extraction sinks; only actual Trafilatura/plain-text or DOM extraction emits the exact extraction metric/span metadata"
+    - "Signed envelope verification enforces issued-at skew, exact ttlMs-to-window binding, expiry, audience/method, signature, and replay semantics"
+    - "Versioned deterministic research evaluators expose only the result/fixture-runner API; their private evidence constructors are populated by the real Core provider client against controlled local transports, the hostile.html extraction fixture, Core extraction telemetry, bounded terminal outcomes, and MetadataMetrics observations. Positive fixtures pass and all four observed negative regressions fail; replay is deterministic and content-free"
+    - "Evaluator execution was verified by uv run pytest -q tests/test_research_provider_observability.py (10 passed) and the assigned client/settings/observability set (30 passed); runner replay, public-API restriction, and provider-label privacy assertions are covered"
+    - "Core stabilization: component-local provider validation preserves legacy calendar, memory, and persona provider labels while keeping the research provider vocabulary closed; memory_processing_service no longer passes redundant outbox kwargs, preserving memory_repository compatibility and its SQL default invalidation outbox"
+    - "Telemetry provider-label stabilization: repository-wide provider values are finite and reject arbitrary, private-marker, URL/path, UUID, credential, content, and exception-derived labels; research components additionally enforce the exact research subset, while calendar/persona/memory/workflow/evaluation/model-provider labels remain accepted"
+    - "Focused provider-label regression tests cover research exact set, non-research arbitrary rejection, sensitive-label rejection, and established legacy labels"
+    - "12 previously failing calendar/memory/persona telemetry tests now pass; full services/aura-core suite passes 1819 tests with 124 skipped and one Authlib deprecation warning"
+    - "Exact AURA-0144 aggregate provider suite passes: 133 tests"
+    - "Production static/browser extraction sinks emit schema-required metadata-observation-v2 JSON with bounded deployment metadata, exact units, trace-only spans, optional injected OTLP bytes export, three-attempt retry exhaustion, and dropped/rejected/export-failure/abandoned-batch accounting"
+    - "Provider sinks drain continuously and on shutdown through FastAPI lifespan hooks; overflow drops oldest and counts, exporter failure retries exactly three times, and sink failures never affect provider execution"
+    - "Production extraction output was checked for v2 required fields, schemaVersion 2, trace-only lineage, and absence of query, target, content, request, exception, or schema-unsupported fields"
+    - "Provider readiness and Compose use the platform-attested AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH name consistently; no legacy probe variable remains in the provider path"
+    - "Canonical unpadded base64url Ed25519 verification rejects malformed key/signature encodings"
+    - "Core settings accept only canonical unpadded base64url signing keys and independently fail closed"
+    - "Executable research fixture runner derives evaluator evidence from URL/address policy observations, execution-state deltas for hostile instructions/policies/tools/permissions/budgets, bounded provider outcomes, and metadata records; positive fixtures pass and all four negative regressions fail"
+  failed:
+    []
+  not_run: []
+decisions:
+  - "Core uses Ed25519 signed research-provider.v1 envelopes with public-key verification, expiry, audience/method validation, and replay-id cache; signing material stays in Core composition."
+  - "Search/static/browser capability switches and all provider ceilings are independent and fail closed; providers are never a source of research lifecycle truth."
+  - "Provider telemetry emits only finite operation/outcome/dependency/provider metadata, exact research spans, and bounded latency/counts; query, target, content, signatures, request IDs, and exceptions are excluded."
+  - "Core provider DTOs use closed request/result unions with method/audience binding, finite media/extraction/degradation enums, and schema-constrained signature key/value fields."
+  - "Core and provider readiness fixtures use the same deterministic offline enforcement probe; signed control envelopes bind exact ttlMs windows, bounded deadlines/limits, replay IDs, audience, and method before admission."
+  - "Core cancellation exposes the contract's owner_cancel, operator_stop, and deadline_expired reasons only for static/browser audiences; SearchProvider cancellation remains unsupported because research-provider.v1 does not advertise it."
+risks:
+  - "Integration must retain the single SearXNG deployable endpoint and provider-side egress/public-key readiness controls when reconciling the shared branch."
+unresolved:
+  - "Integration must re-run changed-path validation after concurrent slices are isolated."
+  - "The v2 telemetry contract permits component identifiers without an @version suffix while the Aura component manifests use versioned registry IDs; integration should retain the registry IDs and ensure the sink-to-collector mapping preserves that version identity."

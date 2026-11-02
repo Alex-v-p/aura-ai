@@ -1,0 +1,371 @@
+{
+  "fixtureVersion": "research-provider-conformance.v1",
+  "schemaId": "https://aura.local/contracts/providers/research/v1/research-provider-transport.schema.json",
+  "cases": [
+    {
+      "caseId": "valid-search-request",
+      "definition": "ProviderRequestEnvelope",
+      "expectation": "accept",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "request",
+        "requestId": "11111111-1111-4111-8111-111111111111",
+        "replayId": "21111111-1111-4111-8111-111111111111",
+        "audience": "searxng",
+        "method": "search",
+        "issuedAt": "2026-10-28T10:00:00Z",
+        "expiresAt": "2026-10-28T10:00:15Z",
+        "ttlMs": 15000,
+        "payload": {
+          "kind": "search_request",
+          "query": "bounded fixture query",
+          "language": "en",
+          "domainAllowlist": ["example.org"],
+          "limits": { "deadlineMs": 15000, "maxCandidates": 20 }
+        },
+        "signature": {
+          "algorithm": "Ed25519",
+          "keyId": "research-provider-2026-10",
+          "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      }
+    },
+    {
+      "caseId": "valid-static-fetch-request",
+      "definition": "ProviderRequestEnvelope",
+      "expectation": "accept",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "request",
+        "requestId": "12222222-2222-4222-8222-222222222222",
+        "replayId": "22222222-2222-4222-8222-222222222222",
+        "audience": "static_fetcher",
+        "method": "fetch",
+        "issuedAt": "2026-10-28T10:00:00Z",
+        "expiresAt": "2026-10-28T10:00:20Z",
+        "ttlMs": 20000,
+        "payload": {
+          "kind": "static_fetch_request",
+          "targetUrl": "https://example.org/research",
+          "admissionKind": "search_candidate",
+          "limits": {
+            "deadlineMs": 20000,
+            "maxRedirects": 5,
+            "maxTransferredBytes": 8388608,
+            "maxDecompressedBytes": 8388608,
+            "maxExtractedUtf8Bytes": 262144
+          }
+        },
+        "signature": {
+          "algorithm": "Ed25519",
+          "keyId": "research-provider-2026-10",
+          "value": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        }
+      }
+    },
+    {
+      "caseId": "valid-browser-fetch-request",
+      "definition": "ProviderRequestEnvelope",
+      "expectation": "accept",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "request",
+        "requestId": "13333333-3333-4333-8333-333333333333",
+        "replayId": "23333333-3333-4333-8333-333333333333",
+        "audience": "browser_fetcher",
+        "method": "fetch",
+        "issuedAt": "2026-10-28T10:00:00Z",
+        "expiresAt": "2026-10-28T10:00:45Z",
+        "ttlMs": 45000,
+        "payload": {
+          "kind": "browser_fetch_request",
+          "targetUrl": "https://example.org/dynamic",
+          "admissionKind": "owner_seed",
+          "justification": "javascript_required",
+          "limits": {
+            "deadlineMs": 45000,
+            "maxRedirects": 5,
+            "maxResponseBytes": 8388608,
+            "maxExtractedUtf8Bytes": 262144
+          }
+        },
+        "signature": {
+          "algorithm": "Ed25519",
+          "keyId": "research-provider-2026-10",
+          "value": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        }
+      }
+    },
+    {
+      "caseId": "valid-fetch-result",
+      "definition": "ProviderResultEnvelope",
+      "expectation": "accept",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "result",
+        "responseId": "34444444-4444-4444-8444-444444444444",
+        "requestId": "12222222-2222-4222-8222-222222222222",
+        "audience": "static_fetcher",
+        "method": "fetch",
+        "producedAt": "2026-10-28T10:00:03Z",
+        "result": {
+          "kind": "fetch_result",
+          "outcome": "success",
+          "evidence": {
+            "finalUrl": "https://example.org/research",
+            "redirectCount": 0,
+            "declaredMediaType": "text/html",
+            "detectedMediaType": "text/html",
+            "retrievedAt": "2026-10-28T10:00:03Z",
+            "transferredBytes": 4096,
+            "extractedUtf8Bytes": 24,
+            "contentSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "extractionMethod": "trafilatura",
+            "label": "Fixture source",
+            "publisher": "Example",
+            "extractedText": "Bounded untrusted fixture"
+          }
+        }
+      }
+    },
+    {
+      "caseId": "valid-health-result",
+      "definition": "ProviderResultEnvelope",
+      "expectation": "accept",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "result",
+        "responseId": "35555555-5555-4555-8555-555555555555",
+        "requestId": "15555555-5555-4555-8555-555555555555",
+        "audience": "browser_fetcher",
+        "method": "health",
+        "producedAt": "2026-10-28T10:00:00Z",
+        "result": {
+          "kind": "health_result",
+          "status": "degraded",
+          "enabled": true,
+          "accepting": false,
+          "inFlight": 1,
+          "contractVersion": "research-provider.v1",
+          "degradation": "draining"
+        }
+      }
+    },
+    {
+      "caseId": "valid-limits-result",
+      "definition": "ProviderResultEnvelope",
+      "expectation": "accept",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "result",
+        "responseId": "36666666-6666-4666-8666-666666666666",
+        "requestId": "16666666-6666-4666-8666-666666666666",
+        "audience": "static_fetcher",
+        "method": "limits",
+        "producedAt": "2026-10-28T10:00:00Z",
+        "result": {
+          "kind": "limits_result",
+          "limits": {
+            "service": "static_fetcher",
+            "deadlineMs": 20000,
+            "maxRedirects": 5,
+            "maxTransferredBytes": 8388608,
+            "maxDecompressedBytes": 8388608,
+            "maxExtractedUtf8Bytes": 262144,
+            "maxConcurrency": 4,
+            "cpuMillicores": 2000,
+            "memoryBytes": 1073741824,
+            "pids": 64,
+            "temporaryStorageBytes": 67108864
+          }
+        }
+      }
+    },
+    {
+      "caseId": "valid-bounded-error",
+      "definition": "ProviderErrorEnvelope",
+      "expectation": "accept",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "error",
+        "responseId": "37777777-7777-4777-8777-777777777777",
+        "requestId": "17777777-7777-4777-8777-777777777777",
+        "audience": "static_fetcher",
+        "method": "fetch",
+        "producedAt": "2026-10-28T10:00:00Z",
+        "error": { "code": "destination_blocked", "retryable": false }
+      }
+    },
+    {
+      "caseId": "reject-unversioned-request",
+      "definition": "ProviderRequestEnvelope",
+      "expectation": "schema_reject",
+      "rejectionCode": "contract_invalid",
+      "document": {
+        "envelopeType": "request",
+        "requestId": "18888888-8888-4888-8888-888888888888",
+        "replayId": "28888888-8888-4888-8888-888888888888",
+        "audience": "searxng",
+        "method": "health",
+        "issuedAt": "2026-10-28T10:00:00Z",
+        "expiresAt": "2026-10-28T10:00:15Z",
+        "ttlMs": 15000,
+        "payload": { "kind": "health_request" },
+        "signature": {
+          "algorithm": "Ed25519",
+          "keyId": "research-provider-2026-10",
+          "value": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"
+        }
+      }
+    },
+    {
+      "caseId": "reject-wrong-method-payload",
+      "definition": "ProviderRequestEnvelope",
+      "expectation": "schema_reject",
+      "rejectionCode": "contract_invalid",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "request",
+        "requestId": "19999999-9999-4999-8999-999999999999",
+        "replayId": "29999999-9999-4999-8999-999999999999",
+        "audience": "searxng",
+        "method": "search",
+        "issuedAt": "2026-10-28T10:00:00Z",
+        "expiresAt": "2026-10-28T10:00:15Z",
+        "ttlMs": 15000,
+        "payload": { "kind": "health_request" },
+        "signature": {
+          "algorithm": "Ed25519",
+          "keyId": "research-provider-2026-10",
+          "value": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE"
+        }
+      }
+    },
+    {
+      "caseId": "reject-over-budget-static-fetch",
+      "definition": "ProviderRequestEnvelope",
+      "expectation": "schema_reject",
+      "rejectionCode": "contract_invalid",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "request",
+        "requestId": "1aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "replayId": "2aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "audience": "static_fetcher",
+        "method": "fetch",
+        "issuedAt": "2026-10-28T10:00:00Z",
+        "expiresAt": "2026-10-28T10:00:20Z",
+        "ttlMs": 20000,
+        "payload": {
+          "kind": "static_fetch_request",
+          "targetUrl": "https://example.org/oversized",
+          "admissionKind": "search_candidate",
+          "limits": {
+            "deadlineMs": 20001,
+            "maxRedirects": 6,
+            "maxTransferredBytes": 8388609,
+            "maxDecompressedBytes": 8388609,
+            "maxExtractedUtf8Bytes": 262145
+          }
+        },
+        "signature": {
+          "algorithm": "Ed25519",
+          "keyId": "research-provider-2026-10",
+          "value": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      }
+    },
+    {
+      "caseId": "reject-content-derived-error-diagnostic",
+      "definition": "ProviderErrorEnvelope",
+      "expectation": "schema_reject",
+      "rejectionCode": "contract_invalid",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "error",
+        "responseId": "3bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "requestId": "1bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "audience": "browser_fetcher",
+        "method": "fetch",
+        "producedAt": "2026-10-28T10:00:00Z",
+        "error": {
+          "code": "internal_error",
+          "retryable": false,
+          "message": "Hostile page text and target URL must never be returned here"
+        }
+      }
+    },
+    {
+      "caseId": "reject-expired-envelope",
+      "definition": "ProviderRequestEnvelope",
+      "expectation": "semantic_reject",
+      "rejectionCode": "expired",
+      "precondition": "clock_after_expires_at",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "request",
+        "requestId": "1ccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "replayId": "2ccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "audience": "searxng",
+        "method": "health",
+        "issuedAt": "2026-10-28T10:00:00Z",
+        "expiresAt": "2026-10-28T10:00:01Z",
+        "ttlMs": 1000,
+        "payload": { "kind": "health_request" },
+        "signature": {
+          "algorithm": "Ed25519",
+          "keyId": "research-provider-2026-10",
+          "value": "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"
+        }
+      }
+    },
+    {
+      "caseId": "reject-replayed-envelope",
+      "definition": "ProviderRequestEnvelope",
+      "expectation": "semantic_reject",
+      "rejectionCode": "replayed",
+      "precondition": "replay_id_already_seen",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "request",
+        "requestId": "1ddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "replayId": "2ddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "audience": "static_fetcher",
+        "method": "health",
+        "issuedAt": "2026-10-28T10:00:00Z",
+        "expiresAt": "2026-10-28T10:00:15Z",
+        "ttlMs": 15000,
+        "payload": { "kind": "health_request" },
+        "signature": {
+          "algorithm": "Ed25519",
+          "keyId": "research-provider-2026-10",
+          "value": "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH"
+        }
+      }
+    },
+    {
+      "caseId": "reject-invalid-signature",
+      "definition": "ProviderRequestEnvelope",
+      "expectation": "semantic_reject",
+      "rejectionCode": "signature_invalid",
+      "precondition": "signature_verification_fails",
+      "document": {
+        "schemaVersion": "research-provider.v1",
+        "envelopeType": "request",
+        "requestId": "1eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        "replayId": "2eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        "audience": "browser_fetcher",
+        "method": "health",
+        "issuedAt": "2026-10-28T10:00:00Z",
+        "expiresAt": "2026-10-28T10:00:15Z",
+        "ttlMs": 15000,
+        "payload": { "kind": "health_request" },
+        "signature": {
+          "algorithm": "Ed25519",
+          "keyId": "research-provider-2026-10",
+          "value": "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII"
+        }
+      }
+    }
+  ]
+}

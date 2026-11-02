@@ -1,0 +1,24 @@
+component:
+  id: aura.automation.workflow_step.agent_run
+  version: 1.0.0
+  owner: automation.workflows
+  category: execution
+input:
+  schema: aura-workflow-agent-run-step-v1
+  replayable: true
+  replay_reason: Step identity and durable Aura run lineage make admission reconciliation replayable.
+output:
+  schema: aura-workflow-lifecycle-events-v1
+  capture: {content: none, metadata: allowlisted}
+dependencies: [aura.execution.run_coordinator, postgresql]
+metrics: [workflow_agent_run_step_duration_ms]
+metric_semantics:
+  workflow_agent_run_step_duration_ms: Bounded workflow agent-run step admission and settlement latency in milliseconds.
+capture_policy: metadata_only
+evaluators: [workflow.agent-run.v1]
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, workflow_id, revision_id, instance_id, step_execution_id, run_id, result_version]
+  prohibited: [content, prompt, response, instructions, mappings, input, output, result, payload, owner_identity, owner_subject, endpoint, url, token, credential, provider_payload, executor_state]
+retention: {process_buffer: bounded, overflow: drop_oldest_and_count, export_failure: retry_three_times_then_drop_and_count}
+export: {sink: structured_container_log, cadence: periodic_and_shutdown, health_counters: [dropped, rejected, export_failures, abandoned_batches]}

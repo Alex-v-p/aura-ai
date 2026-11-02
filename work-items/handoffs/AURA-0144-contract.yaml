@@ -1,0 +1,246 @@
+agent: contract_steward
+work_item: AURA-0144
+status: partial
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: deep
+  agent_thread_id: /root/aura0144_contract
+  worktree: feat/governed-research-artifacts-tasks
+scope:
+  ownership_zone: contracts.providers.research-v1
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/providers/research/v1/research-provider-transport.schema.json
+  - contracts/providers/research/v1/conformance-fixtures.json
+  - contracts/tests/test_aura0144_research_provider_contract.py
+  - work-items/handoffs/AURA-0144-contract.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward as the sole author of the new
+    research-provider transport v1 root and shared conformance fixture set.
+    Concurrent Core and Platform workers were consumers only; no OpenAPI,
+    event, generated-client, runtime, deployment, dependency, or registry path
+    was edited by this ownership slice.
+  definitions:
+    - id: research-provider-transport
+      version: 1
+      source: contracts/providers/research/v1/research-provider-transport.schema.json
+      changes:
+        - >-
+          Added one closed JSON Schema 2020-12 union for request, result, and
+          error envelopes across search, static fetch, browser fetch,
+          cancellation, effective limits, and health operations.
+        - >-
+          Required short-lived request envelopes to carry exact
+          research-provider.v1 identity, opaque request and replay UUIDs,
+          finite audience and method, issued and expiry timestamps, a maximum
+          sixty-second TTL, and a detached Ed25519 signature with a bounded
+          key identifier.
+        - >-
+          Bound search to fifteen seconds and twenty candidates; static fetch
+          to twenty seconds, five redirects, eight MiB transferred and
+          decompressed bytes, and 256 KiB extracted UTF-8; and browser fetch
+          to forty-five seconds, five redirects, eight MiB response bytes, and
+          256 KiB extracted UTF-8.
+        - >-
+          Added closed reported limit profiles for SearXNG, static fetch, and
+          browser fetch with the exact ADR-0018 CPU, memory, PID, temporary
+          storage, and concurrency ceilings. Audience and reported limit
+          profile are structurally bound.
+        - >-
+          Restricted targets to syntactically bounded HTTPS URLs without
+          userinfo or non-443 ports while explicitly retaining independent
+          DNS, address, redirect, and connection validation as a consumer
+          obligation rather than destination authorization by schema.
+        - >-
+          Added bounded search candidates, successful and inadequate fetch
+          results, sanitized extracted evidence, cancellation outcomes,
+          truthful finite health states, and content-free finite errors.
+        - >-
+          Prohibited arbitrary properties, diagnostic messages, exception
+          text, query or target echo in errors and health, browser state,
+          credentials, owner identity, grants, policy, instructions, task/run
+          authority, object locators, and arbitrary provider diagnostics.
+    - id: research-provider-conformance
+      version: 1
+      source: contracts/providers/research/v1/conformance-fixtures.json
+      changes:
+        - >-
+          Added consumer-neutral positive fixtures for search, static fetch,
+          browser fetch, evidence result, health, limits, and bounded error
+          payloads.
+        - >-
+          Added structural rejection fixtures for missing contract identity,
+          wrong method/payload binding, limits above the authorized envelope,
+          and content-derived error diagnostics.
+        - >-
+          Added schema-valid semantic rejection fixtures for expiry, replay,
+          and failed signature verification so Core and every provider test
+          the same transport and runtime validation boundary.
+  compatibility: backward_compatible
+  compatibility_notes:
+    - >-
+      Both identifiers are new v1 contract roots. No previously accepted
+      OpenAPI, event, generated-client, or provider payload is modified.
+    - >-
+      All objects are closed and every method, audience, status, outcome,
+      media type, extraction method, and error is finite; additions require an
+      explicit compatible contract revision.
+    - >-
+      Portable JSON Schema cannot verify signature bytes, compare timestamps,
+      establish clock freshness, remember replay identifiers, prove UTF-8 byte
+      length from character length, revalidate DNS, or authorize a public
+      destination. Producers and consumers must enforce those semantic
+      invariants before use.
+  producers:
+    - >-
+      Aura Core research provider clients produce signed request envelopes for
+      SearXNG, static fetch, browser fetch, cancellation, limits, and health.
+    - >-
+      The isolated SearXNG, static HTTPX/Trafilatura, and browser Playwright
+      providers produce correlated result or bounded error envelopes.
+  consumers:
+    - >-
+      Aura Core research provider clients validate every correlated result and
+      error before exposing untrusted evidence to later application use cases.
+    - >-
+      The isolated SearXNG, static-fetch, and browser-fetch provider listeners
+      validate contract version, audience, method, bounds, signature, expiry,
+      and replay semantics before dispatch.
+    - >-
+      AURA-0144 contract, Core client, provider, hostile-network, privacy, and
+      resource-limit tests consume the shared conformance fixtures.
+  rollout:
+    - >-
+      Ship the new v1 schema and fixture set before enabling any provider
+      listener or Core dispatch. Reject unknown versions, fields, methods,
+      audiences, signatures, expiry, replay, and limit profiles fail-closed.
+    - >-
+      Deploy providers with search, static fetch, browser fetch, and admission
+      independently disabled; use only the public verification key at provider
+      boundaries and retain the signing key in Core.
+    - >-
+      Enable static transport only after conformance, destination-policy,
+      sandbox, privacy, health, and limit tests pass. Enable browser transport
+      separately after its hostile-page and ephemeral-state acceptance passes.
+    - >-
+      Rollback rejects new dispatch while preserving the additive contract and
+      allowing admitted calls to settle or return bounded interruption/error
+      outcomes; providers own no research lifecycle truth.
+  generated_outputs: []
+  notes: >-
+    The schema defines data shape, finite vocabularies, correlation, and hard
+    upper bounds only. Signature verification, replay storage, destination
+    policy, cancellation effects, readiness truth, extraction, provider
+    dispatch, research lifecycle, persistence, and authorization remain in
+    their owning runtime implementations. No business behavior or generated
+    browser client was added.
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+  notes: >-
+    This contract slice adds no instrumentation. Health, error, and limit
+    transports are closed and content-free so the separately owned runtime
+    components can preserve metadata-only telemetry.
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0144.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0144.yaml
+    - python3 -m json.tool contracts/providers/research/v1/research-provider-transport.schema.json
+    - python3 -m json.tool contracts/providers/research/v1/conformance-fixtures.json
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0144_research_provider_contract.py -q
+      (7 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0144_research_provider_contract.py
+      services/aura-core/tests/test_research_provider_clients.py
+      services/aura-core/tests/test_research_provider_settings.py
+      services/aura-core/tests/test_research_provider_observability.py
+      services/aura-research-static-fetcher/tests
+      services/aura-research-browser-fetcher/tests -q (33 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check
+      contracts/tests/test_aura0144_research_provider_contract.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff format --check
+      contracts/tests/test_aura0144_research_provider_contract.py
+    - >-
+      git diff --check -- contracts/providers/research/v1
+      contracts/tests/test_aura0144_research_provider_contract.py
+  failed:
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0144.yaml reports concurrent unintegrated
+      AURA-0142 and AURA-0143 paths outside this item. The owned contract and
+      test paths are explicitly allowed and pass contract classification after
+      AURA-0144 was corrected to repository_governance with required human
+      approval.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0144.yaml ran before concurrent Core and Platform
+      owners completed their component manifests and module registration, so
+      it reported missing AURA-0144 components, metrics, and evaluators plus a
+      concurrent incomplete AURA-0143 task-projection manifest.
+  not_run:
+    - >-
+      Aggregate import, service-isolation, module-registry, repository-shape,
+      baseline, architecture unit, dependency-lock, Core/provider/deployment,
+      Docker Compose, Pyright, and full-ticket pytest checks are Integration
+      Maintainer scope after all concurrent ownership zones settle.
+decisions:
+  - >-
+    Used one transport schema and one fixture manifest so Core, search, static,
+    and browser consumers cannot drift into independently authored wire types.
+  - >-
+    Signed only Core request envelopes. Provider responses are correlated on
+    the isolated inbound network and never require a provider signing secret;
+    providers receive only the public verification key.
+  - >-
+    Used Ed25519 with RFC 8785 canonical JSON and unpadded base64url signature
+    representation to avoid algorithm and serialization ambiguity while
+    leaving key rotation and cryptographic operations in Core/provider code.
+  - >-
+    Kept query, target, candidate labels, and extracted text only in the
+    bounded operation payloads that require them. Errors, health, and limits
+    contain no content-derived or target-derived diagnostic field.
+  - >-
+    Kept destination policy independent of URI syntax. A syntactically valid
+    HTTPS URL is never proof of public routing, DNS safety, redirect safety,
+    admission, or authorization.
+  - >-
+    Represented expiry, replay, and signature failures as schema-valid
+    semantic fixture cases because JSON Schema cannot consult a clock, replay
+    store, or public verification key.
+  - >-
+    Did not consult online documentation because dependency-version
+    verification was not assigned; JSON Schema 2020-12 and provider bounds are
+    fixed by the accepted repository ADR and design.
+risks:
+  - >-
+    JSON Schema maxLength counts Unicode code points, not encoded UTF-8 bytes;
+    every producer and consumer must separately enforce the declared
+    extractedUtf8Bytes maximum over canonical UTF-8 bytes.
+  - >-
+    Schema patterns cannot establish public-address safety. Core and providers
+    must independently reject encoded aliases, mixed answers, rebinding,
+    prohibited IPv4/IPv6 ranges, metadata names, redirects, and connection
+    drift after DNS validation.
+  - >-
+    Core and provider DTOs are separately owned generated-by-hand mappings and
+    can drift from this schema in future changes. The shared positive and
+    negative fixtures must remain mandatory in every consumer suite; the
+    aggregate aligned consumer run currently passes all 33 cases.
+unresolved:
+  - >-
+    Integration Maintainer must rerun changed-path and observability validation
+    after the concurrent AURA-0142, AURA-0143, AURA-0144 Core, Platform, and
+    test/evaluation slices settle.

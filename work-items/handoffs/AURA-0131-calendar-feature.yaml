@@ -1,0 +1,81 @@
+agent: frontend_worker
+work_item: AURA-0131
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0131_calendar_feature
+  worktree: shared-main
+scope:
+  ownership_zone: frontend.aura-web.integrations-calendar
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/aura/integrations/calendar/project.json
+  - frontend/libs/aura/integrations/calendar/tsconfig.lib.json
+  - frontend/libs/aura/integrations/calendar/src/index.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-api.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-management-page.component.css
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-management-page.component.html
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-pages.component.css
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-models.spec.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-models.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-pages.component.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-session-hydration.spec.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-session-hydration.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-store.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-store.security.spec.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/calendar-workspace.spec.ts
+  - frontend/libs/aura/integrations/calendar/src/lib/integrations-page.component.html
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/integrations/calendar (13 passed)
+    - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/integrations/calendar libs/aura/daily-action (25 passed)
+    - cd frontend && pnpm exec tsc --noEmit -p libs/aura/integrations/calendar/tsconfig.lib.json
+    - cd frontend && pnpm exec eslint libs/aura/integrations/calendar
+    - cd frontend && pnpm exec nx lint aura-web
+    - cd frontend && pnpm exec nx test aura-web (10 passed)
+    - cd frontend && pnpm exec nx build aura-web --configuration=production
+    - AURA_WEB_E2E_APP_PORT=4313 AURA_WEB_E2E_STORYBOOK_PORT=6313 AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test apps/aura-web-e2e/src/calendar-planning.spec.ts -g "renders all-day events before timed events" --project=desktop --project=tablet (2 passed)
+    - cd frontend && pnpm exec nx run storybook:build-storybook
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - git diff --check
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0131.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Full Playwright calendar matrix was not rerun; focused desktop OAuth failure-focus and disconnect-confirmation cases passed on isolated app/storybook ports (2 passed).
+decisions:
+  - Generated Aura client types and operations remain the only transport contract; this zone adds no hand-written DTOs or fetch calls from components.
+  - Calendar event and conflict data stays in authenticated in-memory signals and is cleared on session reset, disconnect, authorization failure, and management-route teardown.
+  - OAuth authorizationPath is retained only as a private ephemeral store value and can be navigated only after an explicit owner action after same-origin path validation.
+  - Calendar discovery is bounded to four contract-sized pages and newly discovered calendars remain unselected until explicit owner selection and versioned replacement.
+  - Conflict relationships are rendered only from Core's conflict projection; the browser performs no interval or conflict inference.
+  - Calendar pages use Aura's semantic theme tokens exclusively, including status surfaces and non-color text/icon signals for dark-theme contrast.
+  - Connected initial loads hydrate the agenda only after bounded discovery establishes the authoritative selected-calendar set; the same generation/session guards cover discovery and reads.
+  - HTTP 401/session expiry alone crosses the shared management-session reset boundary; HTTP 403 permission loss clears calendar-private signals and retains a scoped recovery error without resetting reminders, notifications, approvals, or conversations.
+  - Private teardown invalidates connection, discovery, agenda, and selection generations, clears pending authorization and continuation cursors, and restores coherent idle/error/notice state so deferred responses cannot repopulate private content.
+  - Mutation idempotency keys use RFC 4122 UUIDs from secure randomUUID only; mutations fail closed when secure randomness is unavailable while retaining CSRF and credentials headers.
+  - Calendar discovery resumes from its bounded continuation cursor and disables replacement until all authoritative selected calendar UUIDs are present; event and conflict continuations are independently bounded and expose honest partial state when truncated.
+  - Connection lastError is rendered as the server-owned closed error message with a fixed client recovery guide for each approved recovery action; provider details are never inferred or displayed.
+  - The management route owns its stylesheet, disables competing mutations while loading/saving, uses an inline disconnect confirmation with cancel focus restoration, and settles focus after lifecycle/retry actions.
+  - Callback completion is attempted after the asynchronous connection load settles, including connecting states returned by the authoritative connection endpoint; collection and management views expose loading, readsEnabled, availableActions, lastError, and recovery state.
+  - Focus settlement uses afterNextRender with the component injector explicitly supplied, avoiding invalid post-event injection-context access while preserving render-order focus behavior; management links, buttons, and calendar checkboxes meet the 44px touch-target minimum.
+  - A fresh discovery starts selection-version accumulation at null, so a 409 followed by a refresh adopts the first authoritative version (for example, 8 after stale version 7); only an active cursor continuation preserves the existing chain version.
+  - Calendar event and conflict requests use the generated CalendarEventQuery and CalendarConflictQuery shapes directly; conflict bodies contain conflictLimit and never inherit the event-only limit field.
+  - Lifecycle focus after awaited mutations is settled synchronously against the existing heading/action DOM, while injector-backed render scheduling is reserved for newly inserted disconnect-confirmation controls.
+  - Retryable delayed failures use the same injector-backed render fallback when the recovery Retry control is not yet in the DOM; successful disconnect and non-actionable failures retain deterministic synchronous heading focus.
+  - Successful agenda refreshes retain focus on the existing Refresh agenda control; failed agenda refreshes continue through the recovery-action focus fallback.
+risks:
+  - Full route composition and daily-action agenda integration are owned by adjacent frontend workers and require aggregate validation.
+  - The browser-resolved timezone is represented as the generated ClientTimeZone string and the visible day range remains a bounded in-memory view.
+unresolved: []

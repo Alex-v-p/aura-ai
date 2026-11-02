@@ -1,0 +1,106 @@
+agent: test_evaluation_engineer
+work_item: AURA-0122
+status: partial
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0121_acceptance
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.aura0122
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - work-items/handoffs/AURA-0122-tests.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0122.yaml"
+    - "pnpm --dir frontend exec eslint apps/observatory-web-e2e/src/observatory-web.spec.ts"
+    - "git diff --check -- frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts"
+    - >-
+      Focused desktop AURA-0114 and AURA-0115 reruns passed after adapting
+      legacy assertions to collapsed technical, phase, raw-trace, and
+      continuation disclosures.
+    - >-
+      AURA-0122 targeted browser suite passed 12/12 across desktop, tablet,
+      and mobile: operator-first Trace stages, bounded raw paging, disclosure
+      collapse races, run invalidation state preservation, Components KPI and
+      problem-first catalogue behavior, topology disclosure, responsive layout,
+      and CSS-hidden mobile catalogue.
+    - >-
+      Final AURA-0122 Trace paging coverage passed 3/3 projects after adding
+      fixture-owned 220-step and 220-span authoritative pages plus a 24-item
+      measurement set. The test preserves the initial 20-item budget, reveals
+      measurements and steps/spans in batches of at most twenty, reaches the
+      final step/span, and asserts explicit server-continuation labeling.
+    - >-
+      Legacy AURA-0114/AURA-0115/AURA-0121 affected cases passed 6/6 across
+      desktop, tablet, and mobile after adapting to the final semantic stage
+      list, collapsed topology/continuation disclosures, and current labels.
+    - >-
+      Final full observatory-web-e2e matrix passed 446/447 tests across
+      desktop, tablet, and mobile; every owned observatory-web.spec.ts case,
+      including AURA-0122, passed.
+  failed:
+    - >-
+      The full matrix had one unrelated failure outside this ownership zone:
+      observatory-operations.spec.ts:1212, “passes axe in the rejected
+      operation-data state”, expected visible rejected copy but matched a
+      hidden definition label. No AURA-0122 or owned observatory-web case
+      failed.
+    - >-
+      Isolated rerun of observatory-operations.spec.ts:1212 on a fresh desktop
+      server (port 4393) passed 1/1 in 8.6 seconds without any edits to that
+      spec, indicating the full-matrix failure was transient rather than a
+      stable baseline failure.
+  not_run:
+    - >-
+      Architecture aggregate checks, product builds, Storybook, and composed
+      full-stack acceptance were not run in this acceptance slice.
+decisions:
+  - >-
+    Added fixture-owned 200-span and 60-component catalogues so acceptance
+    exercises the operator-first row and document-height budgets without
+    changing APIs or production behavior.
+  - >-
+    Added Trace acceptance for the operator summary, <=12 stage accordions,
+    closed Advanced/raw records, <=20 raw span batches, relative-duration
+    labels, desktop/mobile document-height budgets, lazy evidence, live
+    invalidation state preservation, and zero browser persistence.
+  - >-
+    Extended the large Trace fixture beyond two hundred authoritative steps
+    and spans, with a final-record sentinel and more than eight measurements;
+    acceptance now drives each progressive control until the final loaded
+    record is visible and verifies the server-cursor boundary remains explicit.
+  - >-
+    Added Components acceptance for <=20 compact problem-first rows, catalogue
+    health summaries reconciled to the 60-item fixture, problem promotion from
+    beyond row 20, one selected detail surface, topology closed/open behavior,
+    keyboard focus, desktop/mobile layout, CSS-hidden mobile catalogue, and no
+    horizontal overflow.
+  - >-
+    Added a parent technical-disclosure collapse race covering both loaded and
+    pending evidence: collapse clears visible bytes, aborts late payload
+    rendering, and leaves no hostile text or execution marker behind.
+  - >-
+    Preserved existing AURA-0121 exact evidence, deletion, isolation, and
+    accessibility assertions while adapting only stale locators and labels;
+    no production source, story, contract, or deployment path was edited.
+risks:
+  - >-
+    The full suite recorded one transient unrelated operations assertion
+    failure; its isolated fresh-server rerun passed. AURA-0122 acceptance is
+    green across all required viewport projects.
+unresolved:
+  - >-
+    The aggregate matrix should be rerun if a completely green full-suite
+    result is required; no AURA-0122-owned follow-up remains.

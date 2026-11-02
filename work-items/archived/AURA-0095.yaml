@@ -1,0 +1,296 @@
+id: AURA-0095
+title: Add evaluation API CLI live updates and owner Web workflows
+status: integrated
+change_class: repository_governance
+intent: >
+  Expose the integrated Observatory evaluation definitions orchestration scores
+  artifacts calibration review and deletion capabilities through an
+  owner-authorized backward-compatible REST CLI and metadata-only SSE surface,
+  generate a transport-only Angular client, and deliver accessible responsive
+  Observatory Web workflows without exposing evaluation content or coupling
+  Core to Observatory.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/overview.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - AURA-0080 owns the existing owner-authorized observatory-v1 REST snapshot and metadata-only same-origin SSE contract with persisted catch-up identifiers.
+    - AURA-0081 owns the separate Observatory Angular product browser persistence prohibition and responsive accessible state model.
+    - AURA-0089 through AURA-0094 own evaluation-v1 definitions artifacts orchestration deterministic evaluators local judges calibration and service-owned persistence; AURA-0095 exposes those public application boundaries and must not duplicate their domain logic.
+    - Evaluation content is authorized untrusted data and remains in Garage. REST metadata may carry opaque identifiers hashes bounded labels finite scores versions provenance and explicit authorization metadata but never raw artifact bytes object keys filenames provider endpoints credentials owner identity prompts rubrics responses comments hidden reasoning or arbitrary attributes.
+    - Artifact upload and download streams remain out of initial browser scope. Owner workflows create and inspect versioned definitions and opaque artifact metadata references; content-bearing artifact transfer requires a separately reviewed bounded streaming design and is not implied by catalogue wording.
+    - All evaluation reads and commands reuse the Observatory owner BFF session. State changes require same-origin CSRF idempotency and closed confirmation where destructive; credentials never appear in URLs SSE events generated types or browser persistence.
+    - Evaluation live updates use a dedicated additive same-origin /api/v1/evaluation/events SSE endpoint with one persisted evaluation sequence and exclusive Last-Event-ID cursor. The existing operational /api/v1/events contract and cursor remain unchanged. REST remains authoritative; catch-up is bounded and fully paged before continuous fair polling and events never carry evaluation content scores comments digests model endpoints or authorization details.
+    - Definition job result score review qualification artifact and deletion collections are cursor-paginated and bounded. Sort order cursor semantics filters limits and partial-evidence behavior are explicit and deterministic.
+    - The CLI is a thin owner/operator entrypoint over the same application services and DTOs. It does not bypass authorization policy persistence invariants idempotency or deletion safeguards and does not print content credentials object locations or owner identity.
+    - Generated Angular output is transport-only and derived from observatory-v1. Domain state reconciliation polling live updates validation confirmation and error recovery remain in Observatory feature code.
+    - Browser state is memory-only. Authenticated REST SSE evaluation definitions results scores reviews and artifact metadata are excluded from Workbox Cache Storage localStorage sessionStorage IndexedDB URLs screenshots console output and analytics.
+    - Web workflows cover dataset and case definition inspection suite composition evaluator bindings job submission progress cancellation results scores coverage reproducibility artifact metadata human review calibration qualification history and manual deletion. Baselines experiments regressions dashboards alerts and external delivery remain AURA-0096 and AURA-0097.
+    - The accepted AURA-0094 provider-unavailable limitation is rendered as a bounded service-unavailable or advisory state. AURA-0095 does not change deployment networking or claim real Ollama acceptance.
+    - Independent backend implementation demonstrated that restart-safe Last-Event-ID catch-up has no persisted evaluation event sequence in the existing schema. AURA-0095 therefore authorizes one forward-only idempotent Observatory PostgreSQL migration after 0010 for a bounded metadata-only evaluation live-event ledger; no content scores digests authorization metadata arbitrary attributes or Core state may enter it.
+    - Independent durable-query implementation demonstrated that ClickHouse score rows do not preserve every bounded component revision digest and execution provenance field required for authoritative observatory-v1 reproducibility projections. AURA-0095 authorizes one forward-only ClickHouse migration after 0007 for those metadata-only fields; raw artifacts content prompts responses comments endpoints credentials owner identity and arbitrary attributes remain prohibited.
+    - AURA-0095 explicitly authorizes the forward-only PostgreSQL live-ledger migration to preserve cancellation and qualification-revocation idempotency fingerprints/replay evidence. Ordinary evaluation notifications remain deletable by authorized retention selectors; evaluation_deletion audit evidence remains preserved.
+    - AURA-0095 explicitly authorizes additive PostgreSQL projection metadata columns for authoritative attempt worker component and human-review provenance fields. Missing legacy values remain unavailable/partial; adapters must not borrow or synthesize them.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/events/evaluation/v1/evaluation-events.schema.json
+feature_references:
+  - EVA-001
+  - EVA-002
+  - EVA-003
+  - EVA-004
+  - EVA-005
+  - EVA-006
+  - EVA-007
+  - EVA-008
+  - EVA-009
+  - EVA-010
+  - EVA-011
+  - EVA-012
+  - EVA-013
+  - EVA-014
+  - EVA-015
+  - EVA-016
+  - EVA-017
+  - EVA-018
+  - EVA-019
+  - EVA-038
+  - EVA-039
+  - EVA-040
+  - EVA-041
+ownership_zones:
+  - contracts.observatory-v1
+  - services.aura-observatory.evaluation-query-api
+  - services.aura-observatory.evaluation-command-api
+  - services.aura-observatory.evaluation-cli
+  - services.aura-observatory.evaluation-live-events
+  - frontend.platform.observatory-api-client
+  - frontend.observatory.evaluation-workspaces
+  - frontend.observatory.evaluation-browser-acceptance
+  - evaluation.aura0095-tests
+allowed_paths:
+  - work-items/active/AURA-0095.yaml
+  - work-items/archived/AURA-0095.yaml
+  - work-items/handoffs/AURA-0095-*.yaml
+  - work-items/reviews/AURA-0095-*.yaml
+  - work-items/integration/AURA-0095.yaml
+  - contracts/openapi/observatory-v1.yaml
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_live.py
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/evaluation_calibration.py
+  - services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_calibration.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_live.py
+  - services/aura-observatory/migrations/postgresql/versions/0011_evaluation_live_events.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0008_evaluation_api_provenance.sql
+  - services/aura-observatory/resources/component-manifests/evaluation-*.yaml
+  - services/aura-observatory/resources/component-manifests/live-updates.yaml
+  - services/aura-observatory/tests/test_aura0095_*.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0080_api.py
+  - services/aura-observatory/tests/test_aura0080_query_retention.py
+  - services/aura-observatory/tests/test_aura0084_auth_recovery.py
+  - services/aura-observatory/tests/test_aura0090_storage.py
+  - services/aura-observatory/tests/test_aura0092_orchestration.py
+  - services/aura-observatory/tests/test_aura0093_definitions.py
+  - services/aura-observatory/tests/test_aura0093_score.py
+  - services/aura-observatory/tests/test_aura0094_calibration.py
+  - services/aura-observatory/tests/test_aura0094_clickhouse_integration.py
+  - services/aura-observatory/tests/test_aura0094_contract.py
+  - services/aura-observatory/tests/test_aura0094_postgres_integration.py
+  - contracts/tests/test_observatory_v1.py
+  - contracts/tests/test_observatory_v1_compatibility.py
+  - frontend/libs/platform/observatory-api-client/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/apps/storybook/**
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/validate-observability.py
+  - tooling/architecture/tests/test_observability.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - services/aura-core/**
+  - contracts/evaluation/v1/evaluation.schema.json
+  - contracts/events/**
+  - contracts/openapi/core-v1.yaml
+  - services/aura-observatory/migrations/clickhouse/versions/0001_observations.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0002_observation_ordering.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0004_comparison_markers.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0005_evaluation_scores.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0006_evaluation_score_metadata.sql
+  - services/aura-observatory/migrations/clickhouse/versions/0007_local_judge_scores.sql
+  - services/aura-observatory/migrations/postgresql/versions/0001_observatory_foundation.sql
+  - services/aura-observatory/migrations/postgresql/versions/0002_observatory_retention_state.sql
+  - services/aura-observatory/migrations/postgresql/versions/0003_ingest_health_timestamps.sql
+  - services/aura-observatory/migrations/postgresql/versions/0004_ingest_visibility_watermark.sql
+  - services/aura-observatory/migrations/postgresql/versions/0005_ingest_health_history.sql
+  - services/aura-observatory/migrations/postgresql/versions/0006_component_definitions.sql
+  - services/aura-observatory/migrations/postgresql/versions/0007_evaluation_artifact_storage.sql
+  - services/aura-observatory/migrations/postgresql/versions/0008_evaluation_orchestration.sql
+  - services/aura-observatory/migrations/postgresql/versions/0009_evaluation_definitions.sql
+  - services/aura-observatory/migrations/postgresql/versions/0010_local_judges_calibration.sql
+  - deploy/**
+  - infra/**
+  - frontend/apps/aura-web/**
+  - frontend/libs/aura/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: evaluation-api
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.evaluation_api
+    - aura.observatory.live_updates
+    - aura.observatory.evaluation_definitions
+    - aura.observatory.evaluation_orchestration
+    - aura.observatory.evaluation_artifact_storage
+    - aura.observatory.evaluation_deletion
+    - aura.observatory.calibration
+  required_metrics:
+    - observatory_evaluation_definition_operation_count
+    - observatory_evaluation_job_admission_count
+    - observatory_evaluation_cancellation_count
+    - observatory_evaluation_result_consumption_count
+    - observatory_evaluation_artifact_operation_count
+    - observatory_evaluation_deletion_action_count
+    - observatory_calibration_review_count
+    - observatory_calibration_qualification_count
+    - observatory_evaluation_api_operation_count
+    - observatory_evaluation_live_event_count
+    - observatory_evaluation_live_replay_lag_seconds
+  required_evaluators:
+    - evaluation_api_contract_compatibility
+    - evaluation_api_authorization
+    - evaluation_api_csrf_idempotency
+    - evaluation_sse_metadata_isolation
+    - evaluation_query_pagination_bounds
+    - evaluation_browser_persistence_isolation
+    - evaluation_browser_accessibility
+    - evaluation_browser_recovery
+  capture_policy: authorized_evaluation_content
+security_privacy:
+  applicable: true
+  concerns:
+    - Every evaluation route and CLI action is owner-authorized and state changes require CSRF or an equivalent local operator authorization boundary plus idempotency.
+    - REST and CLI responses expose only approved bounded metadata and opaque artifact identities; content object keys filenames endpoints credentials bearer tokens owner identity raw prompts rubrics inputs outputs comments rationale hidden reasoning and arbitrary attributes are prohibited.
+    - SSE is metadata-only and credentials never appear in URLs. Event payloads carry only bounded resource type opaque resource ID event ID timestamp state and change classification.
+    - Browser state is memory-only and authenticated evaluation data is excluded from service-worker caches browser stores URLs logs screenshots and analytics.
+    - Query filters cursors limits identifiers confirmation text labels and comments are closed bounded inputs and cannot select SQL object storage locations provider destinations event subjects imports tools or permissions.
+    - Artifact deletion cancellation review qualification and destructive controls use explicit confirmation authorization idempotency audit and asynchronous progress where applicable.
+    - Provider-unavailable partial failed cancelled stale disconnected rejected unauthorized and service-unavailable states are explicit and never cause Core or normal Observatory readiness dependency.
+  data_classes:
+    - evaluation_definition_metadata
+    - evaluation_job_metadata
+    - evaluation_result_metadata
+    - evaluation_score_metadata
+    - evaluation_artifact_metadata
+    - human_review_metadata
+    - calibration_qualification_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - observatory-v1 adds backward-compatible owner-authorized bounded resources for datasets cases suites evaluators jobs attempts results scores artifacts reviews calibration qualifications cancellation history and deletion with closed schemas stable opaque IDs UTC timestamps versions provenance finite scores explicit partial evidence and cursor pagination.
+  - Generated Angular output is reproducible and transport-only. Handwritten feature code consumes its public facade without duplicating wire types or embedding domain behavior in generated files.
+  - Evaluation definition and orchestration commands invoke existing application services enforce immutable version and authorization rules require idempotency and return deterministic conflict validation unavailable and terminal states.
+  - Evaluation read models use bounded service-owned query ports and deterministic cursors and never access Core tables adapter internals or unbounded result sets.
+  - Artifact APIs expose metadata authorization state classification purpose digest size media version retention and deletion status but never content object key filename bucket provider endpoint credential or owner identity.
+  - Human review calibration qualification and revocation routes preserve exact evaluation-v1 provenance require owner authorization CSRF idempotency and explicit confirmation where destructive and never return raw comment content.
+  - Evaluation deletion supports the already-authorized manual job dataset suite cutoff and purge-all scopes with asynchronous idempotent status content-free audits and preservation rules defined by AURA-0090.
+  - The dedicated same-origin evaluation SSE stream starts from REST snapshots accepts an exclusive persisted evaluation Last-Event-ID cursor fully pages bounded catch-up then continuously polls new changes and emits only bounded metadata notifications without scores digests content authorization details or credentials; the existing operational stream remains backward-compatible.
+  - CLI commands remain thin use the same application services and DTO validation and print bounded metadata or machine-readable content-free results with finite exit codes.
+  - Observatory Web provides accessible responsive keyboard-operable dataset suite evaluator job result score artifact review calibration qualification history reproducibility coverage cancellation and deletion workflows without importing Aura product features.
+  - Browser workflows provide loading empty partial stale disconnected rejected unauthorized provider-unavailable service-unavailable failed cancelled and recovery states with focus management announcements non-colour indicators reduced motion and accessible tables paired with any charts.
+  - Destructive cancellation deletion revocation and qualification controls show exact bounded scope require explicit confirmation prevent duplicate submission announce asynchronous progress and refresh affected snapshots after completion.
+  - Authenticated evaluation REST and SSE data remains memory-only and absent from Workbox Cache Storage localStorage sessionStorage IndexedDB URLs logs screenshots and analytics; logout or auth-generation change clears all evaluation state.
+  - Real-browser acceptance covers owner login navigation responsive layouts keyboard operation SSE catch-up job progress cancellation review qualification deletion stale recovery and provider-unavailable degradation using controlled content-free fixtures.
+  - Core remains usable when Observatory evaluation services or the optional local judge provider are stopped and no Core source database migration readiness or normal request dependency changes.
+  - Python lint type and tests OpenAPI compatibility generated-client parity Angular lint unit production builds Storybook accessibility Playwright browser acceptance architecture validators baseline protection and diff checks pass without protected baseline changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0095.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0095.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0095.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0095.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0095.yaml
+  - uv run ruff check services/aura-observatory/src services/aura-observatory/tests
+  - uv run pyright services/aura-observatory
+  - uv run pytest services/aura-observatory/tests contracts/tests
+  - pnpm --dir frontend nx lint observatory-web
+  - pnpm --dir frontend nx test observatory
+  - pnpm --dir frontend nx test observatory-api-client
+  - pnpm --dir frontend nx build observatory-web --configuration=production
+  - pnpm --dir frontend nx build storybook --configuration=production
+  - pnpm --dir frontend nx e2e observatory-web-e2e
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - AURA-0096 owns experiments variants cohorts immutable baselines regression decisions attribution confidence and explicit baseline promotion.
+  - AURA-0097 owns dashboards saved queries alerts annotations and incidents plus any external delivery decision.
+  - AURA-0098 owns real local-judge reachability full-stack provider outage acceptance and complete cross-service browser acceptance.
+  - Content-bearing browser artifact upload download and inline comment editing remain deferred unless a separately reviewed bounded streaming and persistence design amends this item.

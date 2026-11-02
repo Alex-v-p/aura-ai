@@ -1,0 +1,23 @@
+component:
+  id: aura.research.deletion@1
+  version: 1.0.0
+  owner: knowledge.research
+  category: deletion
+input: {schema: ResearchDeleteInputV1, replayable: true, replay_reason: Cleanup commands are idempotent and preserve content-free tombstones.}
+output: {schema: ResearchDeleteResultV1, capture: {content: none, metadata: allowlisted}}
+boundaries: {accepts: [ResearchDeleteInputV1], emits: [ResearchDeleteResultV1], excludes: [question, query, url, excerpt, content, owner_identity, task_id, source_id, artifact_id, payload, exception]}
+dependencies: [core_postgresql, artifacts_public_api]
+span: {operation: research.delete, dependency: core_postgresql, capture: metadata_only}
+outcomes: [success, rejected, partial, timeout, failed, unknown]
+errors: [authorization_denied, conflict, deletion_failed, cleanup_unknown, storage_unavailable, timeout]
+metrics: [research_deletion_outcome_count, research_deletion_latency_ms]
+metric_definitions:
+  - {name: research_deletion_outcome_count, type: counter, unit: count, labels: [operation, outcome, error_class, dependency]}
+  - {name: research_deletion_latency_ms, type: histogram, unit: milliseconds, labels: [operation, outcome, error_class, dependency]}
+metric_semantics: {research_deletion_outcome_count: cleanup outcome, research_deletion_latency_ms: cleanup latency}
+capture_policy: metadata_only
+evaluators: [research_deletion_truth@1, research_privacy@1]
+cardinality: {metric_attributes: [operation, outcome, status, error_class, dependency], trace_only: [trace_id, span_id, parent_span_id, link_span_ids, run_id, conversation_id], prohibited: [question, query, url, excerpt, content, payload, owner_identity, task_id, research_id, source_id, artifact_id, exception]}
+privacy: {capture: metadata_only, content: forbidden, owner_identity: forbidden, credentials: forbidden}
+retention: {process_buffer: bounded, overflow: drop_oldest_and_count, export_failure: retry_three_times_then_drop_and_count}
+export: {sinks: [structured_container_log, otlp], cadence: periodic_and_shutdown, health_counters: [dropped, rejected, export_failures, abandoned_batches]}

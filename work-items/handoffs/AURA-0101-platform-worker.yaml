@@ -1,0 +1,78 @@
+agent: platform_worker
+work_item: AURA-0101
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: shared
+scope:
+  ownership_zone: deploy.nats.authorization
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/docker/nats-entrypoint.sh
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0101.yaml
+    - bash -n deploy/docker/nats-entrypoint.sh
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pytest -q services/aura-core/tests/test_aura0101_nats_stream.py (7 passed)
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core ruff check services/aura-core/src/aura_core/platform/outbox/nats.py services/aura-core/tests/test_aura0101_nats_stream.py
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pyright services/aura-core/src/aura_core/platform/outbox/nats.py services/aura-core/tests/test_aura0101_nats_stream.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0101.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0101.yaml (no contract changes; skipped)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0101.yaml (no protected changes; skipped)
+    - implementation-handoff schema validation
+    - git diff --check
+    - >-
+      Static ACL matrix inspection confirmed the obsolete $JS.API.ACCOUNT.INFO
+      grant is absent; exact $JS.API.INFO and $JS.API.STREAM.LIST appear only
+      on the normal Core identity; all five normal durable/filter pairs have
+      exact INFO, CREATE-with-filter, MSG.NEXT, and ACK subjects; and bootstrap,
+      dispatch, and runner identities have no normal Core authority.
+    - >-
+      Bounded repeated live Docker verification passed after supported Compose
+      restarts: aura-nats, aura-core-worker, aura-core-api, and observatory-web
+      were up/healthy, with no NATS authorization errors in the restart window.
+  failed:
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0101.yaml; the shared worktree contains unrelated
+      AURA-0098 and AURA-0100 paths outside this worker's ownership zone.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0101-uv uv run pytest -q
+      deploy/tests/test_aura0091_topology.py (17 passed after the test/evaluation
+      handoff reconciled the amended ACL contract).
+    - >-
+      Supported disposable local-http reset/up and repeated startup completed
+      with aura-nats, aura-core-worker, aura-core-api, and Observatory web
+      running or healthy, zero Core worker restarts, and no bounded NATS
+      authorization errors.
+  not_run: []
+decisions:
+  - >-
+    Replaced the normal Core user's obsolete account-info and durable-create
+    grants with the exact current-client stream-list, account-info, and
+    consumer INFO/CREATE-with-filter/MSG.NEXT/ACK subjects for the five
+    configured Core durable/filter pairs, while retaining exact AURA_RUNS
+    create/info/update permissions.
+  - >-
+    Removed the obsolete account-info grant from the evaluation bootstrap user;
+    dispatch and runner identities were left without account-info permission.
+  - >-
+    Added only exact normal Core business subjects required by the configured
+    runtime for memory processing, automation reminder/notification outbox
+    delivery, and document process/delete/event delivery. No JetStream API or
+    consumer wildcard, evaluation access, users, secrets, networks, stream
+    deletion, purge, or subject reassignment was introduced.
+risks: []
+unresolved: []

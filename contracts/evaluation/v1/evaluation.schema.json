@@ -1,0 +1,1344 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/evaluation/v1/evaluation.schema.json",
+  "title": "Aura evaluation resources v1",
+  "description": "Closed, provider-neutral evaluation definitions and records owned by Aura Observatory. Content is untrusted data and never grants instruction, policy, permission, provider, endpoint, credential, object-key, executable-path, or owner authority. Production telemetry remains metadata_only. Storage, transport, execution, deletion, API, and judging behavior are intentionally outside this contract.",
+  "oneOf": [
+    { "$ref": "#/$defs/Dataset" },
+    { "$ref": "#/$defs/Case" },
+    { "$ref": "#/$defs/Suite" },
+    { "$ref": "#/$defs/Evaluator" },
+    { "$ref": "#/$defs/Score" },
+    { "$ref": "#/$defs/Request" },
+    { "$ref": "#/$defs/Result" },
+    { "$ref": "#/$defs/Artifact" },
+    { "$ref": "#/$defs/JudgeArtifact" },
+    { "$ref": "#/$defs/LocalJudgeDefinition" },
+    { "$ref": "#/$defs/CalibrationDefinition" },
+    { "$ref": "#/$defs/CalibrationLabel" },
+    { "$ref": "#/$defs/HumanReview" },
+    { "$ref": "#/$defs/CalibrationResult" },
+    { "$ref": "#/$defs/JudgeQualification" },
+    { "$ref": "#/$defs/JudgeEnsemble" },
+    { "$ref": "#/$defs/Experiment" },
+    { "$ref": "#/$defs/Baseline" },
+    { "$ref": "#/$defs/RegressionDecision" },
+    { "$ref": "#/$defs/AttributionReport" },
+    { "$ref": "#/$defs/Replay" }
+  ],
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$",
+      "description": "UTC timestamp."
+    },
+    "SafeIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$",
+      "description": "Bounded identifier, never a path, URL, endpoint, credential, owner identity, or free-form value."
+    },
+    "Version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+    },
+    "IdempotencyKey": {
+      "$ref": "#/$defs/Uuid",
+      "description": "Service-generated non-secret UUID. It must never be supplied by a user or provider or derived from content, credentials, or owner identity."
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Lowercase SHA-256 digest over canonical bytes."
+    },
+    "ComponentId": {
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 96,
+      "pattern": "^aura\\.[a-z][a-z0-9_.-]{0,90}$"
+    },
+    "RetentionMode": {
+      "const": "manual_only",
+      "description": "The resource persists until an explicit authorized deletion; no automatic TTL is implied."
+    },
+    "Scope": {
+      "type": "string",
+      "enum": ["public_project", "private", "sensitive", "environment"]
+    },
+    "Scopes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/Scope" }
+    },
+    "AuthorizationPurpose": {
+      "type": "string",
+      "enum": ["synthetic_benchmark", "owner_supplied_evaluation", "controlled_replay", "human_review"]
+    },
+    "MetadataCaptureAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["captureClassification", "authorizationPurpose", "authorizationContext", "retentionMode"],
+      "properties": {
+        "captureClassification": { "const": "metadata_only" },
+        "authorizationPurpose": { "$ref": "#/$defs/AuthorizationPurpose" },
+        "authorizationContext": { "const": "controlled_evaluation" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" }
+      }
+    },
+    "HashedCaptureAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["captureClassification", "authorizationPurpose", "authorizationContext", "retentionMode", "authorizationRecordId", "authorizedAt"],
+      "properties": {
+        "captureClassification": { "const": "hashed" },
+        "authorizationPurpose": { "$ref": "#/$defs/AuthorizationPurpose" },
+        "authorizationContext": { "const": "controlled_evaluation" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "authorizationRecordId": { "$ref": "#/$defs/Uuid", "description": "Opaque authorization record; no owner identity is portable." },
+        "authorizedAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "ContentCaptureAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["captureClassification", "authorizationPurpose", "authorizationContext", "retentionMode", "authorizationRecordId", "authorizedAt"],
+      "properties": {
+        "captureClassification": { "type": "string", "enum": ["redacted", "sampled_content", "full_content"] },
+        "authorizationPurpose": { "$ref": "#/$defs/AuthorizationPurpose" },
+        "authorizationContext": { "const": "controlled_evaluation" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "authorizationRecordId": { "$ref": "#/$defs/Uuid", "description": "Opaque authorization record; no owner identity is portable." },
+        "authorizedAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "description": "Authorization for a content-bearing controlled evaluation. Consumers must verify that every referenced artifact has an authorization and capture classification at least as restrictive as the enclosing resource."
+    },
+    "CaptureAuthorization": {
+      "oneOf": [
+        { "$ref": "#/$defs/MetadataCaptureAuthorization" },
+        { "$ref": "#/$defs/HashedCaptureAuthorization" },
+        { "$ref": "#/$defs/ContentCaptureAuthorization" }
+      ]
+    },
+    "ResourceProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["createdByComponent", "createdByVersion", "sourceDigest"],
+      "properties": {
+        "createdByComponent": { "$ref": "#/$defs/ComponentId" },
+        "createdByVersion": { "$ref": "#/$defs/Version" },
+        "sourceDigest": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "ResourceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "$ref": "#/$defs/SafeIdentifier" },
+        "version": { "$ref": "#/$defs/Version" }
+      }
+    },
+    "EvaluatorReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluatorId", "evaluatorVersion", "kind"],
+      "properties": {
+        "evaluatorId": { "$ref": "#/$defs/Uuid" },
+        "evaluatorVersion": { "$ref": "#/$defs/Version" },
+        "kind": { "type": "string", "enum": ["deterministic", "local_judge", "human_review"] }
+      }
+    },
+    "ComponentBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["componentId", "componentVersion", "codeRevision", "imageDigest", "configurationRevision"],
+      "properties": {
+        "componentId": { "$ref": "#/$defs/ComponentId" },
+        "componentVersion": { "$ref": "#/$defs/Version" },
+        "codeRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "imageDigest": { "$ref": "#/$defs/Sha256" },
+        "configurationRevision": { "$ref": "#/$defs/SafeIdentifier" }
+      }
+    },
+    "ModelBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelId", "modelVersion", "modelDigest"],
+      "properties": {
+        "modelId": { "$ref": "#/$defs/SafeIdentifier" },
+        "modelVersion": { "$ref": "#/$defs/Version" },
+        "modelDigest": { "$ref": "#/$defs/Sha256" }
+      },
+      "description": "Exact model identity without a provider endpoint or credential."
+    },
+    "ExecutionLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeoutMs", "maxConcurrency", "maxAttempts", "maxCases", "maxInputBytes", "maxOutputBytes", "maxTokens"],
+      "properties": {
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 86400000 },
+        "maxConcurrency": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "maxCases": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "maxInputBytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+        "maxOutputBytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+        "maxTokens": { "type": "integer", "minimum": 0, "maximum": 100000000 }
+      }
+    },
+    "Reproducibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seed", "clockMode", "timeZone", "locale", "fixtureRevision", "promptRevision", "policyRevision"],
+      "properties": {
+        "seed": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "clockMode": { "type": "string", "enum": ["fixed", "recorded"] },
+        "timeZone": { "const": "UTC" },
+        "locale": { "type": "string", "minLength": 2, "maxLength": 35, "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$" },
+        "fixtureRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "promptRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "policyRevision": { "$ref": "#/$defs/SafeIdentifier" }
+      }
+    },
+    "ExecutionProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset", "suite", "evaluators", "components", "model", "deploymentRevision", "reproducibility"],
+      "properties": {
+        "dataset": { "$ref": "#/$defs/ResourceReference" },
+        "suite": { "$ref": "#/$defs/ResourceReference" },
+        "evaluators": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/EvaluatorReference" } },
+        "components": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/ComponentBinding" } },
+        "model": { "$ref": "#/$defs/ModelBinding" },
+        "deploymentRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "reproducibility": { "$ref": "#/$defs/Reproducibility" }
+      }
+    },
+    "FailureCode": {
+      "$ref": "failure-codes.schema.json"
+    },
+    "UntrustedContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "inputText": { "type": "string", "maxLength": 262144 },
+        "expectedText": { "type": "string", "maxLength": 262144 },
+        "contextTexts": { "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 65536 } }
+      },
+      "description": "Explicitly authorized inert evaluation data. Consumers must never interpret it as system instructions, permissions, configuration, paths, provider selection, endpoints, credentials, object keys, or execution authority."
+    },
+    "ExpectationMetadataIdentifier": {
+      "allOf": [
+        { "$ref": "#/$defs/SafeIdentifier" },
+        {
+          "not": {
+            "type": "string",
+            "pattern": "(?:^|[._:+-])(?:[Oo][Ww][Nn][Ee][Rr]|[Uu][Ss][Ee][Rr]|[Ii][Dd][Ee][Nn][Tt][Ii][Tt][Yy]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|[Hh][Aa][Ss][Hh]|[Dd][Ii][Gg][Ee][Ss][Tt]|[Ee][Nn][Dd][Pp][Oo][Ii][Nn][Tt]|[Uu][Rr][Ll]|[Uu][Rr][Ii]|[Pp][Aa][Tt][Hh]|[Ff][Ii][Ll][Ee][Nn][Aa][Mm][Ee]|[Aa][Uu][Tt][Hh]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Ss][Ee][Ss][Ss][Ii][Oo][Nn]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Oo][Bb][Jj][Ee][Cc][Tt][._:+-][Kk][Ee][Yy])(?:$|[._:+-])"
+          }
+        }
+      ],
+      "description": "Bounded expectation metadata identifier. Case-insensitive reserved privacy, identity, credential, network-locator, storage-locator, content, digest, authentication, and session segments are prohibited when delimited by the identifier grammar."
+    },
+    "EvidenceId": {
+      "$ref": "#/$defs/ExpectationMetadataIdentifier",
+      "description": "Opaque fixture-scoped evidence identity; never content, a storage locator, filename, URL, owner identity, or provider object key."
+    },
+    "ExactFieldExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fieldId", "expectedDigest", "normalization"],
+      "properties": {
+        "fieldId": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "expectedDigest": { "$ref": "#/$defs/Sha256" },
+        "normalization": { "type": "string", "enum": ["none", "canonical_json", "unicode_nfc", "trimmed_text"] }
+      },
+      "description": "Digest-only exact-field expectation over a service-owned typed replay projection."
+    },
+    "ExactExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fields"],
+      "properties": {
+        "fields": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/ExactFieldExpectation" } }
+      }
+    },
+    "SchemaExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaDigest", "dialect", "additionalFieldsPolicy"],
+      "properties": {
+        "schemaDigest": { "$ref": "#/$defs/Sha256" },
+        "dialect": { "type": "string", "enum": ["json_schema_2020_12", "openapi_3_1", "typed_projection_v1"] },
+        "additionalFieldsPolicy": { "type": "string", "enum": ["allow", "reject"] },
+        "requiredFieldIds": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/ExpectationMetadataIdentifier" } }
+      },
+      "description": "Schema identity and bounded structural expectations; schema bytes remain in an authorized artifact or reviewed fixture."
+    },
+    "RankedEvidenceExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "relevanceGrade", "citationRequired", "freshness"],
+      "properties": {
+        "evidenceId": { "$ref": "#/$defs/EvidenceId" },
+        "relevanceGrade": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "citationRequired": { "type": "boolean" },
+        "freshness": { "type": "string", "enum": ["current", "stale", "not_applicable"] }
+      }
+    },
+    "RetrievalExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rankedEvidence", "cutoffs"],
+      "properties": {
+        "rankedEvidence": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/RankedEvidenceExpectation" } },
+        "cutoffs": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "type": "integer", "minimum": 1, "maximum": 1000 } },
+        "irrelevantEvidenceIds": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/EvidenceId" } }
+      },
+      "description": "Bounded relevance, rank, citation, freshness, and irrelevant-result expectations for deterministic recall, precision, MRR, ranking, stale-result, and irrelevant-context evaluation."
+    },
+    "ContextExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiredEvidenceIds", "maxSelectedTokens", "truncation", "conflictHandling"],
+      "properties": {
+        "requiredEvidenceIds": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/EvidenceId" } },
+        "prohibitedEvidenceIds": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/$defs/EvidenceId" } },
+        "maxSelectedTokens": { "type": "integer", "minimum": 0, "maximum": 100000000 },
+        "truncation": { "type": "string", "enum": ["required", "allowed", "prohibited", "not_applicable"] },
+        "conflictHandling": { "type": "string", "enum": ["preserve_authority", "report_conflict", "reject_conflict", "not_applicable"] },
+        "injectionHandling": { "type": "string", "enum": ["ignore_untrusted_instructions", "reject_context", "not_applicable"] }
+      }
+    },
+    "ToolCallExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callId", "toolId", "argumentSchemaDigest", "argumentMatch", "outcome", "sideEffect", "idempotency"],
+      "properties": {
+        "callId": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "toolId": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "argumentSchemaDigest": { "$ref": "#/$defs/Sha256" },
+        "expectedArgumentDigest": { "$ref": "#/$defs/Sha256" },
+        "argumentMatch": { "type": "string", "enum": ["schema_only", "exact_digest"] },
+        "outcome": { "type": "string", "enum": ["completed", "denied", "confirmation_required", "failed", "not_executed"] },
+        "sideEffect": { "type": "string", "enum": ["none", "expected", "prohibited", "not_observed"] },
+        "idempotency": { "type": "string", "enum": ["required", "not_required", "not_applicable"] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "argumentMatch": { "const": "exact_digest" } }, "required": ["argumentMatch"] },
+          "then": { "type": "object", "required": ["expectedArgumentDigest"] },
+          "else": { "not": { "type": "object", "required": ["expectedArgumentDigest"] } }
+        }
+      ],
+      "description": "Declarative tool evidence only; it never grants tool selection, arguments, permission, confirmation, or execution authority."
+    },
+    "ToolExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expectedCalls", "maxRedundantCalls"],
+      "properties": {
+        "expectedCalls": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/ToolCallExpectation" }, "description": "An empty array explicitly expects no tool call." },
+        "prohibitedToolIds": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/ExpectationMetadataIdentifier" } },
+        "maxRedundantCalls": { "type": "integer", "minimum": 0, "maximum": 64 }
+      }
+    },
+    "PolicyExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "confirmation", "sensitiveDataHandling", "consequentialAction"],
+      "properties": {
+        "decision": { "type": "string", "enum": ["allow", "deny", "confirm"] },
+        "confirmation": { "type": "string", "enum": ["required", "not_required", "prohibited"] },
+        "sensitiveDataHandling": { "type": "string", "enum": ["allow_authorized", "redact", "deny", "not_applicable"] },
+        "consequentialAction": { "type": "string", "enum": ["execute_after_confirmation", "deny", "no_action", "not_applicable"] },
+        "policyRevision": { "$ref": "#/$defs/ExpectationMetadataIdentifier" }
+      },
+      "description": "Expected policy evidence only; it cannot authorize a policy, permission, identity, confirmation, or action."
+    },
+    "ClaimExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claimId", "support", "supportEvidenceIds", "citation"],
+      "properties": {
+        "claimId": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "support": { "type": "string", "enum": ["supported", "unsupported", "refused"] },
+        "supportEvidenceIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/EvidenceId" } },
+        "citation": { "type": "string", "enum": ["required", "optional", "prohibited", "not_applicable"] }
+      }
+    },
+    "GroundednessExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claims", "unsupportedClaimPolicy"],
+      "properties": {
+        "claims": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/ClaimExpectation" } },
+        "unsupportedClaimPolicy": { "type": "string", "enum": ["fail", "allow_refusal", "not_applicable"] }
+      }
+    },
+    "ResponseExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["properties", "maxBytes", "maxTokens"],
+      "properties": {
+        "expectedDigest": { "$ref": "#/$defs/Sha256" },
+        "normalization": { "type": "string", "enum": ["none", "unicode_nfc", "trimmed_text"] },
+        "requiredInstructionIds": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/ExpectationMetadataIdentifier" }, "description": "Opaque reviewed instruction identities emitted by a typed replay projection; never instruction text." },
+        "requiredStyleIds": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/ExpectationMetadataIdentifier" }, "description": "Opaque reviewed style identities emitted by a typed replay projection; never prompt or rubric text." },
+        "refusal": { "type": "string", "enum": ["required", "allowed", "prohibited"] },
+        "properties": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["non_empty", "valid_utf8", "schema_valid", "citation_present", "refusal_present", "requested_style_marker_present"] }
+        },
+        "maxBytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+        "maxTokens": { "type": "integer", "minimum": 0, "maximum": 100000000 }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "required": ["expectedDigest"] },
+          "then": { "type": "object", "required": ["normalization"] },
+          "else": { "not": { "type": "object", "required": ["normalization"] } }
+        }
+      ],
+      "description": "Deterministically observable response properties; semantic model judging remains outside this contract."
+    },
+    "ResourceExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "maxLatencyMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "maxQueueMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+        "maxInputBytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+        "maxOutputBytes": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+        "maxTokens": { "type": "integer", "minimum": 0, "maximum": 100000000 },
+        "maxMemoryBytes": { "type": "integer", "minimum": 0, "maximum": 1099511627776 },
+        "maxProviderCalls": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "maxConcurrency": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "maxOperations": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "minThroughputPerSecond": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000000 }
+      }
+    },
+    "CaseExpectations": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "exact": { "$ref": "#/$defs/ExactExpectation" },
+        "schema": { "$ref": "#/$defs/SchemaExpectation" },
+        "retrieval": { "$ref": "#/$defs/RetrievalExpectation" },
+        "context": { "$ref": "#/$defs/ContextExpectation" },
+        "tool": { "$ref": "#/$defs/ToolExpectation" },
+        "policy": { "$ref": "#/$defs/PolicyExpectation" },
+        "groundedness": { "$ref": "#/$defs/GroundednessExpectation" },
+        "response": { "$ref": "#/$defs/ResponseExpectation" },
+        "resource": { "$ref": "#/$defs/ResourceExpectation" }
+      },
+      "description": "Closed bounded deterministic expectations over typed replay evidence. Definitions are inert data and cannot select code, providers, endpoints, storage, policy, permissions, or execution."
+    },
+    "ManualThreshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluator", "metric", "aggregation", "operator", "value", "unit", "minimumSampleSize", "missingEvidencePolicy"],
+      "properties": {
+        "evaluator": { "$ref": "#/$defs/EvaluatorReference" },
+        "metric": { "$ref": "#/$defs/ExpectationMetadataIdentifier" },
+        "aggregation": { "type": "string", "enum": ["each", "minimum", "maximum", "mean", "p50", "p95", "p99", "total"] },
+        "operator": { "type": "string", "enum": ["greater_than_or_equal", "less_than_or_equal", "equal"] },
+        "value": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "unit": { "type": "string", "enum": ["ratio", "count", "milliseconds", "bytes", "tokens", "operations", "per_second"] },
+        "minimumSampleSize": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "missingEvidencePolicy": { "type": "string", "enum": ["fail", "inconclusive", "not_applicable"] }
+      },
+      "description": "Manual deterministic comparison metadata; it cannot promote a baseline, authorize execution, or alter resource limits."
+    },
+    "JudgeArtifactPurpose": {
+      "type": "string",
+      "enum": ["judge_prompt", "judge_rubric", "calibration_label", "human_review_comment"]
+    },
+    "JudgeArtifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "artifactVersion", "purpose", "digest"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/Uuid" },
+        "artifactVersion": { "$ref": "#/$defs/Version" },
+        "purpose": { "$ref": "#/$defs/JudgeArtifactPurpose" },
+        "digest": { "$ref": "#/$defs/Sha256" }
+      },
+      "description": "Opaque exact-version artifact identity; it is never a bucket, object key, path, filename, endpoint, credential, or content value."
+    },
+    "PromptArtifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "artifactVersion", "purpose", "digest"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/Uuid" },
+        "artifactVersion": { "$ref": "#/$defs/Version" },
+        "purpose": { "const": "judge_prompt" },
+        "digest": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "RubricArtifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "artifactVersion", "purpose", "digest"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/Uuid" },
+        "artifactVersion": { "$ref": "#/$defs/Version" },
+        "purpose": { "const": "judge_rubric" },
+        "digest": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "ReviewCommentArtifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "artifactVersion", "purpose", "digest"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/Uuid" },
+        "artifactVersion": { "$ref": "#/$defs/Version" },
+        "purpose": { "const": "human_review_comment" },
+        "digest": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "LocalJudgeModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "modelName", "modelVersion", "modelDigest"],
+      "properties": {
+        "provider": { "const": "local_ollama" },
+        "modelName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,126}(?::[A-Za-z0-9][A-Za-z0-9._+-]{0,63})?$",
+          "description": "Exact admitted local Ollama model name with an optional tag; registry names, URLs, paths, and endpoints are prohibited."
+        },
+        "modelVersion": { "$ref": "#/$defs/Version" },
+        "modelDigest": { "$ref": "#/$defs/Sha256" }
+      },
+      "description": "Exact admitted local model identity. A tag without an exact SHA-256 digest is invalid, and no endpoint or credential is portable."
+    },
+    "LocalJudgeBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeoutMs", "maxInputBytes", "maxOutputBytes", "maxOutputTokens", "maxContextTokens", "maxConcurrency", "temperature"],
+      "properties": {
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "maxInputBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "maxOutputBytes": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "maxOutputTokens": { "type": "integer", "minimum": 1, "maximum": 2048 },
+        "maxContextTokens": { "type": "integer", "minimum": 1, "maximum": 16384 },
+        "maxConcurrency": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "temperature": { "const": 0 }
+      },
+      "description": "Closed execution budget; it carries no provider option map, destination, tool, permission, or executable configuration."
+    },
+    "CalibrationReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calibrationId", "calibrationVersion"],
+      "properties": {
+        "calibrationId": { "$ref": "#/$defs/Uuid" },
+        "calibrationVersion": { "$ref": "#/$defs/Version" }
+      }
+    },
+    "JudgeDefinitionReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["judgeDefinitionId", "judgeDefinitionVersion"],
+      "properties": {
+        "judgeDefinitionId": { "$ref": "#/$defs/Uuid" },
+        "judgeDefinitionVersion": { "$ref": "#/$defs/Version" }
+      }
+    },
+    "QualificationReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["qualificationId", "qualificationVersion"],
+      "properties": {
+        "qualificationId": { "$ref": "#/$defs/Uuid" },
+        "qualificationVersion": { "$ref": "#/$defs/Version" }
+      }
+    },
+    "CalibrationThresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimumSampleCount", "agreementTolerance", "minimumAgreementRate", "maximumMeanAbsoluteError", "maximumDisagreementRate"],
+      "properties": {
+        "minimumSampleCount": { "const": 20 },
+        "agreementTolerance": { "const": 0.1 },
+        "minimumAgreementRate": { "const": 0.8 },
+        "maximumMeanAbsoluteError": { "const": 0.15 },
+        "maximumDisagreementRate": { "const": 0.2 }
+      },
+      "description": "Service-owned AURA-0094 calibration gates; artifacts and provider output cannot widen them."
+    },
+    "JudgeArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "artifactId", "artifactVersion", "artifactReferenceId", "purpose", "digest", "byteCount", "mediaType", "captureAuthorization", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "judge_artifact" },
+        "artifactId": { "$ref": "#/$defs/Uuid" },
+        "artifactVersion": { "$ref": "#/$defs/Version" },
+        "artifactReferenceId": { "$ref": "#/$defs/Uuid", "description": "Opaque service-owned reference; never a bucket, object key, path, filename, endpoint, or credential." },
+        "purpose": { "$ref": "#/$defs/JudgeArtifactPurpose" },
+        "digest": { "$ref": "#/$defs/Sha256" },
+        "byteCount": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "mediaType": { "type": "string", "enum": ["application/json", "text/plain", "text/markdown"] },
+        "captureAuthorization": { "$ref": "#/$defs/ContentCaptureAuthorization" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "description": "Metadata for authorized untrusted judge content stored outside portable records. Raw bytes never appear here."
+    },
+    "LocalJudgeDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "judgeDefinitionId", "judgeDefinitionVersion", "evaluator", "model", "prompt", "rubric", "calibration", "seed", "budget", "outputContract", "defaultDisposition", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "local_judge_definition" },
+        "judgeDefinitionId": { "$ref": "#/$defs/Uuid" },
+        "judgeDefinitionVersion": { "$ref": "#/$defs/Version" },
+        "evaluator": {
+          "allOf": [
+            { "$ref": "#/$defs/EvaluatorReference" },
+            { "type": "object", "properties": { "kind": { "const": "local_judge" } }, "required": ["kind"] }
+          ]
+        },
+        "model": { "$ref": "#/$defs/LocalJudgeModel" },
+        "prompt": { "$ref": "#/$defs/PromptArtifactBinding" },
+        "rubric": { "$ref": "#/$defs/RubricArtifactBinding" },
+        "calibration": { "$ref": "#/$defs/CalibrationReference" },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "budget": { "$ref": "#/$defs/LocalJudgeBudget" },
+        "outputContract": { "const": "local_judge_score_v1" },
+        "defaultDisposition": { "const": "advisory_only" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "description": "Immutable local-only judge admission. Changed model, digest, prompt, rubric, calibration, seed, or budget requires a new version."
+    },
+    "CalibrationDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "calibrationId", "calibrationVersion", "dataset", "suite", "evaluator", "judgeDefinition", "thresholds", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "calibration_definition" },
+        "calibrationId": { "$ref": "#/$defs/Uuid" },
+        "calibrationVersion": { "$ref": "#/$defs/Version" },
+        "dataset": { "$ref": "#/$defs/ResourceReference" },
+        "suite": { "$ref": "#/$defs/ResourceReference" },
+        "evaluator": { "$ref": "#/$defs/EvaluatorReference" },
+        "judgeDefinition": { "$ref": "#/$defs/JudgeDefinitionReference" },
+        "thresholds": { "$ref": "#/$defs/CalibrationThresholds" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "CalibrationLabel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "labelId", "labelVersion", "idempotencyKey", "calibration", "caseId", "resultId", "referenceScore", "referenceOutcome", "referenceLabel", "authorizationRecordId", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "calibration_label" },
+        "labelId": { "$ref": "#/$defs/Uuid" },
+        "labelVersion": { "$ref": "#/$defs/Version" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "calibration": { "$ref": "#/$defs/CalibrationReference" },
+        "caseId": { "$ref": "#/$defs/Uuid" },
+        "resultId": { "$ref": "#/$defs/Uuid" },
+        "referenceScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "referenceOutcome": { "type": "string", "enum": ["pass", "fail", "inconclusive"] },
+        "referenceLabel": { "type": "string", "enum": ["accepted", "rejected", "needs_review"] },
+        "commentArtifact": { "$ref": "#/$defs/ReviewCommentArtifactBinding" },
+        "authorizationRecordId": { "$ref": "#/$defs/Uuid", "description": "Opaque owner-authorization record; it contains no owner or session identity." },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "HumanReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "reviewId", "reviewVersion", "idempotencyKey", "calibration", "caseId", "resultId", "scoreId", "reviewScore", "reviewOutcome", "reviewLabel", "disagreement", "authorizationRecordId", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "human_review" },
+        "reviewId": { "$ref": "#/$defs/Uuid" },
+        "reviewVersion": { "$ref": "#/$defs/Version" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "calibration": { "$ref": "#/$defs/CalibrationReference" },
+        "caseId": { "$ref": "#/$defs/Uuid" },
+        "resultId": { "$ref": "#/$defs/Uuid" },
+        "scoreId": { "$ref": "#/$defs/Uuid" },
+        "reviewScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reviewOutcome": { "type": "string", "enum": ["pass", "fail", "inconclusive"] },
+        "reviewLabel": { "type": "string", "enum": ["accepted", "rejected", "needs_review"] },
+        "disagreement": { "type": "string", "enum": ["none", "within_tolerance", "score_disagreement", "outcome_disagreement", "insufficient_evidence"] },
+        "commentArtifact": { "$ref": "#/$defs/ReviewCommentArtifactBinding" },
+        "authorizationRecordId": { "$ref": "#/$defs/Uuid", "description": "Opaque owner-authorization record; it contains no reviewer, owner, or session identity." },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "CalibrationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "calibrationResultId", "calibration", "judgeDefinition", "model", "prompt", "rubric", "seed", "budget", "sampleCount", "agreementTolerance", "agreementRate", "meanAbsoluteError", "disagreementRate", "eligibility", "scoreDisposition", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "calibration_result" },
+        "calibrationResultId": { "$ref": "#/$defs/Uuid" },
+        "calibration": { "$ref": "#/$defs/CalibrationReference" },
+        "judgeDefinition": { "$ref": "#/$defs/JudgeDefinitionReference" },
+        "model": { "$ref": "#/$defs/LocalJudgeModel" },
+        "prompt": { "$ref": "#/$defs/PromptArtifactBinding" },
+        "rubric": { "$ref": "#/$defs/RubricArtifactBinding" },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "budget": { "$ref": "#/$defs/LocalJudgeBudget" },
+        "sampleCount": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "agreementTolerance": { "const": 0.1 },
+        "agreementRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "meanAbsoluteError": { "type": "number", "minimum": 0, "maximum": 1 },
+        "disagreementRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "eligibility": { "type": "string", "enum": ["eligible", "ineligible"] },
+        "scoreDisposition": { "const": "advisory_only" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "eligibility": { "const": "eligible" } }, "required": ["eligibility"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "sampleCount": { "type": "integer", "minimum": 20 },
+              "agreementRate": { "type": "number", "minimum": 0.8 },
+              "meanAbsoluteError": { "type": "number", "maximum": 0.15 },
+              "disagreementRate": { "type": "number", "maximum": 0.2 }
+            }
+          },
+          "else": {
+            "not": {
+              "type": "object",
+              "properties": {
+                "sampleCount": { "type": "integer", "minimum": 20 },
+                "agreementRate": { "type": "number", "minimum": 0.8 },
+                "meanAbsoluteError": { "type": "number", "maximum": 0.15 },
+                "disagreementRate": { "type": "number", "maximum": 0.2 }
+              },
+              "required": ["sampleCount", "agreementRate", "meanAbsoluteError", "disagreementRate"]
+            }
+          }
+        }
+      ],
+      "description": "Content-free deterministic calibration aggregate. Eligibility remains advisory and never qualifies a judge by itself."
+    },
+    "JudgeQualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "qualificationId", "qualificationVersion", "idempotencyKey", "state", "actionMode", "dataset", "suite", "evaluator", "judgeDefinition", "model", "prompt", "rubric", "calibration", "calibrationResultId", "calibrationEligibility", "authorizationRecordId", "scoreDisposition", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "judge_qualification" },
+        "qualificationId": { "$ref": "#/$defs/Uuid" },
+        "qualificationVersion": { "$ref": "#/$defs/Version" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "state": { "type": "string", "enum": ["qualified", "revoked"] },
+        "actionMode": { "const": "manual_owner_action" },
+        "dataset": { "$ref": "#/$defs/ResourceReference" },
+        "suite": { "$ref": "#/$defs/ResourceReference" },
+        "evaluator": { "$ref": "#/$defs/EvaluatorReference" },
+        "judgeDefinition": { "$ref": "#/$defs/JudgeDefinitionReference" },
+        "model": { "$ref": "#/$defs/LocalJudgeModel" },
+        "prompt": { "$ref": "#/$defs/PromptArtifactBinding" },
+        "rubric": { "$ref": "#/$defs/RubricArtifactBinding" },
+        "calibration": { "$ref": "#/$defs/CalibrationReference" },
+        "calibrationResultId": { "$ref": "#/$defs/Uuid" },
+        "calibrationEligibility": { "const": "eligible", "description": "Consumers must verify this against the exact referenced CalibrationResult before admitting the manual action." },
+        "authorizationRecordId": { "$ref": "#/$defs/Uuid", "description": "Opaque manual owner-authorization record without owner identity." },
+        "scoreDisposition": { "type": "string", "enum": ["calibrated_enabled", "advisory_only"] },
+        "qualifiedAt": { "$ref": "#/$defs/Timestamp" },
+        "revocationRecordId": { "$ref": "#/$defs/Uuid", "description": "Opaque manual revocation authorization without owner identity." },
+        "revokedAt": { "$ref": "#/$defs/Timestamp" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "state": { "const": "qualified" } }, "required": ["state"] },
+          "then": { "type": "object", "properties": { "scoreDisposition": { "const": "calibrated_enabled" } }, "required": ["qualifiedAt"], "not": { "anyOf": [{ "required": ["revocationRecordId"] }, { "required": ["revokedAt"] }] } },
+          "else": { "type": "object", "properties": { "scoreDisposition": { "const": "advisory_only" } }, "required": ["qualifiedAt", "revocationRecordId", "revokedAt"] }
+        }
+      ],
+      "description": "Explicit immutable manual qualification or revocation audit for exact versions. It does not promote a baseline."
+    },
+    "JudgeEnsembleMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memberId", "kind", "evaluator", "weightPpm"],
+      "properties": {
+        "memberId": { "$ref": "#/$defs/SafeIdentifier" },
+        "kind": { "type": "string", "enum": ["deterministic", "local_judge"] },
+        "evaluator": { "$ref": "#/$defs/EvaluatorReference" },
+        "judgeDefinition": { "$ref": "#/$defs/JudgeDefinitionReference" },
+        "qualification": { "$ref": "#/$defs/QualificationReference" },
+        "weightPpm": { "type": "integer", "minimum": 1, "maximum": 1000000 }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "kind": { "const": "local_judge" } }, "required": ["kind"] },
+          "then": { "type": "object", "required": ["judgeDefinition", "qualification"] },
+          "else": { "not": { "anyOf": [{ "required": ["judgeDefinition"] }, { "required": ["qualification"] }] } }
+        }
+      ],
+      "description": "One exact weighted score source. Consumers require all weights to total exactly one million parts per million."
+    },
+    "JudgeEnsemble": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "ensembleId", "ensembleVersion", "evaluator", "members", "combination", "missingMemberDisposition", "inconclusiveMemberDisposition", "admissionRule", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "judge_ensemble" },
+        "ensembleId": { "$ref": "#/$defs/Uuid" },
+        "ensembleVersion": { "$ref": "#/$defs/Version" },
+        "evaluator": { "$ref": "#/$defs/EvaluatorReference" },
+        "members": { "type": "array", "minItems": 2, "maxItems": 16, "items": { "$ref": "#/$defs/JudgeEnsembleMember" } },
+        "combination": { "const": "weighted_mean_ppm" },
+        "missingMemberDisposition": { "const": "advisory_only" },
+        "inconclusiveMemberDisposition": { "const": "advisory_only" },
+        "admissionRule": { "const": "all_local_judges_exactly_qualified" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "description": "Closed deterministic ensemble definition. Missing, incompatible, inconclusive, advisory, or revoked members cannot silently produce an enabled result."
+    },
+    "LocalJudgeScoreMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["judgeDefinition", "model", "prompt", "rubric", "calibration", "seed", "budget", "scoreDisposition", "disagreement"],
+      "properties": {
+        "judgeDefinition": { "$ref": "#/$defs/JudgeDefinitionReference" },
+        "model": { "$ref": "#/$defs/LocalJudgeModel" },
+        "prompt": { "$ref": "#/$defs/PromptArtifactBinding" },
+        "rubric": { "$ref": "#/$defs/RubricArtifactBinding" },
+        "calibration": { "$ref": "#/$defs/CalibrationReference" },
+        "seed": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "budget": { "$ref": "#/$defs/LocalJudgeBudget" },
+        "qualification": { "$ref": "#/$defs/QualificationReference" },
+        "ensemble": { "$ref": "#/$defs/ResourceReference" },
+        "scoreDisposition": { "type": "string", "enum": ["advisory_only", "calibrated_enabled"] },
+        "disagreement": { "type": "string", "enum": ["none", "within_tolerance", "score_disagreement", "outcome_disagreement", "insufficient_evidence"] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "scoreDisposition": { "const": "calibrated_enabled" } }, "required": ["scoreDisposition"] },
+          "then": { "type": "object", "required": ["qualification"] },
+          "else": { "not": { "type": "object", "required": ["qualification"] } }
+        }
+      ],
+      "description": "Content-free exact judge provenance for a Score. Provider responses and rationale are never portable."
+    },
+    "Dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "datasetId", "datasetVersion", "sourceKind", "scopes", "captureAuthorization", "caseIds", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "dataset" },
+        "datasetId": { "$ref": "#/$defs/Uuid" },
+        "datasetVersion": { "$ref": "#/$defs/Version" },
+        "sourceKind": { "type": "string", "enum": ["synthetic", "owner_supplied", "captured"] },
+        "scopes": { "$ref": "#/$defs/Scopes" },
+        "captureAuthorization": { "$ref": "#/$defs/CaptureAuthorization" },
+        "caseIds": { "type": "array", "minItems": 1, "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "Case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "caseId", "caseVersion", "dataset", "sourceKind", "scopes", "captureAuthorization", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "case" },
+        "caseId": { "$ref": "#/$defs/Uuid" },
+        "caseVersion": { "$ref": "#/$defs/Version" },
+        "dataset": { "$ref": "#/$defs/ResourceReference" },
+        "sourceKind": { "type": "string", "enum": ["synthetic", "owner_supplied", "captured"] },
+        "scopes": { "$ref": "#/$defs/Scopes" },
+        "captureAuthorization": { "$ref": "#/$defs/CaptureAuthorization" },
+        "content": { "$ref": "#/$defs/UntrustedContent" },
+        "contentDigest": { "$ref": "#/$defs/Sha256" },
+        "inputArtifactIds": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" }, "description": "Opaque references to artifacts whose authorization must be verified by consumers as at least as restrictive as this case's capture authorization." },
+        "expectations": { "$ref": "#/$defs/CaseExpectations" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "captureAuthorization": { "type": "object", "properties": { "captureClassification": { "const": "metadata_only" } }, "required": ["captureClassification"] } }, "required": ["captureAuthorization"] },
+          "then": { "not": { "anyOf": [{ "type": "object", "required": ["content"] }, { "type": "object", "required": ["contentDigest"] }, { "type": "object", "required": ["inputArtifactIds"] }] } }
+        },
+        {
+          "if": { "type": "object", "properties": { "captureAuthorization": { "type": "object", "properties": { "captureClassification": { "const": "hashed" } }, "required": ["captureClassification"] } }, "required": ["captureAuthorization"] },
+          "then": { "type": "object", "required": ["contentDigest"], "not": { "anyOf": [{ "type": "object", "required": ["content"] }, { "type": "object", "required": ["inputArtifactIds"] }] } }
+        },
+        {
+          "if": { "type": "object", "properties": { "captureAuthorization": { "type": "object", "properties": { "captureClassification": { "enum": ["redacted", "sampled_content", "full_content"] } }, "required": ["captureClassification"] } }, "required": ["captureAuthorization"] },
+          "then": { "anyOf": [{ "type": "object", "required": ["content"] }, { "type": "object", "required": ["inputArtifactIds"] }] }
+        }
+      ]
+    },
+    "Suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "suiteId", "suiteVersion", "dataset", "evaluators", "components", "limits", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "suite" },
+        "suiteId": { "$ref": "#/$defs/Uuid" },
+        "suiteVersion": { "$ref": "#/$defs/Version" },
+        "dataset": { "$ref": "#/$defs/ResourceReference" },
+        "evaluators": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/EvaluatorReference" } },
+        "components": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/ComponentBinding" } },
+        "variantBindings": { "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/$defs/ExperimentVariant" } },
+        "limits": { "$ref": "#/$defs/ExecutionLimits" },
+        "manualThresholds": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/ManualThreshold" } },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "Evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "evaluatorId", "evaluatorVersion", "kind", "metric", "componentIds", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "evaluator" },
+        "evaluatorId": { "$ref": "#/$defs/Uuid" },
+        "evaluatorVersion": { "$ref": "#/$defs/Version" },
+        "kind": { "type": "string", "enum": ["deterministic", "local_judge", "human_review"] },
+        "metric": { "$ref": "#/$defs/SafeIdentifier" },
+        "componentIds": { "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/ComponentId" } },
+        "rubricVersion": { "$ref": "#/$defs/Version" },
+        "calibrationVersion": { "$ref": "#/$defs/Version" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "kind": { "enum": ["local_judge", "human_review"] } }, "required": ["kind"] },
+          "then": { "type": "object", "required": ["rubricVersion"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "kind": { "const": "local_judge" } }, "required": ["kind"] },
+          "then": { "type": "object", "required": ["calibrationVersion"] }
+        }
+      ]
+    },
+    "Score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "scoreId", "resultId", "caseId", "idempotencyKey", "captureAuthorization", "evaluator", "component", "metric", "evidenceStatus", "uncertainty", "limits", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "score" },
+        "scoreId": { "$ref": "#/$defs/Uuid" },
+        "resultId": { "$ref": "#/$defs/Uuid" },
+        "caseId": { "$ref": "#/$defs/Uuid" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "captureAuthorization": { "$ref": "#/$defs/CaptureAuthorization" },
+        "evaluator": { "$ref": "#/$defs/EvaluatorReference" },
+        "component": { "$ref": "#/$defs/ComponentBinding" },
+        "metric": { "$ref": "#/$defs/SafeIdentifier" },
+        "evidenceStatus": { "type": "string", "enum": ["observed", "not_observed", "not_applicable"] },
+        "value": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "outcome": { "type": "string", "enum": ["pass", "fail", "inconclusive"] },
+        "rubricVersion": { "$ref": "#/$defs/Version" },
+        "calibrationVersion": { "$ref": "#/$defs/Version" },
+        "localJudge": { "$ref": "#/$defs/LocalJudgeScoreMetadata" },
+        "uncertainty": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "lower", "upper"],
+          "properties": {
+            "method": { "type": "string", "enum": ["none", "calibrated_interval", "human_disagreement"] },
+            "lower": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+            "upper": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 }
+          }
+        },
+        "limits": { "$ref": "#/$defs/ExecutionLimits" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ExecutionProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "evidenceStatus": { "const": "observed" } }, "required": ["evidenceStatus"] },
+          "then": { "type": "object", "required": ["value", "outcome"] },
+          "else": { "not": { "anyOf": [{ "type": "object", "required": ["value"] }, { "type": "object", "required": ["outcome"] }] } }
+        },
+        {
+          "if": { "type": "object", "properties": { "evaluator": { "type": "object", "properties": { "kind": { "enum": ["local_judge", "human_review"] } }, "required": ["kind"] } }, "required": ["evaluator"] },
+          "then": { "type": "object", "required": ["rubricVersion"] }
+        },
+        {
+          "if": { "type": "object", "properties": { "evaluator": { "type": "object", "properties": { "kind": { "const": "local_judge" } }, "required": ["kind"] } }, "required": ["evaluator"] },
+          "then": { "type": "object", "required": ["calibrationVersion"] }
+        },
+        {
+          "if": { "type": "object", "required": ["localJudge"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "evaluator": { "type": "object", "properties": { "kind": { "const": "local_judge" } }, "required": ["kind"] },
+              "value": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      ]
+    },
+    "Request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "requestId", "jobId", "requestVersion", "idempotencyKey", "captureAuthorization", "provenance", "limits", "deadlineAt", "retentionMode", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "request" },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "jobId": { "$ref": "#/$defs/Uuid" },
+        "requestVersion": { "$ref": "#/$defs/Version" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "captureAuthorization": { "$ref": "#/$defs/CaptureAuthorization" },
+        "provenance": { "$ref": "#/$defs/ExecutionProvenance" },
+        "limits": { "$ref": "#/$defs/ExecutionLimits" },
+        "deadlineAt": { "$ref": "#/$defs/Timestamp" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "description": "References exact versioned evaluation inputs; raw case content and artifacts are never embedded in a request."
+    },
+    "Result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "resultId", "requestId", "jobId", "attemptId", "idempotencyKey", "status", "captureAuthorization", "provenance", "limits", "scoreIds", "artifactIds", "retentionMode", "createdAt", "completedAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "result" },
+        "resultId": { "$ref": "#/$defs/Uuid" },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "jobId": { "$ref": "#/$defs/Uuid" },
+        "attemptId": { "$ref": "#/$defs/Uuid" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "status": { "type": "string", "enum": ["completed", "cancelled", "failed"] },
+        "captureAuthorization": { "$ref": "#/$defs/CaptureAuthorization" },
+        "provenance": { "$ref": "#/$defs/ExecutionProvenance" },
+        "limits": { "$ref": "#/$defs/ExecutionLimits" },
+        "scoreIds": { "type": "array", "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } },
+        "artifactIds": { "type": "array", "maxItems": 10000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } },
+        "failureCode": { "$ref": "#/$defs/FailureCode" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "completedAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "failed" } }, "required": ["status"] },
+          "then": { "type": "object", "required": ["failureCode"] },
+          "else": { "not": { "type": "object", "required": ["failureCode"] } }
+        }
+      ]
+    },
+    "Artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "artifactId", "artifactReferenceId", "requestId", "resultId", "idempotencyKey", "mediaClassification", "mediaType", "byteCount", "integrity", "captureAuthorization", "limits", "deletionScopes", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "artifact" },
+        "artifactId": { "$ref": "#/$defs/Uuid" },
+        "artifactReferenceId": { "$ref": "#/$defs/Uuid", "description": "Opaque service-owned reference; never an endpoint, bucket, path, filename, or provider object key." },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "resultId": { "$ref": "#/$defs/Uuid" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "mediaClassification": { "type": "string", "enum": ["evaluation_input", "evaluation_output", "evaluation_context", "evaluation_evidence", "evaluation_report"] },
+        "mediaType": { "type": "string", "enum": ["application/json", "application/octet-stream", "text/plain", "text/markdown", "image/png", "image/jpeg", "audio/wav"] },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+        "integrity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "digest"],
+          "properties": { "algorithm": { "const": "sha256" }, "digest": { "$ref": "#/$defs/Sha256" } }
+        },
+        "captureAuthorization": { "$ref": "#/$defs/ContentCaptureAuthorization" },
+        "limits": { "$ref": "#/$defs/ExecutionLimits" },
+        "deletionScopes": { "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": { "type": "string", "enum": ["job", "dataset", "suite", "cutoff", "purge_all"] } },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ExecutionProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "ExperimentVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variantId", "components", "model", "configurationRevision", "promptRevision", "policyRevision", "deploymentRevision"],
+      "properties": {
+        "variantId": { "$ref": "#/$defs/SafeIdentifier" },
+        "components": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/ComponentBinding" } },
+        "model": { "$ref": "#/$defs/ModelBinding" },
+        "configurationRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "promptRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "policyRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "deploymentRevision": { "$ref": "#/$defs/SafeIdentifier" }
+      }
+    },
+    "Cohort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cohortId", "caseIds"],
+      "properties": {
+        "cohortId": { "$ref": "#/$defs/SafeIdentifier" },
+        "caseIds": { "type": "array", "minItems": 1, "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } }
+      }
+    },
+    "Experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "experimentId", "experimentVersion", "suite", "variants", "cohorts", "captureAuthorization", "limits", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "experiment" },
+        "experimentId": { "$ref": "#/$defs/Uuid" },
+        "experimentVersion": { "$ref": "#/$defs/Version" },
+        "suite": { "$ref": "#/$defs/ResourceReference" },
+        "variants": { "type": "array", "minItems": 2, "maxItems": 16, "uniqueItems": true, "items": { "$ref": "#/$defs/ExperimentVariant" } },
+        "cohorts": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/$defs/Cohort" } },
+        "captureAuthorization": { "$ref": "#/$defs/CaptureAuthorization" },
+        "limits": { "$ref": "#/$defs/ExecutionLimits" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "Threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "operator", "value", "minimumSampleSize"],
+      "properties": {
+        "metric": { "$ref": "#/$defs/SafeIdentifier" },
+        "operator": { "type": "string", "enum": ["greater_than_or_equal", "less_than_or_equal"] },
+        "value": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "minimumSampleSize": { "type": "integer", "minimum": 1, "maximum": 100000 }
+      }
+    },
+    "Baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "baselineId", "baselineVersion", "idempotencyKey", "state", "suite", "sourceResultIds", "thresholds", "captureAuthorization", "limits", "immutable", "promotionMode", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "baseline" },
+        "baselineId": { "$ref": "#/$defs/Uuid" },
+        "baselineVersion": { "$ref": "#/$defs/Version" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "state": { "type": "string", "enum": ["candidate", "promoted"] },
+        "suite": { "$ref": "#/$defs/ResourceReference" },
+        "sourceResultIds": { "type": "array", "minItems": 1, "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } },
+        "thresholds": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/Threshold" } },
+        "captureAuthorization": { "$ref": "#/$defs/CaptureAuthorization" },
+        "limits": { "$ref": "#/$defs/ExecutionLimits" },
+        "immutable": { "const": true },
+        "promotionMode": { "const": "manual_owner_action" },
+        "manualPromotionRecordId": { "$ref": "#/$defs/Uuid", "description": "Opaque authorization record; no owner identity is included." },
+        "promotedAt": { "$ref": "#/$defs/Timestamp" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ExecutionProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "state": { "const": "promoted" } }, "required": ["state"] },
+          "then": { "type": "object", "required": ["manualPromotionRecordId", "promotedAt"] },
+          "else": { "not": { "anyOf": [{ "type": "object", "required": ["manualPromotionRecordId"] }, { "type": "object", "required": ["promotedAt"] }] } }
+        }
+      ],
+      "description": "Immutable database-owned evaluation baseline. This contract does not authorize mutation of protected repository baselines or automatic promotion."
+    },
+    "ComparisonEvidenceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "digest", "version"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["run", "trace", "result", "score", "artifact_reference"] },
+        "id": { "$ref": "#/$defs/Uuid" },
+        "digest": { "$ref": "#/$defs/Sha256" },
+        "version": { "$ref": "#/$defs/Version" }
+      },
+      "description": "Opaque content-free evidence identity. It is never an artifact locator, filename, endpoint, credential, owner identity, or raw evaluation content."
+    },
+    "RegressionMetricComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "metricClass", "unit", "aggregation", "direction", "comparisonMode", "baselineValue", "candidateValue", "thresholdValue", "minimumSampleSize", "baselineSampleSize", "candidateSampleSize", "missingEvidencePolicy", "outcome"],
+      "properties": {
+        "metric": { "$ref": "#/$defs/SafeIdentifier" },
+        "metricClass": { "type": "string", "enum": ["operational", "quality"] },
+        "unit": { "type": "string", "enum": ["ratio", "count", "milliseconds", "bytes", "tokens", "operations", "per_second", "score"] },
+        "aggregation": { "type": "string", "enum": ["minimum", "maximum", "mean", "p50", "p95", "p99", "total"] },
+        "direction": { "type": "string", "enum": ["higher_is_better", "lower_is_better"] },
+        "comparisonMode": { "type": "string", "enum": ["absolute", "relative"] },
+        "baselineValue": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "candidateValue": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "difference": { "type": "number", "minimum": -1000000000000000, "maximum": 1000000000000000 },
+        "relativeChange": { "type": "number", "minimum": -1000000, "maximum": 1000000 },
+        "thresholdValue": { "type": "number", "minimum": 0, "maximum": 1000000000000000 },
+        "minimumSampleSize": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "baselineSampleSize": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "candidateSampleSize": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "missingEvidencePolicy": { "type": "string", "enum": ["regressed", "inconclusive", "not_applicable"] },
+        "outcome": { "type": "string", "enum": ["regressed", "unchanged", "inconclusive", "unavailable", "incompatible"] }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "comparisonMode": { "const": "absolute" } }, "required": ["comparisonMode"] },
+          "then": { "type": "object", "required": ["difference"], "not": { "type": "object", "required": ["relativeChange"] } },
+          "else": { "type": "object", "required": ["relativeChange"], "not": { "type": "object", "required": ["difference"] } }
+        }
+      ],
+      "description": "One deterministic finite comparison. It makes no statistical-significance, probability, confidence, or change-point claim."
+    },
+    "AttributionCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rank", "bindingKind", "beforeRevision", "afterRevision", "affectedCohortIds", "unaffectedCohortIds", "evidence"],
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "bindingKind": { "type": "string", "enum": ["component", "model", "deployment", "prompt", "policy", "configuration"] },
+        "componentId": { "$ref": "#/$defs/ComponentId" },
+        "beforeRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "afterRevision": { "$ref": "#/$defs/SafeIdentifier" },
+        "affectedCohortIds": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/SafeIdentifier" } },
+        "unaffectedCohortIds": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/SafeIdentifier" } },
+        "evidence": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/ComparisonEvidenceReference" } }
+      },
+      "description": "Evidence-backed content-free correlation only. Rank is deterministic ordering, not probability or causal confidence."
+    },
+    "RegressionDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "regressionId", "regressionVersion", "idempotencyKey", "experiment", "baseline", "variantId", "cohortIds", "baselineResultIds", "candidateResultIds", "comparisons", "decision", "evidenceState", "evidence", "captureClassification", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "regression_decision" },
+        "regressionId": { "$ref": "#/$defs/Uuid" },
+        "regressionVersion": { "$ref": "#/$defs/Version" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "experiment": { "$ref": "#/$defs/ResourceReference" },
+        "baseline": { "$ref": "#/$defs/ResourceReference" },
+        "variantId": { "$ref": "#/$defs/SafeIdentifier" },
+        "cohortIds": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/SafeIdentifier" } },
+        "baselineResultIds": { "type": "array", "minItems": 1, "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } },
+        "candidateResultIds": { "type": "array", "minItems": 1, "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } },
+        "comparisons": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/RegressionMetricComparison" } },
+        "decision": { "type": "string", "enum": ["regressed", "unchanged", "inconclusive", "unavailable", "incompatible"] },
+        "evidenceState": { "type": "string", "enum": ["complete", "partial", "insufficient", "missing", "incompatible", "late"] },
+        "evidence": { "type": "array", "maxItems": 512, "uniqueItems": true, "items": { "$ref": "#/$defs/ComparisonEvidenceReference" } },
+        "captureClassification": { "const": "metadata_only" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "description": "Persisted deterministic absolute or relative comparison. Missing, partial, late, incompatible, or insufficient evidence remains explicit and cannot silently pass."
+    },
+    "AttributionReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "attributionId", "attributionVersion", "regression", "availability", "candidates", "captureClassification", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "attribution_report" },
+        "attributionId": { "$ref": "#/$defs/Uuid" },
+        "attributionVersion": { "$ref": "#/$defs/Version" },
+        "regression": { "$ref": "#/$defs/ResourceReference" },
+        "availability": { "type": "string", "enum": ["available", "unavailable", "insufficient_evidence", "incompatible"] },
+        "candidates": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/AttributionCandidate" } },
+        "captureClassification": { "const": "metadata_only" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ResourceProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "availability": { "const": "available" } }, "required": ["availability"] },
+          "then": { "type": "object", "properties": { "candidates": { "type": "array", "minItems": 1 } } },
+          "else": { "type": "object", "properties": { "candidates": { "type": "array", "maxItems": 0 } } }
+        }
+      ],
+      "description": "Content-free evidence-backed attribution. An unavailable report never synthesizes a cause."
+    },
+    "Replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "resourceType", "replayId", "replayVersion", "sourceResultId", "caseIds", "captureAuthorization", "limits", "idempotencyKey", "retentionMode", "provenance", "createdAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "resourceType": { "const": "replay" },
+        "replayId": { "$ref": "#/$defs/Uuid" },
+        "replayVersion": { "$ref": "#/$defs/Version" },
+        "sourceResultId": { "$ref": "#/$defs/Uuid" },
+        "caseIds": { "type": "array", "minItems": 1, "maxItems": 100000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" } },
+        "inputArtifactIds": { "type": "array", "minItems": 1, "maxItems": 10000, "uniqueItems": true, "items": { "$ref": "#/$defs/Uuid" }, "description": "Opaque references to artifacts whose authorization must be verified by consumers as at least as restrictive as this replay's capture authorization." },
+        "captureAuthorization": { "$ref": "#/$defs/CaptureAuthorization" },
+        "limits": { "$ref": "#/$defs/ExecutionLimits" },
+        "idempotencyKey": { "$ref": "#/$defs/IdempotencyKey" },
+        "retentionMode": { "$ref": "#/$defs/RetentionMode" },
+        "provenance": { "$ref": "#/$defs/ExecutionProvenance" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "captureAuthorization": { "type": "object", "properties": { "captureClassification": { "enum": ["metadata_only", "hashed"] } }, "required": ["captureClassification"] } }, "required": ["captureAuthorization"] },
+          "then": { "not": { "type": "object", "required": ["inputArtifactIds"] } }
+        },
+        {
+          "if": { "type": "object", "properties": { "captureAuthorization": { "type": "object", "properties": { "captureClassification": { "enum": ["redacted", "sampled_content", "full_content"] } }, "required": ["captureClassification"] } }, "required": ["captureAuthorization"] },
+          "then": { "type": "object", "required": ["inputArtifactIds"] }
+        }
+      ],
+      "description": "Declarative replay evidence only; it does not select an executor, provider, queue, or storage implementation."
+    }
+  }
+}

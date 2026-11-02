@@ -1,0 +1,93 @@
+id: AURA-0036
+title: Remove the redundant header run-inspector trigger
+status: integrated
+change_class: bugfix
+intent: >
+  Keep run inspection available from the conversation library row menu while
+  removing the duplicate Runs control beside the conversation title.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/components-and-interactions.md
+  decisions:
+    - User request to retain only the conversation-tree Inspect runs action
+  contracts: []
+feature_references: [RUN-009]
+ownership_zones:
+  - frontend.aura.interaction.conversations
+  - frontend.aura-web.e2e
+allowed_paths:
+  - work-items/active/AURA-0036.yaml
+  - work-items/archived/AURA-0036.yaml
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.css
+  - frontend/apps/aura-web-e2e/src/conversation-productivity.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - tooling/architecture/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - frontend/libs/platform/**
+  - frontend/libs/observatory/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: frontend.aura.interaction.conversations
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: none
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation: [frontend_worker]
+  review: [general_reviewer]
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 2
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - No Runs button is rendered beside the conversation title.
+  - Inspect runs remains available from each conversation row menu and opens the existing drawer.
+  - Closing the drawer restores focus to the originating row-menu button.
+  - Focused tests and required repository checks pass before one local commit.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0036.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0036.yaml
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/conversation-productivity.spec.ts --config playwright.config.ts --project=desktop --grep run
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0036.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

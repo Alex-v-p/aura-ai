@@ -1,0 +1,219 @@
+id: AURA-0134
+title: Add Aura Web scheduled briefing management
+status: integrated
+change_class: repository_governance
+intent: >
+  Complete the scheduled-briefing product slice in Aura Web with safe creation,
+  schedule management, manually retained history, private result inspection,
+  and notification deep links, while adding only the narrow additive Core
+  capability discovery required to avoid hard-coding an internal execution
+  policy identifier in the browser.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - work-items/archived/AURA-0132.yaml
+    - work-items/archived/AURA-0133.yaml
+    - The owner authorized implementation of all four initiative stages; AURA-0134 completes the Aura Web portion of Stage 3 before the separate Stage 4 decision gate.
+    - The owner-selected initial briefing product uses calendar events reminders and explicitly selected documents, excludes memory, runs once daily in an explicit IANA timezone, delivers a private notification link to a durable result, and retains history until explicit deletion.
+    - Aura Web must discover the one supported briefing execution policy and its fixed budgets from an additive owner-authenticated Core capability resource. The browser may not hard-code the internal policy UUID, infer provider or model configuration, or receive private runtime state.
+    - The capability resource is metadata-only and returns the canonical execution policy identifier revision and fixed public limits needed to construct the existing create request; it exposes no owner identity source data provider name model name prompt content tool grants or governed run evidence.
+    - The existing create pause resume schedule-delete occurrence-history-delete and result-content-delete contract remains authoritative. No schedule edit occurrence-cancel retry or automatic retention behavior is added.
+    - One briefing feature library owns generated-client adaptation in-memory state creation draft behavior schedule/history/result presentation and mutation recovery. The shell owns only routes navigation and provider composition.
+    - Notification and Today compact surfaces remain content-free. A briefing notification deep-links by its opaque schedule and occurrence identifiers to the authenticated canonical occurrence route; result identifiers and output never enter URLs compact cards router state browser storage or service-worker caches.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AUT-004
+  - AUT-011
+  - AUT-013
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUT-020
+  - AUI-001
+  - AUI-002
+  - AUI-019
+  - AUI-023
+ownership_zones:
+  - contracts.aura-api.briefing-capabilities
+  - services.aura-core.briefing-capability-query
+  - frontend.aura-web.briefings
+  - frontend.aura-web.notifications
+  - frontend.aura-web.daily-action
+  - frontend.aura-web.shell
+  - repository.frontend-module-registry
+  - evaluation.aura-web.briefings
+  - delivery.aura0134
+allowed_paths:
+  - work-items/active/AURA-0134.yaml
+  - work-items/archived/AURA-0134.yaml
+  - work-items/handoffs/AURA-0134-*.yaml
+  - work-items/reviews/AURA-0134-*.yaml
+  - work-items/integration/AURA-0134.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/tests/test_aura0132_briefing_contract.py
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/execution.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py
+  - services/aura-core/tests/test_aura0133_execution.py
+  - services/aura-core/tests/test_briefing_api.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - frontend/libs/aura/automation/briefings/**
+  - frontend/libs/aura/automation/notifications/**
+  - frontend/libs/aura/daily-action/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.spec.ts
+  - frontend/apps/storybook/src/briefing-management.stories.ts
+  - frontend/apps/storybook/src/notification-centre.stories.ts
+  - frontend/apps/storybook/src/daily-action.stories.ts
+  - frontend/apps/aura-web-e2e/src/briefings.spec.ts
+  - frontend/apps/aura-web-e2e/src/notifications.spec.ts
+  - frontend/apps/aura-web-e2e/src/today.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/events/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/src/aura_core/providers/**
+  - services/aura-observatory/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/platform/observatory-api-client/**
+  - frontend/apps/aura-web/src/sw.js
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - pyproject.toml
+  - uv.lock
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: true
+  affected:
+    - additive Aura v1 briefing capability discovery resource
+    - existing Aura v1 briefing schedule occurrence and result resources consumed by Aura Web
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: automation.briefings
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Briefing definitions source grants occurrence lineage result content agent and policy references document and calendar labels and owner identity must not enter URLs compact notifications Today cards browser persistence service-worker caches logs telemetry Storybook snapshots committed to the repository or Observatory.
+    - The capability query exposes only the fixed Aura-owned policy identity revision and bounded public limits. It must not expose configured providers models prompts tools grants credentials owner metadata or execution internals.
+    - Mutations use the existing owner session origin-aware CSRF UUID idempotency optimistic schedule version and explicit focused confirmation. Unknown outcomes do not offer unsafe retry.
+    - Draft fields survive validation reconnect and server failure only in authenticated in-memory state and are cleared on accepted creation logout owner-session replacement permission loss or explicit discard.
+    - Calendar and document choices come only from their public owner-authorized stores. Disconnected revoked incomplete and paginated source state fails closed and cannot be widened by the browser.
+    - Result content is fetched only on the authenticated occurrence detail route with no-store behavior and is cleared on route teardown session reset authorization failure owner change or explicit content deletion.
+    - Aura Web must not import display link or communicate with Observatory or governed run evidence.
+  data_classes:
+    - public bounded briefing capability metadata
+    - owner-private briefing schedules source grants and policy references
+    - owner-private occurrence and run lineage metadata
+    - owner-private durable briefing result content
+    - metadata-only private briefing notification links
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 7
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The backward-compatible Aura API exposes one owner-authenticated no-store briefing capability query with the canonical supported execution policy UUID textual revision deadline token and character budgets and explicit memory-disabled tool-disabled daily-only flags; the generated Aura client is regenerated and remains transport-only.
+  - Capability discovery is served through the public briefing application boundary and exactly matches the canonical fixed Core execution policy without duplicating or hard-coding provider model prompt tool or owner state; contract and Core tests fail on drift.
+  - A registered automation-briefings frontend feature library consumes only the generated Aura client plus deliberate public agent calendar document and session surfaces and never imports Core internals provider code memory Observatory or governed run evidence.
+  - Aura Web adds /briefings /briefings/new /briefings/:id and /briefings/:id/occurrences/:occurrenceId under Automate while retaining every existing route mobile navigation focus trap theme reduced-motion and responsive behavior.
+  - Creation supports a bounded display name one daily local time explicit validated IANA timezone active agent revision reminders required selected currently authorized calendars and explicitly selected ready documents; it uses capability metadata for the canonical execution policy and active revision prompt model and zero-call tool references.
+  - Creation preserves valid fields and unsaved selection in memory after validation version authorization offline reconnect and server failures; accepted creation and explicit discard clear the draft and private state never enters storage URLs logs or caches.
+  - Schedule list and detail expose status cadence timezone source counts next occurrence and bounded history without private source content in compact rows; active schedules can pause and paused schedules can resume using authoritative versions and stale-version recovery.
+  - Schedule deletion names schedule-only scope explains that retained history/results remain and that admitted work may be canceled and requires focused confirmation. No unsupported edit occurrence-cancel or retry control is shown.
+  - Occurrence detail distinguishes scheduled admitted running completed partial failed canceled skipped and unknown with non-color text and icons, exposes truthful source completeness and lineage metadata, and fetches result content only when an opaque result identifier is present.
+  - Manual history deletion and result-content deletion are separate explicit confirmations with their exact scopes. Deleted result content is not reconstructed and schedule deletion never implies history deletion.
+  - Briefing notification actions deep-link by opaque schedule and occurrence IDs to the canonical authenticated occurrence route while notification and Today cards remain content-free and never place result IDs or output in URLs.
+  - Loading empty partial stale-version permission-denied offline reconnecting unknown-outcome and deleted-content states preserve available metadata and offer only safe recovery actions with restrained live announcements and stable focus.
+  - Unit Storybook and Playwright coverage verifies desktop tablet mobile keyboard-only touch targets light and dark themes reduced motion 200 percent reflow deep links stale versions session reset draft preservation private-content containment and bounded request behavior.
+  - No migration event contract provider deployment dependency service-worker runtime telemetry memory Observatory protected baseline or durable browser-storage change occurs.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0134.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0134.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0134.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0134.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py services/aura-core/tests/test_briefing_api.py contracts/tests/test_aura0132_briefing_contract.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py services/aura-core/tests/test_briefing_api.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0132_briefing_contract.py services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_briefing_api.py services/aura-core/tests/system/test_contract_and_deployment.py -q
+  - cd frontend && pnpm exec nx run aura-api-client:generate
+  - cd frontend && pnpm exec nx lint aura-web
+  - cd frontend && pnpm exec nx test aura-web
+  - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/automation/briefings libs/aura/automation/notifications libs/aura/daily-action
+  - cd frontend && pnpm exec nx build aura-web --configuration=production
+  - cd frontend && pnpm exec nx run storybook:build-storybook
+  - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/briefings.spec.ts apps/aura-web-e2e/src/notifications.spec.ts apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

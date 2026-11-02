@@ -1,0 +1,102 @@
+agent: test_evaluation_engineer
+work_item: AURA-0084
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: null
+scope:
+  ownership_zone: evaluation.observatory-auth-recovery
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/observatory-web-e2e/full-stack.config.ts
+  - deploy/compose/test_topology.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability: {components: [], metrics_added: []}
+verification:
+  passed:
+    - bash -n deploy/compose/run-observatory-full-stack-e2e.sh
+    - python3 -m pytest -q deploy/compose/test_topology.py -k observatory_full_stack_runner_supplies_owner_login_and_outage_phase
+    - git diff --check -- deploy/compose/run-observatory-full-stack-e2e.sh
+    - >-
+      AURA_WORK_ITEM=work-items/active/AURA-0084.yaml python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role platform_worker --path
+      deploy/compose/run-observatory-full-stack-e2e.sh
+    - >-
+      cd frontend && NX_DAEMON=false NX_ISOLATE_PLUGINS=false NX_CLOUD=false
+      pnpm exec eslint apps/observatory-web-e2e/src/full-stack.spec.ts
+    - >-
+      cd frontend && pnpm exec playwright test --config
+      apps/observatory-web-e2e/full-stack.config.ts --list (2 tests listed)
+    - >-
+      AURA_WORK_ITEM=work-items/active/AURA-0084.yaml python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role test_evaluation_engineer --path
+      frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+    - >-
+      cd frontend && NX_DAEMON=false NX_ISOLATE_PLUGINS=false NX_CLOUD=false
+      pnpm exec eslint apps/observatory-web-e2e/src/full-stack.spec.ts
+      apps/observatory-web-e2e/full-stack.config.ts
+    - >-
+      python3 -m pytest -q deploy/compose/test_topology.py -k
+      observatory_full_stack_runner_supplies_owner_login_and_outage_phase
+    - >-
+      cd frontend && pnpm exec playwright test --config
+      apps/observatory-web-e2e/full-stack.config.ts --list (4 tests listed)
+    - >-
+      AURA_WORK_ITEM=work-items/active/AURA-0084.yaml python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role test_evaluation_engineer --path
+      frontend/apps/observatory-web-e2e/full-stack.config.ts --path
+      frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+    - >-
+      AURA_WORK_ITEM=work-items/active/AURA-0084.yaml python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0084.yaml --role platform_worker --path
+      deploy/compose/test_topology.py
+  failed: []
+  not_run:
+    - >-
+      Docker-backed full-stack acceptance could not run in this worker because
+      the Docker Desktop socket was unavailable; root integration must rerun
+      the complete runner and verify the outage phase in the target environment.
+decisions:
+  - >-
+    Keep the Core-usability assertion and its exact test selection unchanged.
+    Make both one-shot Playwright containers non-interactive and invoke the
+    outage command through the same shell form as the service command, with
+    exec, to avoid TTY or command-dispatch differences between normal and
+    outage phases.
+  - >-
+    Scope the outage prompt assertion to the latest semantic "Your message"
+    article and require an exact text match, because the prompt is also
+    present in other rendered controls after submission.
+  - >-
+    The runner preserves signed-in browser storage state in a mode-0600
+    ignored fixture file. Because the production disposable Valkey command is
+    memory-only, its overlay enables bounded append-only persistence for the
+    dedicated session volume. A scoped stop/start of all Observatory services
+    exercises the same session-volume semantics as down without destroying
+    the disposable networks needed by later browser phases.
+  - >-
+    Reset removes only the stopped disposable observatory-session container
+    and exact project-scoped observatory_session_data volume, then proves the
+    old cookie is rejected before owner reauthentication succeeds.
+risks:
+  - >-
+    The runtime Docker failure mode remains unconfirmed in this worker; the
+    root full-stack run is the required evidence for this bounded change.
+unresolved:
+  - >-
+    Root integration must confirm that the outage container reaches Playwright
+    and passes while Observatory services are stopped and Core remains usable.
+  - >-
+    Root integration must verify that the persisted Valkey session survives the
+    stop/start phase and is rejected after the scoped volume reset.

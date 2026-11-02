@@ -1,0 +1,164 @@
+<div class="tasks-page" aria-labelledby="tasks-heading">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Activity · durable work</p>
+      <h1 id="tasks-heading">Task Center</h1>
+      <p class="lede">
+        One recovery-oriented view across research, workflows, briefings, documents, and memory.
+      </p>
+    </div>
+    <a class="secondary-link" routerLink="/research"
+      >New research <span aria-hidden="true">→</span></a
+    >
+  </header>
+  @if (store.signedOut()) {
+    <p class="status" role="status">Signed out. Sign in again to view the Task Center.</p>
+  }
+  @if (!selectedId()) {
+    <section class="task-list" aria-labelledby="task-list-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Authoritative source snapshots</p>
+          <h2 id="task-list-heading">Tasks</h2>
+        </div>
+        <div class="filters"><label class="filter"
+          ><span>Status</span
+          ><select
+            [value]="store.statusFilter() || ''"
+            (change)="filterStatus($any($event.target).value)"
+          >
+            <option value="">All statuses</option>
+            @for (status of statusOptions; track status) {
+              <option [value]="status">{{ statusLabel(status) }}</option>
+            }
+          </select></label><label class="filter"><span>Source</span><select [value]="store.sourceFilter() || ''" (change)="filterSource($any($event.target).value)"><option value="">All sources</option><option value="research">Web research</option><option value="workflow_instance">Workflows</option><option value="briefing_occurrence">Briefings</option><option value="document_processing">Documents</option><option value="memory_reindex">Memory</option></select></label><label class="filter"><span>Updated from</span><input type="datetime-local" [value]="store.updatedFrom() || ''" (change)="filterFrom($any($event.target).value)" /></label><label class="filter"><span>Updated to</span><input type="datetime-local" [value]="store.updatedTo() || ''" (change)="filterTo($any($event.target).value)" /></label></div>
+      </div>
+      @if (store.loading()) {
+        <div class="loading-skeleton" role="status" aria-label="Loading tasks"><span></span><span></span><span></span></div>
+      } @else if (store.error()) {
+        <p class="status error" role="alert">
+          {{ store.error() }} <button type="button" (click)="store.load()">Retry</button>
+        </p>
+      } @else if (!store.items().length) {
+        <div class="empty-state">
+          <span aria-hidden="true">✓</span>
+          <p>
+            <strong>No durable tasks yet.</strong
+            ><span>Research and background work will appear here with recovery actions.</span>
+          </p>
+        </div>
+      } @else {
+        <div class="task-grid">
+          @for (item of store.items(); track item.id) {
+            <button type="button" class="task-card" (click)="open(item.id)">
+              <span class="status-dot" aria-hidden="true"></span
+                ><span class="card-copy"
+                ><strong>{{ label(item.sourceKind) }}</strong
+                ><span>{{ item.sourceId }} · {{ status(item.status) }} · {{ item.sourceOutcome || 'Outcome pending' }}</span
+                ><small
+                  >{{ item.stage || item.sourceStatus }} · {{ item.progress === null ? 'Progress unknown' : (item.progress * 100 | number: '1.0-0') + '%' }} ·
+                  {{ item.updatedAt | date: 'medium' }}</small
+                ></span
+              ><span class="status-text">{{ status(item.status) }}<small>{{ item.capabilities.canCancel ? ' · cancelable' : '' }}{{ item.capabilities.canRetry ? ' · retryable' : '' }}</small></span>
+            </button>
+          }
+        </div>
+        @if (store.page().nextCursor) { <button type="button" class="secondary-button" (click)="nextPage()">Next page</button> }
+      }
+    </section>
+  } @else {
+    <button type="button" class="back-link" (click)="back()">← Back to tasks</button>
+    @if (store.loading() && !store.selected()) {
+      <div class="loading-skeleton" role="status" aria-label="Loading task detail"><span></span><span></span></div>
+    }
+    @if (store.error()) {
+      <p class="status error" role="alert">
+        {{ store.error() }}
+        <button type="button" (click)="store.loadDetail(selectedId()!)">Retry</button>
+      </p>
+    }
+    @if (store.selected(); as detail) {
+      <article class="detail-card">
+        <header>
+          <div>
+            <p class="eyebrow">{{ label(detail.sourceKind) }}</p>
+            <h2 #taskHeading tabindex="-1">{{ detail.displayLabel || 'Durable task' }}</h2>
+          </div>
+          <span class="state-pill">{{ status(detail.status) }}</span>
+        </header>
+        <dl class="detail-meta">
+          <div>
+            <dt>Outcome</dt>
+            <dd>{{ detail.sourceOutcome || 'Unknown' }}</dd>
+          </div>
+          <div>
+            <dt>Source status</dt>
+            <dd>{{ detail.sourceStatus }}</dd>
+          </div>
+          <div>
+            <dt>Stage</dt>
+            <dd>{{ detail.stage || '—' }}</dd>
+          </div>
+          <div>
+            <dt>Progress</dt>
+            <dd>
+              {{
+                detail.progress === null
+                  ? 'Unknown'
+                  : (detail.progress * 100 | number: '1.0-0') + '%'
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>Updated</dt>
+            <dd>{{ detail.updatedAt | date: 'medium' }}</dd>
+          </div>
+        </dl>
+        @if (detail.failureClass || detail.recoveryAction) {
+          <p class="recovery"><strong>{{ detail.failureClass || 'Recovery' }}:</strong> {{ detail.recoveryAction || 'Inspect the owning service for recovery.' }}</p>
+        }
+        @if (store.streamState() === 'unauthorized') { <p class="status" role="status" aria-live="polite">Signed out. Live task updates require sign-in.</p> }
+        @if (store.streamState() === 'disconnected' || store.streamState() === 'malformed' || store.streamState() === 'gap') { <p class="status" role="status" aria-live="polite">Live updates are {{ store.streamState() === 'gap' ? 'reconciling after a cursor gap' : store.streamState() === 'malformed' ? 'recovering from an invalid event' : 'reconnecting' }}; authoritative refresh is in progress.</p> }
+        @if (store.commandNotice(); as notice) { <p class="status" role="status">{{ notice }}</p> }
+        <div class="detail-actions">
+          @if (detail.capabilities.canCancel) {
+            <button
+              type="button"
+              class="secondary-button"
+              [disabled]="store.saving()"
+              (click)="ask($event, 'cancel')"
+            >
+              Cancel task
+            </button>
+          }
+          @if (detail.capabilities.canRetry) {
+            <button
+              type="button"
+              class="secondary-button"
+              [disabled]="store.saving()"
+              (click)="ask($event, 'retry')"
+            >
+              Retry task
+            </button>
+          }
+          @if (sourceRoute(detail); as source) {
+            <a class="secondary-button" [routerLink]="source.commands">{{ source.label }}</a>
+          } @else {
+            <p class="source-unavailable" role="status">{{ sourceExplanation(detail) }}</p>
+          }
+          @if (detail.artifactRefs.length) {
+            <a class="secondary-button" routerLink="/artifacts">Inspect artifacts</a>
+          }
+        </div>
+        @if (deleteOpen()) {
+          <section class="inline-panel" role="alertdialog" aria-labelledby="task-command-heading" cdkTrapFocus [cdkTrapFocusAutoCapture]="true" (keydown.escape)="closeCommand()">
+            <h3 id="task-command-heading">Confirm {{ commandKind === 'cancel' ? 'task cancellation' : 'task retry' }}</h3>
+            <p>{{ commandKind === 'cancel' ? 'Stop this durable task?' : 'Ask the owning service to retry this task?' }}</p>
+            <button class="text-button" type="button" (click)="closeCommand()">Keep task</button>
+            <button class="secondary-button" type="button" (click)="confirmCommand()">{{ commandKind === 'cancel' ? 'Cancel task' : 'Retry task' }}</button>
+          </section>
+        }
+      </article>
+    }
+  }
+</div>

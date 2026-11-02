@@ -1,0 +1,45 @@
+agent: general_reviewer
+work_item: AURA-0107
+verdict: PASS
+checked:
+  - >-
+    Re-read the corrected localized diff against the approved AURA-0107 work
+    item and the prior general-review blocker. Concurrent AURA-0098 additions
+    in the same adapter remain preserved and outside this verdict's scope.
+  - >-
+    Verified PostgresEvaluationDefinitionRepository.case_declared queries the
+    immutable dataset declaration by exact dataset_id and dataset_version and
+    checks only that row's case_ids array. The focused adapter test covers the
+    declared case, undeclared identifier, wrong version, and wrong dataset and
+    proves the query no longer consults derived dataset-case membership.
+  - >-
+    Verified the corrected isolated-PostgreSQL test now constructs
+    EvaluationDefinitionService with PostgresEvaluationDefinitionRepository
+    and calls service.admit_case while the membership table is empty. This
+    exercises the repaired get-dataset, binding, case_declared, authorization,
+    and transactional create_case sequence rather than bypassing the original
+    failure through a direct repository create.
+  - >-
+    Verified production-equivalent service coverage rejects an undeclared case,
+    a different dataset identifier, and a different dataset version before
+    admitting the exact declared case. Matching identifier/version/fingerprint
+    replay returns the admitted definition, while a second case version raises
+    DefinitionConflictError.
+  - >-
+    Verified rollback/no-partial-state assertions read both authoritative case
+    rows and derived membership rows after the conflict and require exactly one
+    original 1.0.0 case bound to the exact dataset ID/version. The conflicting
+    2.0.0 case and membership cannot remain committed.
+  - >-
+    Confirmed transactional create_case behavior remains unchanged: it
+    share-locks and rereads the immutable declaration, locks existing case-ID
+    versions, enforces cross-version/cross-dataset conflicts, inserts case and
+    membership in one transaction, and preserves exact-fingerprint idempotent
+    reuse and content-free audit behavior.
+  - >-
+    Focused definitions/migration/PostgreSQL suite completed with 50 passed and
+    two environment-gated live PostgreSQL tests skipped in this checkout.
+    Ruff, Pyright, and git diff validation passed; the test source now supplies
+    all production-adapter scenarios required by the prior finding when the
+    documented PostgreSQL URL is enabled.
+findings: []

@@ -1,0 +1,62 @@
+agent: integration_maintainer
+work_item: AURA-0101
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0101-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0101-architecture.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0101-observability.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0101-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0101.yaml
+checks:
+  passed:
+    - >-
+      All three implementation handoffs and all four required review verdicts
+      validated against their repository schemas; no blocking finding remains.
+    - >-
+      Explicit AURA-0101 changed-path validation passed for the 13 owned Core,
+      NATS, work-item, handoff, and review paths. Unrelated dirty AURA-0098
+      and AURA-0100 paths were excluded and preserved.
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0101.yaml passed before archival.
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pytest -q services/aura-core/tests/test_aura0101_nats_stream.py passed: 7 tests.
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core ruff check and pyright passed for the Core adapter and focused tests.
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run pytest -q deploy/tests/test_aura0091_topology.py passed: 17 tests.
+    - bash -n deploy/docker/nats-entrypoint.sh passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0101.yaml passed.
+    - Contract-change and baseline-protection validators passed with no changes.
+    - git diff --check passed.
+    - >-
+      Supported disposable local-http reset/up completed from fresh NATS and
+      database state. Core worker and API, Observatory API and web, and both
+      Observatory evaluation processes reached their required running or
+      healthy states with zero restarts in bounded inspection.
+    - >-
+      A repeated supported local-http startup completed against the existing
+      stream and durable consumers; the same Core worker remained running with
+      zero restarts and bounded logs contained no NATS authorization,
+      duplicate-subject, stream-not-found, traceback, fatal, or exception
+      tokens.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The repository remains dirty by design because AURA-0098 and the separate
+    AURA-0100 Observatory startup slice are still present in the shared
+    working tree; those paths are not part of this integration checkpoint.
+  - >-
+    AURA-0098 retains its independently documented public-admission and
+    governed recovery-health blockers and is not claimed as resolved here.

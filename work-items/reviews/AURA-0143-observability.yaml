@@ -1,0 +1,37 @@
+agent: observability_steward
+work_item: AURA-0143
+verdict: PASS
+checked:
+  - >-
+    Verified stable aura.execution.task_projection@1 identity and version,
+    closed invalidation and rebuild-page boundaries, exact source snapshot and
+    Core PostgreSQL dependencies, task_projection.reconcile span, and count and
+    millisecond metric units.
+  - >-
+    Verified closed outcome, error, dependency, and dimension vocabularies,
+    metadata-only capture, trace-only correlation, bounded retention,
+    deterministic replay, and all four required evaluators.
+  - >-
+    Verified active reconciliation latency remains separate from invalidation
+    lag and no total-run duration or queue residence substitutes for component
+    coverage.
+  - >-
+    Verified admitted trace context is evaluated per operation, omitted context
+    mints unique lineage across service instances and restarts, and admitted
+    trace, span, and parent identifiers serialize through the production OTLP
+    path without entering metric labels.
+  - >-
+    Verified exactly one terminal outcome and one span for live reconciliation,
+    every rebuild page, missing sources, begin/final settlement failures,
+    repository-read failures, quarantine failures, and valid-then-malformed
+    rebuild pages. The latter remains rejected with validation_failed against
+    source_snapshot_api after earlier successful persistence.
+  - >-
+    Verified transactional-outbox envelopes remain closed and metadata-only,
+    durable JetStream delivery acknowledges only after reconciliation, and
+    handler failure leaves delivery unacknowledged for bounded redelivery.
+  - >-
+    Observability validation passed; the focused manifest, lineage, terminal,
+    outbox, and JetStream suite passed 37 tests with 1 skip; the full Task
+    Projection suite passed 67 tests with 1 skip.
+findings: []

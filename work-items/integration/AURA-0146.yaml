@@ -1,0 +1,82 @@
+agent: integration_maintainer
+work_item: AURA-0146
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0146-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0146-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0146-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0146-observability.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The approved AURA-0146 work item, four complete implementation handoffs,
+      and four schema-valid PASS review verdicts were verified. No unresolved
+      review findings remain and all current changed paths are within the
+      approved work-item scope.
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/archived/AURA-0146.yaml passed after archival.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/archived/AURA-0146.yaml passed for the final 61 changed paths.
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/archived/AURA-0146.yaml passed.
+    - python3 tooling/architecture/validate-generated-sync.py passed.
+    - python3 tooling/architecture/validate-import-boundaries.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/archived/AURA-0146.yaml passed.
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/archived/AURA-0146.yaml reported no protected baseline changes
+      and returned the documented skip.
+    - >-
+      Scoped Ruff validation passed for the changed Core interaction, runs,
+      notification, runtime, and test paths.
+    - >-
+      Scoped Pyright validation passed with 0 errors, warnings, or
+      informations.
+    - >-
+      Focused AURA-0146 Core suites passed 292 tests with 7 existing
+      dependency-gated skips; the contract test passed 5 tests.
+    - >-
+      The full services/aura-core suite passed 2081 tests with 124 existing
+      dependency-gated skips and one pre-existing Authlib deprecation warning.
+    - git diff --check passed.
+    - >-
+      Existing repository-supported Docker Compose configuration was inspected
+      for the local PostgreSQL dependency. The repository-declared pgvector
+      PostgreSQL image was launched as a disposable loopback-only tmpfs
+      container; it was removed automatically after the check and no external
+      infrastructure or network operation was invented.
+    - >-
+      The exact required isolated PostgreSQL command passed with
+      AURA_TEST_DEPENDENCIES_ISOLATED=1: 292 passed and 7 dependency-gated
+      skips in 2.46 seconds, exit 0. Credentials were not printed.
+    - >-
+      The integration report itself conforms to
+      work-items/schema/integration-report.schema.json, and all four review
+      verdicts conform to work-items/schema/review-verdict.schema.json.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The feature worktree intentionally remains uncommitted and unpushed. No
+    product code, generated client, image, or artifact was published by this
+    integration pass.

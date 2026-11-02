@@ -1,0 +1,173 @@
+id: AURA-0108
+title: Converge Observatory ingest visibility snapshots
+status: integrated
+change_class: bugfix
+intent: >
+  Make Observatory run and trace detail snapshots obey the same committed
+  ingest visibility fence as run lists, and durably reconcile stale pending
+  receipts whose observation is already present in ClickHouse so response-loss
+  crash windows converge without requiring producer redelivery.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0078.yaml
+    - work-items/archived/AURA-0080.yaml
+    - PostgreSQL receipt status lease timestamps immutable ingest sequence visibility ledger and committed watermark remain the Observatory-owned consistency authority; ClickHouse remains the high-cardinality observation store.
+    - The existing ingest worker performs one bounded reconciliation pass at startup and repeats it on a bounded configurable cadence; no new deployable queue transport or service is introduced.
+    - Reconciliation considers only stale pending receipts with an assigned ingest sequence. It confirms ClickHouse presence by both stable observation identifier and ingest sequence before atomically and idempotently marking the visibility slot and receipt complete in PostgreSQL.
+    - A stale pending receipt with no matching ClickHouse row remains pending without lease renewal so normal at-least-once redelivery can reclaim it after the existing lease. Reconciliation never fabricates an observation skips a missing visibility gap or classifies missing content as delivered.
+    - Multiple ingest workers may scan concurrently. Conditional PostgreSQL state checks and the existing visibility-watermark lock must make completion race-safe idempotent and contiguous even when ClickHouse observations arrive or reconcile out of order.
+    - Run and trace detail reads use the committed PostgreSQL watermark as a ClickHouse ingest-sequence fence. The first page fixes the detail snapshot and continuation pages preserve that fence while remaining compatible with existing opaque cursors.
+    - Existing receipt visibility and watermark columns are sufficient. No migration or public contract change is authorized; implementation evidence requiring either returns to planning rather than expanding this item.
+    - The existing AURA-0078 exact component-manifest catalogue regression is updated only to recognize the two authorized reconciliation metrics on telemetry ingestion and storage; it must retain exact equality and reject undeclared metric drift.
+    - AURA-0098 retains ownership of composed full-stack resilience acceptance. This item is limited to the ingest convergence defect and focused production-adapter recovery evidence.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/telemetry/v2/metadata-observation.schema.json
+feature_references:
+  - OBS-005
+  - OBS-006
+  - OBS-010
+  - OBS-038
+  - OBS-039
+ownership_zones:
+  - services.aura-observatory.telemetry-ingestion
+  - services.aura-observatory.telemetry-storage
+  - services.aura-observatory.query-snapshots
+  - evaluation.observatory-ingest-convergence
+  - delivery.aura0108
+allowed_paths:
+  - work-items/active/AURA-0108.yaml
+  - work-items/archived/AURA-0108.yaml
+  - work-items/handoffs/AURA-0108-*.yaml
+  - work-items/reviews/AURA-0108-*.yaml
+  - work-items/integration/AURA-0108.yaml
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/ingest.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0108_*.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/**
+  - frontend/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - observatory-v1
+    - telemetry-v2
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: telemetry.ingestion
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+    - aura.observatory.query_api
+  required_metrics:
+    - observatory_ingest_reconciliation_count
+    - observatory_ingest_reconciliation_duration_ms
+    - observatory_ingest_visibility_lag_count
+    - observatory_ingest_backlog_count
+  required_evaluators:
+    - telemetry_ingestion_idempotency
+    - observatory_ingest_crash_window_recovery
+    - observatory_snapshot_visibility_consistency
+    - observatory_service_isolation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Reconciliation queries and diagnostics use only opaque observation identifiers ingest sequences bounded states and timestamps; prompts responses arbitrary attributes credentials owner identity and ClickHouse response text remain excluded.
+    - Recovery metrics use a closed finite outcome vocabulary and never label by observation run trace deployment host provider exception or other unbounded identifiers.
+    - ClickHouse existence probes are bounded by the configured reconciliation batch and validate both identifier and sequence before PostgreSQL completion.
+    - Reconciliation failures are isolated to Observatory and cannot affect Core request execution producer delivery or another worker lifecycle.
+    - Existing manual retention locking remains authoritative so reconciliation cannot restore a receipt or visibility state deleted by an authorized retention action.
+  data_classes:
+    - operational_metadata
+    - opaque_observation_identifiers
+    - ingest_sequence_metadata
+    - content_free_health_metrics
+required_agents:
+  implementation:
+    - observatory_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - ProductionObservatoryStore run and trace detail queries apply ingest_sequence less than or equal to the committed PostgreSQL visibility watermark, matching the run-list snapshot boundary and excluding rows that exist in ClickHouse but are not committed visible.
+  - The first run or trace detail page fixes a visibility snapshot and every continuation page stays at that snapshot even if later observations become visible; existing opaque cursors remain accepted and the observatory-v1 response schemas do not change.
+  - The existing Observatory ingest worker runs a bounded reconciliation pass on startup and a bounded periodic cadence using validated batch interval and lease settings without adding a deployable or blocking normal ingestion.
+  - A reconciliation pass selects only stale pending receipts with an assigned immutable ingest sequence and uses a bounded ClickHouse existence lookup that requires the matching observation identifier and ingest sequence.
+  - When ClickHouse already contains the matching observation, reconciliation atomically and idempotently marks its visibility entry and receipt complete in PostgreSQL and advances the committed watermark only across contiguous visible sequences.
+  - When ClickHouse does not contain the matching observation, the receipt remains pending and redeliverable without renewing its stale lease marking its visibility slot or advancing the watermark.
+  - Concurrent workers stale-lease redelivery and reconciliation races cannot double-complete a receipt regress or skip the watermark resurrect retention-deleted state or classify a genuinely missing ClickHouse row as delivered.
+  - An exact crash-after-ClickHouse-insert and before-visibility-mark test proves restart recovery without a second producer delivery while preserving the stable deduplication token and one visible ClickHouse observation.
+  - Out-of-order recovery marks later present rows visible without advancing past an earlier missing sequence; after the earlier row is redelivered the watermark advances through all contiguous visible entries and list run detail and trace detail agree.
+  - Recovery survives worker cancellation and restart, bounds each pass and provider timeout, reports failures without terminating the worker, and leaves unresolved work available for a later pass or producer redelivery.
+  - Reconciliation count uses only a closed finite outcome label set covering completed missing raced and failed work; duration visibility-lag backlog and oldest-backlog health remain bounded metadata-only signals and converge after successful recovery.
+  - The AURA-0078 component-manifest catalogue regression continues to assert exact metric equality and admits observatory_ingest_reconciliation_count and observatory_ingest_reconciliation_duration_ms only for the telemetry-ingestion and telemetry-storage manifests.
+  - Existing metadata-observation validation authentication retention query pagination SSE ordering and service-isolation behavior remain compatible; no Core Aura Web Observatory frontend contract migration dependency or protected baseline changes are introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0108.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0108.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0108.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0108.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0108.yaml
+  - UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0108_*.py
+  - UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests
+  - UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src services/aura-observatory/tests/test_aura0108_*.py
+  - UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory pyright services/aura-observatory
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

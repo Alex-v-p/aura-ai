@@ -1,0 +1,197 @@
+agent: core_worker
+work_item: AURA-0130
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0130_provider_resume
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-core.google-calendar-adapter; repository.core-module-registry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/providers/calendars/__init__.py
+  - services/aura-core/src/aura_core/providers/calendars/google_calendar.py
+  - pyproject.toml
+  - uv.lock
+  - tooling/architecture/modules.yaml
+  - work-items/handoffs/AURA-0130-provider.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.provider.google_calendar@1.0.0
+  metrics_added:
+    - google_calendar_provider_request_duration_ms
+    - google_calendar_provider_retry_count
+verification:
+  passed:
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/providers/calendars
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/providers/calendars services/aura-core/src/aura_core/platform/calendar_oauth.py
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache uv run
+      pytest -p no:cacheprovider services/aura-core/tests/test_aura0130_calendar_provider.py
+      -q (22 passed)
+    - >-
+      PYTHONPATH=services/aura-core/src UV_CACHE_DIR=.local-state/uv-cache uv run
+      pytest -p no:cacheprovider services/aura-core/tests/test_aura0130_calendar_provider.py
+      -q -k 'streaming or deadline or cancellation or pkce or absolute_expiry'
+      (6 passed)
+    - >-
+      Inline uv PKCE check: dedicated attempt verifier produces the expected
+      S256 code_challenge and code_challenge_method=S256.
+    - >-
+      Inline uv adversarial probes: deadline cancellation closes an in-flight
+      transport, malformed provider JSON and credential material retain no
+      parser exception graph, and all probes passed.
+    - >-
+      Inline uv telemetry probe: terminal 429 and 503 calls preserve
+      provider_rate_limit and provider_unavailable categories across the
+      inward provider telemetry port.
+    - >-
+      Inline uv request-budget probes: discovery credential loading, OAuth token
+      exchange, and revocation transport calls all cancel on a shared absolute
+      deadline and close their blocked transport tasks.
+    - >-
+      Inline uv 204-revocation telemetry probe: a successful empty-body revoke
+      records exactly one ok provider observation with zero retries and a
+      non-negative duration.
+    - UV_CACHE_DIR=.local-state/uv-cache uv lock --offline --check
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0130.yaml
+    - git diff --check
+  failed:
+    - >-
+      python3 tooling/architecture/validate-module-registry.py currently reports
+      that aura_core.entrypoints.api.routes.calendar imports
+      CalendarRequestContext from calendar.internal without declaring that
+      private dependency. The provider already imports the relocated
+      provider-neutral context from calendar.public; the API/domain owner must
+      complete the concurrent route relocation before aggregate validation can
+      pass.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run python -m unittest
+      tooling.architecture.tests.test_modules -v has 2 failures: the integrated
+      registry checks report the same stale API route import, and the CLI fixture
+      assertion consequently expects a zero exit code. The provider-owned
+      registry entries remain valid once that route import is relocated.
+    - >-
+      Four calendar retrieval tests currently use legacy test credentials
+      without an absolute expires_at. The corrected adapter rejects those
+      credentials before dispatch as required; the retrieval/domain test owner
+      must update the fixtures to provide a future absolute UTC expiry before
+      final integration.
+  not_run:
+    - >-
+      Aggregate AURA-0130 and full Core suites remain integration-owner checks;
+      this handoff reports the provider-focused suite only.
+    - Full AURA-0130 suite is owned by the test/evaluation worker and is run at integration.
+decisions:
+  - >-
+    Added a direct cryptography dependency and AES-256-GCM credential envelope
+    using fresh 96-bit nonces, opaque string key identifiers from the platform
+    CredentialKeyRing, and canonical owner/connection associated data.
+    Plaintext credential wrappers reject repr and pickle disclosure.
+  - >-
+    Credential opening accepts retained decrypt-only keys and exposes an
+    owner/connection compare-and-swap seam for lazy re-encryption under the
+    active key before provider use; the provider adapter accepts either a
+    composed credential loader or an opaque material wrapper and fails closed
+    when the inward loader or calendar-id resolver is absent.
+  - >-
+    Kept the Google adapter on fixed HTTPS OAuth and Calendar endpoints,
+    exact read-only scope/callback validation, redirect-free HTTP, bounded
+    payloads/pages, cancellation, request deadlines, and bounded retries for
+    transient reads only.
+  - >-
+    Provider payloads are narrowed into neutral calendar/event records and
+    closed provider errors; OAuth/token material and upstream diagnostics do
+    not cross the adapter boundary.
+  - >-
+    Registered the provider package and domain public-port dependencies in the
+    Core module registry while preserving the concurrently authored calendar
+    domain entries.
+  - >-
+    Registered the calendar internal discovery module with exactly one source
+    owner, added the calendar domain self-file relationships, and declared the
+    bootstrap, provider, and API route dependencies required by their current
+    imports. Existing registry entries were preserved.
+  - >-
+    Removed the process-local ProviderCursorPort and its encode/decode seam.
+    The adapter now accepts and returns only bounded raw provider continuation
+    state; application/bootstrap owns the short-lived owner/query-bound Valkey
+    handle around that state.
+  - >-
+    Event continuation state is canonical bounded JSON containing the Aura
+    calendar index and UUID plus the page token for that exact calendar.
+    Pagination resumes the same calendar before advancing to the next selected
+    calendar and never applies a token to another calendar. Discovery now
+    returns the domain-internal CalendarDiscoveryPage and
+    CalendarDiscoveryRecord values; provider identifiers and continuation state
+    remain behind the application/repository projection and never enter public
+    DTOs.
+  - >-
+    OAuth authorization uses the server-held attempt verifier for PKCE S256
+    challenges while retaining independent callback nonce/state values. Token
+    exchange accepts the domain verifier alias, sends only code_verifier,
+    enforces the exact callback URI and read-only scope, and serializes an
+    absolute UTC expires_at. Reads reject missing or expired credentials and
+    never silently refresh them.
+  - >-
+    One monotonic request deadline and cancellation callback flow through
+    retrieval, streamed response buffering, safe retries, and backoff. HTTP
+    responses use httpx streaming contexts, declared and actual body sizes are
+    bounded, contexts close on every outcome, and task CancelledError is
+    re-raised after metadata-only telemetry.
+  - >-
+    Provider and event timezone fields are validated with ZoneInfo, missing
+    event zones resolve deterministically to the provider/calendar or display
+    zone, and the adapter delegates timed and all-day normalization to shared
+    calendar domain normalizers.
+  - >-
+    In-flight connection, response-header, and streamed-body work is wrapped
+    in one cancellable budget task. Cancel events and monotonic deadline expiry
+    cancel the transport task and close the httpx stream immediately; external
+    asyncio.CancelledError remains distinguishable and is re-raised.
+  - >-
+    JSON, timezone, datetime, and decrypted-credential parse failures leave
+    only closed provider or credential errors with no raw payload-bearing
+    cause/context chain. Terminal provider telemetry remains classified by
+    provider category for the API telemetry adapter to map to approved
+    outcome/error-class dimensions; rate-limit and unavailable must not be
+    represented solely as retry_class.
+  - >-
+    Discovery credential loading, OAuth exchange/refresh, and revocation now
+    accept the shared CalendarRequestContext, while retaining legacy deadline
+    and cancellation keyword seams. All use the same active transport race as
+    event retrieval; domain lifecycle/discovery ports must pass that context
+    from their owner-scoped operations before integration.
+  - >-
+    CalendarRequestContext is consumed from the provider-neutral calendar.public
+    contract. The provider's calendar.internal dependency remains limited to
+    the server-side discovery page and record types; no registry dependency was
+    added for the API route's stale internal import.
+  - >-
+    Successful allow_empty responses, including the provider's 204 revoke,
+    now record the same single ok telemetry terminal outcome as JSON responses;
+    the ordinary JSON path remains the sole other success emission path.
+risks:
+  - >-
+    The owning bootstrap/domain boundary must supply the configured fixed
+    callback URI, credential loader, Aura calendar-id resolver, and transient
+    cursor store in the final composition; the adapter fails closed when these
+    inward ports are not composed. The domain/API owner must finish the
+    final Valkey cursor composition and remove the old bootstrap process-local
+    cursor wrapper before integration. The callback application must retain
+    the server-held verifier when invoking exchange_code. The API telemetry
+    adapter must map provider_rate_limit/provider_unavailable terminal records
+    to the approved terminal outcome set while retaining their distinct
+    error class and retry_class. The concurrent API route must import
+    CalendarRequestContext from calendar.public before module-registry
+    validation.
+unresolved:
+  - >-
+    The parent API/bootstrap correction must consume raw continuation strings
+    via the Valkey cursor store and remove the old process-local provider cursor
+    wrapper; no provider cursor handle remains in this adapter.

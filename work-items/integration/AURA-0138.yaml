@@ -1,0 +1,59 @@
+agent: integration_maintainer
+work_item: AURA-0138
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0138-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0138-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0138-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0138-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0138-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0138.yaml
+  - work-items/integration/AURA-0138.yaml
+checks:
+  passed:
+    - >-
+      All four implementation handoffs and all five required PASS review
+      artifacts validate against their repository schemas with no unresolved
+      findings.
+    - >-
+      Work-item, changed-path, generated-sync, import-boundary,
+      service-isolation, frontend-boundary, module-registry, repository-shape,
+      baseline-protection, and git diff checks passed; all 37 changed paths
+      remained within the AURA-0138 allowlist.
+    - >-
+      Required frontend unit and lint targets passed: aura-workflows 11 tests,
+      aura-web 15 tests, aura-approvals 17 tests, and aura-notifications 22
+      tests, plus all four lint targets.
+    - >-
+      The workflow library TypeScript check, Aura Web production build,
+      Storybook build, and generated Aura API client synchronization check
+      passed.
+    - >-
+      The required browser matrix passed 409 tests with 476 intentional
+      project-matrix skips across 885 tests. Desktop, tablet, and mobile
+      workflow authoring, focus/navigation, privacy, lifecycle, SSE, recovery,
+      and accessibility journeys passed; the notification retry-cap journey
+      also passed.
+    - >-
+      The archived work item, implementation handoffs, review verdicts, and
+      integration report validate against their repository schemas.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The browser suite intentionally skips 476 existing project-matrix cases;
+    no skipped case was a required AURA-0138 workflow or integration failure.

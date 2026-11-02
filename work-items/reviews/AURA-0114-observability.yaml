@@ -1,0 +1,40 @@
+agent: observability_steward
+work_item: AURA-0114
+verdict: PASS
+checked:
+  - >-
+    Re-verified stable component identities, declared storage dependencies,
+    correlation, metadata-only capture, retention, bounded cardinality, replay
+    classification, and evaluator declarations.
+  - >-
+    Confirmed Core producer value canceled normalizes to public cancelled in
+    reference and ClickHouse projection and filtering paths.
+  - >-
+    Confirmed lifecycle boundaries stay stable against late telemetry and
+    running runs keep null finish and duration until terminal evidence exists.
+  - >-
+    Confirmed deterministic execution-model selection, lifecycle-first trace
+    selection, and matching newest-lineage legacy fallback.
+  - >-
+    Confirmed run-list ordering, cursor filtering, and cursor encoding share
+    the latest-observation boundary while public finish remains lifecycle based.
+  - >-
+    Confirmed component model deployment and time discovery predicates are one
+    same-observation conjunction while lifecycle status remains a separate
+    full-run aggregate; disjoint rows cannot collectively qualify a run.
+  - >-
+    Confirmed paged detail headers use the fenced full snapshot rather than the
+    current observation page.
+  - >-
+    Confirmed the phase inspector retains measurements, separates tool
+    execution from run admission, and avoids unsafe double counting.
+  - >-
+    Verification passed with 16 focused backend tests, 58 Observatory frontend
+    tests, Ruff, Pyright, lint, observability validation, and diff checks.
+findings: []
+risks:
+  - >-
+    Rich prompt, chunk, generated-content, displayed-thinking, and tool payload
+    evidence remains intentionally unavailable until the separately governed
+    evidence architecture is implemented.
+unresolved: []

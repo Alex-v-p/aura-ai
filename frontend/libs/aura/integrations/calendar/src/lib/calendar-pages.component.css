@@ -1,0 +1,11 @@
+.calendar-page { max-width: 74rem; margin: 0 auto; padding: clamp(1.5rem, 4vw, 3.5rem); color: var(--text); }
+.calendar-header { margin-bottom: 2rem; }
+.eyebrow { text-transform: uppercase; letter-spacing: .12em; font-size: .72rem; font-weight: 700; color: var(--text-muted); }
+h1 { font-size: clamp(2rem, 4vw, 3.4rem); margin: .35rem 0 .7rem; } .lede { max-width: 42rem; color: var(--text-muted); line-height: 1.6; }
+.integration-card { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding: 1.5rem; border: 1px solid var(--border); border-radius: 1.25rem; background: var(--surface-raised); }
+.integration-card-copy { display: flex; gap: 1rem; align-items: flex-start; } .integration-icon { display: grid; place-items: center; width: 2.75rem; height: 2.75rem; border-radius: .8rem; background: var(--accent-soft); color: var(--accent); font-size: 1.35rem; } h2 { margin: 0 0 .35rem; } .muted { color: var(--text-muted); font-size: .9rem; }
+.primary-action { display: inline-flex; gap: .5rem; align-items: center; min-height: 2.75rem; padding: .75rem 1rem; border-radius: .75rem; background: var(--accent); color: var(--on-accent); text-decoration: none; font-weight: 700; }
+.status, .recovery { margin: 1rem 0; padding: .9rem 1rem; border-radius: .75rem; background: var(--surface-subtle); }
+.recovery { display: grid; gap: .35rem; background: var(--danger-surface); color: var(--danger-text); }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+@media (max-width: 640px) { .integration-card { align-items: flex-start; flex-direction: column; } }

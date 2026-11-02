@@ -1,0 +1,12 @@
+agent: security_privacy_reviewer
+work_item: AURA-0120
+verdict: PASS
+checked:
+  - Garage 2.1 header-only output is ignored without producing a false bucket grant.
+  - Valid target, mixed target and unrelated, local-alias, ID-only, duplicate-target, Core, and evaluation grant rows were exercised against both embedded parsers.
+  - Valid unexpected Core, evaluation, and unrelated bucket grants remain detectable before and after permission mutation.
+  - Malformed multi-field and single-field rows emit a bounded parse-error sentinel and make both full bootstrap paths fail closed, including when combined with a valid target row.
+  - Worker bootstrap retains write-only W verification, read denial, and owner denial; API bootstrap retains read/write RW verification and owner denial.
+  - Dedicated secrets, bucket configuration, private network, and worker/API credential separation remain unchanged.
+  - Required AURA-0120 checks passed with 12 focused tests, scoped Ruff, work-item and path validation, isolation checks, both Compose validations, and diff validation.
+findings: []

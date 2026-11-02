@@ -1,0 +1,79 @@
+agent: core_worker
+work_item: AURA-0101
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: shared
+scope:
+  ownership_zone: services.aura-core.nats-outbox
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.execution.run_coordinator
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0101.yaml
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core ruff check services/aura-core/src/aura_core/platform/outbox/nats.py
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pyright services/aura-core/src/aura_core/platform/outbox/nats.py
+    - python3 tooling/architecture/validate-observability.py
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pytest -q services/aura-core/tests/test_aura0101_nats_stream.py (7 passed)
+    - UV_CACHE_DIR=/tmp/aura-0101-uv uv run --project services/aura-core pytest -q services/aura-core/tests/test_streaming.py services/aura-core/tests/test_telemetry.py (105 passed, 1 skipped)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0101.yaml (no contract changes; skipped)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0101.yaml (no protected changes; skipped)
+    - git diff --check -- services/aura-core/src/aura_core/platform/outbox/nats.py
+  failed:
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0101.yaml; the shared working tree contains
+      pre-existing AURA-0098 and AURA-0100 paths outside this worker's zone.
+  not_run:
+    - >-
+      Bounded live Docker verification; aggregate integration owns the
+      supported fresh and repeated launcher checks.
+    - >-
+      Full-worktree git diff --check; unrelated pre-existing files remain
+      owned by AURA-0098 and AURA-0100 workers.
+decisions:
+  - >-
+    Requested AURA_RUNS subjects are stable-deduplicated before add_stream,
+    preserving caller order so the default run subject is submitted once and
+    custom subjects retain their relative order.
+  - >-
+    A failed stream creation now performs three bounded AURA_RUNS lookups with
+    increasing short delays. It reconciles only after the exact named stream
+    becomes visible and re-raises the original provider error when visibility
+    never occurs or the lookup reports a differently named stream.
+  - >-
+    Existing stream subjects are preserved and only missing requested subjects
+    are appended through update_stream; no stream deletion, reassignment, or
+    subject removal was introduced.
+  - >-
+    Stream metadata with an unavailable subject list fails closed rather than
+    risking an update that could omit provider-owned subjects.
+  - >-
+    Registered the three AURA-0101 required evaluator identifiers on the
+    existing aura.execution.run_coordinator manifest without changing its
+    metrics, capture policy, cardinality, or retention fields.
+risks:
+  - >-
+    Live Docker acceptance remains pending the aggregate integration worker.
+  - >-
+    Changed-path validation is blocked by unrelated pre-existing dirty paths
+    from AURA-0098 and AURA-0100 in the shared worktree.
+unresolved:
+  - >-
+    Aggregate integration must rerun all AURA-0101 required checks, including
+    bounded live Docker verification.

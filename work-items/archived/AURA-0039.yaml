@@ -1,0 +1,278 @@
+id: AURA-0039
+title: Add scoped hybrid memory recall
+status: integrated
+change_class: repository_governance
+intent: >
+  Add immutable agent memory policies and owner-scoped hybrid memory retrieval
+  to Core run context assembly so eligible shared-user and current-agent
+  memories can influence later answers within strict authorization, lifecycle,
+  provenance, observability, and token-budget boundaries, without adding the
+  memory product API, realtime activity protocol, or Aura Web experience.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Autonomous Scoped Long-Term Memory plan
+    - AURA-0037 scoped memory contracts and persistence foundation
+    - AURA-0038 autonomous extraction and maintenance
+    - Migration 0001 may add only an idempotent CREATE EXTENSION IF NOT EXISTS vector statement immediately before metadata create all so a fresh database can materialize the already-registered memory embedding vector column
+    - No other migration 0001 schema behavior historical ownership or bootstrap ordering change is authorized by this repair
+    - Migration 0009 may add only the minimal idempotent unique owner identity on memories id principal issuer and principal subject required before its owner-qualified composite foreign keys are created
+    - The migration-chain repair must preserve owner-qualified memory foreign keys and may not replace them with identifier-only references or weaken owner isolation
+    - Each immutable agent revision references one immutable memory policy revision and each admitted run pins that exact policy revision
+    - The existing Core worker composition root may inject the agent store policy loader into memory processing but may not change worker commands subjects routing settlement protocol or deployable behavior
+    - AURA-0038 processing and maintenance tests may change only to prove strict provider-returned embedding identity and digest verification pinned memory-policy claim and hydration and normal or reindex embedding regression safety
+    - The existing memory domain test may change only to supply the newly required observed embedding model identity to attach embedding callers and assert identity mismatch rejection
+    - Initial readable scopes remain the authenticated owner's shared-user scope the current agent scope and explicitly granted fallback agent scopes only
+    - Shared-user and current-agent scopes are searched first and granted foreign-agent scopes are searched only when the primary result set is below the versioned calibrated relevance threshold
+    - A fallback grant permits retrieval from a foreign agent scope but never invokes delegates to or imports configuration from that agent
+    - Shared-user extraction proposals may auto-commit only when the pinned memory policy explicitly authorizes promotion and all AURA-0038 grounding confidence sensitivity and conflict rules also pass
+    - PostgreSQL full-text search and exact active-generation pgvector similarity each return at most 50 policy-filtered candidates and are fused with reciprocal-rank fusion using k 60
+    - Final deterministic reranking includes relevance decay importance confidence validity and scope while factual confidence remains distinct from retrieval relevance
+    - Ordinary recall excludes dormant archived disabled disputed superseded expired unauthorized unembedded and purged records before ranking
+    - Explicit historical retrieval remains a separate owner-authorized query mode and never feeds ordinary conversational context
+    - Run context receives no more than eight recalled memories and memory evidence consumes no more than 20 percent of the configured run context token budget
+    - Recalled memory is untrusted contextual evidence and is never concatenated into or interpreted as platform governance persona or tool policy instructions
+    - Every recall snapshot records memory and revision identifiers component scores scopes provenance identifiers policy revision and embedding generation in Core-owned run metadata
+    - Retrieval telemetry and evaluator results remain metadata-only and never export memory text provenance evidence vectors prompts responses credentials or owner subjects
+    - Public memory-policy and per-run activity resources generated clients SSE activity events and Aura Web surfaces remain reserved for AURA-0040
+  contracts: []
+feature_references:
+  - AGT-002
+  - AGT-008
+  - RUN-008
+  - RUN-012
+  - CTX-004
+  - CTX-005
+  - CTX-006
+  - CTX-007
+  - CTX-008
+  - CTX-009
+  - CTX-010
+  - CTX-013
+  - MEM-007
+  - MEM-008
+  - MEM-009
+  - MEM-010
+  - MEM-018
+  - MEM-019
+  - MEM-020
+  - MEM-022
+  - MEM-023
+  - MEM-035
+  - EVA-007
+  - CMP-003
+ownership_zones:
+  - aura-core.knowledge.memory
+  - aura-core.interaction.agents
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.runtime.context
+  - aura-core.bootstrap
+  - aura-core.platform.telemetry
+  - aura-core.migrations
+  - architecture.module-registry
+allowed_paths:
+  - work-items/active/AURA-0039.yaml
+  - work-items/archived/AURA-0039.yaml
+  - services/aura-core/migrations/versions/0001_core_foundation.py
+  - services/aura-core/migrations/versions/0009_memory_processing.py
+  - services/aura-core/migrations/versions/0010_memory_recall_policies.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/recall.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/postgres.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/sql_store.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/context.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/public.py
+  - services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/runtime/models/ports.py
+  - services/aura-core/src/aura_core/providers/embeddings/ollama/adapter.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/memory-retrieval.yaml
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/tests/test_memory_recall.py
+  - services/aura-core/tests/test_memory_domain.py
+  - services/aura-core/tests/test_memory_persistence.py
+  - services/aura-core/tests/test_memory_processing.py
+  - services/aura-core/tests/test_memory_maintenance.py
+  - services/aura-core/tests/test_memory_evaluation.py
+  - services/aura-core/tests/test_migration_0010_memory_recall_policies.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_ollama.py
+  - services/aura-core/tests/fixtures/memory/**
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/tests/test_modules.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/**
+  - services/aura-core/src/aura_core/domains/interaction/personas/**
+  - services/aura-core/src/aura_core/entrypoints/api/routes/**
+  - services/aura-core/src/aura_core/entrypoints/worker/__init__.py
+  - services/aura-core/src/aura_core/providers/models/**
+  - frontend/**
+  - satellites/**
+  - extensions/**
+  - deploy/**
+  - compose.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.memory_retrieval
+    - aura.execution.run_coordinator
+  required_metrics:
+    - memory_retrieval_duration_ms
+    - memory_lexical_search_duration_ms
+    - memory_vector_search_duration_ms
+    - memory_rerank_duration_ms
+    - memory_retrieval_candidate_count
+    - memory_recall_count
+    - memory_fallback_outcome
+    - memory_context_tokens
+    - memory_retrieval_errors
+  required_evaluators:
+    - memory_retrieval_quality
+    - memory_scope_authorization
+    - memory_context_budget_compliance
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every lexical vector fallback historical and run-metadata query must bind principal issuer and subject before applying scope lifecycle validity or rank logic
+    - The primary search may access only shared-user and current-agent records and a foreign-agent search requires an explicit immutable grant on the run-pinned memory policy revision
+    - Foreign-agent fallback must not disclose whether an ungranted agent scope or memory exists and must not invoke or delegate to the foreign agent
+    - Ordinary retrieval must reject dormant archived disabled disputed superseded expired purged unembedded wrong-generation mixed-dimension and unauthorized records before candidate ranking or context assembly
+    - Lifecycle or authorization changes observed before provider invocation must fail closed even when an earlier recall attempt or retry named the record
+    - Recall content is untrusted evidence and cannot override platform governance persona tool permission or other instruction authority
+    - Query embedding failures malformed persisted vectors database failures and telemetry failures must never widen scope or leak content and should degrade the run to an authorized bounded context without recalled memory
+    - Query embedding model identity must use the artifact digest verified from the provider's current Ollama inventory and must never copy the expected active-generation digest into the observed query embedding result
+    - Memory text evidence provenance content vectors prompts responses credentials owner subjects and provider payloads must not enter telemetry logs errors run events or evaluator output
+    - Run metadata may contain only owner-scoped recall identifiers scores scope types provenance identifiers policy and generation identity and must never duplicate memory content
+    - A memory policy may authorize shared-user promotion only for the same authenticated owner and cannot weaken AURA-0038 confidence grounding conflict sensitivity or credential rejection rules
+  data_classes:
+    - private durable memory content used as model context
+    - semantic query and memory embeddings
+    - memory provenance identifiers and retrieval scores
+    - owner agent conversation run policy revision and embedding generation identifiers
+required_agents:
+  implementation:
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Migration 0010 creates immutable versioned memory policies fallback grants agent-revision references run-pinned policy provenance and recall metadata with forward-only owner-safe constraints and a seeded default policy for existing agent revisions.
+  - Migration 0001 idempotently enables the pgvector extension immediately before metadata create all and makes no other historical change so an empty PostgreSQL database without a preinstalled vector extension can create the registered vector column.
+  - Migration 0009 creates its minimal unique memories id principal issuer principal subject owner identity idempotently before adding the composite owner-qualified foreign keys and retains those owner-qualified references without an identifier-only downgrade.
+  - PostgreSQL migration acceptance passes both a fresh empty 0001 through 0010 upgrade on a database where the vector extension has not been enabled and an existing 0009 through 0010 upgrade with the same owner-qualified memory foreign-key integrity.
+  - Every new or revised agent revision references exactly one immutable memory policy revision and run admission persists that exact policy identifier so queued execution never consults a mutable current agent configuration.
+  - A versioned memory policy explicitly governs shared-user reads current-agent reads granted foreign-agent fallback scopes calibrated fallback threshold context limit and whether otherwise-eligible shared-user extraction promotion is permitted.
+  - The policy service rejects duplicate cyclic self or nonexistent fallback grants and never treats an agent profile reference as authority to read a different authenticated owner's memory.
+  - Shared-user and current-agent records are searched first and granted foreign-agent scopes are searched only when primary eligible results remain below the pinned policy's calibrated relevance threshold.
+  - Foreign-agent fallback performs retrieval only and never invokes the granted agent creates a child run imports its prompt or tools or expands beyond the exact granted agent profile scopes.
+  - PostgreSQL applies owner scope lifecycle validity active embedding generation and dimension filters before returning at most 50 full-text candidates and at most 50 exact pgvector cosine-similarity candidates without an ANN or Python full-table production scan.
+  - Lexical and vector ranks are deduplicated and combined with reciprocal-rank fusion using k 60 then deterministically reranked using decayed relevance importance factual confidence current validity and scope with a versioned scoring policy.
+  - Ordinary recall excludes dormant archived disabled disputed superseded expired unauthorized purged and missing-active-generation-embedding records while an explicit owner-authorized historical query can include requested historical lifecycle states without feeding conversational context.
+  - Query embedding uses the selected active owner generation and exact recorded model identity revision digest and dimension and an unavailable or invalid query embedding fails closed without delaying or failing the conversational response.
+  - The provider-neutral embedding result carries a provider-verified model artifact digest distinct from the query-vector digest and the Ollama embedding adapter resolves it from current provider inventory for the requested model without introducing memory semantics or a new provider boundary.
+  - Recall compares the provider-observed embedding model digest with the active generation digest and degrades to no recalled memory when inventory is unavailable malformed ambiguous missing the requested model or reports a mismatched digest; composition never substitutes the expected generation digest as observed provider identity.
+  - Focused processing and maintenance regressions prove normal embedding and reindex paths reject provider-returned model identity revision digest or dimension mismatches and preserve pinned policy claim and hydration behavior without changing AURA-0038 extraction maintenance retry or lifecycle semantics.
+  - Focused memory domain attach-embedding tests provide observed model identity revision and digest values and prove mismatches are rejected without changing other memory domain behavior.
+  - Context assembly injects at most eight distinct eligible memory revisions and uses no more than 20 percent of the configured run context token budget while preserving the current user prompt mandatory system policy and total context ceiling.
+  - Memory context is represented as a distinct clearly delimited evidence component that identifies it as potentially stale untrusted context and never concatenates memory text into platform governance persona tool or output instructions.
+  - Recall selection is durably recorded before provider invocation with run ID memory ID revision ID final and component scores scope provenance identifiers memory-policy revision embedding generation retrieval version and selection order but without memory text or vectors.
+  - Run retries reuse the pinned policy and fail closed against current owner authorization lifecycle validity and generation eligibility before any previously selected memory content is sent to a provider.
+  - The AURA-0038 extractor consults the completed run's pinned memory policy before auto-committing a shared-user scope proposal and all grounding confidence conflict sensitivity and credential safeguards remain mandatory.
+  - Production worker composition injects agent_policy_loader from memory_uow.make_agent_policy_loader agent_store into the existing memory processing service so shared-user promotion resolves the authenticated run's pinned agent revision and policy and rejects a missing mismatched or mutable-current policy snapshot.
+  - The worker composition change does not alter command payloads JetStream subjects routing acknowledgement settlement retry lifecycle or deployable process behavior.
+  - In-memory and PostgreSQL implementations enforce identical scope fallback lifecycle ranking context-limit and metadata behavior and deterministic fake-clock tests cover relevance decay validity and stale-result exclusion.
+  - Evaluation fixtures cover family facts changing project state short-lived meal context preferences corrections contradictions agent-private shared-user and granted versus ungranted foreign-agent facts.
+  - Retrieval evaluation reports recall at K precision at K reciprocal rank stale-result rate irrelevant-context rate latency fallback correctness and token-budget compliance with fixture policy retrieval and embedding-generation versions.
+  - Security fixtures prove zero unauthorized cross-owner cross-agent or ungranted fallback recalls including identifier guessing retries disabled records expired records and mixed embedding generations.
+  - Metadata-only spans metrics and evaluator outputs distinguish lexical vector fusion rerank primary fallback selection context-budget and controlled degradation outcomes without memory text evidence vectors prompts responses credentials or owner subjects.
+  - The memory-retrieval component manifest declares stable versioned inputs outputs dependencies replayability capture allowlists prohibited content bounded cardinality retention export failure behavior metrics and synthetic evaluation support.
+  - No HTTP memory-policy resources per-run memory-activity resources run-event schema SSE memory activity generated client Aura Web UI document scope household scope workspace scope world-model graph or delegation behavior is added in AURA-0039.
+  - All new and changed Core sources have exactly one module-registry owner with reviewed public dependency edges and no new deployable service package provider authority framework or database ownership boundary is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0039.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0039.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0039.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest tooling.architecture.tests.test_modules -v
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0039.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0039.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_migration_0009_memory_processing.py services/aura-core/tests/test_migration_0010_memory_recall_policies.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run --directory services/aura-core alembic -c alembic.ini history
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

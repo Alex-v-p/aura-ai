@@ -1,0 +1,165 @@
+agent: observatory_worker
+work_item: AURA-0092
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services/aura-observatory.evaluation-orchestration
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/migrations/postgresql/versions/0008_evaluation_orchestration.sql
+  - services/aura-observatory/resources/component-manifests/evaluation-orchestration.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-scheduler.yaml
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/__init__.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_scheduler.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/evaluation_transport.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0092_migration.py
+  - services/aura-observatory/tests/test_aura0092_metrics.py
+  - services/aura-observatory/tests/test_aura0092_orchestration.py
+  - services/aura-observatory/tests/test_aura0092_transport.py
+  - services/aura-observatory/tests/test_aura0092_worker.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/validate-observability.py
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: evaluation-runner-transport-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation-runner-transport.schema.json
+      consumer_boundary:
+        - Closed, bounded runner request, cancellation, and terminal-result envelopes are validated before publication or durable receipt.
+        - NATS carries opaque identifiers, references, digests, limits, provenance, and finite lifecycle values only.
+    - id: evaluation-events-v1
+      version: 1
+      source: contracts/events/evaluation/v1/evaluation-events.schema.json
+      consumer_boundary:
+        - PostgreSQL lifecycle state records references and finite outcomes without changing the event contract.
+migrations:
+  changed: true
+  postgresql:
+    - services/aura-observatory/migrations/postgresql/versions/0008_evaluation_orchestration.sql
+  clickhouse: []
+observability:
+  components:
+    - aura.observatory.evaluation_orchestration
+    - aura.observatory.evaluation_scheduler
+  metrics_added:
+    - observatory_evaluation_job_admission_count
+    - observatory_evaluation_attempt_transition_count
+    - observatory_evaluation_retry_scheduled_count
+    - observatory_evaluation_terminal_count
+    - observatory_evaluation_dependency_outcome_count
+    - observatory_evaluation_cancellation_count
+    - observatory_evaluation_deadline_count
+    - observatory_evaluation_outbox_pending_count
+    - observatory_evaluation_backlog_count
+    - observatory_evaluation_outbox_oldest_age_seconds
+    - observatory_evaluation_outbox_publication_count
+    - observatory_evaluation_result_consumption_count
+    - observatory_evaluation_result_lag_seconds
+    - observatory_evaluation_operation_duration_ms
+    - observatory_evaluation_worker_heartbeat_age_seconds
+    - observatory_evaluation_scheduler_heartbeat_age_seconds
+    - observatory_evaluation_scheduler_occurrence_count
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0092.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0092.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0092.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0092.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0092.yaml
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check on all changed Python source and tests
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright (0 errors, 0 warnings, 0 informations)
+    - uv run pytest -q services/aura-observatory/tests/test_aura0092_*.py services/aura-observatory/tests/test_aura0078_contract.py services/aura-observatory/tests/test_aura0078_review_fixes.py (134 passed, 5 skipped)
+    - Full Observatory test suite after the transport-delivery, audit, dependency, metric, and manifest corrections (701 passed, 9 skipped, 2 warnings)
+    - Focused NATS timeout, reconnect, provider-error privacy, worker-recovery, explicit result-delivery acknowledgement, terminal metrics, metric-persistence, and OTLP span-export checks (52 passed, 5 skipped)
+    - Targeted Pyright for transport, worker, metrics, orchestration, PostgreSQL adapter, and AURA-0092 tests (0 errors, 0 warnings, 0 informations)
+    - Focused PostgreSQL orchestration checks (5 skipped without AURA_AURA0092_POSTGRES_URL)
+    - UUID lease identity, schedule-template, deadline-race, retry-gating, Core-clamped limits, outbox-locking, explicit outbox due-time producer, cancellation-safe failure transition, metric label width, and focused orchestration checks (36 passed, 5 skipped without AURA_AURA0092_POSTGRES_URL)
+    - python tooling/architecture/validate-observability.py (passed)
+    - python tooling/architecture/validate-module-registry.py --manifest tooling/architecture/modules.yaml (passed)
+    - pytest -q tooling/architecture/tests/test_validate_observability.py services/aura-observatory/tests/test_aura0092_*.py services/aura-observatory/tests/test_aura0078_contract.py services/aura-observatory/tests/test_aura0078_review_fixes.py (139 passed, 5 skipped)
+    - uv run pytest -q services/aura-observatory/tests (701 passed, 9 skipped, 2 warnings)
+    - Core-shaped terminal envelope regression (causation references request message id)
+    - git diff --check
+  failed: []
+  not_run:
+    - PostgreSQL/JetStream integration and Docker Desktop project acceptance remain with the platform and test/evaluation workers.
+    - Compose topology and generated deployment entrypoints remain with the platform worker.
+decisions:
+  - PostgreSQL is authoritative for jobs, attempts, schedules, leases, receipts, audits, and outbox rows; NATS is transport only.
+  - Scheduled occurrences require a persisted, schema-validated authorized request template. Materialization copies its target, provenance, capture authorization, and limits, changing only deterministic occurrence identifiers and deadline; no scheduler component/provenance is fabricated.
+  - Requested retry outbox rows are publishable only when both their outbox due time and authoritative attempt next-attempt time have elapsed.
+  - PostgreSQL outbox claims use an EXISTS attempt fence rather than an outer join, so FOR UPDATE SKIP LOCKED locks only authoritative outbox rows and remains valid when an attempt row is absent or nullable.
+  - A result received at or after the stored deadline atomically settles queued/running state to deadline before inserting an out-of-order receipt; it cannot win a settlement race.
+  - Admission uses a deterministic job and initial-attempt identity and inserts the initial outbox entry in the same database transaction.
+  - Result acknowledgements are performed only after durable application or bounded rejection; duplicate and late terminal results cannot reopen state.
+  - Runner request digests are computed from the exact canonical closed transport data projection consumed by Core, with producer/consumer regression coverage preventing wrapped-admission fingerprints.
+  - The application scheduler atomically materializes deterministic schedule occurrences into a job, initial attempt, lifecycle audit, and transactional outbox row before advancing the schedule; the scheduler entrypoint remains DB-only and does not publish.
+  - The protected Observatory manifest-surface test now explicitly describes the two authorized AURA-0092 orchestration and scheduler components and their declared metrics.
+  - The dedicated worker supervises result consumption alongside dispatch/outbox polling and performs bounded result-consumer shutdown before closing NATS.
+  - The dedicated worker and DB-only scheduler catch provider failures at loop boundaries, emit only finite failure codes and dependency outcomes, and recover on a bounded poll interval without logging exception/provider text.
+  - PostgreSQL admission uses an idempotency-key conflict-safe insert followed by locked re-read, so concurrent identical requests converge while fingerprint conflicts remain closed; duplicate result receipts return `duplicate` without changing stored terminal state.
+  - Result receipt insertion also uses message-id conflict-safe insertion, covering concurrent redelivery after the initial receipt lookup without introducing a second terminal transition.
+  - Result consumption reuses the bootstrap-provisioned `AURA_EVALUATION_RUNNER` stream and `aura-evaluation-dispatch` durable explicitly, avoiding NATS stream-name discovery and unauthorized consumer creation.
+  - Retry state is bounded and persisted with deterministic capped exponential backoff; only the contract-approved transient failure classes are eligible and each retry creates a durable attempt and outbox row transactionally.
+  - Evaluation transport validation is an exact local equivalent of the versioned runner schema, including all nested required fields, types, enums, bounds, and capture conditionals; only case identifiers are unique and artifact reference arrays preserve contract semantics. Only the validated data projection is fingerprinted and persisted.
+  - The transactional outbox is the sole publication path. Claims are exclusive leases with due times, capped retry/exhaustion state, and stale requested commands are made ineligible after cancellation/deadline.
+  - Result binding verifies every stored common identifier, lineage field, request digest, capture authorization, provenance/component binding, effective limits, and deadline before receipt persistence; duplicate delivery returns an explicit duplicate disposition without reapplying terminal state.
+  - Admission and schedule validation compare every duplicated request column (request version, dataset/suite/evaluator references, capture classification, deadline, and max attempts) against the validated envelope projection before fingerprinting or persistence. Effective result limits retain the exact contract shape and may only be deployment-clamped downward.
+  - Durable worker leases persist backlog, unpublished-outbox count/age, and result-lag snapshots, while bounded metrics expose heartbeat, backlog, outbox age, result lag, and operation latency without lifecycle or content identifiers.
+  - Corrected the PostgreSQL stale-request fencing update in `claim_outbox` to use a scoped `stale` CTE; the target-table alias is no longer referenced from a JOIN condition where PostgreSQL rejects it, while row locking and lease selection remain transactional.
+  - Nullable outbox lease parameters are explicitly cast as `uuid` with `IS NOT DISTINCT FROM`, preserving exact-row fencing for both leased and unleased calls without PostgreSQL indeterminate-parameter errors.
+  - Human-readable worker and scheduler identifiers remain bounded stable component identities; heartbeat lease tokens are deterministic UUID-shaped database identities, and settings validate both process IDs before composition.
+  - Terminal result lineage follows the Core transport convention: correlationId remains the job workflow id while causationId references the concrete runner request/attempt message id; result binding requires that stored lineage exactly.
+  - Bounded terminal-envelope or binding rejections remain content-free, acknowledge only after the rejection disposition is emitted through the allowlisted result-consumption metric and safe reason log, while repository/storage failures still propagate without acknowledgement.
+  - The scheduler composition does not construct a broker transport or read NATS credentials.
+  - Application orchestration publishes inward dispatch intents through a transport port; NATS subjects, stream names, and connection details remain provider-side. Worker and scheduler metric writes use the existing bounded PostgreSQL metric persistence path with replacement semantics for gauges and bounded shutdown flushing.
+  - Provider-neutral runner codec, digest, and exact schema validation now live in the application boundary; the NATS adapter imports those symbols inward while retaining all subjects, stream, durable, and connection handling.
+  - PostgreSQL metric persistence preserves the declared AURA-0092 names and types, including terminal/dependency counters and operation/result-lag histograms. Heartbeat age is derived from persisted lease timestamps during metric scrape rather than persisted as a constant zero.
+  - Component spans are bounded metadata-only records with stable component/version/deployment, finite operation/dependency/outcome/error values, and no lifecycle, user, or content identifiers.
+  - NATS connection, publish, pull-subscribe, fetch, and acknowledgement operations use bounded timeouts and finite reconnect attempts. Provider callbacks and worker boundaries emit sanitized codes only; pending outbox rows return to durable failure marking instead of waiting on client reconnect.
+  - Result-consumer restart supervision is independent of the recovery/dispatch/outbox loop: a failed or normally-ended inbound task is classified and replaced, then the same bounded iteration still recovers state, marks failed publications, updates heartbeats, and waits for the next poll.
+  - Metric-persistence diagnostics retain bounded finite failure codes and rate-limit repeated warning logs, preventing outage-driven recursive warning noise while preserving durable failure counters when PostgreSQL is available.
+  - Admission, cancellation, and schedule materialization now write each initial outbox row's `next_publish_at` from the operation's explicit UTC timestamp instead of relying on PostgreSQL `CURRENT_TIMESTAMP`; this keeps claim eligibility deterministic when database and worker clocks differ and preserves the transactional outbox boundary.
+  - Forward migration 0008 widens fixed metric label columns to bounded `VARCHAR(64)` values before installing the AURA-0092 allowlist, accommodating valid operation labels such as `schedule_materialize` without permitting arbitrary cardinality.
+  - Provider `CancelledError` is treated as a transport failure for the leased outbox row: the failure transition runs in a shielded repository task, releases the lease and increments bounded attempts before cancellation is re-raised; metric failures are swallowed at the orchestration boundary so they cannot strand authoritative state.
+  - PostgreSQL counter/histogram metric persistence now aligns nine data parameters with nine `VALUES` placeholders before `CURRENT_TIMESTAMP`; gauges retain their separate seven-parameter replacement path. Regression coverage checks exact cursor arity and both metric types.
+  - PostgreSQL terminal result application now inserts exactly one content-free lifecycle audit for each directly applied completed, cancelled, or non-retryable failed terminal result in the same transaction as the receipt and state transition; retryable failures retain only the retry-scheduled audit.
+  - Terminal metrics distinguish retry scheduling from terminal completion, and deadline/cancellation transitions increment the terminal counter exactly once. Publish spans report failed transport attempts, while database failures in dispatch, recovery, heartbeat, result application, and outbox state transitions are classified as PostgreSQL with finite diagnostics.
+  - Persisted metric scraping bounds each allowlisted metric family independently (64 series per family) rather than hiding later AURA-0092 families behind a global limit, retaining bounded query work.
+  - Result delivery is an explicit ports-owned typed abstraction containing the validated envelope and async acknowledgement capability; NATS owns acknowledgement implementation and application code acknowledges only after durable apply or bounded rejection, with no hidden envelope callback key.
+  - The accepted Observatory trace boundary uses an inward metrics span/exporter port and an authorized Observatory adapter provider that talks to the Collector; the bounded OTLP export is the cross-process trace correlation path, with no Core import or new SDK dependency.
+  - Added the repository-authorized OTLP trace export provider in `adapters.evaluation_orchestration`, following Core's pinned metadata-only JSON OTLP shape without importing Core or adding a dependency. The inward metrics module retains only domain-safe span data and the exporter port; composition explicitly wires the provider. Component spans are queued asynchronously with bounded capacity/retries/drops, stable configured resource identity, finite operation/dependency/outcome/error attributes, Collector bearer credentials from the injected ingest secret, and bounded shutdown draining.
+  - Observatory OTLP trace export is opt-in through the existing settings/composition seam (`telemetry_otlp_enabled`, endpoint, queue, attempts, timeout); the platform deployment remains responsible for injecting the enabled flag and stable deployment metadata into each Observatory deployable. The module registry now records composition's dependency on the provider adapter.
+  - Corrected the module registry to declare every direct application edge: composition depends on evaluation orchestration, metrics, ports, and the provider adapter; the evaluation worker depends on orchestration, transport, and settings; the DB-only scheduler depends on settings in addition to composition.
+  - Corrected the OTLP trace provider to emit the existing Observatory adapter's closed observation projection: UUID-stable observation IDs, required component/operation/metric/capture attributes, `aura.dimension.*` outcome/dependency/status mapping, Core-compatible resource identity, v2 schema URL, and bounded span timestamps/status. Direct normalization through `traces_to_observations` and `MetadataObservation.from_payload` now verifies the exported payload is accepted before transport ingestion.
+  - Completed the OTLP failure-span dimension mapping by emitting the finite `span.error_code` as `aura.dimension.error_class`, which normalizes to the contract's `errorClass` dimension and allows the NATS outage trace proof to distinguish `transport_unavailable` without arbitrary attributes.
+  - Result application now returns an atomic `ResultApplication` record. A late result that settles queued/running work to deadline reports that authoritative transition exactly once; duplicate or already-terminal deliveries remain plain out-of-order/duplicate dispositions and cannot increment deadline or terminal counters again. Both in-memory and PostgreSQL paths fence succeeded, failed, cancelled, and deadline jobs before retry or terminal work.
+  - PostgreSQL cancellation now inserts the accepted `evaluation.cancelled` lifecycle audit in the same transaction as the winning state transition. In a cancellation/result race, the winner owns exactly one terminal audit and the loser cannot add a second; adapter read models normalize database UUID values to bounded strings.
+  - Validation failures are recorded at the contract boundary with no dependency attribution. Scheduler heartbeat dependency failures are emitted by the application service and suppressed at the entrypoint boundary to preserve exactly-once dependency outcome accounting.
+  - The scheduler manifest declares the dependency-outcome counter and operation-duration histogram emitted by scheduler materialization/heartbeat spans, with bounded operation/outcome metric attributes; the protected manifest-surface expectation was updated accordingly.
+  - No public API, CLI, SSE, browser, dataset, evaluator, judge, baseline, Core import, or contract change was introduced.
+risks:
+  - Deployment wiring for the dedicated worker/scheduler services, dispatch credentials, private NATS network, health checks, and resource limits remains in the platform ownership slice.
+  - A production PostgreSQL/JetStream acceptance is still required to verify broker redelivery and transaction rollback behavior against the configured local stack; the scoped trace-only run reached service startup but stopped at the harness secret probe before trace verification.
+  - A scoped trace-only Docker run confirmed the exporter/provider path is bounded and the evaluation processes remain healthy, but the E2E startup command does not include `observatory-collector`, so the configured `observatory-collector:4318` endpoint has no receiver. The same run's disposable scheduler probe could not read its ClickHouse secret mount. Platform/test-evaluation ownership must start the Collector in the trace proof and correct the probe secret wiring before ClickHouse persistence can be evaluated.
+  - The changed-path validator currently sees unrelated untracked platform/E2E acceptance artifacts in the shared worktree and reports them outside this Observatory work item; module, isolation, observability, baseline, contract, and full test validators pass.
+unresolved: []

@@ -1,0 +1,99 @@
+agent: frontend_worker
+work_item: AURA-0103
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0103_frontend
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory.monitoring-surfaces
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0103.yaml
+    - pnpm --dir frontend nx lint observatory
+    - pnpm --dir frontend nx test observatory
+    - pnpm --dir frontend nx test observatory-web
+    - pnpm --dir frontend nx build observatory-web --configuration=production
+    - >-
+      Final post-adjustment rerun: observatory lint, observatory-web unit test,
+      and production observatory-web build passed after making health-card
+      padding explicit.
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4316
+      AURA_OBSERVATORY_WEB_E2E_BASE_URL=http://127.0.0.1:4316
+      pnpm --dir frontend exec playwright test
+      --config apps/observatory-web-e2e/playwright.config.ts
+      apps/observatory-web-e2e/src/observatory-web.spec.ts
+      --grep 'shows ingest health|shows bounded self-monitoring'
+      --workers=1 (6 passed across desktop, tablet, and mobile)
+    - >-
+      Final post-adjustment rendered fixture rerun: the same two Overview
+      scenarios passed across desktop, tablet, and mobile (6/6) after making
+      health-card padding explicit.
+    - >-
+      Final history-state padding correction rerun: the ingest/count and
+      self-monitoring/history scenarios passed across desktop, tablet, and
+      mobile (6/6), with loading, error, stale, empty, and ready history
+      paragraphs covered by the same inset selector.
+    - >-
+      Final loading-surface correction rerun: the Overview production build
+      passed with the loading route panel receiving the same responsive inline
+      inset while retaining its existing block padding and semantics; the
+      ready-state fixture scenarios remained green across desktop, tablet, and
+      mobile (6/6).
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Full AURA-0103 changed-path validation; rerun after the test-evaluation
+      handoff exists so both owned handoffs can be validated together.
+    - >-
+      Repository-shape, module-registry, frontend-boundary, contract-change,
+      baseline-protection, full Playwright matrix, and integration checks are
+      owned by integration.
+    - >-
+      Live-browser ready-state review did not produce ready-state evidence in
+      this worker run; the session showed the bounded Observatory unavailable
+      state without private data. No bypass or fabricated ready-state evidence
+      was used.
+    - >-
+      A dedicated 320-pixel fixture run is owned by the test-evaluation
+      engineer; the focused rendered fixture run covered desktop, tablet, and
+      mobile reflow.
+decisions:
+  - >-
+      Added a local responsive --overview-inset using the existing spacing
+      scale so hero, ingest, and metric content share a deliberate horizontal
+      alignment at wide and narrow viewports.
+  - >-
+      Added matching inner gutters to health and history sections and widened
+      ingest count columns without changing their state semantics, controls,
+      requests, or accessibility structure.
+  - >-
+      Extended the history inset to every direct state paragraph so loading,
+      error, stale, empty, ready, and footnote content share the same alignment.
+  - >-
+      Added the same local responsive inline inset to the loading route panel
+      without changing its vertical padding, skeleton structure, or loading
+      semantics.
+  - >-
+      Kept the shell/sidebar, Observatory tokens, store, contracts, and all
+      other routes untouched; existing AURA-0098 changes remain separately
+      attributable.
+risks:
+  - >-
+      The live browser showed the bounded Observatory unavailable state during
+      this worker run, so ready-state visual evidence is not claimed here.
+      Existing AURA-0098 changes remain present and independently attributable.
+unresolved: []

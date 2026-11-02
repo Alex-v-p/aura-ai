@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/artifacts/v1/generated-artifact-events.schema.json",
+  "title": "Aura generated text artifact lifecycle events v1",
+  "description": "Closed metadata-only generated artifact lifecycle events. Owner identity, titles, media types, bytes, previews, digests, filenames, object references, source metadata, citations, provider payloads, credentials, prompts, and responses are prohibited.",
+  "$ref": "#/$defs/GeneratedArtifactLifecycleEvent",
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "ArtifactLifecycle": { "type": "string", "enum": ["active", "deletion_pending", "deletion_failed", "cleanup_unknown", "deleted"] },
+    "GeneratedArtifactLifecycleEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "artifactId", "artifactVersion", "lifecycle", "currentRevision", "occurredAt", "correlationId", "causationId"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["artifact.created", "artifact.revision_published", "artifact.deletion_changed"] },
+        "artifactId": { "$ref": "#/$defs/Uuid" },
+        "artifactVersion": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "lifecycle": { "$ref": "#/$defs/ArtifactLifecycle" },
+        "currentRevision": { "type": ["integer", "null"], "minimum": 1, "maximum": 2147483647 },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "correlationId": { "$ref": "#/$defs/Uuid" },
+        "causationId": { "$ref": "#/$defs/Uuid" }
+      }
+    }
+  }
+}

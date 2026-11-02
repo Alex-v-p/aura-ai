@@ -1,0 +1,99 @@
+agent: contract_steward
+work_item: AURA-0132
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: deep
+  agent_thread_id: /root/aura0132_contracts
+  worktree: shared-main
+scope:
+  ownership_zone: contracts.aura-api.briefings, contracts.automation.briefing-events, contracts.automation.notification-events, and frontend.aura-api-client.generated
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/automation/v1/notification-events.schema.json
+  - contracts/events/automation/v1/briefing-events.schema.json
+  - contracts/tests/test_aura0132_briefing_contract.py
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_reminder_api.py
+  - work-items/handoffs/AURA-0132-contract.yaml
+contracts:
+  changed: true
+  ids:
+    - aura-v1
+    - automation/notification-events/v1
+    - automation/briefing-events/v1
+  versions:
+    aura-v1: 1.20.0
+    automation/notification-events: 1
+    automation/briefing-events: 1
+  compatibility: backward_compatible_additive
+  producers:
+    - future Aura Core briefing schedule and result application owned by AURA-0133
+    - Aura Core notification domain for reminder and future briefing inbox records and metadata-only replay
+  consumers:
+    - regenerated Aura TypeScript transport client
+    - Aura Web notifications and Today consumers through the generated client
+    - future Aura Web briefing management owned by the later route and management slice
+    - future Aura Core briefing schedule and execution implementation owned by AURA-0133
+  rollout:
+    - publish aura-v1 1.20.0, both event schemas, the additive notification migration, and source-aware notification consumers together
+    - retain legacy reminder payload and event shapes exactly while briefing producers remain absent
+    - keep schedule creation and briefing delivery unavailable until the separately approved Core implementation supplies authorization, persistence, state transitions, and recovery
+    - roll back by disabling future briefing production while retaining manual-only schedule, occurrence, result, and notification truth; do not delete durable data as a downgrade side effect
+  generated_outputs:
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  validation:
+    - aura-v1 1.20.0 adds ten owner-scoped schedule, occurrence, result, and scope-named deletion resources while preserving every prior path and every unaffected component
+    - schedules define exactly one daily local-time cadence with an explicit ClientTimeZone and pin an agent revision plus immutable execution, prompt, model, and tool policy revision identifiers
+    - the closed source-grant object represents reminders, explicitly selected Aura calendar identifiers, and explicitly selected document identifiers; memory is unrepresentable
+    - occurrence and result schemas use closed bounded statuses, optimistic versions, deterministic instant and local due-time representations, source-completeness outcomes, and schedule, occurrence, run, and result lineage
+    - schedules, occurrence history, and results contain no automatic expiry; schedule, occurrence_history, and result_content deletion commands are separate owner-authorized CSRF-protected idempotent resources
+    - the legacy ReminderNotification payload is structurally identical to the v1.19 Notification payload and the generated Notification type is a closed ReminderNotification-or-BriefingNotification union
+    - notification-events v1 retains the original NotificationEventProperties, NotificationDeliveredEvent, and NotificationAcknowledgedEvent definitions exactly and additively accepts closed briefing lifecycle metadata
+    - briefing-events v1 contains only bounded identifiers, statuses, versions, lineage, source-completeness flags, and timestamps and rejects output, source content, source grants, owner identity, prompt, credential, provider, and executor fields
+    - the generated transport-only TypeScript client was emitted by the repository generator, matches the OpenAPI digest, and contains no business behavior
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0132.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0132.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0132.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0132_briefing_contract.py contracts/tests/test_aura0128_calendar_contract.py -q (18 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0132_briefing_contract.py contracts/tests/test_aura0128_calendar_contract.py services/aura-core/tests/system/test_contract_and_deployment.py services/aura-core/tests/test_conversation_attachments.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/test_reminder_api.py -q (99 passed, 3 skipped)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0132_briefing_contract.py contracts/tests/test_aura0128_calendar_contract.py services/aura-core/tests/system/test_contract_and_deployment.py services/aura-core/tests/system/test_notification_delivery.py services/aura-core/tests/test_conversation_attachments.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/test_migration_0025_notification_briefing_source.py services/aura-core/tests/test_migrations.py services/aura-core/tests/test_notification_api.py services/aura-core/tests/test_notification_evaluation.py services/aura-core/tests/test_notification_stream.py services/aura-core/tests/test_notifications.py services/aura-core/tests/test_reminder_api.py -q (128 passed, 9 skipped)
+    - cd frontend && node libs/platform/aura-api-client/tools/generate-client.mjs > libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+    - cd frontend && pnpm exec nx run aura-api-client:generate
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated
+    - cd frontend && pnpm exec nx run aura-api-client:lint
+    - tooling.architecture.common.validate_document against implementation-handoff.schema.json
+    - git diff --check
+  failed: []
+  not_run:
+    - frontend product, Storybook, browser, build, observability, module-registry, and aggregate architecture checks remain assigned to their owning agents and integration
+decisions:
+  - The public notification source is a structural closed union so the pre-existing reminder JSON shape remains valid byte-for-byte and briefing notifications cannot invent reminder identifiers.
+  - Briefing notification metadata contains only opaque schedule, occurrence, and result identifiers; clients derive the later dedicated result destination without receiving briefing content in the inbox or event stream.
+  - Schedule source grants require reminder inclusion and explicit bounded Aura calendar and document identifiers; current ownership, readiness, connection, and authorization remain runtime admission responsibilities rather than ambient background authority.
+  - A skipped occurrence creates no result, so skipped is an occurrence outcome while result outcomes remain completed, partial, failed, canceled, unknown, or deleted.
+  - Schedule deletion tombstones the schedule and prevents future admission but cannot cascade into occurrence history or result deletion; each retained data class has a separately named explicit command.
+  - Event contracts intentionally expose no local timezone value, source identifiers, source content, result content, prompt, owner identity, provider field, or executor-specific state.
+risks:
+  - OpenAPI can constrain timezone syntax but cannot prove that a timezone exists in the deployed IANA database; future Core create and admission paths must validate it authoritatively.
+  - Cross-field lifecycle invariants such as which terminal occurrence states require a result are application rules for AURA-0133 and are intentionally absent from the transport-only generated client.
+  - Existing handwritten notification consumers must narrow the generated Notification union before reading reminderId; the concurrent frontend ownership zone is responsible for that migration.
+unresolved:
+  - Briefing schedule, occurrence, and result persistence, admission, execution, notification production, and lifecycle enforcement remain explicitly deferred to AURA-0133.
+  - Briefing routes and management UI remain unavailable until the later frontend slice; this contract alone does not expose product behavior.

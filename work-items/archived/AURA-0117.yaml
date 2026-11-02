@@ -1,0 +1,175 @@
+id: AURA-0117
+title: Authorize and contract full per-run evidence inspection
+status: integrated
+change_class: repository_governance
+intent: >
+  Restore the full-content portion deferred from AURA-0098 by recording the
+  owner's authorization for governed production run evidence and defining the
+  versioned Core-to-Observatory evidence and Observatory inspection contracts,
+  without changing Aura Web or making normal Core execution depend on
+  Observatory availability.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - The owner explicitly authorizes full model-visible and executor-visible evidence capture for ordinary Core runs when an owner-controlled deployment policy enables it.
+    - Ordinary OTLP telemetry remains metadata-only; run evidence uses a separate versioned one-way asynchronous channel and dedicated Observatory-owned storage.
+    - Core never reads from or waits for Observatory, and export queue pressure, transport failure, Observatory outage, or storage failure cannot alter normal run execution.
+    - Exact admitted requests, compiled prompts, admitted context, memory and document chunks, model-visible attachments, displayed thinking, generated output, model-visible tool arguments and results, policy and approval decisions, persistence, delivery, worker, automation, scheduled, and evaluation inputs and outputs are eligible evidence when applicable.
+    - Credentials, secret-bearing fields, bearer material, provider-hidden reasoning, and arbitrary object dumps are permanently excluded. A prohibited item is rejected whole and represented as partial with a bounded content-free reason.
+    - Run evidence has manual-only retention, owner-only access, durable idempotent deletion, and content-free audit records. Evidence bytes use a dedicated Observatory Garage bucket separate from evaluation artifacts; manifests and deletion truth use Observatory PostgreSQL; ClickHouse remains content-free.
+    - Evidence content is never placed in OTLP, SSE, URLs, logs, metrics, browser storage, service-worker caches, screenshots, or Aura Web.
+    - Aura Web contains no Observatory link, label, route, import, configuration, shared session, browser communication, or evidence dependency.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - OBS-001
+  - OBS-002
+  - OBS-005
+  - OBS-020
+  - OBS-025
+  - OBS-027
+  - GOV-020
+ownership_zones:
+  - architecture.run-evidence-capture
+  - contracts.run-evidence-v1
+  - contracts.observatory-run-inspection
+  - frontend.observatory.generated-client
+  - evaluation.aura0117-contracts
+  - delivery.aura0117
+allowed_paths:
+  - work-items/active/AURA-0117.yaml
+  - work-items/archived/AURA-0117.yaml
+  - work-items/handoffs/AURA-0117-*.yaml
+  - work-items/reviews/AURA-0117-*.yaml
+  - work-items/integration/AURA-0117.yaml
+  - docs/adr/0017-governed-production-run-evidence.md
+  - docs/adr/README.md
+  - docs/architecture/aura-ai-architecture-handover.md
+  - docs/architecture/system-context.md
+  - docs/architecture/module-boundaries.md
+  - docs/specifications/observatory-and-evaluation.md
+  - docs/specifications/open-decisions.md
+  - contracts/events/runs/v1/run-evidence.schema.json
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/tests/test_aura0117_run_evidence_contract.py
+  - contracts/tests/test_observatory_v1.py
+  - contracts/tests/test_observatory_v1_compatibility.py
+  - frontend/libs/platform/observatory-api-client/**
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - services/**
+  - frontend/apps/aura-web/**
+  - frontend/libs/aura/**
+  - frontend/libs/platform/aura-api-client/**
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/runs/v1/run-events.schema.json
+  - contracts/telemetry/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - run-evidence-v1 additive schema
+    - observatory-v1 additive inspection evidence and deletion operations
+    - observatory-api-client generated transport
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: run-evidence
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Evidence is private owner content and may contain conversations memories documents model-visible attachments generated output and tool payloads.
+    - Closed bounded serializers reject credential-bearing items whole instead of claiming redacted evidence is exact.
+    - Provider-hidden reasoning is never requested inferred reconstructed or stored; only displayed model.thinking.delta text is eligible.
+    - Evidence reads are owner-authorized and no-store; deletion is CSRF-protected idempotent durable and auditable without content.
+    - Evidence content is excluded from telemetry SSE URLs logs metrics browser persistence caches screenshots and error detail.
+    - The new contract must not be imported by Aura Web or alter the existing Aura run-event and metadata-observation contracts.
+  data_classes:
+    - owner_private_run_evidence
+    - admitted_request_content
+    - prompt_and_context_content
+    - retrieval_and_chunk_content
+    - displayed_thinking_content
+    - generated_content
+    - tool_input_output_content
+    - model_visible_attachment_content
+    - content_free_evidence_audit
+required_agents:
+  implementation:
+    - contract_steward
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - ADR-0017 and the Observatory specification authorize owner-enabled full production run evidence while preserving metadata-only OTLP and SSE, strict product separation, Core failure isolation, dedicated Observatory storage, manual retention, and owner-only access.
+  - A closed versioned run-evidence envelope defines stable event and evidence IDs, run trace span and parent correlation, monotonic per-run sequence, step category, evidence kind, media classification and type, digest, byte count, capture-policy revision, timestamps, retry identity, and explicit captured excluded partial dropped and deleted states with bounded reasons.
+  - The evidence contract provides explicit payload variants for admitted requests and triggers, compiled prompts, admitted conversation context, memory and document chunks, model-visible attachments, routing, displayed thinking, generation output, tool arguments and results, policy approvals and outcomes, response synthesis, persistence, delivery, workers, automations, schedules, and evaluations without arbitrary object serialization.
+  - The evidence contract bounds every string array object and byte-bearing item, closes every object schema, supports idempotent duplicate and out-of-order delivery, and makes prohibited credentials secret material and provider-hidden reasoning unrepresentable.
+  - Observatory OpenAPI additively defines GET /api/v1/runs/{run_id}/inspection, GET /api/v1/runs/{run_id}/evidence/{evidence_id}, and DELETE /api/v1/runs/{run_id}/evidence with owner authorization, no-store content streaming, CSRF and idempotency for deletion, durable deletion status, completeness and partial reasons, and bounded ordered timeline structures.
+  - Existing metadata-only run trace analytics comparison and SSE contracts remain backward compatible; SSE carries only run-scoped invalidation metadata and never evidence content.
+  - The generated Observatory transport supports the approved bounded evidence response media types without generic unsafe buffering or hand-maintained contract duplication.
+  - Contract tests prove malformed oversized duplicate secret-bearing and unsupported-media evidence is rejected, existing clients remain compatible, and Aura Web plus the Aura API client have no dependency on the run-evidence contract or Observatory client.
+  - This contract phase introduces no runtime behavior migration deployment change service dependency or protected baseline change; follow-up work items own Core capture, Observatory storage and APIs, Observatory UI, and full-stack acceptance in that order.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0117.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0117.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0117.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0117.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0117.yaml
+  - UV_CACHE_DIR=/tmp/aura-0117-uv uv run pytest -q contracts/tests/test_aura0117_run_evidence_contract.py contracts/tests/test_observatory_v1.py contracts/tests/test_observatory_v1_compatibility.py
+  - cd frontend && corepack pnpm exec nx run observatory-api-client:validate-contract
+  - cd frontend && corepack pnpm exec nx run observatory-api-client:check-generated
+  - cd frontend && corepack pnpm exec nx test observatory-api-client
+  - cd frontend && corepack pnpm exec nx lint observatory-api-client
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Follow-up Core capture work must select explicit serializers at each applicable execution boundary and cannot infer authorization to dump arbitrary runtime objects.
+  - Follow-up Observatory storage work must introduce service-owned PostgreSQL migrations and a dedicated least-privilege Garage bucket and identity separate from evaluation artifacts.
+    - Follow-up UI work must render evidence inertly and lazily, preserve disclosure state during live refresh, and prove zero browser persistence or screenshot capture of evidence content.

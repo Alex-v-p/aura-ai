@@ -1,0 +1,74 @@
+agent: frontend_worker
+work_item: AURA-0155
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: /root/aura0155_frontend
+  worktree: shared-main
+scope:
+  ownership_zone: frontend.aura-web.shell-navigation, frontend.aura-web.shell-acceptance
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura0155-sidebar-layout.spec.ts
+  - frontend/apps/aura-web-e2e/playwright.config.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0155.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0155.yaml --path work-items/active/AURA-0155.yaml
+      --path frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+      --path frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+      --path frontend/apps/aura-web-e2e/src/aura0155-sidebar-layout.spec.ts
+      --path frontend/apps/aura-web-e2e/playwright.config.ts
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - pnpm exec eslint apps/aura-web-e2e/src/aura0155-sidebar-layout.spec.ts
+    - NX_DAEMON=false pnpm exec nx run aura-web:build:production
+    - NX_DAEMON=false pnpm exec nx test aura-web (15 tests passed)
+    - >-
+      pnpm exec playwright test --config
+      apps/aura-web-e2e/playwright.config.ts
+      --project=desktop -g "keeps expanded product navigation separate from
+      conversation library" (1 passed; committed config discovery)
+    - git diff --check
+  failed:
+    - >-
+      cd frontend && pnpm exec prettier --check
+      apps/aura-web/src/app/shell/aura-shell.component.css
+      apps/aura-web-e2e/src/aura0155-sidebar-layout.spec.ts (the dedicated
+      regression spec is formatted; the existing legacy shell CSS is not and
+      --write would create broad unrelated churn)
+  not_run: []
+decisions:
+  - >-
+    Scoped the layout correction to wide desktop (min-width 1280px), where the
+    template supplies inline shrinkable flex values. Preventing both direct
+    product-nav and conversation-nav children from shrinking keeps Calendar
+    and Activity inside the product navigation box while preserving a
+    positive-height conversation region in normal flow; the existing
+    sidebar-scroll-region remains the only desktop scroll owner. Compact tablet
+    and mobile flex behavior is unchanged.
+  - >-
+    Moved the focused 1280x720 geometry regression into a dedicated
+    aura0155-sidebar-layout.spec.ts and added that filename to the committed
+    Playwright test-match regex, making the required browser check discoverable
+    without importing the broad aura-web.spec.ts suite.
+  - >-
+    No generated client, contract, dependency, backend, or deployment files
+    changed. AURA-0155 explicitly authorizes the focused E2E spec and
+    Playwright config discovery correction.
+risks:
+  - >-
+    Prettier remains a pre-existing repository check failure for the legacy
+    one-line shell CSS; formatting it would produce unrelated whole-file churn.
+unresolved: []

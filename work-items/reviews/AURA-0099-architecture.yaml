@@ -1,0 +1,26 @@
+agent: architecture_guardian
+work_item: AURA-0099
+verdict: PASS
+checked:
+  - >-
+    Verified the bootstrap-only entrypoint, app-owned shell and token styles,
+    Observatory library feature ownership, public TypeScript imports, and no
+    Aura, Core-private, sibling-app, or provider-adapter dependency.
+  - >-
+    Re-ran repository-shape, module-registry, frontend-boundary, contract,
+    baseline, work-item, and whitespace validation with no attributable
+    package, contract, generated-client, service, migration, or ADR change.
+  - >-
+    Verified explicit changed-path validation for all 27 AURA-0099 paths and
+    all 25 preserved AURA-0098 paths, accurate complete handoffs, and mixed
+    hunk attribution for safe staging.
+findings: []
+risks:
+  - >-
+    Experiment and evaluation files contain mixed AURA-0098 and AURA-0099
+    hunks, so integration must stage from the corrected attribution ledger
+    rather than adding whole files indiscriminately.
+  - >-
+    AURA-0098 remains independently blocked by its documented backend and
+    platform prerequisites.
+unresolved: []

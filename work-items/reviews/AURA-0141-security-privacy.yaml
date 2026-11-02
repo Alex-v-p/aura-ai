@@ -1,0 +1,29 @@
+agent: security_privacy_reviewer
+work_item: AURA-0141
+verdict: PASS
+checked:
+  - >-
+    Verified active research is a closed schema restricted to active content,
+    while every deletion state is a closed content-free tombstone excluding
+    questions, citations, URLs, evidence, and artifact references.
+  - >-
+    Verified deleted artifacts force title and media type to null and disable
+    preview, download, and deletion capabilities while retaining only bounded
+    integrity, lineage, timestamp, and deletion-audit truth.
+  - >-
+    Verified positive and negative fixtures cover active and partial research,
+    every deletion state, leaked private fields, invalid capabilities, missing
+    integrity, unexpected properties, and valid durable-task detail objects.
+  - >-
+    Rechecked session authorization, owner-scoped REST responses, body-only
+    private inputs, CSRF, idempotency, expected versions, metadata-only events
+    and SSE, task-scoped citations, and admission-only tool results.
+  - >-
+    Verified no credentials, provider payloads, object-store references,
+    executor or browser state, internal projection authority, or Observatory
+    dependencies are exposed through the public contracts or generated client.
+  - >-
+    Focused tests passed 16/16 and the full contract suite reached 114 passes
+    with only two verified pre-existing AURA-0132 notification-baseline
+    failures outside this work item.
+findings: []

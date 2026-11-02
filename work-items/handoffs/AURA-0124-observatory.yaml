@@ -1,0 +1,37 @@
+agent: observatory_worker
+work_item: AURA-0124
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: aura-observatory.evaluation-idle-telemetry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.observatory.evaluation_scheduler
+    - aura.observatory.evaluation_orchestration
+  metrics_added: []
+verification:
+  passed:
+    - .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0124_idle_telemetry.py services/aura-observatory/tests/test_aura0092_orchestration.py services/aura-observatory/tests/test_aura0092_metrics.py services/aura-observatory/tests/test_aura0092_worker.py services/aura-observatory/tests/test_aura0094_worker.py services/aura-observatory/tests/test_aura0094_observability.py -q (50 passed)
+    - git diff --check
+  failed: []
+  not_run:
+    - AURA-0124 full required-check suite (delivery lead/integration)
+decisions:
+  - Successful scheduler materialization and worker evaluation-cycle spans/counters are emitted only when the cycle materializes, recovers, dispatches, claims, or publishes real work.
+  - Database heartbeat/lease calls remain unchanged; successful heartbeat gauges and spans are sampled once per thirty seconds per service process through an injectable monotonic clock.
+  - Heartbeat telemetry interval configuration rejects non-finite values and every value below the hard thirty-second minimum.
+  - Heartbeat failures remain immediate and are never suppressed by the success sampler.
+risks:
+  - Existing stored observations remain unchanged; reduction applies to new idle cycles after restart.
+unresolved: []

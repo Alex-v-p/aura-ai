@@ -1,0 +1,98 @@
+agent: frontend_worker
+work_item: AURA-0081
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0081_frontend
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: frontend.observatory-web.shell,frontend.observatory.overview,frontend.observatory.runs,frontend.observatory.traces,frontend.observatory.components,frontend.observatory.retention,frontend.observatory.live-state
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web/project.json
+  - frontend/apps/observatory-web/tsconfig.app.json
+  - frontend/apps/observatory-web/src/index.html
+  - frontend/apps/observatory-web/src/main.ts
+  - frontend/apps/observatory-web/src/styles.css
+  - frontend/apps/observatory-web/src/app.component.spec.ts
+  - frontend/libs/observatory/project.json
+  - frontend/libs/observatory/tsconfig.lib.json
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-gateway.ts
+  - frontend/libs/observatory/src/lib/observatory-session.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+  - frontend/libs/observatory/src/lib/features/runs/runs.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+  - frontend/libs/observatory/src/lib/features/components/components.component.ts
+  - frontend/libs/observatory/src/lib/features/retention/retention.component.ts
+  - frontend/apps/storybook/src/observatory.stories.ts
+  - frontend/apps/storybook/src/observatory-trace.stories.ts
+  - frontend/apps/storybook/src/observatory-retention.stories.ts
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+  - frontend/eslint.config.mjs
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  generated_outputs:
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts (consumed, not modified)
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.web
+    - aura.observatory.live_updates
+    - aura.observatory.retention
+  metrics_added: []
+verification:
+  passed:
+    - NODE_OPTIONS=--max-old-space-size=512 NX_DAEMON=false pnpm exec tsc --noEmit -p apps/observatory-web/tsconfig.app.json
+    - NODE_OPTIONS=--max-old-space-size=512 NX_DAEMON=false pnpm exec nx run observatory-web:lint
+    - NODE_OPTIONS=--max-old-space-size=512 NX_DAEMON=false pnpm exec nx run observatory:lint
+    - NODE_OPTIONS=--max-old-space-size=512 NX_DAEMON=false pnpm exec nx run observatory:test
+    - NODE_OPTIONS=--max-old-space-size=512 NX_DAEMON=false pnpm exec nx run observatory-web:test
+    - Focused Observatory unit coverage for same-origin CSRF bootstrap with contract-length validation, UTC retention/run filters, server-snapshot stale detection, independent resource-state classification, and deferred request-generation invalidation
+    - NODE_OPTIONS=--max-old-space-size=512 NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+    - NODE_OPTIONS=--max-old-space-size=512 NX_DAEMON=false pnpm exec tsc --noEmit -p apps/storybook/tsconfig.json
+    - NODE_OPTIONS=--max-old-space-size=512 NX_DAEMON=false pnpm exec tsc --noEmit -p libs/observatory/tsconfig.lib.json
+    - NODE_OPTIONS=--max-old-space-size=768 NX_DAEMON=false pnpm exec nx run storybook:build-storybook
+    - git diff --check
+  failed:
+    - NODE_OPTIONS=--max-old-space-size=512 NX_DAEMON=false pnpm exec nx run storybook:build-storybook (controlled Node heap limit at approximately 507 MiB; rerun passed with 768 MiB cap)
+  not_run:
+    - frontend/apps/observatory-web-e2e Playwright acceptance (owned by test/evaluation worker)
+    - Docker Compose and full-stack acceptance (owned by platform/integration workers)
+    - repository-wide architecture checks (owned by delivery/integration)
+decisions:
+  - Observatory is a separate Angular application and feature library; the shell imports only the Observatory public API and generic shared UI.
+  - All REST access is routed through the generated observatory-v1 transport client and a same-origin fetch adapter with no-store credentials; feature components do not call fetch directly.
+  - The live EventSource URL is derived from the generated `streamEvents` operation path rather than duplicating an API route in feature code.
+  - Session bootstrap and logout use the generated `getOwnerSession`/`logoutOwnerSession` observatory-v1 operations behind the narrow gateway auth adapter; the CSRF token is captured from `OwnerSession` in an in-memory gateway field, overrides the retention mutation header, and is cleared on logout/session expiry.
+  - Owner sign-in links derive the anonymous `startOwnerLogin` path and bounded `return_to` query from the generated contract; no hard-coded auth endpoint is embedded in feature templates.
+  - Live state is reconciled from the REST snapshot and same-origin EventSource notifications; no authenticated response, SSE payload, or session value is written to Workbox, localStorage, sessionStorage, or IndexedDB.
+  - Manual reconnect uses the gateway reconnect port to close and clear the errored EventSource before opening a new one; the store preserves disconnected state until the replacement stream fires `open`.
+  - The feature store depends on the injected Observatory gateway/live port; concrete fetch/EventSource wiring is provided by the observatory-web application composition root.
+  - Named SSE events are registered explicitly, stale server timestamps are surfaced, partial resource failures preserve successful panels, and each runs/components/deployments panel exposes its own loading, empty, stale, or unavailable state.
+  - Authenticated feature components are conditionally mounted only for an active owner session; logout/session expiry resets filters and invalidates load, trace, component-health, and retention continuations so private operational state cannot reappear after sign-out.
+  - Retention completion invalidates selected traces and component-health caches; component-health reads are deduplicated while in flight and trend samples expose accessible names and values.
+  - Component-health request tokens are invalidated on retention completion and only their owning token may clear an in-flight marker, preventing pre-retention completions from publishing or deleting a newer request guard.
+  - Component trend requests are prefetched from an Angular lifecycle hook via a queued microtask; template evaluation is read-only, avoiding signal writes during change detection.
+  - Retention requests require explicit browser confirmation and send CSRF, confirmation, and idempotency headers; completion polling refreshes the Observatory snapshot.
+  - Trace rows are rendered as a keyboard-accessible tree with parent depth, duration waterfall, outcome, and partial/missing-parent indicators.
+  - Trace topology uses semantic list markup with screen-reader depth text rather than a partially implemented ARIA tree widget; selected-run loading/error/retry, local panel retries, reconnect control, and trend-loading states are explicit.
+  - Storybook includes deterministic loading, healthy, empty, stale, partial, disconnected, service-unavailable, owner-session-required, partial-trace, trace-error, retention-progress, and retention-failure fixtures without adding dependencies or importing Aura product feature libraries.
+  - Retention failure codes are retained as secondary reference diagnostics while known storage, conflict, and cancellation outcomes receive calm recovery guidance; the MVP is intentionally light-theme only.
+  - Observatory library declaration compilation sets rootDir to the frontend workspace because its public imports intentionally resolve shared UI and the generated observatory-v1 client source; this keeps standalone library type checking valid without changing ownership boundaries.
+risks:
+  - EventSource reconnection relies on the browser-managed Last-Event-ID header; the API remains responsible for persisted catch-up semantics.
+  - The repository-wide Storybook build requires a 768 MiB Node heap cap in this environment even though focused Observatory checks pass at 512 MiB.
+unresolved:
+  - The mocked browser fixture at frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts still emits the non-contract failure code `storage_unavailable`; the service contract and Observatory UI mapping use `storage_failure`. That E2E path is owned by the test/evaluation worker and was not modified in this frontend ownership handoff.
+  - Existing mocked browser fixture still intercepts the retired `/api/v1/auth/session` route, uses a sub-32-character CSRF fixture, and handles native browser dialogs; the product now uses generated `/api/v1/auth/me`/`/api/v1/auth/logout` operations, contract-length CSRF, and an in-DOM confirmation dialog, so the test/evaluation worker must align its fixture and retention interaction.
+  - Full-stack browser and Compose topology checks remain for the integration/test workers.

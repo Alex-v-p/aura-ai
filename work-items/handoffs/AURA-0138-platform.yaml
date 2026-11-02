@@ -1,0 +1,54 @@
+agent: platform_worker
+work_item: AURA-0138
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0138_platform
+  worktree: shared
+scope:
+  ownership_zone: repository.frontend-module-registry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+  - tooling/architecture/modules.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0138.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0138.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0138.yaml
+    - cd frontend && pnpm exec nx run aura-workflows:lint
+    - cd frontend && pnpm exec nx run aura-workflows:test (5 passed)
+    - cd frontend && pnpm exec tsc --noEmit -p libs/aura/automation/workflows/tsconfig.lib.json
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Registered aura-web.automation-workflows as a frontend-feature module with
+    only the generated Aura API client as its current public dependency.
+    Approval, notification, and shared-UI surfaces remain independent until a
+    real public import requires a reviewed dependency edge.
+  - >-
+    Added the canonical @aura/aura/automation/workflows path alias to the
+    TypeScript base configuration and Vitest resolver so product and test code
+    resolve the library through its public index.
+risks: []
+unresolved: []

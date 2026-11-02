@@ -1,0 +1,20 @@
+{
+  "name": "aura-api-client",
+  "projectType": "library",
+  "sourceRoot": "libs/platform/aura-api-client/src",
+  "tags": ["scope:aura", "type:data-access"],
+  "targets": {
+    "generate": {
+      "executor": "nx:run-commands",
+      "options": { "command": "node libs/platform/aura-api-client/tools/generate-client.mjs" }
+    },
+    "check-generated": {
+      "executor": "nx:run-commands",
+      "options": { "command": "node libs/platform/aura-api-client/tools/generate-client.mjs --check" }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "eslint libs/platform/aura-api-client" }
+    }
+  }
+}

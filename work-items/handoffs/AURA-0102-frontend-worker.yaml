@@ -1,0 +1,74 @@
+agent: frontend_worker
+work_item: AURA-0102
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory-web.page-frame-and-observatory-presentation
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web/src/app/app.component.css
+  - frontend/apps/observatory-web/src/app/app.component.ts
+  - frontend/apps/observatory-web/src/styles/observatory-tokens.css
+  - frontend/libs/observatory/src/lib/presentation/observatory-presentation.ts
+  - frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+  - frontend/libs/observatory/src/lib/features/runs/runs.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+  - frontend/libs/observatory/src/lib/features/components/components.component.ts
+  - frontend/libs/observatory/src/lib/features/analytics/analytics.component.ts
+  - frontend/libs/observatory/src/lib/features/comparison/comparison.component.ts
+  - frontend/libs/observatory/src/lib/features/retention/retention.component.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.component.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - pnpm --dir frontend nx lint observatory-web
+    - pnpm --dir frontend nx lint observatory
+    - pnpm --dir frontend nx test observatory
+    - pnpm --dir frontend nx test observatory-web
+    - pnpm --dir frontend nx build observatory-web --configuration=production
+    - git diff --check
+    - >-
+      Final ownership-boundary correction rerun: observatory-web/observatory lint,
+      observatory and observatory-web unit tests, production observatory-web build,
+      focused diff check, work-item validation, and 20-path AURA-0102 changed-path
+      validation all passed; no Observatory shell ::ng-deep rules remain for
+      private Experiment or Operations internals.
+    - >-
+      Preserved AURA-0098 rejected-scope DOM invariant: the consolidated Evaluation
+      recovery region retains the .live-banner.rejected hook and open progressive
+      scope disclosure; desktop, tablet, and mobile Playwright checks passed (3/3).
+      Observatory lint, web lint, production build, and focused diff check passed.
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0102.yaml --path ... (20 attributable AURA-0102 paths validated)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0098.yaml --path ... (25 separately preserved AURA-0098 paths validated)
+  not_run:
+    - pnpm --dir frontend nx test observatory-api-client
+    - pnpm --dir frontend nx build storybook --configuration=production
+    - pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+    - full repository validators (owned by integration)
+decisions:
+  - Added responsive page-gutter, content-width, readable-prose, control-width, and major-section spacing tokens without changing shared Aura UI tokens.
+  - Added a bounded main-content frame and destination scroll reset; reduced-motion users receive instant restoration.
+  - Applied selective route composition overrides for monitoring, analysis, evaluation, experiments, operations, and retention surfaces; domain state, templates, stores, generated clients, contracts, and sidebar semantics remain unchanged.
+  - Removed the broad shell deep-style overrides for Experiment and Operations and moved their presentation rules into the owning feature templates; the pre-existing AURA-0098 experiment behavior hunk remains unchanged and separately attributable.
+  - Corrected the wide Overview metric row to two equal tracks, added task-forward Runs and Trace empty states with accessible status semantics, and wired Trace’s Browse runs action through the existing shell destination API.
+  - Replaced raw component trend failures with quiet plain-language status while retaining the unavailable state.
+  - Added bounded analytics reason/bucket formatting and calmer warning regions, and consolidated evaluation recovery into one Retry all region with progressive scope retry disclosure and wrapping desktop tabs.
+  - Applied a 40/60 aligned-start Operations grid and removed prominent horizontal scrolling for empty colspan table states through scoped Observatory shell CSS; no operation state or request behavior changed.
+  - Removed the duplicate rejected-scope error sentence from the Evaluation recovery region; the consolidated state label now owns that copy while Retry all and scope-specific controls remain unchanged.
+  - Restored the preserved rejected-scope selector contract by keeping the consolidated recovery region discoverable as .live-banner.rejected and leaving scope retries in an accessible details disclosure opened for the existing acceptance invariant; no copy or retry semantics changed.
+  - Same Aura UX/UI reviewer completed rebuilt Docker visual verification across the corrected full-width route compositions; no remaining blocker was reported.
+risks:
+  - The existing AURA-0098 experiment component diff remains in the working tree and is not part of this redesign handoff.
+unresolved: []

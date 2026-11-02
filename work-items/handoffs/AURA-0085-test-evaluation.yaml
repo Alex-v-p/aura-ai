@@ -1,0 +1,48 @@
+agent: test_evaluation_engineer
+work_item: AURA-0085
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.observatory-health
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0085_adversarial.py
+  - work-items/handoffs/AURA-0085-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+    - aura.observatory.query_api
+    - aura.observatory.live_updates
+  metrics_added: []
+verification:
+  passed:
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/tests/test_aura0085_adversarial.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/tests/test_aura0085_adversarial.py
+    - 14 of 14 focused AURA-0085 adversarial tests passed
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-observatory/tests -q: 315 tests passed.
+    - Coverage includes non-finite/future/out-of-order intake, duplicate and malformed accounting, storage-failure privacy, stale/missing heartbeat states, bounded history pruning, material-only health events, malformed REST bounds, and migration rerun/content-free checks
+  failed: []
+  not_run:
+    - Aggregate work-item, browser, frontend, and full-stack checks remain assigned to their respective AURA-0085 owners and integration maintainer.
+decisions:
+  - Added only test/evaluation paths; no production behavior, contract, migration, threshold, or golden baseline was changed.
+  - Kept both regression tests as gates because they directly encode AURA-0085 acceptance criteria; both now pass after the owning worker fixes.
+  - Used deterministic in-memory adapters and content-free metadata fixtures; no network tools, credentials, payload content, or external systems were used.
+  - Existing frontend browser coverage already exercises health loading, stale, partial, unavailable, disconnected, retry, accessibility, and authenticated browser-storage exclusion states; no duplicate browser spec was added.
+risks:
+  - Durable PostgreSQL/ClickHouse migration execution still requires the integration environment; static idempotence and privacy checks are included here.
+  - This handoff does not replace the required real-browser or full-stack acceptance.
+unresolved: []

@@ -1,0 +1,70 @@
+agent: general_reviewer
+work_item: AURA-0117
+verdict: PASS
+checked:
+  - >-
+    Read the active work item, all three final implementation handoffs,
+    ADR-0013, ADR-0015, ADR-0016, ADR-0017, the architecture handover,
+    system-context and module-boundary sources, the Observatory specification,
+    open decisions, and the complete current diff rather than relying on
+    handoff summaries.
+  - >-
+    Verified run-evidence-v1 is a closed and bounded Draft 2020-12 envelope
+    with stable logical identifiers, per-attempt delivery identity, independent
+    event/evidence collision handling, deterministic canonical byte domains,
+    digest and byte-count verification, discriminated kind/category/media
+    bindings, explicit payload serializers, and captured, excluded, partial,
+    dropped, and deleted state invariants.
+  - >-
+    Verified the corrected content-admission contract requires allowlisted
+    scanner and policy attestations and media-specific inspection modes. Text
+    and JSON require decoded inspection, images require validated structure,
+    metadata and OCR, PDFs additionally require decoded text, and uninspected
+    dropped binary evidence remains representable without contradictory
+    admission claims.
+  - >-
+    Verified the additive Observatory OpenAPI surface is owner-session scoped,
+    no-store on success and failure, bounded to approved media, uses a custom
+    manifest digest header, requires CSRF plus UUID idempotency and explicit
+    confirmation for deletion, and reports content-free errors and durable
+    deletion failure codes.
+  - >-
+    Verified inspection projection states are internally constrained: every
+    evidence capture state has an accounting field, non-captured manifests
+    retain no digest or bytes, deleted evidence has the manual-deletion reason,
+    unavailable snapshots are partial with bounded reasons, and complete
+    snapshots cannot contain partial, dropped, or deleted evidence.
+  - >-
+    Verified observatory-v1 compatibility is preserved. Existing LiveEvent
+    shapes and operation types remain accepted while the UUID-scoped
+    metadata-only run invalidation is additive, generated run-inspection DTOs
+    are concrete object types, and evidence responses use the bounded Blob
+    descriptor without changing existing client operations.
+  - >-
+    Verified concrete contract tests cover malformed identifiers, timestamps,
+    base64 and approved media; oversized text and attachments; mismatched
+    kinds and media; RFC 8785, UTF-8 and decoded attachment bytes; digest and
+    byte counts; independent duplicate collisions and exact retries; multiple
+    secret forms; valid PNG/PDF admission; under-inspected binary content;
+    contradictory projection states; legacy SSE compatibility; and Aura Web
+    isolation.
+  - >-
+    Independently ran the final work-item, changed-path, repository-shape,
+    module-registry, import-boundary, service-isolation, observability,
+    contract-change, baseline-protection and whitespace checks. The final
+    Python contract suite passed 36 tests; generated-client validation and
+    synchronization, 9 client tests, and client lint also passed.
+findings: []
+risks:
+  - >-
+    This phase defines contracts and governance only. Follow-up Core and
+    Observatory runtime work must implement the declared media parsers,
+    scanner/policy allowlists, OCR and sandboxed PDF inspection, fail-closed
+    admission, bounded nonblocking export, digest verification, persistence,
+    deletion recovery, and content-free audit before capture is enabled.
+  - >-
+    The generated descriptor and DTOs expose Blob evidence responses, but the
+    actual Observatory Fetch transport, inert renderer, zero-persistence
+    browser behavior, and end-to-end outage tests intentionally remain in the
+    later API/UI/full-stack work items identified by AURA-0117.
+unresolved: []

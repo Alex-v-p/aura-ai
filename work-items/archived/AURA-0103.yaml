@@ -1,0 +1,142 @@
+id: AURA-0103
+title: Restore Observatory Overview surface padding
+status: integrated
+change_class: refactor
+intent: >
+  Restore deliberate horizontal and vertical padding inside the separate Aura
+  Observatory Overview surfaces so headings, summaries, health metrics, and
+  history content share a coherent inset at wide and narrow viewports, while
+  preserving the accepted shell, sidebar, domain behavior, accessibility,
+  public contracts, and uncommitted AURA-0098 work.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - Owner feedback on 2026-10-23 identifies the Observatory Overview content as visually under-padded; the accepted sidebar and other routes remain unchanged.
+    - The live shell provides responsive outer page gutters, but Overview hero, ingest, and health surfaces explicitly zero their horizontal padding and therefore break internal alignment with metric cards.
+    - The correction is owned by the Overview feature component and must not use shell-level private selectors or change stores, API requests, authentication, persistence, or contracts.
+    - Browser evidence remains ephemeral and excludes credentials, cookies, tokens, private payloads, and authenticated screenshots from committed artifacts.
+    - Existing AURA-0098 changes and blockers remain preserved and independently attributable.
+  contracts: []
+feature_references: [OBS-002, OBS-006]
+ownership_zones:
+  - frontend.observatory.monitoring-surfaces
+  - evaluation.observatory-overview-spacing
+  - delivery.aura0103
+allowed_paths:
+  - work-items/active/AURA-0103.yaml
+  - work-items/archived/AURA-0103.yaml
+  - work-items/handoffs/AURA-0103-*.yaml
+  - work-items/reviews/AURA-0103-*.yaml
+  - work-items/integration/AURA-0103.yaml
+  - frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - tooling/**
+  - contracts/**
+  - services/**
+  - deploy/**
+  - infra/**
+  - packages/**
+  - satellites/**
+  - extensions/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/libs/platform/**
+  - frontend/apps/observatory-web/src/app/**
+  - frontend/apps/observatory-web/src/styles/**
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/lib/features/experiments/**
+  - frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators:
+    - observatory_overview_surface_padding
+    - observatory_overview_responsive_reflow
+  capture_policy: bounded visual observations only; no credentials session material or private payload capture
+security_privacy:
+  applicable: false
+  concerns:
+    - Styling and test changes must not alter authenticated data handling, URLs, storage, screenshots, traces, logs, or browser persistence.
+  data_classes: []
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - aura_ux_ui_reviewer
+    - general_reviewer
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - At wide desktop the System health Ingest health health cards and history region have a deliberate internal inset and align coherently with the padded metric cards instead of placing content against surface edges.
+  - Overview preserves the existing responsive outer shell gutter and does not change the sidebar shell tokens navigation stores contracts requests or other Observatory routes.
+  - Mobile tablet and 320-pixel 400-percent-equivalent reflow retain useful padding without clipped content uncontrolled document overflow or giant whitespace.
+  - Loading error empty ready stale disconnected partial and unavailable Overview states retain their existing semantics focus order status roles actions and bounded presentation.
+  - A focused browser assertion verifies positive horizontal padding on visible Overview surfaces without treating the assertion as an aesthetic verdict.
+  - Real-browser before and after review is completed at wide desktop and narrow reflow; no authenticated screenshot or private operational payload is committed.
+  - Existing AURA-0098 changes remain present and independently attributable.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0103.yaml
+  - >-
+    python3 tooling/architecture/validate-changed-paths.py
+    --work-item work-items/active/AURA-0103.yaml
+    --path work-items/active/AURA-0103.yaml
+    --path work-items/handoffs/AURA-0103-frontend-worker.yaml
+    --path work-items/handoffs/AURA-0103-test-evaluation-engineer.yaml
+    --path frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+    --path frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0103.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0103.yaml
+  - pnpm --dir frontend nx lint observatory
+  - pnpm --dir frontend nx test observatory
+  - pnpm --dir frontend nx test observatory-web
+  - pnpm --dir frontend nx build observatory-web --configuration=production
+  - >-
+    pnpm --dir frontend exec playwright test
+    --config apps/observatory-web-e2e/playwright.config.ts
+    apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - Rendered real-browser review of Overview at wide desktop tablet mobile and 320-pixel narrow reflow
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions:
+  - AURA-0098 remains independently owned with the blockers recorded in its current integration report; this work item must neither alter that slice nor claim to resolve its acceptance status.

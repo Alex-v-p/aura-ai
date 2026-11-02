@@ -1,0 +1,100 @@
+id: AURA-0052
+title: Close disposable Core integration regressions
+status: integrated
+change_class: bugfix
+intent: >
+  Correct the PostgreSQL-only memory purge, configuration, approval, and
+  deterministic seed failures exposed by the required disposable-service gate
+  without changing public contracts or in-memory behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - Required integration-gate follow-up to the approved Repository Quality Remediation plan
+  contracts: []
+feature_references: [MEM-015, MEM-025, MEM-026, MEM-028, MEM-030]
+ownership_zones:
+  - aura-core.knowledge.memory.persistence
+  - aura-core.interaction.agents.persistence
+  - aura-core.integration-tests
+  - repository.deployment.validation
+allowed_paths:
+  - work-items/active/AURA-0052.yaml
+  - work-items/archived/AURA-0052.yaml
+  - services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/postgres.py
+  - services/aura-core/tests/test_memory_persistence.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - deploy/compose/e2e/fake_provider.py
+  - deploy/compose/test_topology.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - contracts/**
+  - docs/**
+  - evaluations/**
+  - tooling/**
+  - frontend/**
+  - services/aura-core/migrations/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: knowledge.memory
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Preserve owner scoping and complete transactional purge behavior
+    - Preserve idempotency receipts retry fences and content-free audit metadata
+  data_classes:
+    - private memory records and owner identifiers
+required_agents:
+  implementation: [core_worker, test_evaluation_engineer, platform_worker]
+  review: [general_reviewer, architecture_guardian, security_privacy_reviewer]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - PostgreSQL memory purge SQL executes and atomically scrubs revisions provenance embeddings candidates outcomes commands and retry fences while preserving the replay receipt.
+  - Model configuration and approval flows reuse an existing embedding generation without attempting a duplicate owner-generation insert.
+  - Legacy review candidate approval normalizes action and decay defaults under PostgreSQL.
+  - Built-in agent seed rows flush in foreign-key dependency order on a fresh metadata-created PostgreSQL schema.
+  - The touched SQL memory repository has no file-wide Pyright or Ruff suppressions and passes strict checks without new exemptions.
+  - The deterministic Ollama full-stack fixture exposes revision and digest identity metadata so its two chat models remain selectable under the production adapter contract.
+  - The complete disposable PostgreSQL memory and production-adapter suites pass together with Valkey and NATS coverage and no infrastructure skips.
+  - No public contract migration authorization retention redaction telemetry or in-memory behavior changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0052.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0052.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0052.yaml
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests
+  - env AURA_TEST_DEPENDENCIES_ISOLATED=1 AURA_TEST_DATABASE_URL=postgresql+psycopg://postgres:aura@127.0.0.1:55432/aura AURA_TEST_VALKEY_URL=redis://:aura@127.0.0.1:56379/0 AURA_TEST_NATS_URL=nats://aura:aura@127.0.0.1:54222 uv run --project services/aura-core pytest services/aura-core/tests/test_memory_persistence.py services/aura-core/tests/system/test_production_adapters.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

@@ -1,0 +1,57 @@
+agent: integration_maintainer
+work_item: AURA-0122
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0122-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0122-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0122-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0122-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0122-ux.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0122.yaml
+  - work-items/integration/AURA-0122.yaml
+checks:
+  passed:
+    - >-
+      Both AURA-0122 implementation handoffs are schema-valid, stay within
+      their authorized paths, and the final integration checks resolve the
+      acceptance handoff's previously deferred aggregate run.
+    - >-
+      All five required review artifacts, including the mechanically recorded
+      UX advisory PASS, are schema-valid PASS verdicts with no findings or
+      unresolved blocks.
+    - >-
+      Work-item, changed-path, contract-change, generated-sync, import-boundary,
+      service-isolation, frontend-boundary, observability, repository-shape, and
+      baseline-protection validators passed; contract and baseline checks
+      correctly reported no applicable changes.
+    - "pnpm --dir frontend exec nx lint observatory-web"
+    - "pnpm --dir frontend exec nx test observatory-web (1 passed)"
+    - "pnpm --dir frontend exec nx test observatory (78 passed)"
+    - "pnpm --dir frontend exec nx build observatory-web --configuration=production"
+    - "pnpm --dir frontend exec nx build-storybook storybook"
+    - >-
+      AURA_OBSERVATORY_WEB_E2E_APP_PORT=4312 pnpm --dir frontend exec nx e2e
+      observatory-web-e2e (447 passed across desktop, tablet, and mobile;
+      including all AURA-0122 cases and the previously transient Operations
+      assertion)
+    - "git diff --check"
+    - >-
+      The work item was moved from active to archived with status integrated,
+      and all discovered changed paths remain within its authorized scope.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks: []

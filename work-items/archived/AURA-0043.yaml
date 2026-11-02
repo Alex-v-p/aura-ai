@@ -1,0 +1,95 @@
+id: AURA-0043
+title: Preserve durable run event sequencing through conversation and memory completion
+status: integrated
+change_class: bugfix
+intent: >
+  Allocate every durable run event a unique monotonic run-local sequence so a
+  normal question can complete, publish its response, and enqueue asynchronous
+  memory processing without delivery failures.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/memory-and-knowledge.md
+  decisions:
+    - User-reported DELIVERY_ERROR for trace c356a7828f232063b210d88c9599b167
+    - Runtime evidence shows uq_run_event_sequence collision when max sequence is zero
+  contracts: []
+feature_references: [RUN-002, MEM-002]
+ownership_zones:
+  - aura-core.execution.runs
+  - aura-core.interaction.conversations
+  - aura-core.knowledge.memory
+  - aura-core.system-tests
+allowed_paths:
+  - work-items/active/AURA-0043.yaml
+  - work-items/archived/AURA-0043.yaml
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_memory_processing.py
+  - services/aura-core/tests/test_memory_domain.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/system/test_full_stack_conversation.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - tooling/architecture/**
+  - contracts/**
+  - services/aura-core/migrations/**
+  - services/aura-observatory/**
+  - frontend/**
+  - deploy/**
+  - compose.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: execution.runs, knowledge.memory
+observability:
+  applicable: true
+  affected_components: [aura.execution.run_coordinator, aura.runtime.stream_delivery]
+  required_metrics: [run_status, events_delivered, errors]
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation: [core_worker, test_evaluation_engineer]
+  review: [general_reviewer, observability_steward]
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Appending a durable event after sequence zero allocates sequence one rather than colliding with sequence zero.
+  - Replayed event IDs remain idempotent and concurrent producers retain unique monotonic run-local sequences.
+  - A real local-stack question reaches completed with an assistant response and no DELIVERY_ERROR.
+  - A completed turn containing an ordinary durable preference reaches a terminal memory-processing outcome and creates or reinforces a memory revision with an embedding.
+  - Duplicate delivery remains acknowledged without duplicating run events or memory records.
+  - Versioned outbox memory commands deserialize without weakening identifier validation.
+  - In-memory and SQL memory repositories provide the same candidate lookup required by the instrumented worker path.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0043.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0043.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0043.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_run_events.py services/aura-core/tests/system/test_api_conversation_flow.py -q
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

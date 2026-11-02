@@ -1,0 +1,15 @@
+agent: architecture_guardian
+work_item: AURA-0073
+verdict: PASS
+checked:
+  - Bounded mismatch probe uses an owner-scoped metadata-only SELECT with LIMIT 1.
+  - SQL regression preserves bounded lexical and vector candidate windows.
+  - DocumentService and HTTP document-search public contracts remain unchanged.
+  - DocumentSearchResult remains internal to the provider-neutral repository boundary.
+  - Vector comparison requires matching model ID, revision, and digest while incompatible chunks retain lexical eligibility.
+  - identity_mismatch telemetry is runtime-allowlisted, manifest-declared, metadata-only, and accepted by production telemetry validation.
+  - PostgreSQL and pgvector ownership and Ollama provider isolation comply with ADR-0013.
+  - Core and Observatory, frontend, contract, migration, and protected-baseline boundaries remain intact.
+  - All architecture validators and git diff checks passed.
+  - Focused final verification passed with 73 tests passed and 2 environment-dependent tests skipped.
+findings: []

@@ -1,0 +1,22 @@
+agent: architecture_guardian
+work_item: AURA-0125
+verdict: PASS
+checked:
+  - Verified the exact current final diff, including the final relocation of the authoritative Core run-event lookup into the existing publication failure boundary and its regression test.
+  - All changed and untracked paths remain authorized by AURA-0125 and aligned with Core Worker, Test/Evaluation Engineer, and Delivery Lead ownership.
+  - No versioned contracts, generated clients, migrations, Observatory code, frontend code, deployment files, provider adapters, services, packages, or architecture registries changed.
+  - The authoritative duplicate query remains a read-only call to the Core-owned SqlConversationStore public event seam using stable event_id and run_id values; no ORM mapping, foreign database, or Observatory state is accessed.
+  - Moving the lookup inside the publication try/except preserves the existing operation boundary: lookup and publish failures emit one bounded persistence-class observation and are re-raised through the established delivery behavior.
+  - The lookup remains ahead of the process-local publisher compatibility check, so PostgreSQL remains authoritative across publisher and worker restarts.
+  - Duplicate detection does not acquire memory mutation, retry scheduling, or acknowledgement authority; PostgreSQL memory job state and available_at remain authoritative for retries.
+  - Housekeeping publication failures remain isolated from already durable processing settlement through the bootstrap callback boundary, while command-path publication failures retain existing transport retry behavior.
+  - Quiet telemetry context remains bounded to idle discovery and claim operations; real processing, embedding, lifecycle, and reindex work retain fresh linked non-suppressing contexts.
+  - Direct candidate projection remains limited to the established allowlisted MemoryCandidate metadata shape and introduces no content serialization or provider coupling.
+  - The worker entrypoint remains a thin composition and transport boundary; memory business transitions stay in the memory application service and repository.
+  - Internal API additions remain backward-compatible and optional; no external public API shape or versioned contract changed.
+  - Core/Observatory isolation, service-owned data, provider direction, and Aura Web/Observatory Web separation remain intact.
+  - Component manifests remain consistent with the implemented metadata-only behavior.
+  - git diff --check passed during this read-only final review.
+findings: []
+risks: []
+unresolved: []

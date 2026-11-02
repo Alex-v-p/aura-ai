@@ -1,0 +1,147 @@
+id: AURA-0112
+title: Preserve authoritative suite projection fields
+status: integrated
+change_class: bugfix
+intent: >
+  Make Observatory suite list detail and create responses preserve their
+  existing contract-required summary while projecting persisted authoritative
+  component variant and execution-limit bindings needed by subsequent job
+  admission.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0093.yaml
+    - work-items/archived/AURA-0095.yaml
+    - work-items/archived/AURA-0110.yaml
+    - Observatory PostgreSQL remains authoritative for admitted immutable suite definitions. The public query boundary projects persisted facts and never reconstructs execution bindings from identifiers summaries or frontend state.
+    - The existing observatory-v1 EvaluationSuiteDefinition summary fields remain required and unchanged. Existing optional components variantBindings and limits fields are included when those authoritative values are present in the persisted suite definition.
+    - Create list detail and idempotent create replay use the same closed suite projector so equivalent persisted definitions produce one contract-conformant public shape.
+    - Legacy already-projected suite summaries without the optional authoritative fields remain readable. Present optional fields must be complete bounded and valid; malformed or partially present authoritative data fails closed rather than being silently dropped or synthesized.
+    - AURA-0098 retains its frontend parser correction and composed acceptance. This item changes no frontend code generated client or browser contract.
+    - No public schema storage schema migration dependency service or architecture change is required. Evidence requiring one returns to planning.
+  contracts:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - EVA-001
+  - EVA-002
+  - EVA-003
+  - EVA-023
+ownership_zones:
+  - services.aura-observatory.evaluation-query-projection
+  - services.aura-observatory.evaluation-api-replay
+  - evaluation.observatory-suite-projection-compatibility
+  - delivery.aura0112
+allowed_paths:
+  - work-items/active/AURA-0112.yaml
+  - work-items/archived/AURA-0112.yaml
+  - work-items/handoffs/AURA-0112-*.yaml
+  - work-items/reviews/AURA-0112-*.yaml
+  - work-items/integration/AURA-0112.yaml
+  - services/aura-observatory/src/aura_observatory/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/tests/test_aura0112_*.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/src/aura_observatory/adapters/**
+  - services/aura-observatory/src/aura_observatory/entrypoints/**
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - frontend/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - evaluation-v1
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: evaluation.query
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Only the existing closed component variant and execution-limit fields may cross the public query boundary; arbitrary stored keys provider fields and private definition data remain excluded.
+    - Component image digests model digests revisions identifiers and numeric limits retain their existing bounded format validation and are not copied into logs metrics errors URLs or browser persistence by this backend correction.
+    - Malformed partial duplicate over-limit or conflicting optional bindings fail with bounded existing query or unavailable classifications that do not reflect stored values or provider diagnostics.
+    - The correction remains inside Observatory and does not read Core state add cross-product communication widen owner authorization or change retention and deletion behavior.
+  data_classes:
+    - evaluation_definition_metadata
+    - execution_binding_metadata
+    - opaque_resource_identifiers
+    - content_free_error_metadata
+required_agents:
+  implementation:
+    - observatory_worker
+  review:
+    - general_reviewer
+    - security_privacy_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Suite list detail and create responses retain every existing required summary field and remain valid against the unchanged observatory-v1 EvaluationSuiteDefinition schema.
+  - When a persisted suite contains authoritative components the public response includes the existing components field as a closed bounded list and componentIds is the deterministic matching summary of those bindings.
+  - When a persisted suite contains authoritative variantBindings the public response includes the existing optional field with its bounded unique variant identifiers complete component model and revision bindings and no additional keys.
+  - When a persisted suite contains authoritative limits the public response includes the existing optional limits object while caseBudget and timeoutMs remain the matching required summary values.
+  - Production provider-shaped id and version resource references plus components variantBindings and limits round-trip through list detail create and idempotent create replay without field loss renaming or synthesis.
+  - Legacy canonical suite summaries that omit all three optional authoritative fields remain readable and preserve their existing exact response shape.
+  - If any optional authoritative field is present but malformed partial mixed over its contract bound duplicated or inconsistent with its summary the projection fails closed with the existing bounded error classification rather than returning an incomplete suite.
+  - Dataset evaluator provenance state retention timestamps pagination and filtering semantics remain unchanged; the projector does not mutate the persisted definition mapping.
+  - Focused regression tests exercise exact PostgreSQL provider-shaped suite payloads for list and detail production admission output for create and stored idempotency replay for retry.
+  - A contract-conformance regression validates both the required summary-only legacy shape and the enriched authoritative shape against the unchanged OpenAPI schema.
+  - The enriched response interoperates with the AURA-0098 Observatory frontend suite parser and supplies the exact authoritative fields used to construct a valid job-admission request without requiring any frontend change in this item.
+  - No Core Aura Web Observatory frontend adapter entrypoint contract migration deploy dependency service metric evaluator protected baseline threshold or retention change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0112.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0112.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0112.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0112.yaml
+  - UV_CACHE_DIR=/tmp/aura-0112-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0112_*.py
+  - UV_CACHE_DIR=/tmp/aura-0112-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0095_backend.py services/aura-observatory/tests/test_aura0095_backend_comprehensive.py services/aura-observatory/tests/test_aura0095_postgres_integration.py services/aura-observatory/tests/test_aura0112_*.py
+  - UV_CACHE_DIR=/tmp/aura-0112-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests
+  - UV_CACHE_DIR=/tmp/aura-0112-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/tests/test_aura0112_*.py
+  - UV_CACHE_DIR=/tmp/aura-0112-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/tests/test_aura0112_*.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

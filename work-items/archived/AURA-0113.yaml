@@ -1,0 +1,141 @@
+id: AURA-0113
+title: Settle deleted telemetry visibility slots
+status: integrated
+change_class: bugfix
+intent: >
+  Prevent owner-authorized Observatory retention deletion from leaving deleted
+  receipt sequences as permanent visibility gaps that hide every newer run.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0108.yaml
+    - work-items/archived/AURA-0109.yaml
+    - Owner-authorized retention deletion is a terminal disposition for only the immutable target snapshot. Its receipt sequences may be settled in the visibility ledger atomically with receipt deletion so intentionally deleted observations cannot fence later retained observations.
+    - Visibility settlement never treats an untargeted missing or pending receipt as persisted and introduces no timeout automatic abandonment or best-effort gap skipping.
+    - The existing content-free retention audit remains the durable truth that the target content was deleted. No observation content or target identifiers are added to logs metrics errors or public event payloads.
+    - The repair remains wholly Observatory-owned and changes no public contract migration service dependency Core behavior Aura Web behavior or cross-product communication.
+  contracts: []
+feature_references:
+  - OBS-001
+  - OBS-002
+ownership_zones:
+  - services.aura-observatory.retention
+  - services.aura-observatory.ingest-visibility
+  - evaluation.observatory-retention-visibility
+  - delivery.aura0113
+allowed_paths:
+  - work-items/active/AURA-0113.yaml
+  - work-items/archived/AURA-0113.yaml
+  - work-items/handoffs/AURA-0113-*.yaml
+  - work-items/reviews/AURA-0113-*.yaml
+  - work-items/integration/AURA-0113.yaml
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/tests/test_aura0113_*.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - compose.yaml
+  - deploy/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/**
+  - services/aura-observatory/src/aura_observatory/api.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/**
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - frontend/**
+  - evaluations/**
+  - tooling/architecture/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: retention
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.retention
+    - aura.observatory.telemetry_storage
+  required_metrics:
+    - observatory_retention_action_count
+    - observatory_retention_deleted_count
+    - observatory_retention_failure_count
+    - observatory_ingest_visibility_lag_count
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Only receipt sequences belonging to the existing immutable owner-authorized retention target snapshot may be terminally settled.
+    - Receipt settlement and deletion must be atomic and idempotent across retries and restart recovery.
+    - Untargeted pending receipts remain pending and continue to fence visibility until persisted or explicitly deleted by a later owner-authorized action.
+    - No telemetry payload target identifier credential or receipt content may enter audit details logs metrics errors or browser-visible events.
+    - The correction remains inside Observatory and does not widen authorization retention scope or Core-to-Observatory coupling.
+  data_classes:
+    - telemetry_receipt_metadata
+    - content_free_retention_audit
+    - opaque_observation_identifiers
+required_agents:
+  implementation:
+    - observatory_worker
+  review:
+    - general_reviewer
+    - security_privacy_reviewer
+    - observability_steward
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Owner-authorized purge-all and cutoff retention actions terminally settle exactly the receipt sequences in their immutable persisted target snapshot before deleting those receipts.
+  - Settling a deleted target permits the committed visibility watermark to advance through contiguous targeted slots and already-visible health-event slots without advancing across any untargeted pending receipt.
+  - The target settlement receipt deletion and watermark update are one PostgreSQL transaction so a crash cannot leave a committed partial disposition.
+  - Retrying an interrupted or already-applied deletion is idempotent and never settles a receipt added after target capture.
+  - ClickHouse deletion failure leaves PostgreSQL receipts visibility slots and committed watermark unchanged for the affected phase.
+  - Existing stale-pending reconciliation continues to leave ordinary missing observations pending and redeliverable; there is no automatic age-based or outage-based gap skipping.
+  - Existing retention audit authorization deletion counts retention phases and content-free event behavior remain unchanged.
+  - Focused regressions cover a targeted missing receipt followed by a visible newer run an untargeted pending fence mixed visible and targeted slots retry behavior and transactional rollback.
+  - No contract migration Core Aura Web Observatory frontend deploy dependency service baseline threshold or capture-policy change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0113.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0113.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0113.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0113.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0113.yaml
+  - UV_CACHE_DIR=/tmp/aura-0113-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0113_*.py
+  - UV_CACHE_DIR=/tmp/aura-0113-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0080_formal_regressions.py services/aura-observatory/tests/test_aura0108_reconciliation.py services/aura-observatory/tests/test_aura0109_ingest_throughput.py services/aura-observatory/tests/test_aura0113_*.py
+  - UV_CACHE_DIR=/tmp/aura-0113-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests
+  - UV_CACHE_DIR=/tmp/aura-0113-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0113_*.py
+  - UV_CACHE_DIR=/tmp/aura-0113-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/adapters/postgres.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0113_*.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

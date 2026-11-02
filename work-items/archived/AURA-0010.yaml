@@ -1,0 +1,169 @@
+id: AURA-0010
+title: Bootstrap containerized Aura Web conversation shell
+status: integrated
+change_class: feature
+intent: >
+  Establish the Aura Web workspace and deliver an accessible, responsive,
+  themeable conversation shell with deterministic local behavior, reusable
+  components, frontend tests, and a repository-root Docker Compose preview,
+  without introducing backend integrations or future API contracts.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/repository-structure.md
+    - docs/architecture/technology-stack.md
+    - tooling/architecture/path-ownership.yaml
+  specifications:
+    - docs/specifications/clients-and-voice.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - AURA-0008 root Compose ownership authorization
+    - User-selected root docker compose up entry point
+    - User-selected welcome-first conversation and conversation-only navigation
+    - User-selected expanded desktop sidebar, tablet rail, and mobile sticky composer
+    - User-selected deterministic local reply and small shared component core
+    - User-selected static-shell-only PWA behavior
+  contracts: []
+feature_references: []
+ownership_zones:
+  - frontend.aura-web
+  - frontend.aura.interaction.conversations
+  - frontend.shared.ui
+  - deployment.aura-web
+allowed_paths:
+  - compose.yaml
+  - deploy/docker/aura-web.Dockerfile
+  - deploy/docker/aura-web.Dockerfile.dockerignore
+  - deploy/docker/aura-web.nginx.conf
+  - work-items/active/AURA-0010.yaml
+  - work-items/archived/AURA-0010.yaml
+  - frontend/.editorconfig
+  - frontend/.gitignore
+  - frontend/.prettierignore
+  - frontend/.prettierrc.json
+  - frontend/README.md
+  - frontend/package.json
+  - frontend/pnpm-workspace.yaml
+  - frontend/pnpm-lock.yaml
+  - frontend/nx.json
+  - frontend/tsconfig.json
+  - frontend/tsconfig.base.json
+  - frontend/eslint.config.mjs
+  - frontend/vitest.workspace.ts
+  - frontend/playwright.config.ts
+  - frontend/postcss.config.mjs
+  - frontend/workbox-config.mjs
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/storybook/**
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/libs/shared/ui/**
+  - frontend/libs/shared/layout/**
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - tooling/architecture/**
+  - services/**
+  - contracts/**
+  - packages/**
+  - evaluations/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - scripts/**
+  - deploy/compose/**
+  - deploy/aura/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - frontend/libs/platform/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Mock transcript content remains plain text and Angular-escaped
+    - Conversations and drafts remain memory-only
+    - Only the non-sensitive theme preference is persisted
+    - Workbox caches public and static shell assets only
+    - The preview binds to loopback by default
+    - The runtime container is non-root and receives no secrets
+    - Fixtures contain no credentials, private diagnostics, or real user data
+  data_classes:
+    - synthetic mock conversation content
+    - non-sensitive theme preference
+required_agents:
+  implementation:
+    - frontend_worker
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 2
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The locked workspace uses Node 24, pnpm 12, Angular 22, Nx 23, strict TypeScript, Tailwind 4, and the approved frontend test stack.
+  - Only Aura Web and the explicitly authorized conversation and shared libraries are scaffolded.
+  - Nx boundaries keep the application thin, conversation behavior Aura-owned, and shared libraries product-neutral.
+  - The initial route presents a welcome-first conversation interface with accessible conversation-only navigation.
+  - Desktop uses an expanded collapsible sidebar, tablet uses a compact rail, and mobile uses an accessible overlay and sticky safe-area composer.
+  - System, light, and dark themes use documented semantic tokens and persist only the theme preference.
+  - Prompt submission produces deterministic local working and reply behavior; stopping preserves the user turn and displays interruption.
+  - Empty, loading, validation, working, interrupted, recoverable-error, and completed states provide accessible text and recovery behavior.
+  - Storybook documents reusable components and conversation states with automated axe coverage.
+  - Vitest and Playwright cover state transitions, keyboard behavior, accessibility, focus management, and responsive layouts.
+  - The PWA precaches only public and static shell assets and does not persist drafts, transcripts, mock state, authenticated data, or runtime requests.
+  - Running docker compose up --build from the repository root serves a healthy Aura Web preview at http://localhost:4200.
+  - The default Compose application starts only Aura Web and requires no host Node or pnpm installation.
+  - Optional Compose check services run lint, tests, Storybook validation, and Playwright without becoming default runtime services.
+  - The runtime image is non-root, minimal, health-checked, and contains no development server, source tree, package cache, or development dependencies.
+  - No backend service, API contract, generated client, authentication provider, database, model call, tool, voice processing, or broader infrastructure is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0010.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0010.yaml
+  - docker compose config --quiet
+  - docker compose --profile checks build frontend-checks frontend-e2e
+  - docker compose --profile checks run --rm frontend-checks
+  - docker compose up --build --detach --wait aura-web
+  - curl --fail --silent --show-error http://127.0.0.1:4200/
+  - docker compose --profile checks run --rm frontend-e2e
+  - docker compose down --remove-orphans
+  - python3 -m unittest discover -s tooling/architecture/tests -v
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0010.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0010.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0010.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

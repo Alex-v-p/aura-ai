@@ -1,0 +1,180 @@
+id: AURA-0086
+title: Add Observatory component catalogue and dependency topology
+status: integrated
+change_class: contract
+intent: >
+  Make Observatory component definitions, deployed versions, dependencies, and
+  observed health understandable through an owner-only, bounded, accessible
+  catalogue without coupling Observatory runtime behavior to Core internals.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/foundations.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Synchronize only Observatory-owned component manifests into Observatory PostgreSQL through a service-owned idempotent path.
+    - Keep Core and other externally observed components visible as observed-only definitions until a versioned public definition contract is separately authorized.
+    - Keep component definitions and dependency edges in PostgreSQL while deriving observed health and deployed versions from ClickHouse observations.
+    - Represent topology through bounded version-aware resources and provide a semantic table or list as the complete non-visual alternative to any graphical view.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/telemetry/v1/metadata-observation.schema.json
+feature_references:
+  - OBS-010
+  - OBS-011
+  - OBS-012
+  - OBS-013
+ownership_zones:
+  - contracts.observatory-api
+  - services.aura-observatory.component-catalogue
+  - services.aura-observatory.component-query
+  - frontend.observatory.component-topology
+  - evaluation.observatory-components
+allowed_paths:
+  - work-items/active/AURA-0086.yaml
+  - work-items/archived/AURA-0086.yaml
+  - work-items/handoffs/AURA-0086-*.yaml
+  - work-items/reviews/AURA-0086-*.yaml
+  - work-items/integration/AURA-0086.yaml
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/catalogue.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/adapters/memory.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/migrations/postgresql/versions/0006_component_definitions.sql
+  - services/aura-observatory/resources/component-manifests/*.yaml
+  - services/aura-observatory/tests/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/apps/storybook/src/observatory.stories.ts
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - services/aura-core/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - contracts/telemetry/**
+  - compose.yaml
+  - deploy/compose/local-http.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - infra/**
+  - tooling/architecture/**
+contracts:
+  changes_allowed: true
+  affected:
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: component-catalogue
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  required_metrics:
+    - observatory_query_duration_ms
+    - observatory_query_freshness_lag_ms
+  required_evaluators:
+    - component_manifest_completeness
+    - component_dependency_integrity
+    - observatory_self_monitoring
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Catalogue definitions contain only repository-approved component metadata and never prompts responses documents filenames tool payloads credentials endpoints tokens or owner identity.
+    - Dependency and health queries are owner-authorized and bounded by explicit item point and time limits.
+    - Unknown observed components remain metadata-only and cannot inject arbitrary display labels schemas evaluators dependencies URLs or markup.
+    - Browser topology and SSE contain only approved definitions and aggregate observation metadata and are excluded from browser persistence.
+  data_classes:
+    - component_definition_metadata
+    - operational_telemetry_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Observatory PostgreSQL stores versioned component definitions with a stable component identifier version owner category input and output schema identifiers declared measurements evaluators and dependency edges.
+  - An idempotent service-owned synchronization path loads only packaged Observatory component manifests and rejects malformed duplicate cyclic or unbounded definitions without importing Aura Core modules or reading Core tables.
+  - Components observed through metadata telemetry without a matching definition remain visible as explicitly observed-only entries with their deployed versions and aggregate health.
+  - ClickHouse remains the source for high-cardinality observations deployed-version presence and bounded health trends; PostgreSQL definitions are not duplicated into observation storage.
+  - The backward-compatible REST contract exposes a bounded component catalogue version-specific definitions dependency relationships and aggregate health with deterministic ordering.
+  - Dependency responses represent missing definitions unavailable dependencies and partial observed health explicitly without inventing edges or collapsing incompatible versions.
+  - Retention deletion continues to remove observations and derived health while preserving component definitions dependency edges and catalogue metadata.
+  - The owner-only Components workspace exposes catalogue metadata deployed versions measurements schemas evaluators health trends and direct and reverse dependencies.
+  - The topology is fully keyboard operable uses text and semantic status in addition to colour preserves visible focus and provides an equivalent screen-reader-readable responsive table or list.
+  - Browser behavior covers loading empty observed-only partial stale disconnected unavailable malformed-definition and retry states without persisting authenticated API data.
+  - Unit migration contract frontend browser and full-stack tests cover fresh upgrade and rerun migrations manifest synchronization definition validation missing dependencies deterministic ordering observed-only components partial health and retention preservation.
+  - Core modules databases startup requests workers and scheduling remain unchanged and usable when Observatory is unavailable.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0086.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0086.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0086.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0086.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0086.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - cd services/aura-observatory && uv run ruff check src tests
+  - cd services/aura-observatory && uv run pyright
+  - cd services/aura-observatory && uv run pytest tests
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+  - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+  - bash deploy/compose/run-observatory-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

@@ -1,0 +1,49 @@
+agent: integration_maintainer
+work_item: AURA-0155
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0155-general.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0155-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The complete AURA-0155 implementation handoff and both required review
+      verdicts conform to their repository schemas; the handoff is complete and
+      both reviewers report PASS with empty findings.
+    - >-
+      The approved work item passed validation before archival and the archived
+      integrated work item passed validation after archival.
+    - >-
+      Required and aggregate changed-path validation passed for all nine
+      AURA-0155 implementation and metadata paths; every discovered path is
+      within allowed_paths.
+    - python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - >-
+      Prettier passed for the changed Playwright configuration and dedicated
+      regression spec, and ESLint passed for the dedicated regression spec.
+    - NX_DAEMON=false pnpm exec nx run aura-web:build:production passed.
+    - >-
+      The focused desktop Playwright regression passed 1/1:
+      keeps expanded product navigation separate from conversation library.
+    - git diff --check passed.
+    - >-
+      No contract, dependency, generated-client, backend, migration,
+      observability, or protected-baseline changes were introduced.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared feature worktree intentionally retains the uncommitted AURA-0155
+    implementation and integration metadata; no integration commit or push was
+    performed.
+  - >-
+    The UX reviewer suggested a future short-height focus-not-obscured test as
+    a nonblocking enhancement; it is outside AURA-0155 acceptance scope.

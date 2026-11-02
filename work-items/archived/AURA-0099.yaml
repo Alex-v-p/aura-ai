@@ -1,0 +1,253 @@
+id: AURA-0099
+title: Redesign Observatory as a coherent owner operations product
+status: integrated
+change_class: refactor
+intent: >
+  Redesign the separate Aura Observatory Angular product into a polished,
+  information-dense, and approachable owner operations workspace with coherent
+  navigation, hierarchy, presentation primitives, responsive behavior, state
+  treatment, and accessible destructive workflows while preserving all
+  existing domain behavior, public contracts, privacy boundaries, and the
+  uncommitted AURA-0098 resilience slice.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved 2026-10-23 visual redesign targets only the separate Aura Observatory product and excludes the normal Aura application and Aura product feature libraries.
+    - Observatory uses a calm operational-workbench direction with warm neutral canvas and ink surfaces dusty-rose interaction accents semantic status colors compact typographic hierarchy restrained borders selective elevation and no decorative gradients.
+    - Navigation is regrouped around Monitor Analyze Evaluate and Operate without adding a new URL routing contract; advanced workspaces progressively disclose secondary controls while preserving existing accessible names and keyboard behavior where compatibility requires them.
+    - Reusable Observatory presentation primitives live inside the Observatory feature library unless a later work item proves a genuinely product-neutral shared primitive.
+    - Evaluation experiment and operations command stores may receive bounded presentation orchestration changes required to replace native browser confirmation prompts with accessible in-product dialogs; request bodies CSRF idempotency confirmation headers and domain state transitions remain unchanged.
+    - The app entrypoint becomes bootstrap-only and the application shell remains responsible for composition navigation layout authentication recovery and global providers; feature behavior remains in the Observatory library.
+    - Real-browser review uses only deterministic synthetic metadata or signed-out states. Authenticated data session material and private content remain memory-only and are excluded from URLs browser persistence screenshots traces videos reports logs and console output.
+    - Existing AURA-0098 files and hunks are preserved. Its migration-ledger admission-boundary recovery-health and full-stack storage-state findings are not bypassed or claimed as resolved by this visual work item.
+  contracts: []
+feature_references:
+  - OBS-002
+  - OBS-003
+  - OBS-006
+  - OBS-007
+  - OBS-008
+  - OBS-009
+  - OBS-010
+  - OBS-011
+  - OBS-025
+  - OBS-035
+  - OBS-036
+  - OBS-038
+  - OBS-039
+ownership_zones:
+  - frontend.observatory-web.shell
+  - frontend.observatory.presentation-system
+  - frontend.observatory.monitoring-surfaces
+  - frontend.observatory.analysis-surfaces
+  - frontend.observatory.evaluation-surfaces
+  - frontend.observatory.operations-surfaces
+  - evaluation.observatory-visual-ux
+  - delivery.aura0099
+allowed_paths:
+  - work-items/active/AURA-0099.yaml
+  - work-items/archived/AURA-0099.yaml
+  - work-items/handoffs/AURA-0099-*.yaml
+  - work-items/reviews/AURA-0099-*.yaml
+  - work-items/integration/AURA-0099.yaml
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/presentation/**
+  - frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+  - frontend/libs/observatory/src/lib/features/runs/runs.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+  - frontend/libs/observatory/src/lib/features/components/components.component.ts
+  - frontend/libs/observatory/src/lib/features/analytics/analytics.component.ts
+  - frontend/libs/observatory/src/lib/features/comparison/comparison.component.ts
+  - frontend/libs/observatory/src/lib/features/retention/retention.component.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.store.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.store.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.store.ts
+  - frontend/apps/observatory-web-e2e/playwright.config.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-operations.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-ux.spec.ts
+  - frontend/apps/storybook/src/observatory*.stories.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - tooling/**
+  - contracts/**
+  - services/**
+  - deploy/**
+  - infra/**
+  - packages/**
+  - satellites/**
+  - extensions/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/libs/platform/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators:
+    - observatory_visual_hierarchy_review
+    - observatory_responsive_reflow
+    - observatory_keyboard_and_focus
+    - observatory_state_presentation
+    - observatory_dense_data_legibility
+  capture_policy: metadata_only synthetic browser fixtures only
+security_privacy:
+  applicable: true
+  concerns:
+    - Authenticated Observatory REST SSE CSRF session filter selection and operational data remain memory-only and absent from URLs browser storage caches screenshots traces videos reports logs and console output.
+    - Real-browser visual artifacts use deterministic synthetic metadata or signed-out states and are temporary review evidence rather than committed product data.
+    - Destructive retention evaluation baseline alert incident and annotation workflows retain explicit scope consequence CSRF idempotency cancel-first behavior focus management and sanitized terminal feedback.
+    - The redesign introduces no innerHTML sanitizer bypass remote asset external font analytics download clipboard persistence or raw provider diagnostic surface.
+    - Session expiry logout and late asynchronous responses clear or reject stale principal-bound state without leaking it into the redesigned shell.
+  data_classes:
+    - synthetic_operational_metadata
+    - operational_metadata
+    - opaque_run_and_trace_identifiers
+    - evaluation_definition_metadata
+    - owner_session_state
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - aura_ux_ui_reviewer
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 7
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The separate Observatory shell presents a distinctive owner operations identity and grouped Monitor Analyze Evaluate and Operate navigation with clear current location service status and responsive desktop rail tablet treatment and mobile overlay without changing public URL or API contracts.
+  - Observatory semantic tokens and presentation primitives establish consistent typography spacing density alignment surfaces controls tables status treatments focus indicators dialogs progressive disclosure and light dark forced-colors and reduced-motion behavior without importing Aura feature code.
+  - Overview Runs Trace Components Analytics Comparison and Retention prioritize current health active failures recent work and next actions while dense tables charts waterfalls topology and identifiers remain legible and inspectable without indiscriminate card nesting.
+  - Evaluations Experiments Baselines Dashboards Saved queries Alerts Incidents and Annotations share the same hierarchy controls state vocabulary and responsive behavior while advanced authoring forms and technical metadata are progressively disclosed.
+  - Loading empty ready stale disconnected partial rejected unauthorized unavailable failed cancelled and recovery states are visually and semantically distinct with text and structure in addition to color and with a safe local next action where one exists.
+  - Retention evaluation baseline alert incident and annotation destructive or consequential actions use accessible confirmation experiences that name the exact target and consequence prevent mutation before confirmation support cancel and Escape where safe announce progress and terminal state and restore focus.
+  - Wide desktop 1440 by 900 laptop 1280 by 800 tablet 768 by 1024 mobile 390 by 844 and 320-pixel 400-percent-equivalent reflow are inspected in a real browser using synthetic metadata with no clipped primary content uncontrolled document overflow or navigation loss.
+  - Dark mode reduced motion forced colors keyboard-only operation visible unobscured focus screen-reader landmarks headings status and dialog semantics and 400-percent reflow receive both rendered human review and automated regression evidence.
+  - Privacy review proves the redesign adds no authenticated browser persistence URL leakage screenshot trace video report log console raw diagnostic remote asset clipboard download or sanitizer-bypass path and preserves same-origin no-store CSRF session-recovery and stale-response protections.
+  - Existing AURA-0098 changes remain present and attributable its documented backend and platform blockers remain fail-closed and no private SQL adapter call weakened check fabricated evidence protected baseline change or blocked full-stack PASS claim is introduced.
+  - Every browser-visible implementation slice receives a rendered Aura UX UI review blocking findings are corrected by the owning worker and the same reviewer verifies the correction before integration.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0099.yaml
+  - >-
+    python3 tooling/architecture/validate-changed-paths.py
+    --work-item work-items/active/AURA-0099.yaml
+    --path work-items/active/AURA-0099.yaml
+    --path work-items/handoffs/AURA-0099-frontend-worker.yaml
+    --path work-items/handoffs/AURA-0099-test-evaluation-engineer.yaml
+    --path frontend/apps/observatory-web/src/app/app.component.css
+    --path frontend/apps/observatory-web/src/app/app.component.ts
+    --path frontend/apps/observatory-web/src/main.ts
+    --path frontend/apps/observatory-web/src/styles.css
+    --path frontend/apps/observatory-web/src/styles/observatory-tokens.css
+    --path frontend/libs/observatory/src/index.ts
+    --path frontend/libs/observatory/src/lib/presentation/observatory-presentation.ts
+    --path frontend/libs/observatory/src/lib/features/analytics/analytics.component.ts
+    --path frontend/libs/observatory/src/lib/features/comparison/comparison.component.ts
+    --path frontend/libs/observatory/src/lib/features/components/components.component.ts
+    --path frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.component.ts
+    --path frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.store.ts
+    --path frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts
+    --path frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.store.ts
+    --path frontend/libs/observatory/src/lib/features/operations/operations-workspace.component.ts
+    --path frontend/libs/observatory/src/lib/features/operations/operations-workspace.store.ts
+    --path frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+    --path frontend/libs/observatory/src/lib/features/retention/retention.component.ts
+    --path frontend/libs/observatory/src/lib/features/runs/runs.component.ts
+    --path frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+    --path frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+    --path frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+    --path frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+    --path frontend/apps/observatory-web-e2e/src/observatory-operations.spec.ts
+  - >-
+    python3 tooling/architecture/validate-changed-paths.py
+    --work-item work-items/active/AURA-0098.yaml
+    --path deploy/compose/e2e/fake_provider.py
+    --path deploy/compose/e2e/provider.yaml
+    --path deploy/compose/e2e/core-availability.sh
+    --path deploy/compose/e2e/diagnostic-categories.sh
+    --path deploy/compose/e2e/test_core_availability_safety.sh
+    --path deploy/compose/e2e/test_diagnostic_categories.sh
+    --path deploy/compose/run-observatory-full-stack-e2e.sh
+    --path deploy/compose/run-evaluation-orchestration-e2e.sh
+    --path docs/README.md
+    --path docs/runbooks/observatory-reliability.md
+    --path frontend/apps/observatory-web-e2e/src/full-stack.spec.ts
+    --path frontend/apps/observatory-web-e2e/src/observatory-evaluation.spec.ts
+    --path frontend/apps/observatory-web-e2e/src/observatory-experiments.spec.ts
+    --path frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts
+    --path frontend/libs/observatory/src/lib/observatory-store.ts
+    --path services/aura-observatory/resources/component-manifests/alerting.yaml
+    --path services/aura-observatory/resources/component-manifests/evaluation-orchestration.yaml
+    --path services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+    --path services/aura-observatory/src/aura_observatory/composition.py
+    --path services/aura-observatory/src/aura_observatory/entrypoints/evaluation_worker.py
+    --path services/aura-observatory/src/aura_observatory/evaluation_evaluators.py
+    --path services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+    --path services/aura-observatory/src/aura_observatory/ports.py
+    --path services/aura-observatory/tests/test_aura0098_observability.py
+    --path services/aura-observatory/tests/test_aura0098_score_projection.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0099.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0099.yaml
+  - pnpm --dir frontend nx lint observatory-web
+  - pnpm --dir frontend nx lint observatory
+  - pnpm --dir frontend nx test observatory
+  - pnpm --dir frontend nx test observatory-web
+  - pnpm --dir frontend nx test observatory-api-client
+  - pnpm --dir frontend nx build observatory-web --configuration=production
+  - pnpm --dir frontend nx build storybook --configuration=production
+  - pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+  - Synthetic real-browser visual review at desktop laptop tablet mobile 400-percent-equivalent dark reduced-motion forced-colors and keyboard modes
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions:
+  - AURA-0098 retains a separately owned pre-existing full-stack harness finding where Playwright storageState serializes disposable owner-session cookies; AURA-0099 must not claim repository-wide memory-only acceptance until that work item removes the persistence or an explicit owner exception is recorded.

@@ -1,0 +1,182 @@
+name: aura-research-providers
+
+services:
+  # The Core worker receives only the private provider network.  It retains
+  # its existing database/bus/cache networks from compose.yaml.
+  aura-core-worker:
+    networks:
+      aura-research-searxng-private:
+        aliases: [aura-core-worker]
+      aura-research-static-private:
+        aliases: [aura-core-worker]
+      aura-research-browser-private:
+        aliases: [aura-core-worker]
+
+  aura-research-searxng:
+    profiles: [research-providers]
+    build:
+      context: .
+      dockerfile: deploy/docker/research-searxng.Dockerfile
+    image: aura/research-searxng:1.0.0@sha256:fc2943975dea39558eb355b01b29c834785857c21516d16fa6d6078b1c5724b2
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./deploy/research/provider-seccomp.json
+    cap_drop: [ALL]
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 2.0
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m
+      - /run:rw,noexec,nosuid,nodev,size=16m
+    environment:
+      SEARXNG_BASE_URL: http://aura-research-searxng:8080/
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+      SEARXNG_SECRET_KEY_FILE: /run/provider/searxng-secret
+      AURA_RESEARCH_SEARCH_ENABLED: ${AURA_RESEARCH_SEARCH_ENABLED:-false}
+      AURA_RESEARCH_SEARCH_DRAINING: ${AURA_RESEARCH_SEARCH_DRAINING:-false}
+      AURA_RESEARCH_SEARCH_IMMEDIATE_STOP: ${AURA_RESEARCH_SEARCH_IMMEDIATE_STOP:-false}
+      AURA_PROVIDER_PUBLIC_KEY_FILE: /run/provider/public-key
+      AURA_RESEARCH_EGRESS_POLICY_FILE: /run/provider/egress-policy.yaml
+      AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH: ${AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH:-}
+      AURA_SEARXNG_URL: http://127.0.0.1:8081
+    volumes:
+      - type: bind
+        source: ./deploy/research/searxng-settings.yml
+        target: /etc/searxng/settings.yml
+        read_only: true
+      - type: bind
+        source: ${AURA_PROVIDER_PUBLIC_KEY_HOST_PATH:-./deploy/research/provider-public-key}
+        target: /run/provider/public-key
+        read_only: true
+      - type: bind
+        source: ${SEARXNG_SECRET_KEY_HOST_PATH:-./deploy/research/searxng-secret}
+        target: /run/provider/searxng-secret
+        read_only: true
+      - type: bind
+        source: ./deploy/research/egress-policy.yaml
+        target: /run/provider/egress-policy.yaml
+        read_only: true
+      - type: bind
+        source: ./deploy/research/egress_probe.py
+        target: /run/provider/egress_probe.py
+        read_only: true
+    networks: [aura-research-searxng-private, aura-research-public-egress]
+    expose: [8080]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  aura-research-static-fetcher:
+    profiles: [research-providers]
+    build:
+      context: .
+      dockerfile: deploy/docker/research-static-fetcher.Dockerfile
+    image: aura/research-static-fetcher:1.0.0@sha256:ec6a14df5b63e3fbb3498e3240f7f640c230f9dca67683d23265db3866697f2d
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./deploy/research/provider-seccomp.json
+    cap_drop: [ALL]
+    pids_limit: 64
+    mem_limit: 1g
+    cpus: 2.0
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+      - /run:rw,noexec,nosuid,nodev,size=8m
+    environment:
+      AURA_RESEARCH_STATIC_ENABLED: ${AURA_RESEARCH_STATIC_ENABLED:-false}
+      AURA_RESEARCH_STATIC_DRAINING: ${AURA_RESEARCH_STATIC_DRAINING:-false}
+      AURA_RESEARCH_STATIC_IMMEDIATE_STOP: ${AURA_RESEARCH_STATIC_IMMEDIATE_STOP:-false}
+      AURA_PROVIDER_PUBLIC_KEY_FILE: /run/provider/public-key
+      AURA_RESEARCH_EGRESS_POLICY_FILE: /run/provider/egress-policy.yaml
+      AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH: ${AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH:-}
+    volumes:
+      - type: bind
+        source: ${AURA_PROVIDER_PUBLIC_KEY_HOST_PATH:-./deploy/research/provider-public-key}
+        target: /run/provider/public-key
+        read_only: true
+      - type: bind
+        source: ./deploy/research/egress-policy.yaml
+        target: /run/provider/egress-policy.yaml
+        read_only: true
+      - type: bind
+        source: ./deploy/research/egress_probe.py
+        target: /run/provider/egress_probe.py
+        read_only: true
+    networks: [aura-research-static-private, aura-research-public-egress]
+    expose: [8080]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  aura-research-browser-fetcher:
+    profiles: [research-providers]
+    build:
+      context: .
+      dockerfile: deploy/docker/research-browser-fetcher.Dockerfile
+    image: aura/research-browser-fetcher:1.0.0@sha256:508b37a524219d210a67a7190beb079efda72553e0dcb9ef21d4dae8f8a7686b
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./deploy/research/provider-seccomp.json
+    cap_drop: [ALL]
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 4.0
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /run:rw,noexec,nosuid,nodev,size=8m
+    environment:
+      AURA_RESEARCH_BROWSER_ENABLED: ${AURA_RESEARCH_BROWSER_ENABLED:-false}
+      AURA_RESEARCH_BROWSER_DRAINING: ${AURA_RESEARCH_BROWSER_DRAINING:-false}
+      AURA_RESEARCH_BROWSER_IMMEDIATE_STOP: ${AURA_RESEARCH_BROWSER_IMMEDIATE_STOP:-false}
+      AURA_PROVIDER_PUBLIC_KEY_FILE: /run/provider/public-key
+      AURA_RESEARCH_EGRESS_POLICY_FILE: /run/provider/egress-policy.yaml
+      AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH: ${AURA_RESEARCH_EGRESS_ATTESTATION_PROBE_PATH:-}
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    volumes:
+      - type: bind
+        source: ${AURA_PROVIDER_PUBLIC_KEY_HOST_PATH:-./deploy/research/provider-public-key}
+        target: /run/provider/public-key
+        read_only: true
+      - type: bind
+        source: ./deploy/research/egress-policy.yaml
+        target: /run/provider/egress-policy.yaml
+        read_only: true
+      - type: bind
+        source: ./deploy/research/egress_probe.py
+        target: /run/provider/egress_probe.py
+        read_only: true
+    networks: [aura-research-browser-private, aura-research-public-egress]
+    expose: [8080]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+networks:
+  # Each provider has a distinct private network. Core is the only peer on
+  # each network; providers cannot reach one another laterally.
+  aura-research-searxng-private:
+    internal: true
+  aura-research-static-private:
+    internal: true
+  aura-research-browser-private:
+    internal: true
+  aura-research-public-egress:
+    # Operator provisions this network with controlled DNS and a public-443
+    # egress policy. Compose must fail closed when it is absent.
+    external: true
+    name: ${AURA_RESEARCH_EGRESS_NETWORK:-aura-research-egress}

@@ -1,0 +1,189 @@
+id: AURA-0084
+title: Add recoverable Observatory owner-session UX
+status: integrated
+change_class: contract
+intent: >
+  Make initial sign-in, explicit logout, session expiry, callback failure, and
+  identity unavailability distinct, accessible, recoverable browser states
+  without weakening the existing Observatory BFF identity boundary.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/foundations.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Keep separate Core and Observatory clients audiences sessions cookies and callback routes.
+    - Keep the Observatory callback outside OpenAPI and expose only finite sanitized same-origin recovery states to the browser.
+    - Preserve private-state clearing and stale-request invalidation whenever the owner session becomes unavailable.
+    - Follow the W3C WAI ARIA Authoring Practices keyboard-interface guidance for persistent visible and predictable focus.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+feature_references:
+  - OBS-003
+  - OBS-038
+ownership_zones:
+  - services.aura-observatory.auth-session
+  - services.aura-core.conversation-persistence
+  - services.aura-core.telemetry-export
+  - contracts.observatory-telemetry-api
+  - frontend.observatory.auth-recovery
+  - evaluation.observatory-auth-recovery
+  - observability.observatory-query-api
+  - platform.observatory-edge
+allowed_paths:
+  - work-items/active/AURA-0084.yaml
+  - work-items/archived/AURA-0084.yaml
+  - work-items/handoffs/AURA-0084-*.yaml
+  - work-items/reviews/AURA-0084-*.yaml
+  - work-items/integration/AURA-0084.yaml
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/auth.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/otlp.py
+  - services/aura-observatory/src/aura_observatory/contract.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/tests/test_aura0079_auth.py
+  - services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0078_contract.py
+  - services/aura-observatory/tests/test_aura0080_api.py
+  - services/aura-observatory/tests/test_aura0080_formal_regressions.py
+  - services/aura-observatory/tests/test_aura0084_auth_recovery.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/test_telemetry.py
+  - contracts/telemetry/v1/metadata-observation.schema.json
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - compose.yaml
+  - deploy/compose/local-http.yaml
+  - deploy/docker/observatory-web.nginx.conf
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0079_runtime_wiring_regressions.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - services/aura-observatory/migrations/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - metadata-observation-v1
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.query_api
+  required_metrics:
+    - observatory_auth_callback_duration_ms
+    - observatory_auth_callback_outcome
+  required_evaluators:
+    - observatory_auth_recovery
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Callback recovery never reflects provider errors authorization codes state nonces tokens issuers endpoints subjects or exception text.
+    - The browser continues to receive only an HttpOnly opaque session cookie and an ephemeral CSRF value from the same-origin BFF.
+    - Session expiry and logout clear authenticated snapshots trace state filters retention state and deferred request completions before recovery UI appears.
+    - Recovery markers are finite non-sensitive same-origin values removed from the address bar after consumption and never persisted.
+    - Focus restoration and live announcements must not expose owner identity or authenticated Observatory data.
+  data_classes:
+    - authentication_session_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Multi-chunk Core assistant streams append through the asynchronous SQL repository without implicit relationship I/O or persistence failure.
+  - Core OTLP serialization replaces only the internal all-zero no-trace sentinel with a valid metadata-only trace identifier so one background span cannot invalidate a batch containing real run spans.
+  - Observatory accepts Core's existing canonical lowercase 128-bit UUID identifiers without requiring RFC version or variant marker bits, while preserving fixed length and alphabet bounds.
+  - High-volume metadata SSE notifications coalesce into bounded single-flight snapshot refreshes with a guaranteed trailing refresh, so continuous telemetry cannot starve run discovery or create unbounded browser work.
+  - Component-health queries execute on the pinned ClickHouse version without aggregate-alias collisions and retain accurate bounded latency and outcome summaries.
+  - Initial anonymous access explicit logout in-session expiry and callback failure render distinct finite plain-language states with one prominent same-origin owner sign-in action.
+  - Missing expired malformed denied or failed OIDC callbacks return to a sanitized Observatory recovery surface without reflecting provider or credential details in the body URL cookies logs or browser storage.
+  - Successful callbacks retain strict issuer audience nonce and configured-owner validation rotate any prior session and return only to an existing bounded local path.
+  - A session lost while focus is inside authenticated navigation trace component or retention content clears private state announces the change and moves focus predictably to the recovery heading without focusing the page on initial load before session status is known.
+  - The recovery action has native link semantics visible focus styling keyboard activation and responsive presentation at mobile tablet desktop 200 percent zoom reduced-motion and dark-theme settings.
+  - Logout expiry and callback recovery preserve separate Core and Observatory sessions audiences cookies and CSRF boundaries and never store bearer credentials or authenticated API data in the browser.
+  - Mocked and full-stack browser acceptance cover failure followed by successful retry normal down session preservation destructive reset reauthentication and continued Core usability.
+  - The shipped Observatory session store persists sessions on its service-owned volume so the repository local-http down and subsequent up lifecycle preserves a valid owner session without test-only runtime overrides.
+  - The Observatory same-origin proxy preserves the browser authority including any non-default port so origin-less EventSource requests can be authenticated without weakening the API origin boundary.
+  - The query API component manifest declares the metadata-only observatory_auth_recovery evaluator without adding unbounded telemetry labels.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0084.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0084.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0084.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0084.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0084.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - cd services/aura-observatory && uv run ruff check src tests/test_aura0079_auth.py tests/test_aura0084_auth_recovery.py
+  - cd services/aura-observatory && uv run pyright
+  - cd services/aura-observatory && uv run pytest tests/test_aura0079_auth.py tests/test_aura0084_auth_recovery.py
+  - cd frontend && pnpm exec nx run observatory:lint
+  - cd frontend && pnpm exec nx run observatory:test
+  - cd frontend && pnpm exec nx run observatory-web:lint
+  - cd frontend && pnpm exec nx run observatory-web:test
+  - cd frontend && pnpm exec nx run observatory-web:build:production
+  - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+  - bash deploy/compose/run-observatory-full-stack-e2e.sh
+  - python3 -m pytest deploy/compose/test_topology.py deploy/tests/test_aura0079_runtime_wiring_regressions.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

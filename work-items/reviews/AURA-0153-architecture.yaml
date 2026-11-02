@@ -1,0 +1,26 @@
+agent: architecture_guardian
+work_item: AURA-0153
+verdict: PASS
+checked:
+  - >-
+    The change remains inside the approved Core source-capability and Aura Web
+    presentation ownership zones; contracts, generated client sources,
+    migrations, route-shell files, deployables, providers, and Observatory are
+    unchanged.
+  - >-
+    The five-source matrix preserves direct-detail capability only for
+    constructible research and document sources, while workflow, briefing,
+    memory, unknown, and inconsistent combinations fail closed without
+    fabricated identifiers or task self-links.
+  - >-
+    Conversation citation normalization remains in the conversations feature,
+    the local Research validator does not import Conversations internals, and
+    route construction uses the closed supported route map.
+  - >-
+    Work-item, changed-path, contract, generated-sync, import-boundary,
+    service-isolation, module-registry, frontend-boundary,
+    repository-shape, Ruff, Pyright, and production-build checks passed.
+  - >-
+    The final 24-case browser matrix passed across desktop, tablet, and mobile;
+    no architectural exception or public-boundary expansion was required.
+findings: []

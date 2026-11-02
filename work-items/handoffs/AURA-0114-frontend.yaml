@@ -1,0 +1,49 @@
+agent: frontend_worker
+work_item: AURA-0114
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory.run-inspector
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/observatory/src/lib/features/runs/runs.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.spec.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace-inspector.utils.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: [frontend.observatory.run-inspector]
+  metrics_added: []
+verification:
+  passed:
+    - corepack pnpm exec nx test observatory (58 tests)
+    - corepack pnpm exec nx lint observatory
+    - corepack pnpm exec nx build observatory-web
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0114.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - full AURA-0114 work-item checks (delivery lead owns aggregate run)
+decisions:
+  - Kept capture explicitly metadata-only; UI marks prompts, chunks, generated content, thinking text, and tool payloads as not captured.
+  - Used deterministic phase classification over existing observation/span labels; no frontend data exchange with Aura Web was introduced.
+  - Marked each visual waterfall as an accessible role=img with a duration label and hid its decorative fill from the accessibility tree.
+  - Prefer the canonical trace span when a RunDetail measurement mirrors the same component, operation, outcome, timestamp, or duration; retain distinct measurements.
+  - Classify tool/policy/approval operations before request lifecycle matching so tool.execute remains in Tools & policy.
+  - Render measurement values with their captured units, retain exact finite duration text in aria labels, and expose each phase record's timestamp plus offset from run admission.
+  - Order observed phase cards before compact explicit Not observed cards and provide a scoped polite selected-run status update.
+  - Deduplicate only when both the source timestamp and finite duration agree; equal duration by itself remains a separate retained measurement.
+  - Derive request/lifecycle coverage from retained request-phase records, keeping Not observed distinct from content Not captured.
+  - Use readable duration formatting for millisecond measurement rows while keeping exact numeric values in accessible labels.
+  - Preserve canonical lifecycle order within observed-first and unobserved phase groups; phase record volume never changes the order.
+risks:
+  - Phase classification is label-based until governed content evidence contracts exist; unmatched records remain visible under Other metadata.
+unresolved: []

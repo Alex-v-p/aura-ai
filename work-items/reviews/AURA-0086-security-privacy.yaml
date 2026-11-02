@@ -1,0 +1,20 @@
+agent: security_privacy_reviewer
+work_item: AURA-0086
+verdict: PASS
+checked:
+  - Re-read the active work item, current implementation and test handoffs, applicable architecture and identity decisions, the complete corrected diff, and the general and architecture PASS reviews.
+  - Verified every new catalogue, definition, dependency, and health route requires the separate configured-owner Observatory session before validating or querying identifiers.
+  - Verified component identifiers, versions, cursors, page sizes, topology depth, node counts, dependency arrays, measurement arrays, and evaluator arrays use closed allowlists or explicit maxima.
+  - Verified manifest normalization persists only packaged component metadata and cannot add prompts, responses, documents, filenames, tool payloads, credentials, endpoints, bearer tokens, owner identity, arbitrary attributes, URLs, or markup.
+  - Verified PostgreSQL writes remain parameterized, ClickHouse identifiers are allowlisted before literal encoding, storage failures become content-free retryable 503 responses, and absence remains distinct from dependency failure.
+  - Verified migration 0006 now uses a surrogate dependency-edge key, nullable required_version, null-safe uniqueness, deterministic upgrade deduplication, and idempotent synchronization SQL for unconstrained dependencies.
+  - Verified topology traversal now uses visited and enqueued sets, deterministic edge deduplication, 200-node, 1000-edge, 64-direct-ID, 200-reverse-ID, and 64-deployed-version response bounds without dangling edges.
+  - Verified PostgreSQL catalogue pagination now uses a deterministic per-component lateral LIMIT 64 before retained definition-version rows cross the adapter boundary.
+  - Verified ClickHouse deployed-version aggregation uses provider-level groupUniqArray(64), and returned declared and deployed version arrays remain capped at the OpenAPI maximum of 64.
+  - Verified component health applies a 24-hour default UTC window, rejects naive inverted and wider-than-31-day ranges, and emits explicit lower and upper ClickHouse timestamp predicates.
+  - Verified catalogue health flows through the bounded query service and topology computes one bounded window reused across all node-health lookups, preventing whole-history aggregation against manual-only retention.
+  - Verified authenticated catalogue data remains in memory, clears on session loss, uses escaped Angular interpolation and encoded path values, and is excluded from browser storage, caches, URLs, and SSE payload changes.
+  - Verified retention continues to remove observations and derived health while preserving PostgreSQL component definitions and dependency edges.
+  - Ran the focused correction suite successfully with 21 tests passing and one unrelated Authlib deprecation warning.
+  - Ran the complete Observatory suite from the repository root successfully with 367 tests passing, one opt-in PostgreSQL integration test skipped, and two unrelated deprecation warnings.
+findings: []

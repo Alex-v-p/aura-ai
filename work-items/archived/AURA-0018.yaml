@@ -1,0 +1,137 @@
+id: AURA-0018
+title: Add disposable local HTTP Authentik development login
+status: integrated
+change_class: repository_governance
+intent: >
+  Make the optional local Authentik deployment usable on Docker Desktop without
+  DNS, TLS, or an external reverse proxy by adding an explicit loopback-only
+  HTTP development mode, an idempotent dedicated-owner bootstrap, and a simple
+  operator command while preserving all production HTTPS safeguards.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications: []
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Local HTTP Authentik Development Login plan
+    - The local HTTP issuer and associated Core identity are disposable development state
+    - The local owner is a dedicated normal Authentik user named aura-owner by default
+    - The local owner is created by an idempotent one-shot bootstrap job
+    - Nginx Proxy Manager and LAN-exposed ports are outside this development mode
+    - The user-approved root README change requires the missing root documentation ownership entry to be registered
+  contracts: []
+feature_references: []
+ownership_zones:
+  - deployment.aura-stack
+  - deployment.local-identity
+  - repository.governance
+allowed_paths:
+  - work-items/active/AURA-0018.yaml
+  - work-items/archived/AURA-0018.yaml
+  - README.md
+  - .env.example
+  - deploy/compose/local-identity.yaml
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/test_topology.py
+  - deploy/authentik/bootstrap-local-owner.py
+  - tooling/architecture/path-ownership.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - services/**
+  - frontend/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - .env
+  - .env.local-http
+  - .secrets/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - HTTP and insecure cookies are enabled only by the explicit local-http override
+    - Aura Web and Authentik Server remain loopback-only and no LAN-facing port is introduced
+    - Only Authentik Server joins its dedicated non-internal edge network
+    - Core, PostgreSQL, NATS, Valkey, Authentik PostgreSQL, and Authentik Valkey publish no host ports
+    - Owner passwords, subjects, client secrets, and runtime state remain ignored and uncommitted
+    - Bootstrap is idempotent and must not rotate an existing owner password file
+    - Production configuration continues to require stable HTTPS origins and Secure cookies
+  data_classes:
+    - local development credentials
+    - immutable local owner subject
+required_agents:
+  implementation:
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: false
+execution:
+  parallelism_class: local
+  max_parallel_agents: 1
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - One documented command starts Aura with the disposable local HTTP Authentik deployment.
+  - Aura is reachable at http://aura.localhost:4200 and Authentik at http://authentik.localhost:9000 on the development machine only.
+  - Core and the browser discover the exact same http://authentik.localhost:9000/application/o/aura-web/ issuer.
+  - The Aura OIDC provider has the exact http://aura.localhost:4200/api/v1/auth/callback redirect after bootstrap, including for an existing Authentik database.
+  - A dedicated active aura-owner user is created idempotently with a generated ignored password and stable hashed subject.
+  - Repeated startup preserves the owner password file and subject and does not duplicate the owner account.
+  - The generated owner subject is supplied through an ignored local environment overlay without modifying or committing .env.
+  - The Aura login endpoint redirects to Authentik instead of returning dependency unavailable.
+  - Browser login as aura-owner creates an authorized Aura session for the configured issuer and subject.
+  - The normal and external identity configurations retain production HTTPS and Secure-cookie behavior.
+  - No Core API, database, frontend, generated-client, migration, or public contract changes are introduced.
+  - The root README has explicit documentation ownership so changed-path validation fails closed for future edits.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0018.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0018.yaml
+  - bash -n deploy/compose/local-http.sh
+  - python3 -m unittest deploy.compose.test_topology -v
+  - docker compose config --quiet
+  - docker compose -f compose.yaml -f deploy/compose/local-identity.yaml --profile local-identity config --quiet
+  - docker compose --env-file .env --env-file .env.local-http -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml --profile local-identity config --quiet
+  - ./deploy/compose/local-http.sh up
+  - ./deploy/compose/local-http.sh verify-idempotency
+  - docker compose --env-file .env --env-file .env.local-http -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml --profile local-identity port aura-web 8080
+  - docker compose --env-file .env --env-file .env.local-http -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml --profile local-identity port authentik-server 9000
+  - curl --fail --silent --show-error http://aura.localhost:4200/healthz
+  - curl --fail --silent --show-error http://authentik.localhost:9000/application/o/aura-web/.well-known/openid-configuration
+  - curl --fail --silent --show-error --output /dev/null http://aura.localhost:4200/api/v1/auth/login
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 -m unittest discover -s tooling/architecture/tests -v
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "fixtureRevision": "research-resilience-durability-v1",
+  "classification": "synthetic-lifecycle-observations",
+  "scenarios": [
+    {"id": "restart", "events": ["queued", "running", "running", "completed"], "expected": "completed_once"},
+    {"id": "duplicate-event", "events": ["running", "running", "completed", "completed"], "expected": "completed_once"},
+    {"id": "out-of-order", "events": ["completed", "running"], "expected": "completed"},
+    {"id": "cancel-race", "events": ["cancel_requested", "draining", "canceled"], "expected": "canceled"},
+    {"id": "retry", "events": ["failed", "retry_requested", "queued", "completed"], "expected": "new_task_completed"},
+    {"id": "unknown-outcome", "events": ["running", "unknown"], "expected": "unknown_recovery"},
+    {"id": "late-result", "events": ["canceled", "late_provider_result"], "expected": "no_resurrection"},
+    {"id": "delete-race", "events": ["deletion_pending", "deletion_failed", "deleted"], "expected": "unreadable"},
+    {
+      "id": "timeout",
+      "events": ["running", "deadline_expired", "budget_exhausted", "late_provider_result"],
+      "expected": "budget_exhausted_no_resurrection",
+      "terminalOutcome": "budget_exhausted",
+      "failureClass": "timeout",
+      "lateResult": "ignored",
+      "upstreamTestIds": [
+        "python::services.aura-core.tests.test_research_budget_evaluation::test_wall_clock_deadline_stops_execution_before_provider_dispatch",
+        "python::services.aura-core.tests.test_research_budget_evaluation::test_wall_clock_expiry_has_exact_terminal_failure_labels"
+      ]
+    }
+  ]
+}

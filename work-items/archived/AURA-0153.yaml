@@ -1,0 +1,368 @@
+id: AURA-0153
+title: Complete governed research presentation and recovery UX
+status: integrated
+change_class: bugfix
+intent: >
+  Restore the generated research references that are already present in
+  conversation messages, make research and artifact recovery states truthful
+  and actionable, and make Task Center source navigation capability-gated and
+  route-correct, with substantive privacy and accessibility acceptance.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/governed-research-artifacts-and-tasks.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/components-and-interactions.md
+    - docs/design/foundations.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0018-governed-web-research-providers.md
+    - work-items/archived/AURA-0141.yaml
+    - work-items/archived/AURA-0143.yaml
+    - work-items/archived/AURA-0146.yaml
+    - work-items/archived/AURA-0147.yaml
+    - work-items/active/AURA-0148.yaml
+    - >-
+      The generated Aura v1 Message transport already carries webCitations,
+      taskRefs, and artifactRefs. Aura Web must consume those generated types
+      through the conversations feature and must not edit or duplicate the
+      generated client or public contract.
+    - >-
+      Research and document source detail routes are constructible from the
+      existing route key and opaque source ID. Workflow instances and briefing
+      occurrences require parent identifiers that DurableTaskDetail does not
+      expose, and memory reindexing has no source-specific detail route.
+      Their public source projection adapters must therefore advertise
+      hasSourceDetail false until a separately authorized additive contract
+      can carry sufficient route identity. Aura Web must fail closed when a
+      route key and capability are inconsistent rather than loop back to the
+      current task or invent identifiers.
+    - >-
+      State-specific recovery support references are presentation-only values
+      derived from the already authorized opaque resource ID and version.
+      They must not include trace IDs, exception text, internal URLs,
+      provider diagnostics, private content, or persistence.
+    - >-
+      AURA-0148 aggregate validation files are concurrent work and must not be
+      edited. The shared Aura Web Playwright configuration may change only by
+      adding the AURA-0153 browser spec to test discovery while preserving all
+      existing matches, server settings, projects, reporters, artifacts,
+      timeouts, and worker behavior.
+    - >-
+      This correction implements behavior already required by the accepted
+      governed-research design and existing additive contracts. It adds no
+      deployable, dependency, package, protocol, persistence field, route
+      authority, or architectural exception, so no new ADR is required.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - RUN-014
+  - RUN-017
+  - ART-004
+  - ART-005
+  - ART-006
+  - WEB-001
+  - WEB-002
+  - WEB-003
+  - WEB-004
+  - WEB-005
+  - WEB-006
+  - WEB-007
+ownership_zones:
+  - core.task-projection-source-capabilities
+  - frontend.aura.interaction.research-completion
+  - frontend.aura.knowledge.research-recovery
+  - frontend.aura.knowledge.artifact-recovery
+  - frontend.aura.activity.task-source-navigation
+  - frontend.aura-web.governed-product-acceptance
+  - frontend.test-infrastructure
+  - delivery.aura0153
+allowed_paths:
+  - work-items/active/AURA-0153.yaml
+  - work-items/archived/AURA-0153.yaml
+  - work-items/handoffs/AURA-0153-*.yaml
+  - work-items/reviews/AURA-0153-*.yaml
+  - work-items/integration/AURA-0153.yaml
+  - services/aura-core/src/aura_core/domains/automation/workflows/public.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/tests/test_task_projection_sources.py
+  - services/aura-core/tests/test_task_projection_api.py
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.css
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.security.spec.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.html
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.css
+  - frontend/libs/aura/knowledge/research/src/lib/research-page.component.spec.ts
+  - frontend/libs/aura/knowledge/research/src/lib/research-store.spec.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.html
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.css
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.spec.ts
+  - frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-store.spec.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-models.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-models.spec.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.ts
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.html
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.css
+  - frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.spec.ts
+  - frontend/apps/aura-web-e2e/playwright.config.ts
+  - frontend/apps/aura-web-e2e/src/aura0153-governed-product-ux.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - deploy/**
+  - evaluations/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - tooling/**
+  - services/aura-observatory/**
+  - services/aura-research-static-fetcher/**
+  - services/aura-research-browser-fetcher/**
+  - services/aura-core/migrations/**
+  - services/aura-core/src/aura_core/domains/execution/**
+  - services/aura-core/src/aura_core/domains/interaction/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/**
+  - services/aura-core/src/aura_core/domains/knowledge/research/**
+  - frontend/libs/platform/aura-api-client/src/lib/generated/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/apps/aura-web/src/**
+  - frontend/apps/aura-web-e2e/src/governed-research-acceptance.spec.ts
+  - frontend/apps/aura-web-e2e/src/governed-research-accessibility.spec.ts
+  - frontend/apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - package.json
+  - pnpm-lock.yaml
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: false
+  affected:
+    - Existing generated Aura v1 Message research-reference and DurableTaskDetail capability transports consumed without hand editing
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - >-
+      Web citations are untrusted transport data at the browser boundary.
+      Render only bounded validated public HTTPS citations or the fixed
+      content-free deleted-source tombstone; reject unsafe schemes, userinfo,
+      malformed identifiers, duplicates, surplus entries, and unexpected
+      fields from presentation state.
+    - >-
+      Task and artifact references remain bounded opaque internal references.
+      They may form existing same-origin route paths only and must never carry
+      titles, object keys, digests, questions, excerpts, or other private
+      values into a URL.
+    - >-
+      Research questions, citation labels and URLs, artifact titles and
+      content, recovery copy inputs, and source display labels remain in
+      authorized in-memory DOM state only. Tests must scan both keys and values
+      of localStorage and sessionStorage plus the current URL path, query, and
+      fragment for seeded private canaries after navigation, mutation,
+      reconnect, logout, and account/session loss.
+    - >-
+      Recovery explanations and support references must not expose trace IDs,
+      stack or exception text, internal endpoints, credentials, provider
+      diagnostics, evidence identifiers, object keys, or retained content.
+    - >-
+      Source navigation is capability-gated and fail-closed. The client must
+      not fabricate parent identifiers, reuse a task URL as a source link, or
+      expose a source action when exact direct detail is not advertised and
+      constructible.
+  data_classes:
+    - owner-private research completion text web citations task references and artifact references
+    - owner-private research and artifact lifecycle recovery state
+    - owner-private task presentation source identity and recovery metadata
+    - ephemeral browser-only test canaries for persistence and URL scans
+required_agents:
+  implementation:
+    - core_worker
+    - frontend_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 2
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - >-
+    Conversation hydration preserves bounded generated Message.webCitations,
+    Message.taskRefs, and Message.artifactRefs across initial REST detail,
+    authoritative snapshots, and reconnect refresh without affecting legacy
+    document citations, attachments, research activity, turn ordering, or
+    duplicate-message behavior.
+  - >-
+    A terminal research answer visibly renders validated public-HTTPS source
+    citations with safe external-link semantics, content-free deleted-source
+    tombstones without links, same-origin task links, and direct report
+    artifact links. Malformed, unsafe, duplicate, cross-shape, and over-limit
+    references are discarded before template rendering, and accessible names
+    distinguish web sources, deleted sources, tasks, and artifacts.
+  - >-
+    Active research detail uses distinct plain-language explanations for
+    partial, budget_exhausted, interrupted, and failed provider_disabled or
+    provider_unavailable outcomes. Each names what completed, what remains or
+    stopped, available source/artifact evidence, and the truthful next action;
+    none is labeled complete and retry always means starting new research.
+  - >-
+    Research and artifact deletion_pending, deletion_failed, cleanup_unknown,
+    and deleted detail states have state-specific impact and recovery copy
+    plus a sanitized stable support reference derived only from the opaque
+    resource ID and version. deletion_failed offers only the advertised
+    idempotent Retry cleanup action, cleanup_unknown offers only the advertised
+    reconciliation/refresh action, and bytes, preview, download, or blind
+    repeat deletion never reappear.
+  - >-
+    Component and real-browser tests activate Retry cleanup and Reconcile
+    cleanup for both research and artifacts, assert exactly one owning API
+    command with current expected version and idempotency behavior, then prove
+    authoritative response text, focus, live-region announcement, disabled
+    state while saving, and no impossible or repeated action.
+  - >-
+    Core source projection adapters explicitly retain direct detail capability
+    for constructible research and document sources and advertise
+    hasSourceDetail false for workflow instances, briefing occurrences, and
+    memory reindexing until sufficient route identity exists. Focused source
+    and API tests prove the serialized capability for every source kind.
+  - >-
+    Task Center displays Open source only when hasSourceDetail is true and the
+    closed route-key map can construct the exact supported route:
+    research_detail to /research/:sourceId and document_detail to
+    /documents/:sourceId. False or inconsistent workflow, briefing, memory,
+    unknown, or mismatched capability/route combinations render a truthful
+    no-direct-detail explanation and never navigate to /tasks/:taskId,
+    fabricate identifiers, or expose a misleading link.
+  - >-
+    Browser acceptance seeds unique private question, citation, artifact,
+    source-label, URL-query, and content canaries and proves none appears in
+    any localStorage or sessionStorage key/value or in location pathname,
+    search, or hash after conversation hydration, detail navigation, cleanup
+    retry/reconciliation, reconnect, logout, and session-loss handling.
+  - >-
+    Substantive accessibility acceptance uses keyboard-only activation for
+    citation, artifact, task, Retry cleanup, Reconcile cleanup, dialog Escape,
+    and back navigation; verifies focus return or state-heading focus and
+    throttled polite/assertive live-region copy; runs axe without rule
+    suppression; exercises forced-colors and reduced motion; and at 200 percent
+    zoom proves no page-level horizontal overflow or loss of primary recovery
+    actions on desktop, tablet, and mobile projects.
+  - >-
+    Generated-client synchronization, Core source tests, frontend lint/unit,
+    Aura Web production build, focused Playwright acceptance, architecture
+    validators, and diff hygiene pass with no contract, migration, dependency,
+    lockfile, route-shell, Observatory, provider, AURA-0148 evaluation,
+    protected baseline, screenshot, trace, video, or private artifact change.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0153.yaml
+  - >-
+    python3 tooling/architecture/validate-changed-paths.py --work-item
+    work-items/active/AURA-0153.yaml --path work-items/active/AURA-0153.yaml
+    --path services/aura-core/src/aura_core/domains/automation/workflows/public.py
+    --path services/aura-core/src/aura_core/domains/automation/briefings/public.py
+    --path services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+    --path services/aura-core/tests/test_task_projection_sources.py
+    --path services/aura-core/tests/test_task_projection_api.py --path
+    frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+    --path frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+    --path frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+    --path frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+    --path frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.css
+    --path frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+    --path frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.security.spec.ts
+    --path frontend/libs/aura/knowledge/research/src/lib/research-page.component.ts
+    --path frontend/libs/aura/knowledge/research/src/lib/research-page.component.html
+    --path frontend/libs/aura/knowledge/research/src/lib/research-page.component.css
+    --path frontend/libs/aura/knowledge/research/src/lib/research-page.component.spec.ts
+    --path frontend/libs/aura/knowledge/research/src/lib/research-store.spec.ts
+    --path frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.ts
+    --path frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.html
+    --path frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.css
+    --path frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-page.component.spec.ts
+    --path frontend/libs/aura/knowledge/artifacts/src/lib/artifacts-store.spec.ts
+    --path frontend/libs/aura/activity/tasks/src/lib/tasks-models.ts --path
+    frontend/libs/aura/activity/tasks/src/lib/tasks-models.spec.ts --path
+    frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.ts --path
+    frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.html --path
+    frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.css --path
+    frontend/libs/aura/activity/tasks/src/lib/tasks-page.component.spec.ts
+    --path frontend/apps/aura-web-e2e/playwright.config.ts --path
+    frontend/apps/aura-web-e2e/src/aura0153-governed-product-ux.spec.ts
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0153.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0153.yaml
+  - >-
+    UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+    uv run ruff check
+    services/aura-core/src/aura_core/domains/automation/workflows/public.py
+    services/aura-core/src/aura_core/domains/automation/briefings/public.py
+    services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+    services/aura-core/tests/test_task_projection_sources.py
+    services/aura-core/tests/test_task_projection_api.py
+  - >-
+    UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+    services/aura-core/src/aura_core/domains/automation/workflows/public.py
+    services/aura-core/src/aura_core/domains/automation/briefings/public.py
+    services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+    services/aura-core/tests/test_task_projection_sources.py
+    services/aura-core/tests/test_task_projection_api.py
+  - >-
+    UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+    services/aura-core/tests/test_task_projection_sources.py
+    services/aura-core/tests/test_task_projection_api.py -q
+  - cd frontend && pnpm exec nx run aura-api-client:check-generated
+  - >-
+    cd frontend && NX_DAEMON=false pnpm exec nx run-many -t lint test
+    --projects=aura-conversations,aura-research,aura-artifacts,aura-tasks,aura-web
+  - cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production
+  - >-
+    cd frontend && pnpm exec playwright test --config
+    apps/aura-web-e2e/playwright.config.ts
+    apps/aura-web-e2e/src/aura0153-governed-product-ux.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

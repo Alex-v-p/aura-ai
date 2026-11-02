@@ -1,0 +1,79 @@
+agent: observability_steward
+work_item: AURA-0122
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the settled Trace, trace-helper, Components, Storybook,
+    browser-acceptance, work-item, component manifest, and handoff diff against
+    every prior observability finding and the AURA-0122 acceptance criteria.
+  - >-
+    Verified stable component identity
+    aura.observatory.run_inspection_query@1.0.0, versioned observatory-v1 input
+    and run-inspection output, PostgreSQL, ClickHouse, and session-store
+    dependencies, read-only replay, and run-only trace correlation.
+  - >-
+    Verified dedicated run_inspection_query_latency_ms and
+    run_inspection_merge_latency_ms boundaries remain authoritative for
+    component latency; total-run latency is displayed only as run metadata and
+    was not accepted as component or stage coverage.
+  - >-
+    Verified bounded operation, outcome, status, dependency, and errorClass
+    dimensions, the run_inspection_projection_truth,
+    run_inspection_outage_isolation, and metadata_v2_allowlist evaluators,
+    metadata-only capture, content-free SSE and telemetry, owner-only lazy
+    evidence retrieval, redaction, manual owner deletion retention, and finite
+    cardinality rules remain unchanged.
+  - >-
+    Verified inspection steps are the authoritative aggregate source when
+    present and the reconciled span and measurement view is only a fallback.
+    Counts no longer max-merge unrelated projections, repeat deliveries are
+    aggregated by stable step identity before bounding, and exact records remain
+    accessible through bounded progressive disclosure.
+  - >-
+    Revalidated the final exact-access changes: twenty-record client batches can
+    continue through every record in the contract-bounded loaded inspection and
+    trace pages, per-step measurement and evidence totals describe the loaded
+    manifests exactly, and a nextCursor is labelled as server continuation
+    rather than being misrepresented as data already loaded by the client.
+  - >-
+    Verified failed, running, partial, cancelled, and unavailable facets remain
+    independent; cancellation is not counted as error; mixed unavailable and
+    cancelled records cannot fall through to succeeded; partial reasons remain
+    visible; and KPI totals are truthfully labelled as records.
+  - >-
+    Verified temporal parallelism requires overlapping authoritative intervals,
+    non-overlapping lineage is labelled only as branched records, and stage
+    ordering uses the first authoritative start time with deterministic ties.
+  - >-
+    Verified maximum child durations are consistently labelled Longest recorded
+    operation or Longest operation in the global KPI, Retrieval, Generation,
+    and Tools highlights, stage rows, accessible copy, and unavailable states.
+    No child-operation maximum is presented as authoritative stage duration.
+  - >-
+    Verified the failed-run verdict is neutral, run-scoped live invalidation
+    preserves open stages and the selected projection, failed inspection
+    refreshes are marked stale, authoritative terminal duration remains stable
+    without a new run snapshot, and raw span bars are explicitly labelled
+    relative duration.
+  - >-
+    Verified catalogue KPIs reconcile to the contract: observed_only and any
+    missing entry count as definition gaps, all entries with a known
+    non-degraded error rate count as healthy regardless of definition status,
+    and non-declared, degraded, and no-data entries receive deterministic
+    problem-first priority before the twenty-row bound.
+  - >-
+    Independently reran the Observatory unit suite with 78 passing tests and
+    the observability governance check successfully. The focused regression
+    asserts both measured and unavailable longest-operation highlight wording,
+    plus access to the final loaded step, span, and measurement after the
+    initial batch. The acceptance handoff reports all twelve targeted AURA-0122
+    desktop, tablet, and mobile scenarios, the additional three-project final
+    paging coverage, and all owned Observatory browser cases pass; the sole
+    unrelated full-matrix failure passed on isolated rerun.
+findings: []
+risks:
+  - >-
+    The aggregate browser matrix recorded one transient failure in an unrelated
+    Operations assertion; its isolated rerun passed and no AURA-0122-owned case
+    failed.
+unresolved: []

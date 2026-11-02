@@ -1,0 +1,128 @@
+agent: core_worker
+work_item: AURA-0146
+status: partial
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: /root/aura0146_core
+  worktree: feat/governed-research-artifacts-tasks
+scope:
+  ownership_zone: Core research admission, conversation/run lineage, durable completion delivery, and notifications
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0033_research_completion_delivery.py
+  - services/aura-core/resources/component-manifests/research-completion-delivery.yaml
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/public.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  - services/aura-core/src/aura_core/domains/execution/runs/events.py
+  - services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/dto.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/public.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  - services/aura-core/src/aura_core/domains/interaction/research_delivery/__init__.py
+  - services/aura-core/src/aura_core/domains/interaction/research_delivery/evaluation.py
+  - services/aura-core/src/aura_core/domains/interaction/research_delivery/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/research_delivery/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/research/persistence.py
+  - services/aura-core/src/aura_core/domains/knowledge/research/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/research/repository.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/entrypoints/worker/research_delivery.py
+  - services/aura-core/src/aura_core/runtime/tools/public.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_migration_0033_research_completion_delivery.py
+  - services/aura-core/tests/test_research_delivery.py
+  - work-items/handoffs/AURA-0146-core.yaml
+contracts:
+  changed: false
+migrations:
+  changed: true
+observability:
+  components:
+    - aura.interaction.research_completion_delivery@1
+    - aura.runtime.tool_execution
+  metrics_added:
+    - research_completion_outcome_count
+    - research_completion_latency_ms
+verification:
+  passed:
+    - python -m compileall -q services/aura-core/src/aura_core services/aura-core/migrations/versions/0033_research_completion_delivery.py
+    - focused Ruff checks for changed Core paths
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/runtime/tools/public.py services/aura-core/src/aura_core/domains/interaction services/aura-core/src/aura_core/domains/execution/runs services/aura-core/src/aura_core/domains/automation/notifications (zero errors)
+    - pytest -p no:cacheprovider services/aura-core/tests/test_tool_*.py services/aura-core/tests/test_conversations.py services/aura-core/tests/test_notifications.py services/aura-core/tests/test_migration_0033_research_completion_delivery.py -q (123 passed, 7 skipped)
+    - pytest -p no:cacheprovider services/aura-core/tests/test_run_*.py services/aura-core/tests/test_tool_*.py -q (130 passed)
+    - pytest -p no:cacheprovider services/aura-core/tests/test_research_delivery.py services/aura-core/tests/test_research_delivery_evaluation.py services/aura-core/tests/test_versioned_agents.py services/aura-core/tests/test_tool_runtime.py services/aura-core/tests/test_migration_0033_research_completion_delivery.py -q (63 passed, 9 skipped)
+    - pytest -p no:cacheprovider services/aura-core/tests/test_research_delivery.py services/aura-core/tests/test_tool_runtime.py services/aura-core/tests/test_versioned_agents.py -q (68 passed, 9 skipped) after persisted-origin registration correction
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research_delivery*.py services/aura-core/tests/test_tool_*.py services/aura-core/tests/test_run_*.py services/aura-core/tests/test_conversations.py services/aura-core/tests/test_notifications.py services/aura-core/tests/test_migrations.py -q (259 passed, 7 skipped)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research_delivery.py -q (25 passed; explicit non-snapshot TypeError boundary included)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/interaction/research_delivery/public.py (zero errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q (2046 passed, 124 skipped, 1 Authlib deprecation warning)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q (2070 passed, 124 skipped, 1 Authlib deprecation warning after atomic deletion admission and deleted-citation projection)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research_delivery.py services/aura-core/tests/test_conversations.py -q (103 passed, including SQL reload projection)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/system/test_api_conversation_flow.py services/aura-core/tests/test_conversations.py services/aura-core/tests/test_research_delivery.py -q (131 passed)
+    - AppState/API deletion projection regression (2 focused tests passed); memory and SQL stores bind the composed research service through set_research_query
+    - focused Ruff checks for all changed Core production and test paths after final remediation
+    - git diff --check
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0146.yaml (54 paths validated)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/interaction/research_delivery services/aura-core/src/aura_core/domains/knowledge/research services/aura-core/src/aura_core/entrypoints/worker/research_delivery.py services/aura-core/src/aura_core/entrypoints/worker/app.py services/aura-core/src/aura_core/domains/interaction/agents/public.py services/aura-core/src/aura_core/domains/execution/runs/service.py (zero errors)
+    - validate-work-item.py
+    - validate-changed-paths.py
+    - validate-contract-changes.py
+    - validate-import-boundaries.py
+    - validate-service-isolation.py
+    - validate-repository-shape.py
+    - validate-baseline-protection.py
+    - git diff --check
+  failed:
+    - validate-module-registry.py (requires parent/integration registration for the new interaction.research_delivery and worker modules plus declared dependencies)
+    - validate-observability.py (existing aura.runtime.tool_execution@1 work-item naming/version mismatch and required evaluator/metric registry coverage require integration-owner update)
+  not_run:
+    - PostgreSQL-isolated database cases requiring AURA_TEST_DATABASE_URL (the repository-wide suite completed with its normal skips)
+decisions:
+  - Built-in Aura policy revision 4 remains document-only and immutable; revision 5 is an additive web.research policy and agent revision with the exact research:run permission.
+  - Terminal delivery consumes a bounded source-authorized snapshot containing only persisted compact answer, validated citations, authorized artifact references, outcome/recovery, version, mode, and origin; deleted or stale versions fail closed.
+  - Research admission persists typed origin metadata, and worker recovery can reconcile a missing conversation or dedicated delivery record before acknowledgement.
+  - Conversational admission reloads the committed source-owned origin before registering delivery; destination identifiers are parsed only from that persisted origin and are checked against the owner/run lineage.
+  - Dedicated research deliveries are notification-only; conversational deliveries append once before independently retryable notification settlement.
+  - Worker delivery failures use bounded JetStream nack/redelivery and the loop remains supervised rather than terminating.
+  - ScoreV1 evaluators are production-owned, closed, typed, replay-keyed, and reject content-bearing observations.
+  - web.research@1 is admission-only, exact research:run scoped, idempotent per originating run/call, and bounded by the existing 30-second tool executor timeout.
+  - Completion append and notification use distinct durable idempotency keys; unknown append/notification outcomes remain retryable without duplicating the other side.
+  - Delivery accepts only the narrow terminal snapshot; dedicated origins bypass transcript append but settle one idempotent notification before acknowledgement.
+  - Source-owned research delivery claims are durable, row-locked, lease-bounded, and shared with deletion serialization so an active append/notification settlement cannot race a deletion tombstone.
+  - Deletion clears synthesized answers as well as evidence/citations, and detail/evidence reads remain content-free for tombstones.
+  - Terminal artifact references are capped at eight and reauthorized through the artifact public service for exact owner, active lifecycle, and task lineage before delivery.
+  - Successful web.research admission appends a deterministic bounded acknowledgement directly and completes the originating run without a second synthesis/provider call.
+  - SQL conversation UoW persists research origin/activity while locking the originating run row; coordinator no longer treats this persistence as optional.
+  - Workflow notification source replacement constraints retain ordinal bounds 1 through 8, and conversation Message validation caps artifact references at eight.
+  - SQL completion delivery reauthorizes issuer/subject against the conversation owner and serializes duplicate appends with a transaction advisory lock.
+  - Research completion delivery omits deleted research content and records skipped_deleted state rather than reintroducing evidence.
+  - Delivery claim acquisition and deletion admission use the same source research-row lock and transaction; deletion reloads the locked row, rejects unexpired claims, advances the authoritative version, and never copies stale task claim fields.
+  - ResearchCompletionDeliveryService.deliver is statically snapshot-only and retains a defensive TypeError for non-snapshot callers.
+  - Conversation and run reads resolve research citation lifecycle through the public owner-scoped research query port; deleted sources project only DeletedResearchCitation with sourceId and the fixed deleted label, without URL, locator, timestamps, excerpts, or artifact relations.
+  - SQL conversation reload invokes the research projection even when no attachment/document adapters are configured, preserving the content-free deletion fence after restart.
+  - AppState binds its composed ResearchApplicationService to the conversation store after construction in both testing/memory and production/SQL composition, with an API regression covering message and run payloads.
+  - Legacy conversation rows and SimpleNamespace fixtures hydrate absent additive research fields as empty metadata; migration revision remains bounded as 0033_research_delivery while retaining down_revision 0032_governed_research.
+  - Provider execution remains outside this slice and is reached only through the AURA-0145 public research application boundary.
+risks:
+  - The existing work-item observability validator identifies aura.runtime.tool_execution@1 while the repository manifest is versioned as aura.runtime.tool_execution 1.3.0; integration must reconcile this without weakening capture policy.
+  - The SQL completion adapter depends on the governance identity public lookup and needs the module registry dependency declaration before aggregate validation.
+  - Full PostgreSQL restart/race/delete tests remain for the shared integration/evaluation pass.
+  - PostgreSQL claim/reload paths are implemented but isolated database checks were unavailable because AURA_TEST_DATABASE_URL was not supplied in this worker environment.
+  - The deterministic in-memory claim/delete interleaving coverage exercises both winner outcomes; PostgreSQL lock-order coverage remains part of aggregate integration when an isolated database is available.
+unresolved:
+  - Parent integration owner must register new module ownership/dependencies in tooling/architecture/modules.yaml and reconcile observability evaluator/metric registration. Provider-specific metrics/manifests remain outside this Core handoff.

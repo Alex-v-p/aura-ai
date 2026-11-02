@@ -1,0 +1,95 @@
+agent: core_worker
+work_item: AURA-0133
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0133_state_api
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-core.briefings-state-persistence-and-api
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0026_briefing_execution.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/__init__.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/repository.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/application.py
+  - services/aura-core/src/aura_core/domains/automation/__init__.py
+  - services/aura-core/src/aura_core/bootstrap/briefing_uow.py
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py
+  - services/aura-core/tests/test_aura0133_cancellation_authority.py
+  - work-items/handoffs/AURA-0133-state-api.yaml
+contracts:
+  changed: false
+migrations:
+  changed: true
+  revision: 0026_briefing_execution
+observability:
+  components:
+    - aura.automation.briefing_persistence
+    - aura.automation.briefing_cancellation
+  metrics_added:
+    - briefing_result_persistence_duration_ms
+    - briefing_cancellation_duration_ms
+    - briefing_outcome_count
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0133.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0133.yaml
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/bootstrap/briefing_uow.py services/aura-core/src/aura_core/bootstrap/database.py services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py services/aura-core/src/aura_core/entrypoints/api/state.py services/aura-core/src/aura_core/entrypoints/api/app.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/bootstrap/briefing_uow.py services/aura-core/src/aura_core/bootstrap/database.py services/aura-core/src/aura_core/entrypoints/api/routes/briefings.py services/aura-core/src/aura_core/entrypoints/api/state.py services/aura-core/src/aura_core/entrypoints/api/app.py
+    - AURA_WORK_ITEM=AURA-0133 python tooling/architecture/validate-changed-paths.py (45 changed paths validated)
+    - python tooling/architecture/validate-import-boundaries.py
+    - python tooling/architecture/validate-service-isolation.py
+    - python tooling/architecture/validate-repository-shape.py
+    - PYTHONPATH=services/aura-core/src python -c 'from aura_core.domains.automation.briefings import BriefingApplicationService, BriefingRepository'
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_briefing_repository_evaluation.py services/aura-core/tests/test_migration_0026_briefing_execution.py services/aura-core/tests/test_aura0133_scheduler.py services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_cancellation_authority.py -q (39 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/bootstrap/briefing_uow.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/bootstrap/briefing_uow.py (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -q services/aura-core/tests/test_aura0133_cancellation_authority.py (3 passed; correlation and API wiring assertions)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -q services/aura-core/tests/test_security_configuration.py services/aura-core/tests/test_outbox.py services/aura-core/tests/test_telemetry.py (116 passed, 1 skipped)
+    - git diff --check
+  latest_focused:
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest services/aura-core/tests/test_briefing_repository_evaluation.py services/aura-core/tests/test_migration_0026_briefing_execution.py services/aura-core/tests/test_aura0133_scheduler.py services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_cancellation_authority.py -q (39 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/briefings/repository.py services/aura-core/src/aura_core/entrypoints/api/state.py (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings/repository.py services/aura-core/src/aura_core/entrypoints/api/state.py (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/briefings/repository.py services/aura-core/src/aura_core/domains/automation/briefings/public.py services/aura-core/src/aura_core/bootstrap/briefing_uow.py (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings/repository.py services/aura-core/src/aura_core/domains/automation/briefings/public.py services/aura-core/src/aura_core/bootstrap/briefing_uow.py (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-core/tests/test_aura0133_cancellation_authority.py (passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/tests/test_aura0133_cancellation_authority.py (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -q services/aura-core/tests/test_aura0133_cancellation_authority.py (3 passed, 1 skipped; SQL span harness skips without AURA_0133_DATABASE_URL)
+    - SQL span harness asserts real SqlBriefingRepository persistence and cancellation span IDs/parents use briefing_phase_span_id(run_id, phase), trace IDs are run IDs, and MetadataMetrics.rejected remains zero when PostgreSQL is configured.
+  blocked_external:
+    - "Combined observability test currently reports MetadataMetrics.rejected=4 in the sibling NATS generic-command path; its identifier trace keys (schedule_id/occurrence_id/event_id) do not match the sibling telemetry allow-list. The state-owned persistence metrics themselves retain zero rejections."
+    - "Shared-tree changed-path validation reports sibling execution-run-coordinator.yaml outside this zone; no state-owned path was added outside the approved list."
+  failed: []
+  not_run:
+    - aggregate architecture, PostgreSQL migration/concurrency, and full Core checks remain assigned to Delivery Lead integration
+decisions:
+  - The public BriefingRepository and BriefingApplicationService expose owner-scoped schedule, occurrence, result and explicit deletion operations without persistence types.
+  - Daily occurrence identities are UUID5 values derived from schedule identity and local calendar date; DST gaps advance to the first valid instant and overlaps choose the earlier instant.
+  - Schedule deletion tombstones only schedule state; occurrence history and result content use separate manual deletion commands and do not cascade.
+  - The API uses established session/CSRF/idempotency dependencies and sets no-store on every briefing response.
+  - Initial source grants are closed to reminders, explicit calendars, and explicit documents; memory is not representable.
+  - SQL mutations use owner-scoped durable command receipts and optimistic versions; history and result-content deletion replay deterministically.
+  - SQL admission, terminal result settlement, lineage, stale-claim recovery, and daily occurrence advancement are transaction-bound; a public claim-plus-stage port lets composition stage the generic wake envelope before commit.
+  - Concrete repositories are exported only from the authorized bootstrap adapter; the briefing package exports state abstractions, while execution types remain available through their public execution module without leaking persistence adapters.
+  - Result-content deletion clears content while retaining the original terminal outcome, deletion timestamp, version and run lineage for owner-readable audit.
+  - BriefingApplicationService exposes fail-closed identifier revalidation and a composition-bound process_command seam for durable worker execution.
+  - Lifecycle facts are schema-exact metadata-only serializers and are staged transactionally through the public lifecycle port; SQL composition wires this to the public outbox adapter without adding correlation or content fields.
+  - Result-content deletion stages both the terminal result-deleted lifecycle fact and the explicit deletion receipt event; no result text is present in either payload.
+  - Persistence and cancellation spans use the run trace, deterministic phase span IDs, and the deterministic admission phase as parent while retaining result/occurrence identity in aggregate metadata.
+  - Cancellation settles the admitted/running occurrence and a deterministic canceled result in the deletion transaction after the typed briefing cancellation callback succeeds; stale recovery similarly settles an unknown result.
+  - History deletion tombstones only terminal historical occurrences and leaves scheduled/admitted/running future work intact; public result payloads do not expose the internal original-status audit field.
+risks:
+  - PostgreSQL migration/concurrency and claim-plus-outbox staging require the aggregate PostgreSQL gate and scheduler composition to call the new public staging seam.
+  - The worker must bind its concrete execution application through BriefingApplicationService.set_execution_application at composition; the state service intentionally fails closed when that binding is absent.
+  - The platform outbox parser/publisher must recognize the schema-exact briefing lifecycle event payload carried by the wired SQL stage (the worker wake command remains a separate generic command subject).
+unresolved: []

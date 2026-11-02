@@ -1,0 +1,21 @@
+component:
+  id: aura.knowledge.document_processing
+  version: 1.0.0
+  owner: knowledge.documents
+  category: worker
+input:
+  schema: document-processing-command-v1
+  replayable: true
+output:
+  schema: document-processing-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies: [postgresql, object_storage, embedding_provider, parser, nats_jetstream]
+metrics: [document_processing_duration_ms, document_processing_outcome, document_chunk_count, document_retry_count, consumer_received, consumer_acknowledged, consumer_nacked, consumer_rejected, consumer_redelivered, outbox_duplicates]
+evaluators: [document_processing_idempotency, document_format_validation]
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, document_id, job_id]
+  prohibited: [content, filename, object_key, digest, owner, credential, vector]

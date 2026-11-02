@@ -1,0 +1,10 @@
+{
+  "name": "observatory",
+  "projectType": "library",
+  "sourceRoot": "libs/observatory/src",
+  "tags": ["scope:observatory", "type:feature"],
+  "targets": {
+    "test": { "executor": "nx:run-commands", "options": { "command": "vitest run --config vitest.workspace.ts libs/observatory/src" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "eslint libs/observatory" } }
+  }
+}

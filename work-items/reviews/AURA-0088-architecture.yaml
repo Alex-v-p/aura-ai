@@ -1,0 +1,23 @@
+agent: architecture_guardian
+work_item: AURA-0088
+verdict: PASS
+checked:
+  - >-
+    Re-read the active work item, architecture handover, module boundaries,
+    accepted ADRs, and all six implementation handoffs; ownership zones,
+    allowed paths, service-owned storage, public ports, and Core/Observatory
+    isolation remain intact.
+  - >-
+    Verified the v2 contract is additive, v1 remains unchanged and accepted
+    during rollout, marker columns are owned by the Observatory ClickHouse
+    migration, and the generated client remains transport-only.
+  - >-
+    Verified bounded parameterized comparison queries, fixed observation/span/
+    measurement/scan/execution limits, iterative trace alignment, explicit
+    partial and unavailable evidence, and no PostgreSQL high-cardinality query
+    dependency.
+  - >-
+    Ran work-item, changed-path, repository-shape, module-registry,
+    service-isolation, frontend-boundary, contract, generated-sync,
+    Compose-topology, and git diff checks successfully.
+findings: []

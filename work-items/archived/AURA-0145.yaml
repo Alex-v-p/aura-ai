@@ -1,0 +1,234 @@
+id: AURA-0145
+title: Execute durable governed web research
+status: integrated
+change_class: repository_governance
+intent: >
+  Add a Core-owned durable research aggregate and coordinator that admits bounded
+  Quick, Auto, Deep, and Agent-led work, checkpoints every authoritative
+  transition, validates task-scoped evidence and citations, produces generated
+  artifacts, supports truthful cancellation extension recovery and deletion,
+  and projects research through the existing federated Task Center boundary.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/governed-research-artifacts-and-tasks.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/memory-and-knowledge.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - docs/adr/0018-governed-web-research-providers.md
+    - work-items/archived/AURA-0140.yaml
+    - work-items/archived/AURA-0141.yaml
+    - work-items/active/AURA-0142.yaml
+    - work-items/active/AURA-0143.yaml
+    - work-items/active/AURA-0144.yaml
+    - AURA-0142 through AURA-0144 are integrated; AURA-0144 is explicitly limited to disabled-only provider development under the 2026-10-30 owner decision.
+    - AURA-0145 implementation and deterministic tests may use in-memory synthetic or explicitly isolated provider fixtures. Real provider profiles admission and outbound research remain disabled and are not acceptance evidence until the separately governed egress and image-provenance gates are satisfied.
+    - Research is Core Knowledge truth; Observatory remains optional and cannot participate in research correctness availability authorization cancellation deletion or settlement.
+    - Provider calls use only the reviewed AURA-0144 ports; artifact writes use only the generated-artifact public application API; Task Center uses only the research source public snapshot and command boundary.
+    - Conversation append notification and web.research tool admission remain exclusively AURA-0146 scope.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/knowledge/v1/research-events.schema.json
+    - contracts/events/execution/v1/task-events.schema.json
+    - contracts/events/artifacts/v1/generated-artifact-events.schema.json
+feature_references:
+  - RUN-014
+  - RUN-015
+  - RUN-016
+  - RUN-017
+  - ART-002
+  - ART-003
+  - ART-004
+  - ART-005
+  - ART-006
+  - ART-007
+ownership_zones:
+  - services.aura-core.knowledge.research
+  - services.aura-core.research-coordinator
+  - services.aura-core.research-persistence
+  - services.aura-core.research-api-worker
+  - services.aura-core.research-task-source
+  - evaluation.research-lifecycle-quality
+  - repository.research-module-registry
+  - delivery.aura0145
+allowed_paths:
+  - work-items/active/AURA-0145.yaml
+  - work-items/archived/AURA-0145.yaml
+  - work-items/handoffs/AURA-0145-*.yaml
+  - work-items/reviews/AURA-0145-*.yaml
+  - work-items/integration/AURA-0145.yaml
+  - services/aura-core/migrations/versions/0032_governed_research.py
+  - services/aura-core/src/aura_core/domains/knowledge/research/**
+  - services/aura-core/src/aura_core/bootstrap/research_uow.py
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/bootstrap/research_providers.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/research.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/entrypoints/worker/research.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/providers/research/evaluation.py
+  - services/aura-core/resources/component-manifests/research-*.yaml
+  - services/aura-core/tests/test_research_*.py
+  - services/aura-core/tests/test_migration_0032_governed_research.py
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - frontend/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/artifacts/generated/**
+  - services/aura-core/src/aura_core/domains/execution/tasks/**
+  - services/aura-core/src/aura_core/domains/interaction/**
+  - services/aura-core/src/aura_core/domains/automation/notifications/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-research-static-fetcher/**
+  - services/aura-research-browser-fetcher/**
+  - deploy/**
+  - infra/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: false
+  affected:
+    - Aura v1 research settings create list detail evidence cancellation extension deletion cleanup retry and reconciliation resources
+    - Research lifecycle events v1 and TaskProjectionSnapshotV1 research source capability
+    - Internal generated-artifact create and Task Center source snapshot and command application APIs
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: knowledge.research
+observability:
+  applicable: true
+  affected_components:
+    - aura.research.coordinator@1
+    - aura.research.cancellation@1
+    - aura.research.planner@1
+    - aura.research.evidence_validation@1
+    - aura.research.citation_validation@1
+    - aura.research.synthesis@1
+    - aura.research.deletion@1
+  required_metrics:
+    - research_coordinate_outcome_count
+    - research_coordinate_latency_ms
+    - research_checkpoint_count
+    - research_queue_lag_ms
+    - research_cancel_command_outcome_count
+    - research_cancel_command_latency_ms
+    - research_cancel_settlement_lag_ms
+    - research_plan_outcome_count
+    - research_plan_latency_ms
+    - research_evidence_validation_outcome_count
+    - research_evidence_validation_latency_ms
+    - research_evidence_rejected_count
+    - research_citation_validation_outcome_count
+    - research_citation_validation_latency_ms
+    - research_citation_rejected_count
+    - research_synthesis_outcome_count
+    - research_synthesis_latency_ms
+    - research_unsupported_claim_count
+    - research_deletion_outcome_count
+    - research_deletion_latency_ms
+    - research_budget_wall_time_consumed_ms
+    - research_budget_sources_consumed_count
+    - research_budget_searches_consumed_count
+    - research_budget_browser_pages_consumed_count
+    - research_budget_model_calls_consumed_count
+    - research_budget_exhaustion_count
+    - research_static_fetch_settled_count
+    - research_static_to_browser_fallback_count
+    - research_static_to_browser_fallback_ratio
+  required_evaluators:
+    - research_source_relevance@1
+    - research_claim_support@1
+    - research_citation_precision@1
+    - research_freshness@1
+    - research_source_diversity@1
+    - research_unsupported_claims@1
+    - research_budget_compliance@1
+    - research_evidence_sufficiency@1
+    - research_prompt_injection_resistance@1
+    - research_failure_isolation@1
+    - research_privacy@1
+    - research_deletion_truth@1
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Owner-private questions queries seed URLs domains titles source URLs excerpts evidence citations and artifact content never enter events ordinary telemetry logs error text caches or browser-visible query strings.
+    - All provider output is untrusted evidence; closed coordinator schemas and deterministic policy checks alone control instructions grants tools budgets destination decisions citations and lifecycle transitions.
+    - Evidence IDs are task-scoped and citations settle only after deterministic support validation; unknown cross-task stale deleted or invented evidence cannot be cited.
+    - Complete fetched pages are transient and discarded after settlement; only bounded cited excerpts source metadata and content-free lifecycle truth remain.
+    - Cancellation extension deletion retry and reconciliation require owner authorization CSRF idempotency expected versions and durable unknown-outcome handling without resurrecting evidence or linked artifacts.
+    - Operator caps cannot be raised by owner presets or the single extension; static retrieval receives preference and browser fallback requires an explicit inadequate-extraction transition and remaining budget.
+  data_classes:
+    - owner-private research questions queries target restrictions and settings
+    - hostile transient fetched web bytes and bounded extracted evidence
+    - owner-private source metadata excerpts citations reports and provenance
+    - restricted durable operation ledgers checkpoints deletion truth and idempotency records
+    - content-free lifecycle invalidations tombstones metrics and traces
+required_agents:
+  implementation:
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 2
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Every admitted request creates exactly one durable research task and immutable admitted budget before provider dispatch; Quick is 90 seconds and six sources, Auto ten minutes and fifteen sources, Deep thirty minutes and thirty sources, and Agent-led at most sixty minutes and sixty sources under operator caps.
+  - Migration 0032 descends exactly from 0031, preserves one Alembic head, upgrades existing databases additively, and durably represents ownership settings task lifecycle checkpoints operation ledger evidence citations delivery-independent artifact lineage extension state deletion truth idempotency and outbox state.
+  - The coordinator resumes after restart from the last committed checkpoint, rejects duplicate late reordered or post-cancel provider results, never dispatches after durable cancel intent, and truthfully settles completed partial budget_exhausted failed canceled or interrupted outcomes.
+  - HTTP receives the cost preference; browser retrieval occurs only for justified JavaScript or inadequate static extraction with remaining admitted budget, and every search fetch redirect byte text browser model source and time counter remains within its envelope including retries.
+  - Evidence is task-scoped, bounded and validated before synthesis; every retained material claim is supported, citations resolve to admitted nondeleted evidence, and unsupported invented stale duplicate and cross-task citations fail closed.
+  - Successful or truthful partial research creates immutable Markdown report and optional JSON source-manifest artifacts through the generated-artifact public API with research task provenance and no direct artifact persistence import.
+  - The research source public API supplies the same TaskProjectionSnapshotV1 for live invalidation rebuild and backfill and owns advertised cancel or retry commands; execution.tasks never imports research tables repositories or ORM models.
+  - Owner-authorized research and evidence deletion makes content immediately unreadable, serializes against completion and artifact delivery, preserves content-free tombstones, and truthfully supports known-failure retry and unknown-outcome reconciliation without resurrection.
+  - Queue lag cancellation command latency cancel-settlement lag budget settlement and static-browser fallback instrumentation implement the exact clocks units finite dimensions and one-terminal-sample rules from the approved design; Observatory outage cannot alter outcomes.
+  - Unit property migration live-PostgreSQL restart race duplicate cancellation extension provider-fault citation deletion privacy and evaluator tests pass without weakening AURA-0144 destination or sandbox controls or protected baselines.
+  - No conversation append notification tool grant frontend route new provider deployable arbitrary binary public upload full-page retention Observatory dependency contract break or automatic retention behavior occurs.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0145.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0145.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0145.yaml
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0145.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0145.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/domains/knowledge/research services/aura-core/src/aura_core/bootstrap/research_uow.py services/aura-core/src/aura_core/entrypoints/api/routes/research.py services/aura-core/src/aura_core/entrypoints/worker/research.py services/aura-core/tests/test_research_*.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/knowledge/research services/aura-core/src/aura_core/bootstrap/research_uow.py services/aura-core/src/aura_core/entrypoints/api/routes/research.py services/aura-core/src/aura_core/entrypoints/worker/research.py
+  - AURA_TEST_DATABASE_URL=${AURA_TEST_DATABASE_URL:?isolated PostgreSQL URL required} AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research_*.py services/aura-core/tests/test_migrations.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

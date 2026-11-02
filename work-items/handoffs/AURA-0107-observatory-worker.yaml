@@ -1,0 +1,56 @@
+agent: observatory_worker
+work_item: AURA-0107
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: /home/alexa/Documents/Projects/aura-ai
+scope:
+  ownership_zone: services.aura-observatory.evaluation-definition-state
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/tests/test_aura0093_definitions.py
+  - services/aura-observatory/tests/test_aura0093_postgres_integration.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability: {applicable: false, components: [], metrics_added: []}
+verification:
+  passed:
+    - UV_CACHE_DIR=/tmp/aura-0107-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0093_migration.py services/aura-observatory/tests/test_aura0093_postgres_integration.py (50 passed, 2 skipped)
+    - UV_CACHE_DIR=/tmp/aura-0107-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0093_postgres_integration.py
+    - UV_CACHE_DIR=/tmp/aura-0107-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py services/aura-observatory/tests/test_aura0093_definitions.py services/aura-observatory/tests/test_aura0093_postgres_integration.py
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0107.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0107.yaml (skipped; no contract changes)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0107.yaml (skipped; no protected baseline changes)
+    - git diff --check
+  failed:
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0107.yaml (shared checkout contains concurrent AURA-0098 changes outside this work item)
+  not_run: []
+decisions:
+  - >
+    PostgreSQL case_declared now checks the immutable dataset row's case_ids
+    array for the exact dataset identifier and version; it no longer consults
+    derived dataset-case membership that does not exist for the first case.
+  - >
+    The transactional create_case declaration recheck, case locking, version
+    conflict handling, membership insertion, idempotency, and audits were left
+    unchanged. Focused unit coverage checks declared, undeclared, wrong-version,
+    and wrong-dataset cases; opt-in PostgreSQL coverage drives
+    EvaluationDefinitionService.admit_case through first admission, replay,
+    conflict, and rollback/no-partial-state assertions.
+risks:
+  - >
+    Changed-path validation is blocked by pre-existing concurrent AURA-0098
+    edits in the shared checkout; no AURA-0098 files were modified here.
+  - >
+    The opt-in PostgreSQL acceptance tests were skipped locally because
+    AURA_AURA0093_POSTGRES_URL is not configured; they remain ready for the
+    composed integration environment.
+unresolved: []

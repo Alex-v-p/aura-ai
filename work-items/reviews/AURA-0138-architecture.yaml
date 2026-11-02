@@ -1,0 +1,25 @@
+agent: architecture_guardian
+work_item: AURA-0138
+verdict: PASS
+checked:
+  - >-
+    Verified accessible dialog focus trapping, inert background handling, and
+    focus restoration remain feature-local and add no shell, framework,
+    service, persistence, or dependency boundary.
+  - >-
+    Verified workflow-only SSE reconciliation preserves an open instance while
+    authoritative REST remains the source of truth, and explicit parent-route
+    navigation still clears stale instance state.
+  - >-
+    Verified lazy routes, thin application composition, generated Aura API
+    client usage, public feature APIs, module-registry dependencies, and opaque
+    approval and notification deep links preserve frontend boundaries.
+  - >-
+    Confirmed Core and Observatory isolation and no database, provider,
+    deployment, package, framework, or ADR-requiring architecture change.
+  - >-
+    Work-item, changed-path, generated-sync, import-boundary,
+    service-isolation, frontend-boundary, module-registry, repository-shape,
+    baseline, diff, workflow unit, lint, TypeScript, production build, and
+    Storybook checks passed.
+findings: []

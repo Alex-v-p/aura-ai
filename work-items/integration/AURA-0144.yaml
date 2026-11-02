@@ -1,0 +1,81 @@
+agent: integration_maintainer
+work_item: AURA-0144
+status: integrated
+integrated_commits:
+  - 146632b
+  - cad38ed
+  - 1405329
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0144-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0144-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0144-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0144-observability.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The updated AURA-0144 work item validates with no open decisions; its
+      disabled-only owner decision explicitly defers production egress and
+      provider-image publication.
+    - >-
+      The final feature branch is clean. Commit-scoped changed-path validation
+      for the AURA-0144 metadata checkpoint 1405329 passed, and no uncommitted
+      branch paths remain to collide with the provider ownership zone.
+    - >-
+      All four implementation handoffs and all four required review verdicts
+      are schema-valid; review findings are empty and the partial handoffs
+      retain only future deployment enablement gates.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0144.yaml reports no changed paths on the clean
+      branch; commit-scoped validation passed for the reviewed checkpoint.
+    - >-
+      Architecture, contract-change, import-boundary, service-isolation,
+      module-registry, repository-shape, observability, and baseline-protection
+      validators passed or reported the expected not-applicable result.
+    - >-
+      python3 -m unittest tooling.architecture.tests.test_common
+      tooling.architecture.tests.test_modules -v passed all 27 tests.
+    - UV_CACHE_DIR=.local-state/uv-cache uv lock --check passed.
+    - >-
+      Scoped Ruff validation passed with no findings and scoped Pyright
+      validation passed with 0 errors, warnings, or informations.
+    - >-
+      The exact required AURA-0144 aggregate passed 133 tests; no provider,
+      contract, security, limits, telemetry, or topology assertion failed.
+    - >-
+      The full services/aura-core suite passed 2081 tests with 124
+      dependency-gated skips and one pre-existing Authlib deprecation warning.
+    - >-
+      docker compose -f compose.yaml -f deploy/compose/research-providers.yaml
+      config --quiet passed.
+    - git diff --check passed.
+    - >-
+      The exact required AURA-0144 aggregate was rerun and passed 133 tests;
+      no provider, contract, security, limits, telemetry, or topology
+      assertion failed.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Real provider profiles and research admission remain disabled until a
+    separately authorized controlled-DNS/public-TCP-443 dataplane supplies a
+    machine-verifiable positive and negative attestation suite.
+  - >-
+    Provider images remain local and unpublished. Enablement or promotion
+    requires reviewed immutable manifest digests and provenance or signature
+    evidence for all three images.
+  - >-
+    Cloudflare Tunnel and Nginx Proxy Manager provide inbound Aura access only;
+    local HTTP Aura ingress is permitted for development and does not satisfy
+    provider outbound egress enforcement.

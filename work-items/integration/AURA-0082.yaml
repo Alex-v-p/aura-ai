@@ -1,0 +1,80 @@
+agent: integration_maintainer
+work_item: AURA-0082
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0082-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0082-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0082-security-privacy.yaml
+  - reviewer: platform_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0082-platform.yaml
+  - reviewer: observatory_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0082-observatory.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0082-tests.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0082.yaml
+checks:
+  passed:
+    - >-
+      Work-item, implementation-handoff, and review-verdict schema validation
+      passed for AURA-0082, all three handoffs, and all three reviews.
+    - >-
+      AURA-0082 work-item validation and changed-path validation passed for all
+      27 tracked and untracked changed paths within the approved scope.
+    - >-
+      Repository-shape, service-isolation, shell syntax, and git diff hygiene
+      validation passed.
+    - >-
+      AURA-0082 topology suite passed all 38 tests, including profile,
+      project-scoped volume, identity propagation, and reset documentation
+      assertions.
+    - >-
+      Docker Compose merged configuration rendered successfully with local
+      identity and Observatory profiles.
+    - >-
+      Observatory CLI help smoke check passed.
+    - >-
+      Architecture tooling unit suite passed all 52 tests under bounded
+      resources.
+    - >-
+      Observatory implementation handoff: complete Observatory suite passed
+      214 tests with one existing Authlib deprecation warning; focused
+      AURA-0078/AURA-0079/AURA-0080 regression suite passed 136 tests.
+    - >-
+      Platform handoff: focused deployment regression suite passed 14 tests;
+      Ruff and Pyright passed for changed deployment and Observatory paths,
+      with Pyright reporting zero errors, warnings, or informations.
+    - >-
+      Runtime acceptance: canonical startup completed successfully; long-running
+      services became healthy, migration/bootstrap jobs completed, and Aura,
+      Observatory, and Authentik readiness endpoints returned 2xx.
+    - >-
+      Runtime lifecycle acceptance passed: repeated up was healthy and
+      idempotent, down preserved the generated environment, owner hashes, and
+      ten project-scoped volumes, reset removed only the disposable project
+      state while preserving the owner-password hash, and a fresh up recreated
+      the stack successfully.
+    - git diff --check
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    No integration commit was created because this integration task explicitly
+    requires the reviewed working tree to remain uncommitted; the Delivery
+    Lead may create the authorized Conventional Commit after this report.
+  - >-
+    Runtime evidence covers the disposable local Docker project only; discarded
+    host-bound local state was intentionally not preserved per the owner's
+    authorization.

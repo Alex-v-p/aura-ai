@@ -1,0 +1,24 @@
+agent: architecture_guardian
+work_item: AURA-0098
+verdict: PASS
+checked:
+  - >-
+    Verified the reduced foundation scope and explicit follow-up deferrals are
+    truthful and do not claim completion of evaluation scenarios 2-6 or the
+    exhaustive outage and restart matrix.
+  - >-
+    Verified Core and Observatory retain separate services, data ownership,
+    sessions, frontends, migrations, and dependency directions; no Aura Web,
+    Core, contract, migration, dependency-file, or protected-baseline change
+    was introduced.
+  - >-
+    Re-ran repository shape, module registry, service isolation,
+    observability, contract-change, baseline, Compose, shell, and diff checks
+    after removing retained disposable diagnostics; all passed.
+findings: []
+risks:
+  - >-
+    Deferred evaluation, owner-operations, session-reset, and exhaustive
+    outage behavior requires separately authorized follow-up work before it
+    can be represented as accepted.
+unresolved: []

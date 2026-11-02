@@ -1,0 +1,97 @@
+agent: contract_steward
+work_item: AURA-0086
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: /root/aura_0086_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.observatory-api
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-observatory/tests/test_aura0086_contract.py
+  - work-items/handoffs/AURA-0086-contract.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward; no other owner was authorized to edit the Observatory OpenAPI source or its generated transport client during this slice
+  compatibility: backward_compatible
+  definitions:
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - Added cursor and page-size inputs to the existing component catalogue while preserving the existing response fields and their required status.
+        - Added optional definitionState and definitionVersions catalogue metadata so old producers remain valid during rolling rollout and observed-only components remain explicit.
+        - Added an exact component-version definition resource with bounded owner, category, input/output schema, measurement, evaluator, and dependency metadata.
+        - Added a bounded exact-version dependency-topology resource with deterministic ordering, component and provider node kinds, direct and reverse relationships, explicit missing definitions, unavailable versions, availability, and partial-health state.
+        - Added optional component-version and point-limit filters to the existing component-health resource.
+  compatibility_notes:
+    - Existing operation identifiers, paths, request requirements, response properties, and required fields are unchanged.
+    - Existing ComponentSummary.versions continues to mean observed deployed versions; definition versions are separate and optional.
+    - ComponentSummary.definitionState, ComponentSummary.definitionVersions, and ComponentCollection.nextCursor are optional for compatibility with older observatory-v1 producers.
+    - Exact-version definition and topology resources and all supporting schemas are additive; observatory-v1 remains at version 1.0.0.
+    - The generated Angular output contains transport types and route descriptors only, with no health classification, topology traversal, pagination, retry, persistence, or presentation behavior.
+  producers:
+    - Aura Observatory owner-authorized component query API
+    - Aura Observatory PostgreSQL component-definition catalogue
+    - Aura Observatory ClickHouse observed-health and deployed-version query adapter
+  consumers:
+    - Observatory Web component catalogue and accessible dependency topology workspace
+    - Observatory browser and full-stack acceptance suites
+    - Observatory API contract and generated-client validation
+  rollout:
+    - Apply the service-owned PostgreSQL definition migration and run packaged Observatory manifest synchronization before relying on declared definitions.
+    - Deploy the compatible Observatory API producer before or with the regenerated Observatory Web client; older clients ignore additive response fields and do not call new resources.
+    - Keep Core and other external components as observed-only until a separately authorized public definition contract exists; do not load their private manifests or tables.
+    - Continue deriving deployed versions and aggregate health from ClickHouse observations, while retention deletion preserves PostgreSQL definitions and edges.
+    - Keep all catalogue, topology, and health responses owner-authorized, bounded, metadata-only, and excluded from browser persistence.
+  generated_outputs:
+    - source: contracts/openapi/observatory-v1.yaml
+      generator: frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0086.yaml
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0086-contract-uv uv run pytest tests/test_aura0086_contract.py -q (4 passed)
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0086-contract-uv uv run ruff check tests/test_aura0086_contract.py
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:lint
+    - cd frontend && pnpm exec tsc -p libs/platform/observatory-api-client/tsconfig.lib.json --noEmit
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0086.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0086.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0086.yaml
+    - implementation-handoff.schema.json validation for work-items/handoffs/AURA-0086-contract.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Service runtime, migration, frontend feature, browser, and full-stack checks remain assigned to the Observatory, frontend, test/evaluation, review, and integration owners.
+decisions:
+  - Kept contract id observatory-v1 and version 1.0.0 because all resources, parameters, response fields, schemas, and generated types are additive and remove no accepted input or output.
+  - Used exact component versions in definition and topology paths so incompatible definitions cannot be collapsed into one unversioned resource.
+  - Preserved the existing ComponentSummary.versions field as observed deployed versions and introduced a separate definitionVersions field to keep PostgreSQL definitions distinct from ClickHouse observations.
+  - Represented dependencies as either component or provider identifiers because approved Observatory manifests declare both Aura components and infrastructure providers such as PostgreSQL and ClickHouse.
+  - Made missing definitions, version mismatch, observed availability, unavailable dependencies, and partial health finite explicit states instead of inferring or inventing relationships.
+  - Bounded definition arrays, catalogue pages, topology depth, topology nodes and edges, reverse relationships, health points, identifiers, and version values.
+  - Kept generated output transport-only and placed no synchronization, graph traversal, health classification, authorization, or presentation logic in schemas or generated clients.
+risks:
+  - The contract supports dependency version constraints, while current packaged manifests may leave requiredVersion null; the UI and query implementation must present that state as intentionally unconstrained rather than inventing a compatible version.
+unresolved: []

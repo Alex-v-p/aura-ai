@@ -1,0 +1,9 @@
+agent: architecture_guardian
+work_item: AURA-0076
+verdict: PASS
+checked:
+  - The new artifacts.attachments boundary, knowledge.documents ownership, conversation links, provider ports, module registry, and manifests match the authorized architecture and introduce no new service or framework.
+  - Public APIs and versioned event contracts are additive, generated-client synchronization is valid, and unavailable message summaries are content-free tombstones.
+  - Repository shape, module registry, Python import boundaries, service isolation, frontend boundaries, changed-path scope, contract classification, and baseline protection all validate.
+  - The final owner-boundary corrections were reviewed and no architectural finding remains.
+findings: []

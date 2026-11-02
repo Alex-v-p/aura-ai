@@ -1,0 +1,94 @@
+agent: security_privacy_reviewer
+work_item: AURA-0100
+verdict: PASS
+checked:
+  - >-
+    Verified the local HTTP overlay restores only the existing
+    deploy/docker/nats-entrypoint.sh bind at
+    /usr/local/bin/aura-nats-entrypoint with read_only=true, alongside the
+    disposable NATS data volume; the effective service remains unpublished
+    and attached only to aura-core-bus and aura-evaluation-bus.
+  - >-
+    Verified the restored entrypoint reads four scoped NATS credentials from
+    Docker secret files, validates bounded user identifiers, writes its
+    generated authorization configuration mode 0600, and preserves the
+    separate normal, bootstrap, dispatch, and runner subject ACLs.
+  - >-
+    Verified the effective NATS secret set is unchanged and the AURA-0100 diff
+    does not modify networks, secret definitions, identity configuration,
+    Observatory API/session code, OIDC clients, audiences, owner checks,
+    cookies, CSRF handling, contracts, or Core/Observatory isolation.
+  - >-
+    Verified the Observatory evaluation worker and scheduler healthcheck delta
+    changes only the executable from the unavailable base-image python command
+    to /app/.venv/bin/python, the same packaged interpreter used by their
+    runtime CMDs. CMD form, import-only probe targets, intervals, timeouts,
+    retries, start periods, dependencies, credentials, networks, ports, and
+    every other service property remain unchanged.
+  - >-
+    Verified observatory-garage-bootstrap no longer reads or mutates Garage
+    node identity or cluster layout and still requires
+    aura-garage-bootstrap to complete successfully before it runs. Its
+    effective service has no published ports, uses only the private
+    observatory-object-storage network, mounts Garage state and configuration
+    read-only, and receives only the separate Observatory Garage access and
+    secret keys.
+  - >-
+    Verified Observatory Garage provisioning fails closed when key import,
+    key inspection, the write grant, read denial, owner denial, or final grant
+    verification fails. It rejects Core-bucket reuse and unexpected existing
+    grants, then requires exactly one target-bucket association whose compact
+    permission flags are exactly W.
+  - >-
+    Verified disposable Garage access-ID generation uses Python's
+    cryptographic secrets source with token_hex(12), providing 96 bits of
+    entropy in the provider-valid exact shape GK plus 24 lowercase hexadecimal
+    characters. Generated values remain inside the helper process and are
+    never passed through argv, environment variables, stdout, or stderr.
+  - >-
+    Verified disposable Garage secret generation uses token_hex(32), providing
+    256 bits of cryptographic entropy in the provider-valid exact shape of 64
+    lowercase hexadecimal characters. Validation reads at most 66 bytes,
+    accepts only that exact value with at most one final newline, and therefore
+    rejects uppercase, malformed, embedded-newline, or oversized credentials
+    without reading unbounded file content.
+  - >-
+    Verified exact-default classification covers all three Garage access-ID
+    files and all three corresponding Garage secret-key files. Rotation is
+    enabled only when the normalized selected path equals its specific
+    launcher-owned default, whether the default was implicit or explicitly
+    configured. Valid default and custom credentials are preserved
+    byte-for-byte; genuinely custom invalid credentials fail closed while
+    preserving contents and mode. NATS and database secret behavior remains
+    unchanged.
+  - >-
+    Verified invalid managed Garage credentials rotate through a
+    same-directory random temporary file opened with O_EXCL and O_NOFOLLOW at
+    mode 0600, fully written and file-fsynced before os.replace, followed by a
+    no-follow parent directory fsync. The captured inode and security mode are
+    rechecked before replacement; symlink, non-regular, empty, insecure-mode,
+    or mismatched path identity fails closed, and temporary files are cleaned
+    without disclosing either old or replacement values.
+  - >-
+    Verified the new Observatory migration ledger remains service-owned and
+    stores only migration version and application timestamp; it introduces no
+    authenticated content, telemetry payload, credential, retention change,
+    or cross-service data access.
+  - >-
+    Verified the AURA-0100 tests and structured handoffs contain no exact
+    local secret values and no bearer-token, cookie, authorization-code,
+    state, nonce, or token query evidence; rendered Compose output remains
+    process-memory-only and is not emitted on assertion failures.
+  - >-
+    Re-ran twenty-one launcher and Compose startup security tests plus six
+    focused Garage bootstrap shell, dependency, parser, grant, and fail-closed
+    tests successfully, and verified shell syntax, the work item, and service
+    isolation with no contract or protected-baseline changes.
+findings: []
+risks:
+  - >-
+    Live integration evidence must remain limited to container health and a
+    redacted Observatory login redirect result; do not record redirect query
+    values, headers, cookies, tokens, credentials, authenticated payloads, or
+    screenshots containing owner data.
+unresolved: []

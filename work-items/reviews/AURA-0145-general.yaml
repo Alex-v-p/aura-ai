@@ -1,0 +1,26 @@
+agent: general_reviewer
+work_item: AURA-0145
+verdict: PASS
+checked:
+  - >-
+    Re-read exact trusted resolver task/run correlation, typed resolution
+    validation, retained operation-span cleanup, structured synthesis, and
+    deletion paths against the prior General PASS.
+  - >-
+    Confirmed resolver results must match the exact task and coordinator run
+    correlation before a claim can be cited or reported. Missing, mismatched,
+    foreign-run, and unknown-type resolutions remain fail-closed, while the
+    safe exact structured claim retains its canonical-only report behavior.
+  - >-
+    Confirmed evidence deletion removes citation/evidence rows and clears
+    operation-ledger response payloads containing bounded evidence spans before
+    the research tombstone reaches proven deleted. Retry and unknown cleanup
+    paths remain distinct and do not resurrect private content.
+  - >-
+    Independently ran the focused research and migration suite: 212 passed.
+    Also considered the supplied full Core (2001 passed, 124 skipped) and
+    isolated live PostgreSQL (219 passed) evidence. Prior semantic support,
+    sufficiency, canonical reporting, cancellation, deletion, transactional
+    outbox, restart recovery, durable idempotency, SQL hydration, migration,
+    observability, and evaluator findings remain closed.
+findings: []

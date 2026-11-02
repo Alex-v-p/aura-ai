@@ -1,0 +1,129 @@
+agent: delivery_lead
+work_item: AURA-0140
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0140_delivery
+  worktree: shared
+scope:
+  ownership_zone: architecture.governed-web-research
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - docs/README.md
+  - docs/adr/0018-governed-web-research-providers.md
+  - docs/adr/README.md
+  - docs/design/README.md
+  - docs/design/governed-research-artifacts-and-tasks.md
+  - work-items/handoffs/AURA-0140-delivery.yaml
+contracts:
+  changed: false
+  notes: >-
+    AURA-0140 defines the additive contract intent and assigns its implementation
+    to AURA-0141; it does not modify OpenAPI, event schemas, or generated clients.
+migrations:
+  changed: false
+  notes: >-
+    Artifact, research, and Task Center persistence is designed but remains
+    assigned to the owning follow-on work items.
+observability:
+  components: []
+  metrics_added: []
+  notes: >-
+    This repository-governance slice adds no runtime behavior. The design fixes
+    exact stable component contracts, typed boundaries, dependencies, spans,
+    metrics, finite dimensions/outcomes/errors, trace-only correlation,
+    capture/replay/retention/privacy constraints, instrumentation tests, and
+    evaluators for AURA-0142 through AURA-0148.
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0140.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0140.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0140.yaml (skipped as declared not applicable)
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Authorized SearXNG plus distinct static HTTPX/Trafilatura and Playwright
+    provider deployables behind Core-owned ports, signed short-lived request
+    envelopes, independent least-privilege identities, controlled public-HTTPS
+    egress, dual destination validation, read-only sandboxes, exact resource
+    ceilings, and independent admission/static/browser kill switches.
+  - >-
+    Fixed Quick, Auto, Deep, and Agent-led time/source/search/browser/model
+    envelopes, 30-second Auto detachment, one owner-authorized extension within
+    the original envelope, static-first selection, and a bounded evidence
+    sufficiency rule that cannot convert budget exhaustion into completion.
+  - >-
+    Defined Core-owned immutable Markdown, plain-text, and JSON artifact
+    revisions in a dedicated Garage bucket with SHA-256 integrity, authorized
+    inert preview/download, manual-only retention, and durable truthful deletion.
+  - >-
+    Kept research, workflows, briefings, document processing, and memory
+    reindexing authoritative in their source modules while authorizing only a
+    metadata-only, idempotent, rebuildable execution-domain task projection and
+    public-API-routed capability-gated commands.
+  - >-
+    Defined foreground client subscription and background conversation delivery,
+    task-scoped citation validation, retained bounded cited excerpts, full-page
+    disposal, dedicated workspace completion, and the AURA-0141 through
+    AURA-0148 dependency and ownership sequence.
+  - >-
+    Corrected the conversational boundary so web.research@1 performs durable
+    admission only within the existing 30-second tool attempt and returns an
+    opaque task reference. Quick and Auto foreground behavior is a client task
+    subscription, while one durable delivery record exclusively owns the
+    exactly-once terminal append and independent notification.
+  - >-
+    Restricted task-source events to source identifier/version invalidations.
+    Live reconciliation and rebuild now call the same source-owned public
+    TaskProjectionSnapshotV1 query through a nondelegable internal projection
+    capability, so owner scope never enters transport and projection consumers
+    never invent a cross-domain lookup.
+  - >-
+    Closed research outcomes and kill-switch behavior around the nonterminal
+    draining stage, terminal interrupted outcome, bounded provider_disabled and
+    provider_unavailable failure classes, and mandatory source outcome labels
+    within the normalized failed Task Center grouping.
+  - >-
+    Added owner-authorized CSRF-protected idempotent research/evidence deletion,
+    immediate read unavailability, known/unknown cleanup recovery, content-free
+    tombstones, explicit linked-artifact scope, immutable conversation citation
+    behavior, and deletion-race/privacy tests.
+  - >-
+    Fixed the stable versioned observable-component and evaluator catalogue,
+    typed boundaries, dependencies, exact spans/metrics/dimensions/outcomes/error
+    classes, replay/capture/retention/cardinality rules, and release gates. Also
+    fixed Knowledge/Research, Knowledge/Artifacts, and Activity/Tasks navigation,
+    responsive route regions, focus/live-region behavior, partial and deletion
+    recovery states, stable transcript activity, and owner-scoped memory-only
+    draft clearing.
+  - >-
+    Added aura.research.cancellation@1 and exact component-local measurements
+    for research queue lag, cancellation command latency,
+    cancel-intent-to-terminal settlement lag, each admitted budget ledger field,
+    and static-to-browser fallback count/denominator/five-minute ratio. Units,
+    dimension subsets, outcomes, errors, trace-only correlation,
+    capture/replay/retention, and fake-clock/cardinality instrumentation tests
+    are closed, and coordinator or total-task latency is explicitly rejected as
+    a substitute.
+risks:
+  - >-
+    Browser retrieval remains the highest residual attack and resource surface;
+    it therefore stays independently disabled until sandbox, hostile-page,
+    destination-policy, and resource acceptance passes.
+  - >-
+    Manual-only artifact and cited-evidence retention can grow storage without
+    bound; operators must monitor capacity until a separately authorized
+    retention policy exists.
+  - >-
+    Task list title resolution depends on bounded source public queries because
+    private titles are intentionally absent from projection events; source
+    degradation must produce an explicit stale or unknown presentation.
+unresolved: []

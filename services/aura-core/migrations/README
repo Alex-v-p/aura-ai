@@ -1,0 +1,1 @@
+Aura Core migrations are service-owned. Authentik uses a separate database and migration lifecycle.

@@ -1,0 +1,60 @@
+agent: observatory_worker
+work_item: AURA-0112
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-observatory.evaluation-query-projection+services.aura-observatory.evaluation-api-replay
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/evaluation_query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/tests/test_aura0112_suite_projection.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0112.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0112.yaml --path services/aura-observatory/src/aura_observatory/evaluation_query.py --path services/aura-observatory/src/aura_observatory/evaluation_api.py --path services/aura-observatory/tests/test_aura0112_suite_projection.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0112.yaml (no contract changes)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0112.yaml (no baseline changes)
+    - UV_CACHE_DIR=/tmp/aura-0112-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0112_*.py (39 passed, including reviewer regressions)
+    - UV_CACHE_DIR=/tmp/aura-0112-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/tests/test_aura0112_*.py
+    - UV_CACHE_DIR=/tmp/aura-0112-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/evaluation_query.py services/aura-observatory/src/aura_observatory/evaluation_api.py services/aura-observatory/tests/test_aura0112_*.py
+    - git diff --check
+    - AURA-0110 resource-reference regression plus AURA-0112 focused tests (121 passed)
+    - AURA-0093/AURA-0095/AURA-0110/AURA-0112 regression (190 passed, 9 skipped; one shared-worktree baseline failure)
+  failed:
+    - python3 tooling/architecture/validate-repository-shape.py is blocked by pre-existing .aura-e2e.artifacts.* top-level paths
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0112.yaml without --path is blocked by pre-existing AURA-0098 and other dirty paths outside this work item
+    - AURA-0093/AURA-0095/AURA-0112 regression has the pre-existing migration inventory assertion expecting version 14 while shared checkout contains version 15
+    - Full Observatory suite has six pre-existing failures: migration 0015 rerunnable assertion, two full-stack harness assertions, and three migration version assertions
+  not_run: []
+decisions:
+  - Added one closed suite projector for list, detail, create, and idempotent replay; authoritative components, variant bindings, and complete execution limits are retained without arbitrary persisted keys.
+  - Derived componentIds deterministically from authoritative components and required any persisted summary componentIds to match exactly.
+  - Derived caseBudget and timeoutMs from complete limits while requiring any persisted summary values to match; malformed, partial, duplicate, over-bound, and conflicting authoritative fields fail closed.
+  - Aligned every projected RevisionIdentifier with the OpenAPI delimiter-bounded exclusions, including hash and digest, and applied the same bounded private-segment exclusion to variantId while allowing benign substrings.
+  - Applied the authoritative delimiter-bounded private-segment policy to modelId as well, retaining content-free unavailable errors for rejected identifiers.
+  - Replaced key-only OpenAPI shape assertions with recursive EvaluationSuite validation resolving component references and checking nested types, bounds, patterns, enums, closed objects, and uniqueness for legacy and enriched projections.
+  - Preserved exact legacy summary-only projections and the pre-enrichment two-field limits encoding used by existing read-model compatibility tests, without exposing that partial map as authoritative limits.
+  - Added provider-shaped list/detail, create/idempotent replay, legacy compatibility, malformed-data, frontend-admission, and unchanged OpenAPI shape tests.
+  - No Core, Aura Web, frontend, contract, migration, adapter, entrypoint, deploy, dependency, metric, evaluator, baseline, or retention change.
+risks:
+  - The shared checkout contains unrelated AURA-0098 and later integrated changes; integration must stage only the three AURA-0112 paths and preserve all other edits.
+  - The full Observatory suite remains red on shared migration and full-stack harness expectations; no unrelated files were changed to mask those failures.
+unresolved:
+  - None within the AURA-0112 ownership zone; required reviewer verification and parent integration remain.

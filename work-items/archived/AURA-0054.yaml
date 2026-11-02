@@ -1,0 +1,204 @@
+id: AURA-0054
+title: Add owner-scoped one-shot reminder management
+status: integrated
+change_class: repository_governance
+intent: >
+  Add deterministic owner-scoped one-shot reminders with durable PostgreSQL
+  state, idempotent lifecycle commands, versioned API and event contracts, and
+  an accessible Aura Web management surface while preserving provider and
+  product boundaries for later scheduler, notification, and agent-tool work.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved one-shot owner-only reminder scope with offset-aware input normalized to UTC
+    - Owner-approved three-work-item delivery sequence beginning with reminder CRUD and no external delivery
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AUT-002
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUI-019
+  - DEV-001
+  - DEV-002
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.automation.v1
+  - aura-core.automation.reminders
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.platform.outbox
+  - aura-core.platform.telemetry
+  - aura-core.entrypoints.api
+  - aura-core.entrypoints.worker
+  - aura-web.api-client
+  - aura-web.automation.reminders
+  - aura-web.shell
+  - aura-web.e2e
+  - frontend.storybook
+  - repository.architecture.registry
+  - evaluation.automation-reminders
+allowed_paths:
+  - work-items/active/AURA-0054.yaml
+  - work-items/archived/AURA-0054.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/automation/v1/**
+  - docs/specifications/tools-automation-and-integrations.md
+  - services/aura-core/migrations/versions/0014_reminder_foundation.py
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/bootstrap/reminder_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/__init__.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/reminders.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/outbox/**
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/reminder-management.yaml
+  - services/aura-core/tests/test_reminders.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/test_reminder_evaluation.py
+  - services/aura-core/tests/test_outbox.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_migration_0014_reminder_foundation.py
+  - services/aura-core/tests/system/test_reminder_api.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/**
+  - frontend/apps/aura-web-e2e/src/reminders.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/reminder-management.stories.ts
+  - frontend/libs/aura/automation/reminders/**
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/tsconfig.base.json
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - services/aura-core/src/aura_core/domains/integrations/**
+  - services/aura-core/src/aura_core/providers/**
+  - services/aura-core/src/aura_core/entrypoints/scheduler/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/observatory/**
+  - deploy/**
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/automation/v1/reminder-events.schema.json
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: automation.reminders
+observability:
+  applicable: true
+  affected_components:
+    - aura.automation.reminder_management
+  required_metrics:
+    - reminder_command_duration_ms
+    - reminder_command_outcome
+    - reminder_version_conflict_count
+    - reminder_idempotency_conflict_count
+  required_evaluators:
+    - reminder_lifecycle_correctness
+    - reminder_owner_authorization
+    - reminder_time_normalization
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every reminder query and mutation must be scoped to the authenticated owner principal.
+    - Reminder content must not enter outbox identifiers events telemetry or ordinary audit metadata.
+    - Mutation commands require same-origin CSRF validation exact idempotency replay and optimistic concurrency.
+    - The generic outbox envelope must preserve existing run and memory v1 wire payloads byte-for-byte.
+  data_classes:
+    - private reminder content
+    - owner identity
+    - reminder lifecycle metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - platform_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Owner-authenticated users can create list inspect complete and cancel one-shot reminders through a versioned API and Aura Web reminder workspace.
+  - Reminder content is trimmed to 1 through 2000 characters and due timestamps require an explicit RFC3339 offset are strictly future-dated and persist as UTC.
+  - Reminder lifecycle is scheduled fired completed or canceled completion is allowed from scheduled or fired cancellation is allowed only from scheduled and terminal records are immutable.
+  - Every query and command resolves the authenticated principal and cannot read mutate or infer another owner's reminder.
+  - Create complete and cancel require CSRF same-origin UUID idempotency and exact replay while mismatched reuse conflicts and expected-version mismatches fail safely.
+  - Upcoming reminders are ordered by due time ascending history is ordered by update time descending and owner-bound opaque cursors remain stable across pages.
+  - Reminder lifecycle mutations stage content-free identifier-only outbox events and metadata-only audit records in the same transaction as business state.
+  - The generic outbox supports aggregate type and aggregate identifier without fabricated run or conversation identifiers while existing run and memory v1 payloads remain byte-compatible.
+  - Aura Web renders local browser time offers create inspect complete and cancel actions and provides accessible responsive empty loading conflict and failure states.
+  - No recurrence rescheduling deletion notification delivery scheduler agent tool Home Assistant calendar voice Wall or Observatory behavior is added.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0054.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0054.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0054.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0054.yaml
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

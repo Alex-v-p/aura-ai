@@ -1,0 +1,13 @@
+agent: architecture_guardian
+work_item: AURA-0142
+verdict: PASS
+checked:
+  - HTTP delete, retry, and reconciliation routes invoke admission-only application use cases.
+  - Only resume_pending_cleanup reaches Garage after a durable leased claim with mandatory current-token validation, renewal, and stale-token rejection.
+  - Public GeneratedArtifact and GeneratedArtifactRevision DTOs contain no object_key; stored revision references remain private.
+  - SQL mutations stage schema-exact lifecycle events through the platform transactional outbox in the authoritative transaction.
+  - Garage remains an inward-facing port implementation selected only by bootstrap and fixed to the dedicated aura-artifacts bucket.
+  - Migration 0029 remains Core-owned, descends from 0028, and introduces no cross-domain table ownership.
+  - Shared AppState, router, database, worker, and registry composition remains explicitly deferred to integration.
+  - Import-boundary, service-isolation, repository-shape, focused runtime, and diff checks passed.
+findings: []

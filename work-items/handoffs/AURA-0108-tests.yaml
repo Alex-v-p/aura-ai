@@ -1,0 +1,117 @@
+agent: test_evaluation_engineer
+work_item: AURA-0108
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: shared-main
+scope:
+  ownership_zone: evaluation.observatory-ingest-convergence
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0108_reconciliation.py
+  - work-items/handoffs/AURA-0108-tests.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0108.yaml
+      --role test_evaluation_engineer
+      --path services/aura-observatory/tests/test_aura0108_reconciliation.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory
+      ruff check services/aura-observatory/tests/test_aura0108_reconciliation.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0108-uv uv run --project services/aura-observatory
+      pyright services/aura-observatory/tests/test_aura0108_reconciliation.py
+      (0 errors, 0 warnings, 0 informations)
+    - >-
+      The independent probe test asserts that the ClickHouse reconciliation
+      result requires both the opaque observation identifier and its immutable
+      ingest sequence, and that the request remains bounded to the supplied
+      receipt pairs.
+    - >-
+      The existing bounded reconciliation classification test continues to
+      cover completed, missing, and raced outcomes and finite outcome labels.
+    - >-
+      Selected legacy convergence regressions passed (7 passed): contiguous
+      watermark ordering, sequence reuse after cancellation/restart, durable
+      sequence/visibility transactionality, retention-worker failure
+      continuation, out-of-order lag bounds, duplicate-winner idempotency, and
+      API/worker authoritative-state separation.
+    - >-
+      After the Observatory owner correction, the focused AURA-0108 suite
+      passed: 22 passed, including exact crash-window recovery without
+      redelivery, missing-row retryability, pair-matched presence, bounded
+      watermark advancement, run/trace committed-fence continuation, forged
+      cursor rejection, watermark-outage fail-closed behavior, worker
+      liveness/periodicity/restart, provider timeout/recovery, race handling,
+      causal failure spans, and lag/backlog convergence.
+    - >-
+      The second correction is independently covered: a quiescent 2,001-row
+      visible tail advances through bounded passes without new events; health
+      reports a truthful interim 977-row lag and final zero lag; successive
+      passes have distinct trace IDs while all spans within each pass share
+      one correlation; and selection, ClickHouse presence, and PostgreSQL
+      commit timeouts attribute to the correct dependency phase with the
+      finite timeout error class.
+    - >-
+      After the Observatory owner correction, the selected convergence suite
+      was rerun unchanged: 171 passed, 1 migration-idempotency regression
+      deselected because it is the known overlapping AURA-0104 dirty-worktree
+      failure, with two pre-existing deprecation warnings.
+    - >-
+      The long-tail ledger test proves the production watermark advancement
+      performs at most 1024 visible-tail checks per critical section while
+      preserving contiguity.
+    - >-
+      The transactional adapter test proves concurrent reconciliation has one
+      winner and a same-lock retention deletion prevents late receipt or
+      visibility resurrection.
+    - >-
+      git diff --check and the handoff YAML parse passed after the correction.
+  failed: []
+  not_run:
+    - >-
+      Full Observatory suite and aggregate AURA-0098 acceptance remain owned
+      by the delivery/integration flow; this test role did not change product
+      code or run live dependencies.
+    - >-
+      The repository-wide changed-path validator cannot validate the shared
+      checkout without unrelated AURA-0098/AURA-0108 implementation paths;
+      the explicit test-owned path validation above passed.
+decisions:
+  - >-
+    Added only an Observatory test under the AURA-0108 test ownership path;
+    no Core, Aura Web, contract, migration, or production implementation file
+    was modified.
+  - >-
+    Used a deterministic HTTP client double and content-free opaque IDs; no
+    network, credentials, prompts, responses, or provider payload content are
+    retained by the test.
+  - >-
+    The corrected presence adapter validates the returned integer sequence
+    against the requested immutable observation-id/sequence pairs; the
+    independent test remains strict and was not weakened.
+  - >-
+    Added deterministic service-owned fakes and a transactional PostgreSQL
+    adapter double only in the authorized AURA-0108 test path. The tests keep
+    provider queries, race state, and health signals content-free and use no
+    network or credentials.
+  - >-
+    The known migration-idempotency failure was excluded only from the broad
+    selected legacy invocation because it is outside AURA-0108 and belongs to
+    the overlapping AURA-0104 migration/harness changes; no threshold or
+    production behavior was weakened.
+risks: []
+unresolved: []

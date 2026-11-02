@@ -1,0 +1,24 @@
+agent: architecture_guardian
+work_item: AURA-0136
+verdict: PASS
+checked:
+  - >-
+    Final architecture recheck found the implementation within the approved
+    AURA-0136 ownership zones and authorized paths, with no unresolved
+    architecture findings.
+  - >-
+    Core remains the owner of workflow truth and persistence; the workflow
+    state package exposes no route, scheduler, worker, provider, executor, or
+    Observatory dependency.
+  - >-
+    Approval, notification, run-lineage, generated-client, frontend-boundary,
+    module-registry, and migration changes remain additive and preserve the
+    existing public module direction and legacy compatibility.
+  - >-
+    The deterministic contract/state slice does not introduce a new service,
+    framework, package, deployment surface, or architectural exception, and
+    no ADR is required.
+  - >-
+    Architecture, isolation, frontend-boundary, module-registry, repository
+    shape, changed-path, and diff checks passed.
+findings: []

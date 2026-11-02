@@ -1,0 +1,193 @@
+id: AURA-0142
+title: Add Core generated text artifacts
+status: integrated
+change_class: feature
+intent: >
+  Implement the Core-owned generated text artifact aggregate, immutable
+  revisions, owner-authorized read and deletion use cases, and a dedicated
+  least-privilege aura-artifacts Garage binding without adding research
+  coordination, Task Center behavior, user uploads, or frontend surfaces.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/governed-research-artifacts-and-tasks.md
+    - docs/specifications/memory-and-knowledge.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - docs/adr/0018-governed-web-research-providers.md
+    - work-items/archived/AURA-0140.yaml
+    - work-items/archived/AURA-0141.yaml
+    - Migration 0029_generated_artifacts descends from 0028_workflow_execution; AURA-0143 owns the only following migration and shared Core composition wiring.
+    - Artifact bytes use a dedicated aura-artifacts bucket and Core identity that cannot access aura-documents, evaluation, or Observatory buckets.
+    - Artifact creation and immutable revision append are internal application APIs; public HTTP exposes no upload or revision-create operation.
+    - The Core Worker owns the generated domain bootstrap route and Core tests; the Platform Worker owns settings root Compose Garage grants and deployment tests; the Test and Evaluation Engineer owns independent lifecycle fault privacy and instrumentation cases; only the Integration Maintainer reconciles their reviewed handoffs.
+    - On the shared feature branch AURA-0142 writers stay inside these paths, publish the reviewed 0029 migration identity before AURA-0143 validates 0030, and hand off before AURA-0143 touches shared composition.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/artifacts/v1/generated-artifact-events.schema.json
+feature_references:
+  - ART-002
+  - ART-003
+  - ART-004
+  - ART-005
+  - ART-006
+  - ART-007
+  - ART-009
+  - ART-010
+ownership_zones:
+  - services.aura-core.generated-artifacts
+  - services.aura-core.generated-artifact-storage
+  - services.aura-core.generated-artifact-api
+  - services.aura-core.generated-artifact-migration
+  - deploy.garage.generated-artifact-bucket
+  - evaluation.generated-artifact-lifecycle
+  - delivery.aura0142
+allowed_paths:
+  - work-items/active/AURA-0142.yaml
+  - work-items/archived/AURA-0142.yaml
+  - work-items/handoffs/AURA-0142-*.yaml
+  - work-items/reviews/AURA-0142-*.yaml
+  - work-items/integration/AURA-0142.yaml
+  - services/aura-core/migrations/versions/0029_generated_artifacts.py
+  - services/aura-core/src/aura_core/domains/artifacts/generated/**
+  - services/aura-core/src/aura_core/providers/object_storage/generated_artifacts.py
+  - services/aura-core/src/aura_core/bootstrap/artifact_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/artifacts.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/artifact-persistence.yaml
+  - services/aura-core/resources/component-manifests/artifact-deletion.yaml
+  - services/aura-core/tests/test_generated_artifacts.py
+  - services/aura-core/tests/test_generated_artifact_storage.py
+  - services/aura-core/tests/test_generated_artifact_api.py
+  - services/aura-core/tests/test_generated_artifact_deletion.py
+  - services/aura-core/tests/test_generated_artifact_observability.py
+  - services/aura-core/tests/test_migration_0029_generated_artifacts.py
+  - compose.yaml
+  - .env.example
+  - deploy/tests/test_aura0142_artifact_garage.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/migrations/versions/0030_task_projection.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/tasks.py
+  - services/aura-core/src/aura_core/entrypoints/worker/**
+  - services/aura-core/src/aura_core/providers/research/**
+  - services/aura-research-static-fetcher/**
+  - services/aura-research-browser-fetcher/**
+  - services/aura-observatory/**
+  - deploy/compose/research-providers.yaml
+  - deploy/research/**
+  - deploy/docker/research-*.Dockerfile
+  - tooling/**
+  - frontend/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: false
+  affected:
+    - Aura v1 generated artifact list detail revisions preview download deletion cleanup retry and reconciliation resources
+    - Generated artifact lifecycle events v1
+    - Internal Core generated-artifact create and append-revision application boundary
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: artifacts.generated
+observability:
+  applicable: true
+  affected_components:
+    - aura.artifacts.persistence@1
+    - aura.artifacts.deletion@1
+  required_metrics:
+    - artifact_write_outcome_count
+    - artifact_write_latency_ms
+    - artifact_deletion_outcome_count
+    - artifact_deletion_latency_ms
+  required_evaluators:
+    - generated_artifact_integrity@1
+    - generated_artifact_authorization@1
+    - generated_artifact_deletion_truth@1
+    - generated_artifact_privacy@1
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Artifact titles content provenance citations digests filenames object keys owner lineage and linked task run conversation or workspace values are owner-private and prohibited from URLs logs ordinary telemetry metadata-only events browser persistence and Observatory.
+    - Markdown preview must reject raw HTML scripts remote embeds unsafe links and executable content; JSON and plain text previews remain inert bounded no-store responses.
+    - Every list detail revision preview and download request reauthorizes owner scope; downloads use attachment disposition sanitized filenames nosniff and no-store.
+    - Create and append accept only system-generated Markdown UTF-8 plain text or canonical JSON within fixed byte limits and must verify SHA-256 and immutable monotonic revision truth.
+    - Deletion is CSRF-protected idempotent and expected-version-bound, makes bytes immediately unreadable, and truthfully distinguishes deletion_pending deletion_failed cleanup_unknown and deleted across restart and provider ambiguity.
+    - The aura-artifacts Garage identity and bucket must be isolated from documents evaluation and Observatory data, receive no public exposure, and fail closed when credentials grants or bucket identity are wrong.
+  data_classes:
+    - owner-private generated Markdown plain text and canonical JSON
+    - owner-private artifact metadata provenance revision and task run conversation workspace lineage
+    - restricted Garage object keys digests byte counts and storage credentials
+    - content-free artifact lifecycle events and tombstones
+required_agents:
+  implementation:
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - PostgreSQL additively owns owner scope supported media type lifecycle current revision immutable ordered revision metadata SHA-256 byte count provenance task run conversation and optional workspace lineage idempotency deletion truth and content-free tombstones with bounded columns closed checks indexes positive versions and no cross-domain cascade.
+  - Migration 0029_generated_artifacts descends exactly from 0028_workflow_execution, upgrades existing databases without rewriting unrelated rows, and has restart duplicate application integrity and rollback-posture coverage; 0030 remains exclusively AURA-0143.
+  - The internal artifacts public application API creates and appends immutable system-generated Markdown plain-text and canonical JSON revisions, computes and verifies SHA-256 before publication, never overwrites bytes, reconciles ambiguous writes by digest, and exposes no public upload or append endpoint.
+  - Owner-authorized list detail and revision history are metadata-only; bounded previews enforce server-side type validation and inert sanitization; downloads reauthorize and emit no-store nosniff safe attachment responses.
+  - Deletion acceptance under optimistic version and idempotency makes preview and download unavailable immediately, schedules durable object cleanup, treats missing objects as absent, preserves content-free lineage and integrity truth, and exposes separate retry for known failure and reconciliation for unknown outcome without resurrection.
+  - A dedicated aura-artifacts Garage bucket and least-privilege Core identity are provisioned idempotently; topology tests prove no access to aura-documents evaluation or Observatory buckets and no artifact credentials reach browsers provider services scheduler or Observatory.
+  - Garage unavailability timeout partial write digest mismatch restart duplicate completion delete race and ambiguous cleanup tests preserve PostgreSQL truth and never publish a false revision or false deletion success.
+  - Generated-artifact lifecycle events match the AURA-0141 metadata-only schema and contain only identifiers lifecycle versions timestamps correlation and causation; private metadata content digest and object references are unrepresentable.
+  - aura.artifacts.persistence@1 and aura.artifacts.deletion@1 implement the exact typed boundaries spans dependencies units finite dimensions outcomes errors trace-only correlation capture replay and retention rules from the approved design; privacy and cardinality tests reject content identifiers and exception text.
+  - The route module implements every AURA-0141 artifact read deletion cleanup and reconciliation operation and is independently testable; AURA-0143 alone owns final app state router database and worker composition so the two parallel tickets never edit a shared composition file.
+  - No research coordinator provider task projection frontend Observatory public upload binary PDF image archive code execution automatic retention protected baseline contract or generated-client change occurs.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0142.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0142.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0142.yaml
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0142.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0142.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/domains/artifacts/generated services/aura-core/src/aura_core/providers/object_storage/generated_artifacts.py services/aura-core/src/aura_core/bootstrap/artifact_uow.py services/aura-core/src/aura_core/entrypoints/api/routes/artifacts.py services/aura-core/tests/test_generated_artifacts.py services/aura-core/tests/test_generated_artifact_storage.py services/aura-core/tests/test_generated_artifact_api.py services/aura-core/tests/test_generated_artifact_deletion.py services/aura-core/tests/test_generated_artifact_observability.py services/aura-core/tests/test_migration_0029_generated_artifacts.py deploy/tests/test_aura0142_artifact_garage.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/artifacts/generated services/aura-core/src/aura_core/providers/object_storage/generated_artifacts.py services/aura-core/src/aura_core/bootstrap/artifact_uow.py services/aura-core/src/aura_core/entrypoints/api/routes/artifacts.py services/aura-core/tests/test_generated_artifacts.py services/aura-core/tests/test_generated_artifact_storage.py services/aura-core/tests/test_generated_artifact_api.py services/aura-core/tests/test_generated_artifact_deletion.py services/aura-core/tests/test_generated_artifact_observability.py services/aura-core/tests/test_migration_0029_generated_artifacts.py
+  - AURA_TEST_DATABASE_URL=${AURA_TEST_DATABASE_URL:?isolated PostgreSQL URL required} AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_generated_artifacts.py services/aura-core/tests/test_generated_artifact_storage.py services/aura-core/tests/test_generated_artifact_api.py services/aura-core/tests/test_generated_artifact_deletion.py services/aura-core/tests/test_generated_artifact_observability.py services/aura-core/tests/test_migration_0029_generated_artifacts.py services/aura-core/tests/test_migrations.py deploy/tests/test_aura0142_artifact_garage.py -q
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

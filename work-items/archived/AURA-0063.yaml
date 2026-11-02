@@ -1,0 +1,187 @@
+id: AURA-0063
+title: Redesign Approvals as a review-first decision inbox
+status: integrated
+change_class: feature
+intent: >
+  Recompose Aura Web Approvals into a calm safety-first decision inbox with
+  pending requests separated from terminal history, route-backed contextual
+  detail, review-before-decision actions, authoritative pending indication,
+  accessible responsive behavior, and honest recovery while preserving the
+  existing owner-scoped approval contract and deterministic lifecycle.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/reference-research.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved Approvals decision inbox with pending requests first and terminal History separated
+    - Owner-approved review-before-decision flow with no list-level or bulk approve or reject action
+    - Owner-approved /approvals/:id canonical detail route presented as a focus-managed drawer on wide desktop and a focused full-screen page on mobile
+    - Owner-approved sticky detail actions that explain action consequence origin expiry and execution state before Approve or Reject becomes available
+    - Existing Aura v1 Approval list detail decision and SSE APIs are sufficient; this work item introduces no contract service persistence or migration change
+    - Unknown decision outcomes are never presented as success and are never retried automatically
+    - ApprovalStore joins the application-composed management-session reset port so private detail cached CSRF stream cursors owner-scoped collections and pending indicators do not cross accepted-session changes
+    - Owner-approved conversation approval cards navigate to /approvals/:id for review and never approve or reject inline
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - GEN-007
+  - TOL-006
+  - TOL-008
+  - TOL-009
+  - TOL-017
+  - AUT-009
+  - AUI-001
+  - AUI-006
+  - AUI-023
+  - AUI-030
+  - GOV-010
+  - GOV-011
+ownership_zones:
+  - aura-web.governance.approvals
+  - aura-web.interaction.conversations
+  - aura-web.shell
+  - aura-web.application.routes
+  - aura-web.application.composition
+  - aura-web.e2e
+  - frontend.storybook
+allowed_paths:
+  - work-items/active/AURA-0063.yaml
+  - work-items/archived/AURA-0063.yaml
+  - frontend/libs/aura/governance/approvals/**
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web-e2e/src/approvals.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/approval-inbox.stories.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.security.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - services/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - frontend/libs/platform/**
+  - frontend/libs/aura/interaction/agents/**
+  - frontend/libs/aura/interaction/personas/**
+  - frontend/libs/aura/knowledge/**
+  - frontend/libs/aura/automation/**
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-web/src/styles.css
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - deploy/**
+  - infra/**
+  - tooling/architecture/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: governance.approvals
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Approval proposal content is private and appears only after a separately owner-authorized detail request; lists streams badges logs telemetry URLs and ordinary errors remain metadata-only.
+    - Direct detail routes preserve backend authorization and never briefly publish stale detail from another route principal or accepted session.
+    - Approve and Reject preserve CSRF optimistic-version and idempotency semantics and are never automatically retried after timeout disconnect or otherwise uncertain completion.
+    - Authentication and principal changes clear private detail owner-scoped collections cached CSRF stream cursors reconnect timers and decision state before old requests can repopulate them.
+    - Approval SSE remains principal-bound metadata-only validates bounded contract events reconciles expired cursors authoritatively and cannot publish after reset stop or route generation changes.
+    - Error presentation uses bounded status-based language and never renders proposal payloads credentials provider responses server diagnostics or hidden reasoning.
+    - Conversation approval cards route to owner-authorized approval detail without gaining broader proposal access or retaining an inline decision path that bypasses review.
+  data_classes:
+    - private_approval_proposal
+    - owner_scoped_approval_metadata
+    - owner_scoped_approval_identifiers
+    - approval_and_execution_state
+required_agents:
+  implementation:
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Approvals presents a Pending decision inbox first and a distinct terminal History view for approved rejected expired and canceled records, without mixing terminal records into the default decision queue. [Design — sidebar-and-management-surfaces.md Approvals decision inbox; foundations.md Responsive behavior and density]
+  - List rows explain the proposed action origin expiry and status in plain language, keep technical tool and version identifiers under an explicit disclosure, and never expose private proposal content. [Design — sidebar-and-management-surfaces.md Approvals decision inbox; foundations.md Privacy-sensitive presentation]
+  - List rows and collection controls provide no Approve Reject or bulk-decision action; a decision becomes available only after the user opens and reviews the owner-authorized detail. [Design — sidebar-and-management-surfaces.md Approvals decision inbox; failure-and-recovery-states.md Sensitive and consequential workflows]
+  - Selecting a request navigates to /approvals/:id; wide desktop presents a contextual drawer and mobile presents a focused full-screen detail page with a clear route-backed return path and no horizontal scrolling. [Design — sidebar-and-management-surfaces.md Route matrix; components-and-interactions.md Drawers dialogs and notifications]
+  - Approval detail explains what Aura wants to do the user-visible consequence affected scope originating conversation or task expiry decision status and execution state before presenting actions. [Design — sidebar-and-management-surfaces.md Approvals decision inbox; failure-and-recovery-states.md Sensitive and consequential workflows]
+  - Tool identifier tool version record identifiers exact versions and lifecycle timestamps are secondary sanitized technical details under an explicit disclosure rather than the primary visual hierarchy. [Design — foundations.md Privacy-sensitive presentation; failure-and-recovery-states.md Failure UX]
+  - Pending detail keeps Approve and Reject visible in a sticky footer, names each consequence, disables duplicate submission, and terminal detail explains the durable outcome without offering an impossible action. [Design — sidebar-and-management-surfaces.md Approvals decision inbox; components-and-interactions.md Controls and rich content]
+  - Decision responses update detail collection and global pending indication only when they belong to the current accepted session and request generation; conflicts reconcile authoritative state and late responses cannot overwrite a newer route principal or decision. [Design — failure-and-recovery-states.md Preservation and identity invariant; components-and-interactions.md Component state matrix]
+  - A timeout disconnect server failure or otherwise unconfirmed Approve or Reject outcome is presented as needing confirmation rather than success or definite failure, is not retried automatically, and offers an authoritative status refresh before any further decision. [Design — failure-and-recovery-states.md Recovery rules and Sensitive and consequential workflows]
+  - The global pending badge or indicator is derived from an authoritative pending-filter reconciliation rather than the currently visible mixed or History page; when pagination prevents an exact number the UI uses an honest bounded indicator instead of a false exact count. [Design — sidebar-and-management-surfaces.md Shell anatomy and Approvals decision inbox; failure-and-recovery-states.md Recovery rules]
+  - Route detail loads collection refreshes pagination stream events session hydration and mutations use independent request identities or generation guards so stale work cannot repopulate a newer view route or accepted session. [Design — failure-and-recovery-states.md Preservation and identity invariant]
+  - Approval streaming is globally single-owned principal-bound and metadata-only, accepts only bounded contract-valid events, resumes from the last fully processed event, awaits authoritative reconciliation after a 410 response, and caps automatic reconnect attempts before offering manual recovery. [Design — failure-and-recovery-states.md Offline Reconnecting and Recovery rules; components-and-interactions.md Status and notification states]
+  - Authentication and principal changes reset Approval collections detail errors pending indication reconnect cursors cached CSRF timers and mutation state, and an obsolete session request cannot restore a prior CSRF token or restart a prior-principal stream. [Design — failure-and-recovery-states.md Preservation and identity invariant; foundations.md Privacy-sensitive presentation]
+  - Originating conversation approval cards navigate to /approvals/:id for owner-authorized review, expose no inline Approve or Reject action, and preserve the conversation context without broadening proposal access. [Design — sidebar-and-management-surfaces.md Approvals decision inbox; failure-and-recovery-states.md Sensitive and consequential workflows]
+  - Drawers trap focus close with Escape provide an explicit close or Back action restore focus to the invoking row when possible announce their heading and keep visible keyboard focus and screen-reader names. [Design — components-and-interactions.md Drawers dialogs and notifications; foundations.md Accessibility baseline]
+  - Loading empty authentication permission not-found conflict offline reconnecting unknown-outcome and terminal states use semantic text and structure in addition to color and place Retry only where repeating a read or reconciliation is safe. [Design — failure-and-recovery-states.md State matrix and Recovery rules; foundations.md Status roles]
+  - Light and dark Storybook stories cover Pending History route detail loading empty authentication permission conflict unknown-outcome unavailable-stream and recovery states using the approved semantic tokens. [Design — foundations.md Themes and Core semantic tokens; sidebar-and-management-surfaces.md Shared state patterns]
+  - Automated validation covers 1440x900 iPad Mini and iPhone 13-equivalent widths keyboard operation focus trap and return 200 percent zoom reflow reduced motion non-color communication direct deep links and axe checks for landing and detail surfaces. [Design — foundations.md Responsive behavior and density and Accessibility baseline]
+  - Existing Approval list detail approve reject and SSE requests owner scopes private proposal separation statuses execution states expiry immutable terminal outcomes optimistic versions idempotency and replay semantics remain behaviorally backward compatible. [Design — design README.md Authority and boundaries; failure-and-recovery-states.md Sensitive and consequential workflows]
+  - No contract service migration new approval kind bulk approval multi-approver policy package framework durable browser storage or Observatory behavior is introduced. [Design — design README.md Authority and boundaries; sidebar-and-management-surfaces.md Authority and precedence]
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0063.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0063.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0063.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0063.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0063.yaml
+  - pnpm --dir frontend exec nx test aura-approvals
+  - pnpm --dir frontend exec nx lint aura-approvals
+  - pnpm --dir frontend exec vitest run --config vitest.workspace.ts libs/aura/interaction/conversations
+  - pnpm --dir frontend exec nx lint aura-conversations
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test --config=playwright.config.ts apps/aura-web-e2e/src/approvals.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

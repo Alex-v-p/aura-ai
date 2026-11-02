@@ -1,0 +1,90 @@
+agent: observatory_worker
+work_item: AURA-0087
+status: complete
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.operational-analytics
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/memory.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/tests/test_aura0087_analytics.py
+  - services/aura-observatory/tests/test_aura0087_test_evaluation.py
+  - services/aura-observatory/tests/test_aura0080_formal_regressions.py
+  - services/aura-observatory/tests/test_aura0086_acceptance.py
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  metrics_added:
+    - observatory_query_duration_ms
+    - observatory_query_outcome
+    - observatory_query_freshness_lag_ms
+verification:
+  passed:
+    - uv run ruff check src tests
+    - uv run pyright
+    - uv run pytest services/aura-observatory/tests -q (417 passed, 3 skipped, 2 warnings)
+    - uv run pytest services/aura-observatory/tests/test_aura0087_test_evaluation.py -q (35 passed, 2 skipped)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0087.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0087.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0087.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0087.yaml (skipped: no protected changes)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0087.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - implementation-handoff.schema.json validation for work-items/handoffs/AURA-0087-observatory.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - bash deploy/compose/run-observatory-full-stack-e2e.sh (parent execution confirmed composed ClickHouse 25.8 direct and ProductionObservatoryStore quantile parity; a subsequent scan-boundary query returned the provider's exact HTTP 408/code-159 physical read-limit response without a stable English marker, now classified by the exact tuple into an empty scan_limit partial snapshot; parent rerun is still required)
+decisions:
+  - Kept a finite allowlisted metric catalogue and metadata-only aggregate response shapes; no general query language or arbitrary dimensions were added.
+  - Normalized every analytics window to UTC with a 24-hour default, 31-day maximum, deterministic bucket selection, 200-point series cap, 12-series cap, one-million-row scan cap, and five-second ClickHouse execution setting.
+  - Used ClickHouse quantileExact expressions and declared clickhouse_quantile_exact in every snapshot; mixed measurement units are rejected before adapter execution.
+  - Added operational_analytics_query explicitly to ObservatoryQueryPort and invoke it directly; deterministic local/reference analytics is behind an explicit bounded reference adapter and production composition always injects the production port.
+  - Kept request-derived ClickHouse values in typed HTTP param_* bindings for timestamps, metric names, units, and filters; only finite structural expressions and limits remain in SQL.
+  - Applied a fixed one-million-row bounded source scan before aggregate response limits; because ClickHouse read overflow can stop before a lookahead or stable storage order, exact-cap results are conservatively marked scan-partial without claiming deterministic earliest-row selection.
+  - Defined rate as measurement-value sum divided by an explicit interval capped at 86400 seconds, normalized outcome aliases identically, and derived bounded fresh/stale/unavailable state from the independent maximum observed_at.
+  - Matched the reference percentile helper to pinned ClickHouse 25.8 quantileExact's discrete nearest-rank selection at floor(level * sample_count), including upper-endpoint clamping, and added provider parity coverage; long-window summary rates scale total measurements to a true per-day interval without exceeding 86400 seconds.
+  - Configured pinned-25.8 ClickHouse reads with max_rows_to_read plus read_overflow_mode=break (the valid read-limit setting) and conservative exact-cap scan partials; genuine execution timeout responses return bounded execution_limit snapshots instead of generic storage errors.
+  - Moved the typed AnalyticsRequest DTO and bounded default limits beside the inward query port; the production adapter no longer imports the application implementation for the request type.
+  - Added a one-row provider lookahead, deterministic ingest-sequence ordering, and ClickHouse progress-header capture. Selective physical reads without provider progress are conservatively marked scan_limit partial rather than overstating completeness; late-data evidence is computed independently of the final response LIMIT.
+  - Normalized production outcome/status dimensions with lowerUTF8 while preserving outcome-before-status precedence, and canonicalized outcome filters to the same aliases used by the reference path.
+  - Corrected retention-boundary detection to use the deleted observation-time domain: successful purge-all overlaps every query window, while delete-before overlaps when its cutoff is after the window start, independent of action completion time.
+  - Converted malformed HTTP-200 JSON and invalid aggregate row/coercion data into the generic typed StorageUnavailableError without exposing response bodies or SQL.
+  - Rejected NaN and positive/negative infinity in every numeric ClickHouse analytics field through the same generic StorageUnavailableError path; empty selective results with unavailable provider progress are conservatively scan-partial rather than reported complete.
+  - Derived late-data evidence from ingest-sequence/event-time ordering and retention-boundary evidence from completed Observatory retention actions, propagating both causes through snapshots, series, points, and breakdowns.
+  - Extended the scoped full-stack runner with a composed-provider gate that asserts ClickHouse 25.8, records direct and ProductionObservatoryStore quantileExact p50/p90/p95/p99 parity, and executes the real adapter at the one-million-row selective scan boundary; fixture rows are synchronously removed during cleanup.
+  - Kept the ClickHouse probe's PostgreSQL-unavailable helper at heredoc module scope and added a static regression plus Python-heredoc compilation check so the production scan gate cannot regress to a local-scope NameError.
+  - Reworked the bounded ClickHouse analytics query to apply the one-row lookahead before windowing and consume that limited source once; summary windows, scan-row evidence, and late-data evidence now derive from the bounded source without repeated source CTE reads that can exhaust the provider cap and surface a false storage failure.
+  - Ordered the composed provider gate so adapter quantileExact parity is queried before the million-row selective-scan fixture is inserted; the post-fixture phase performs only the scan-limit assertion, preserving truthful physical-read-boundary evidence.
+  - Kept the composed quantile fixture aligned with the production metric contract by setting measurement_name=duration_ms; no production SQL broadening or unbounded fallback was introduced for a harness mismatch.
+  - Classified only the exact ClickHouse HTTP 408 plus exception code 159 tuple as an empty scan_limit partial snapshot at the analytics boundary, which explicitly sets max_rows_to_read/read_overflow_mode=break; no free-form provider wording is required. Other statuses/codes remain typed StorageUnavailableError responses, and the same tuple through non-analytics reads remains unavailable.
+  - Propagated source-global late-data evidence from the single bounded lookahead source via a window marker repeated on aggregate rows; Python now checks that marker independently of aggregate LIMIT, preserving late_data when the late bucket/group is outside the returned page without another physical table scan.
+  - Returned no-store authenticated snapshots and content-free bounded freshness, partial, unavailable, scan, breakdown, and facet fields.
+  - Added only the three AURA-0087 evaluator identifiers to the existing query-api manifest; identity, metrics, dependencies, capture policy, retention, and cardinality declarations were preserved byte-for-byte.
+risks:
+  - ClickHouse summary percentiles use bounded-source window aggregates and declare the stable quantileExact method; adapter doubles may fall back to their supplied aggregate row fields. A provider read-limit can legitimately yield no aggregate rows, so its scan partial response intentionally carries no series and reports the bounded scan cap.
+  - The source-global late marker includes the bounded one-row lookahead; it does not claim late data outside the physical read boundary, while aggregate-page truncation retains the evidence for all rows in the bounded source.
+  - Ordinary unit-level provider and PostgreSQL regressions remain endpoint-free by default and are skipped unless AURA_AURA0087_CLICKHOUSE_URL and AURA_AURA0087_POSTGRES_URL are configured; the required composed full-stack runner has verified provider parity but must complete its rerun of the corrected scan-boundary phase before this handoff is fully integration-validated.
+unresolved: []

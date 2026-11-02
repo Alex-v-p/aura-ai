@@ -1,0 +1,18 @@
+agent: architecture_guardian
+work_item: AURA-0124
+verdict: PASS
+checked:
+  - AURA-0124 owner decisions, ownership zones, allowed and forbidden paths, acceptance criteria, implementation handoffs, and complete current diff.
+  - Core changes remain within Core-owned reminder, approval, scheduler, and worker modules; Observatory changes remain within Observatory-owned evaluation orchestration.
+  - Core imports no Observatory implementation, Observatory imports no Core implementation, neither service reads the other's database, and no shared persistence or reverse dependency was introduced.
+  - Scheduler and worker loops retain their existing database calls, intervals, leases, retries, and application-service invocations; only successful idle telemetry admission changes.
+  - Core scheduler and worker entrypoints remain thin composition and polling boundaries; telemetry classification does not duplicate reminder or approval state transitions.
+  - The Observatory heartbeat gate wraps only successful metric and span emission after each repository heartbeat; the repository operation still executes on every configured poll and failures remain immediate.
+  - No provider implementation, framework, package, deployable, top-level directory, migration, frontend source, or inappropriate shared dependency was added.
+  - Existing module public boundaries remain intact; optional constructor injection for the monotonic heartbeat clock is backward-compatible and no versioned contract or generated client changed.
+  - Aura Web and Observatory Web are untouched, preserving frontend product isolation and the absence of main-app Observatory communication.
+  - Path ownership authorizes the Core Worker, Observatory Worker, and Test/Evaluation Engineer changes recorded in their handoffs.
+  - Work-item, changed-path, contract-change, generated-sync, import-boundary, service-isolation, frontend-boundary, module-registry, observability, repository-shape, baseline-protection, and git diff checks passed.
+findings: []
+risks: []
+unresolved: []

@@ -1,0 +1,68 @@
+agent: integration_maintainer
+work_item: AURA-0104
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0104-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0104-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0104-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0104-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0104.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+checks:
+  passed:
+    - >-
+      All three implementation handoffs and all four required review verdicts
+      were read, validated structurally, and confirmed complete with PASS
+      reviews and no unresolved blocking findings.
+    - >-
+      AURA-0104 work-item validation passed before and after archival, and the
+      archived changed-path validation passed for all 35 authorized paths.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-frontend-boundaries.py passed.
+    - >-
+      Contract-change and protected-baseline validation passed; no protected
+      baseline or threshold was changed.
+    - >-
+      Contract tests passed: 20 tests covering Observatory and evaluation
+      contracts and compatibility.
+    - >-
+      Observatory focused acceptance tests passed: 23 tests; Ruff and Pyright
+      passed with zero errors.
+    - >-
+      Observatory API client tests passed: 7 tests; frontend lint passed.
+    - >-
+      Deployment capability tests passed: 4 tests; local-http shell syntax
+      passed.
+    - >-
+      Docker Compose Observatory configuration rendered successfully with
+      stable synthetic deployment inputs, including an isolated temporary
+      state root and owner/OIDC values.
+    - git diff --check passed.
+    - >-
+      A single focused Conventional Commit checkpoint was created after the
+      reviewed, validated AURA-0104 slice was staged; no push was performed.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The broader clean-HEAD full-topology mismatch remains owned by the
+    uncommitted AURA-0098 resilience slice and was not an AURA-0104 required
+    check. AURA-0104 does not claim AURA-0098 acceptance or alter its gates.
+  - >-
+    Full composed startup, outage, and browser recovery acceptance remains
+    with AURA-0098 after its owned public admission and governed recovery
+    surfaces are integrated.

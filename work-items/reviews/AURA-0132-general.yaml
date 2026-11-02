@@ -1,0 +1,15 @@
+agent: general_reviewer
+work_item: AURA-0132
+verdict: PASS
+checked:
+  - Reviewed the approved work item, architecture baseline, module boundaries, ADR-0013 through ADR-0017, final implementation handoffs, and the settled contract, migration, Core, frontend, shell, Storybook, and evaluation diff.
+  - Verified the notification contract remains a closed additive reminder-or-briefing union, legacy reminder payloads remain compatible, briefing metadata remains content-free, and briefing scheduling, execution, result persistence, routes, and management UI remain deferred.
+  - Traced reminder and briefing creation, owner scoping, persistence, acknowledgement, idempotency, replay, SSE serialization, and failure handling through the memory and PostgreSQL repositories and HTTP/browser consumers.
+  - Reverified the corrected PostgreSQL acknowledgement path copies the complete briefing schedule, occurrence, and result lineage required by the migration constraint and replay contract, with a dedicated integration regression.
+  - Reverified SQL briefing creation acquires owner/idempotency and result-source advisory locks in deterministic lexical order, detects changed-payload key reuse, deduplicates result delivery, and has concurrent PostgreSQL regression coverage.
+  - Reverified browser lifecycle validation accepts only the canonical complete reminder or briefing event variant and rejects incomplete, mixed, extra-field, and non-contract source-envelope events before advancing replay state.
+  - Verified the final notification and Today recovery paths isolate the active inbox view, unread projection, and live SSE recovery; session reset invalidates their generations and the shell/focus paths retain reachable recovery targets.
+  - Independently passed 13 focused Core notification, stream, and API tests with 8 environment-dependent PostgreSQL skips and 38 affected frontend unit tests during re-review; worker evidence also reports lint, generated-client checks, production build, Storybook build, and broader focused suites passing.
+  - Verified the final settled required Playwright command completed with exit 0: 299 passed, 436 expected skips, and 0 failed across notifications, Today, and Storybook accessibility on desktop, tablet, and mobile.
+  - Verified changed-path and architecture evidence is complete, the implementation handoffs report no failed checks, and git diff checking passes on the settled diff.
+findings: []

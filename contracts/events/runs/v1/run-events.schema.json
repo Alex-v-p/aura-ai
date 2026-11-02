@@ -1,0 +1,363 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/runs/v1/run-events.schema.json",
+  "title": "Aura run event stream v1",
+  "description": "Provider-neutral SSE data payloads. For durable events, the SSE id field equals eventId and the SSE event field equals eventType. model.thinking.delta is live-only: its payload eventId remains required for envelope compatibility, but the SSE id field is omitted so it never advances Last-Event-ID and the event is never persisted or replayed.",
+  "oneOf": [
+    { "$ref": "#/$defs/RunSnapshotEvent" },
+    { "$ref": "#/$defs/RunStatusEvent" },
+    { "$ref": "#/$defs/AssistantDeltaEvent" },
+    { "$ref": "#/$defs/ModelThinkingDeltaEvent" },
+    { "$ref": "#/$defs/AssistantSnapshotEvent" },
+    { "$ref": "#/$defs/RunErrorEvent" },
+    { "$ref": "#/$defs/MemoryActivityEvent" },
+    { "$ref": "#/$defs/ToolStatusEvent" },
+    { "$ref": "#/$defs/ApprovalStatusEvent" },
+    { "$ref": "#/$defs/HeartbeatEvent" }
+  ],
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "RunStatus": { "type": "string", "enum": ["queued", "running", "waiting_for_confirmation", "cancel_requested", "canceled", "completed", "failed", "interrupted"] },
+    "ClientTimeZone": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$", "description": "IANA timezone identifier validated by the producer against its deployed timezone database." },
+    "WorkflowRunOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Complete immutable metadata-only lineage for a workflow-admitted run. Workflow values, instructions, mappings, owner identity, executor state, prompts, responses and results are prohibited.",
+      "required": ["workflowRevisionId", "workflowInstanceId", "workflowStepExecutionId"],
+      "properties": {
+        "workflowRevisionId": { "$ref": "#/$defs/Uuid" },
+        "workflowInstanceId": { "$ref": "#/$defs/Uuid" },
+        "workflowStepExecutionId": { "$ref": "#/$defs/Uuid" }
+      }
+    },
+    "DocumentCitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Content-free validated source reference. Evidence identifiers, excerpts, queries, filenames, object keys, and model-provided URLs are prohibited.",
+      "required": ["documentId", "displayLabel", "locator"],
+      "properties": {
+        "documentId": { "$ref": "#/$defs/Uuid" },
+        "displayLabel": { "type": "string", "minLength": 1, "maxLength": 120, "description": "Server-generated accessible source label that does not contain a document filename or content." },
+        "locator": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Server-derived page-or-section label for the cited evidence." }
+      }
+    },
+    "ResearchMode": { "type": "string", "enum": ["quick", "auto", "deep", "agent_led"] },
+    "ResearchAdmissionState": { "type": "string", "enum": ["admitted", "rejected"] },
+    "OpaqueTaskReference": { "type": "object", "additionalProperties": false, "required": ["taskId"], "properties": { "taskId": { "$ref": "#/$defs/Uuid" } } },
+    "OpaqueArtifactReference": { "type": "object", "additionalProperties": false, "required": ["artifactId"], "properties": { "artifactId": { "$ref": "#/$defs/Uuid" } } },
+    "ResearchRunOrigin": { "type": "object", "additionalProperties": false, "required": ["researchId", "taskId"], "properties": { "researchId": { "$ref": "#/$defs/Uuid" }, "taskId": { "$ref": "#/$defs/Uuid" } }, "description": "Opaque metadata-only research lineage. Question, source, provider, plan, evidence, and artifact content are prohibited." },
+    "ResearchActivity": { "type": "object", "additionalProperties": false, "required": ["taskRef", "mode", "admissionState"], "properties": { "taskRef": { "$ref": "#/$defs/OpaqueTaskReference" }, "mode": { "$ref": "#/$defs/ResearchMode" }, "admissionState": { "$ref": "#/$defs/ResearchAdmissionState" } }, "description": "Stable admission activity only; terminal research content and provider material are prohibited." },
+    "WebCitation": { "type": "object", "additionalProperties": false, "description": "Owner-authorized citation constructed only from task-scoped validated evidence. Queries, excerpts, object keys, provider payloads, browser state, and model-supplied evidence identifiers are prohibited.", "required": ["kind", "sourceId", "label", "url", "retrievedAt", "locator"], "properties": { "kind": { "const": "web" }, "sourceId": { "$ref": "#/$defs/Uuid" }, "label": { "type": "string", "minLength": 1, "maxLength": 300 }, "url": { "type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048 }, "retrievedAt": { "$ref": "#/$defs/Timestamp" }, "locator": { "type": ["string", "null"], "maxLength": 255 } } },
+    "DeletedResearchCitation": { "type": "object", "additionalProperties": false, "required": ["kind", "sourceId", "label"], "properties": { "kind": { "const": "deleted_research" }, "sourceId": { "$ref": "#/$defs/Uuid" }, "label": { "const": "Research source deleted" } }, "description": "Content-free tombstone with no URL, locator, excerpt, evidence, or artifact relation." },
+    "ResearchCitation": { "oneOf": [{ "$ref": "#/$defs/WebCitation" }, { "$ref": "#/$defs/DeletedResearchCitation" }] },
+    "ResearchToolAdmissionResult": { "type": "object", "additionalProperties": false, "required": ["taskRef", "mode", "admissionState"], "properties": { "taskRef": { "$ref": "#/$defs/OpaqueTaskReference" }, "mode": { "$ref": "#/$defs/ResearchMode" }, "admissionState": { "$ref": "#/$defs/ResearchAdmissionState" } }, "description": "Closed web.research@1 admission-only result. Research content, evidence, URLs, citations, provider material, and terminal results are prohibited." },
+    "AttachmentAvailability": { "type": "string", "enum": ["available", "unavailable"] },
+    "AttachmentSummaryMediaType": {
+      "type": "string",
+      "enum": ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/markdown", "text/plain", "image/png", "image/jpeg", "image/webp"]
+    },
+    "AvailableMessageAttachmentSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Owner-authorized presentation data for an available source, included only in direct no-store run snapshots. It is excluded from lifecycle events, audit, logs, traces, metrics, evaluation capture, and provider diagnostics.",
+      "required": ["linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount", "availability"],
+      "properties": {
+        "linkId": { "$ref": "#/$defs/Uuid" },
+        "kind": { "type": "string", "enum": ["document", "image"] },
+        "sourceId": { "$ref": "#/$defs/Uuid" },
+        "displayFilename": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "mediaType": { "$ref": "#/$defs/AttachmentSummaryMediaType" },
+        "byteCount": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+        "availability": { "type": "string", "const": "available" },
+        "width": { "type": "integer", "minimum": 1, "maximum": 40000000 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 40000000 }
+      }
+    },
+    "UnavailableMessageAttachmentSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Content-free historical tombstone. The original filename, media type, byte count, dimensions, content, and preview are unavailable.",
+      "required": ["linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount", "availability"],
+      "properties": {
+        "linkId": { "$ref": "#/$defs/Uuid" },
+        "kind": { "type": "string", "enum": ["document", "image"] },
+        "sourceId": { "$ref": "#/$defs/Uuid" },
+        "displayFilename": { "type": "string", "const": "Attachment unavailable" },
+        "mediaType": { "type": "string", "const": "application/octet-stream" },
+        "byteCount": { "type": "integer", "const": 0 },
+        "availability": { "type": "string", "const": "unavailable" }
+      }
+    },
+    "MessageAttachmentSummary": {
+      "oneOf": [
+        { "$ref": "#/$defs/AvailableMessageAttachmentSummary" },
+        { "$ref": "#/$defs/UnavailableMessageAttachmentSummary" }
+      ],
+      "description": "Owner-authorized presentation data included only in direct no-store run snapshots. Deleted sources are represented only by content-free unavailable tombstones."
+    },
+    "BaseProperties": {
+      "type": "object",
+      "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "eventType": { "type": "string" },
+        "runId": { "$ref": "#/$defs/Uuid" },
+        "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "conversationId": { "type": "null" } }, "required": ["conversationId"] },
+          "then": { "required": ["workflowOrigin"] },
+          "else": { "not": { "required": ["workflowOrigin"] } }
+        }
+      ]
+    },
+    "Run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "conversationId", "userMessageId", "assistantMessageId", "status", "agentRevisionId", "modelPolicyRevisionId", "provider", "modelId", "retryOfRunId", "createdAt", "startedAt", "finishedAt", "error"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" },
+        "userMessageId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "assistantMessageId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "status": { "$ref": "#/$defs/RunStatus" },
+        "agentRevisionId": { "$ref": "#/$defs/Uuid" },
+        "modelPolicyRevisionId": { "$ref": "#/$defs/Uuid" },
+        "toolPolicyRevisionId": { "$ref": "#/$defs/Uuid" },
+        "toolCallLimit": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "toolCallsUsed": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "clientTimeZone": { "oneOf": [{ "$ref": "#/$defs/ClientTimeZone" }, { "type": "null" }], "description": "Validated timezone pinned at run admission. Optional for pre-1.9 producers." },
+        "approvalId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Identifier-only durable approval correlation for a confirmation-backed tool call." },
+        "pendingToolCallId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Identifier-only tool call awaiting or resuming after owner confirmation." },
+        "toolLifecycleStatus": { "oneOf": [{ "$ref": "#/$defs/RunToolLifecycleStatus" }, { "type": "null" }], "description": "Durable confirmation-backed tool lifecycle. Optional for runs without confirmation." },
+        "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/DocumentCitation" }, "description": "Optional validated document sources accepted from evidence returned during this exact run." },
+        "webCitations": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/ResearchCitation" }, "description": "Optional task-scoped validated web citations accepted for this exact run." },
+        "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/MessageAttachmentSummary" }, "description": "Optional snapshot of the admitted source user message's immutable attachment links. Historical producers may omit it." },
+        "taskRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/OpaqueTaskReference" } },
+        "artifactRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/OpaqueArtifactReference" } },
+        "researchOrigin": { "$ref": "#/$defs/ResearchRunOrigin" },
+        "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "modelId": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "retryOfRunId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "branchId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Opaque conversation branch containing this run. Optional or null for compatibility with pre-1.17 producers." },
+        "regeneratedFromRunId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Source run for owner-requested regeneration, or null for ordinary and failed-run retry executions. Optional for compatibility with pre-1.17 producers." },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "startedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
+        "finishedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] },
+        "error": { "oneOf": [{ "$ref": "#/$defs/RunError" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "conversationId": { "type": "null" } }, "required": ["conversationId"] }, "then": { "properties": { "userMessageId": { "type": "null" } }, "required": ["workflowOrigin"] }, "else": { "properties": { "userMessageId": { "$ref": "#/$defs/Uuid" } }, "not": { "required": ["workflowOrigin"] } } }]
+    },
+    "Message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "conversationId", "role", "content", "state", "runId", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "conversationId": { "$ref": "#/$defs/Uuid" },
+        "role": { "type": "string", "enum": ["user", "assistant"] },
+        "content": { "type": "string" },
+        "state": { "type": "string", "enum": ["complete", "partial", "interrupted", "failed"] },
+        "runId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "branchId": { "$ref": "#/$defs/Uuid", "description": "Opaque branch on which this immutable message was created. Optional for compatibility with pre-1.17 producers." },
+        "parentMessageId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }], "description": "Previous message in this immutable ancestor path. Optional for compatibility with pre-1.17 producers." },
+        "citations": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/DocumentCitation" }, "description": "Optional validated document sources for an assistant message. Historical and non-assistant messages may omit this property." },
+        "webCitations": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/ResearchCitation" }, "description": "Optional task-scoped validated web citations. Deleted research sources resolve to content-free tombstones." },
+        "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/MessageAttachmentSummary" }, "description": "Optional immutable attachment-link summaries for a user message. Historical and assistant messages may omit this property." },
+        "taskRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/OpaqueTaskReference" } },
+        "artifactRefs": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/OpaqueArtifactReference" } },
+        "researchActivity": { "$ref": "#/$defs/ResearchActivity" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "updatedAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "RunError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable", "traceId"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "retryable": { "type": "boolean" },
+        "traceId": { "type": "string", "pattern": "^[0-9a-f]{32}$" }
+      }
+    },
+    "RunSnapshotEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.snapshot" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "data": { "type": "object", "additionalProperties": false, "required": ["run", "assistantMessage"], "properties": { "run": { "$ref": "#/$defs/Run" }, "assistantMessage": { "oneOf": [{ "$ref": "#/$defs/Message" }, { "type": "null" }] } } }
+        } }
+      ]
+    },
+    "RunStatusEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "data": { "type": "object", "additionalProperties": false, "required": ["status", "startedAt", "finishedAt"], "properties": { "status": { "$ref": "#/$defs/RunStatus" }, "startedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] }, "finishedAt": { "oneOf": [{ "$ref": "#/$defs/Timestamp" }, { "type": "null" }] } } }
+        } }
+      ]
+    },
+    "AssistantDeltaEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "assistant.delta" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "data": { "type": "object", "additionalProperties": false, "required": ["messageId", "offset", "text"], "properties": { "messageId": { "$ref": "#/$defs/Uuid" }, "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1 } } }
+        } }
+      ]
+    },
+    "ModelThinkingDeltaEvent": {
+      "description": "This live-only event carries private transient model reasoning solely to an active owner-authorized stream. It is never persisted, replayed, included in transcript content, audit, outbox, telemetry, or retained transport. Its eventId is payload-only: producers omit the SSE id field, and consumers must not advance a Last-Event-ID cursor for it.",
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "model.thinking.delta" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "data": { "type": "object", "additionalProperties": false, "required": ["offset", "text"], "properties": { "offset": { "type": "integer", "minimum": 0 }, "text": { "type": "string", "minLength": 1, "maxLength": 4096 } } }
+        } }
+      ]
+    },
+    "AssistantSnapshotEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "assistant.snapshot" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "data": { "type": "object", "additionalProperties": false, "required": ["message"], "properties": { "message": { "$ref": "#/$defs/Message" } } }
+        } }
+      ]
+    },
+    "RunErrorEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "run.error" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/RunError" }
+        } }
+      ]
+    },
+    "MemoryScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "user" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "agentProfileId"],
+          "properties": {
+            "type": { "const": "agent" },
+            "agentProfileId": { "$ref": "#/$defs/Uuid" }
+          }
+        }
+      ]
+    },
+    "MemoryActivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Identifier-only durable memory activity. Private memory, candidate, evidence, prompt, response, vector, credential, and owner content are prohibited.",
+      "required": ["id", "action", "status", "scope", "candidateId", "memoryId", "memoryRevisionId", "policyRevisionId", "embeddingGenerationId", "reconciliationStatus", "occurredAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Uuid" },
+        "action": { "type": "string", "enum": ["created", "reinforced", "disputed", "recalled", "queued_for_review"] },
+        "status": { "type": "string", "enum": ["queued", "completed", "failed"] },
+        "scope": { "oneOf": [{ "$ref": "#/$defs/MemoryScope" }, { "type": "null" }] },
+        "candidateId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "memoryId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "memoryRevisionId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "policyRevisionId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "embeddingGenerationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] },
+        "reconciliationStatus": { "type": "string", "enum": ["pending", "authoritative"] },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "MemoryActivityEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "memory.activity" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/MemoryActivity" }
+        } }
+      ]
+    },
+    "ToolStatus": {
+      "type": "string",
+      "enum": ["pending", "awaiting_confirmation", "executing", "completed", "denied", "failed"]
+    },
+    "RunToolLifecycleStatus": {
+      "type": "string",
+      "enum": ["awaiting_confirmation", "approved", "denied", "executing", "completed", "failed"]
+    },
+    "ToolStatusData": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Metadata-only tool lifecycle state. Tool arguments, queries, results, memory content, prompts, responses, credentials, and hidden reasoning are prohibited.",
+      "required": ["callId", "toolId", "toolVersion", "status"],
+      "properties": {
+        "callId": { "$ref": "#/$defs/Uuid", "description": "Aura-generated call identifier; provider call identifiers are never exposed." },
+        "toolId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$", "maxLength": 128 },
+        "toolVersion": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/ToolStatus" },
+        "errorClass": { "type": "string", "enum": ["capability", "validation", "policy", "budget", "timeout", "provider_protocol", "execution", "cancellation"] },
+        "errorCode": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" },
+        "resultCount": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "researchAdmission": { "$ref": "#/$defs/ResearchToolAdmissionResult", "description": "Present only for the admission-only web.research@1 result." }
+      }
+    },
+    "ToolStatusEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "tool.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/ToolStatusData" }
+        } }
+      ]
+    },
+    "ApprovalStatus": {
+      "type": "string",
+      "enum": ["pending", "approved", "rejected", "expired", "canceled"]
+    },
+    "ApprovalExecutionStatus": {
+      "type": "string",
+      "enum": ["not_started", "queued", "executing", "completed", "failed", "denied"]
+    },
+    "ApprovalStatusData": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Metadata-only approval lifecycle state. Proposal content, requested due time, tool arguments, prompts, responses, credentials, and hidden reasoning are prohibited.",
+      "required": ["approvalId", "proposalId", "runId", "conversationId", "status", "executionStatus", "version"],
+      "properties": {
+        "approvalId": { "$ref": "#/$defs/Uuid" },
+        "proposalId": { "$ref": "#/$defs/Uuid" },
+        "runId": { "$ref": "#/$defs/Uuid" },
+        "conversationId": { "$ref": "#/$defs/Uuid" },
+        "status": { "$ref": "#/$defs/ApprovalStatus" },
+        "executionStatus": { "$ref": "#/$defs/ApprovalExecutionStatus" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ApprovalStatusEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "approval.status" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" }, "data": { "$ref": "#/$defs/ApprovalStatusData" }
+        } }
+      ]
+    },
+    "HeartbeatEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/BaseProperties" },
+        { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "eventId", "sequence", "eventType", "runId", "conversationId", "occurredAt", "data"], "properties": {
+          "schemaVersion": { "const": 1 }, "eventId": { "$ref": "#/$defs/Uuid" }, "sequence": { "type": "integer", "minimum": 0 }, "eventType": { "const": "heartbeat" }, "runId": { "$ref": "#/$defs/Uuid" }, "conversationId": { "oneOf": [{ "$ref": "#/$defs/Uuid" }, { "type": "null" }] }, "workflowOrigin": { "$ref": "#/$defs/WorkflowRunOrigin" }, "occurredAt": { "$ref": "#/$defs/Timestamp" },
+          "data": { "type": "object", "additionalProperties": false, "required": ["serverTime"], "properties": { "serverTime": { "$ref": "#/$defs/Timestamp" } } }
+        } }
+      ]
+    }
+  }
+}

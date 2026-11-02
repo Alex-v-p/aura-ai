@@ -1,0 +1,62 @@
+agent: integration_maintainer
+work_item: AURA-0100
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0100-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0100-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0100-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0100.yaml
+checks:
+  passed:
+    - >-
+      All three implementation handoffs and all three required review verdicts
+      validated against their repository schemas; no blocking finding remains.
+    - >-
+      Explicit AURA-0100 changed-path validation passed for the 14 owned
+      migration, Compose, launcher, test, work-item, handoff, and review paths.
+      Unrelated dirty AURA-0098 paths and the already integrated AURA-0101
+      checkpoint were excluded and preserved.
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0100.yaml passed before archival.
+    - UV_CACHE_DIR=/tmp/aura-0100-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0100_startup.py services/aura-observatory/tests/test_aura0097_test_evaluation.py passed: 29 tests.
+    - UV_CACHE_DIR=/tmp/aura-0100-uv uv run --project services/aura-observatory ruff check passed.
+    - UV_CACHE_DIR=/tmp/aura-0100-uv uv run --project services/aura-observatory pyright services/aura-observatory/tests/test_aura0100_startup.py passed with zero errors.
+    - UV_CACHE_DIR=/tmp/aura-0100-uv uv run pytest -q deploy/tests/test_aura0100_observatory_startup.py deploy/tests/test_aura0094_runtime.py deploy/tests/test_aura0094_topology.py passed: 31 tests.
+    - UV_CACHE_DIR=/tmp/aura-0100-uv uv run python -m unittest deploy.compose.test_topology passed: 50 tests.
+    - Docker Compose local-http config rendering passed.
+    - bash -n deploy/compose/local-http.sh passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - Contract-change and baseline-protection validators passed with no changes.
+    - git diff --check passed.
+    - >-
+      Supported disposable local-http reset/up completed from fresh state;
+      Observatory PostgreSQL, ClickHouse, session, API, web, worker, and both
+      evaluation services reached their required running or healthy states.
+      The migration and bootstrap one-shot services exited successfully.
+    - >-
+      A repeated supported startup retained healthy Core and Observatory
+      services with zero restarts. Bounded public probes returned 200 for Aura,
+      Observatory, and Observatory healthz; the Observatory login endpoint
+      returned a redacted 307 through the separate Authentik path.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The repository remains dirty by design because the independently owned
+    AURA-0098 resilience slice remains in the shared working tree and its
+    documented blockers are not claimed as resolved by this startup repair.
+  - >-
+    The AURA-0098 full-stack acceptance still requires its separately governed
+    public admission and recovery-health capabilities; no private SQL,
+    adapter, weakened check, or fabricated acceptance evidence was used here.

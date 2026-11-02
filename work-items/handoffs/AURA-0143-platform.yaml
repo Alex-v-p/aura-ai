@@ -1,0 +1,176 @@
+agent: platform_worker
+work_item: AURA-0143
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0144_platform
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: transactional-outbox-task-invalidation-and-memory-lifecycle-migration
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/migrations/versions/0031_memory_reindex_task_version.py
+  - services/aura-core/src/aura_core/platform/outbox/__init__.py
+  - services/aura-core/src/aura_core/platform/outbox/service.py
+  - services/aura-core/src/aura_core/platform/outbox/repository.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/__init__.py
+  - services/aura-core/src/aura_core/domains/execution/tasks/transport.py
+  - services/aura-core/src/aura_core/bootstrap/workflow_uow.py
+  - services/aura-core/src/aura_core/bootstrap/briefing_uow.py
+  - services/aura-core/src/aura_core/bootstrap/document_uow.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/domains/automation/workflows/application.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/persistence.py
+  - services/aura-core/tests/test_migration_0030_task_projection.py
+  - services/aura-core/tests/test_migration_0031_memory_reindex_task_version.py
+  - services/aura-core/tests/test_outbox.py
+  - services/aura-core/tests/test_aura0101_nats_stream.py
+contracts:
+  changed: false
+migrations:
+  changed: true
+  revision: 0031_memory_reindex_task_version
+  down_revision: 0030_task_projection
+observability:
+  components:
+    - aura.execution.task_projection@1
+  metrics_added: []
+  notes: Durable consumer acknowledgement is intentionally after source reconciliation; transport payloads remain metadata-only.
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0143.yaml
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0143.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0143.yaml
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check on assigned platform/bootstrap/source tests
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright on the platform outbox,
+      execution transport, bootstrap seams, memory persistence, and transport
+      tests (0 errors)
+    - >-
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_NATS_URL=nats://127.0.0.1:54222
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_migration_0030_task_projection.py
+      services/aura-core/tests/test_migration_0031_memory_reindex_task_version.py
+      services/aura-core/tests/test_outbox.py
+      services/aura-core/tests/test_aura0101_nats_stream.py
+      services/aura-core/tests/test_task_projection_worker.py::test_worker_acknowledges_the_durable_outbox_sequence_not_page_length
+      -q (37 passed, 0 skipped). The newly included case is
+      test_worker_acknowledges_the_durable_outbox_sequence_not_page_length.
+    - >-
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider on the live source-adapter and memory
+      persistence suites (53 passed)
+    - >-
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider services/aura-core/tests/test_outbox.py
+      services/aura-core/tests/test_task_projection_sources.py -q (35 passed;
+      includes same-transaction duplicate and deterministic same-ID conflict
+      coverage)
+    - >-
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider on the workflow, briefing, document,
+      and document-SQL suites (68 passed, 1 skipped)
+    - >-
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      AURA_TEST_NATS_URL=nats://127.0.0.1:54222
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache
+      uv run pytest -p no:cacheprovider on the projection, AURA-0133 outbox,
+      NATS, and migration-order regression suites (77 passed)
+    - git diff --check
+    - Migration/static assertion confirms 0030 has no memory lifecycle column and no task-source invalidation/checkpoint tables.
+    - Platform source search confirms no SQL source references to task_source_invalidations or task_source_invalidation_checkpoints.
+    - >-
+      Platform outbox source search confirms it contains no task topic, source
+      kind, invalidation envelope, parser, constructor, staging helper, or
+      task-specific consumer vocabulary.
+    - >-
+      Live PostgreSQL coverage at the isolated AURA-0143 database proves
+      transactional outbox commit/rollback behavior and migration 0031
+      upgrade, positive CHECK rejection, ordered 0029→0030 restart/downgrade,
+      and downgrade (15 migration/outbox tests passed).
+    - >-
+      Live JetStream coverage against nats://127.0.0.1:54222 proves the generic
+      JSON consumer leaves handler failures unacknowledged, survives connection
+      restart, and redelivers to the same durable consumer before ack (1 test;
+      included in the 37 passed above).
+  failed:
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0143.yaml is blocked by unrelated concurrent
+      AURA-0142/AURA-0144 files on the shared branch, including forbidden
+      contract, provider, deployment, root compose, and pyproject paths.
+    - >-
+      The repository-wide AURA-0143 pyright command reports concurrent Core
+      errors in execution task contracts and worker tasks; the platform outbox,
+      bootstrap, and transport subset is clean.
+    - >-
+      The single combined live PostgreSQL command over all projection/source/
+      memory suites is not composable: concurrent fixture cleanup of shared
+      Base.metadata tables produces duplicate outbox type and missing-table
+      errors. The same live tests pass in the four isolated batches recorded
+      above.
+  not_run:
+    - >-
+      validate-contract-changes and validate-module-registry remain integration
+      maintainer scope because contracts/modules.yaml are outside this worker's
+      authorized paths.
+decisions:
+  - >-
+    The platform outbox remains generic: it owns stage_command, transactional
+    persistence/replay, and a durable JSON JetStream consumer parameterized by
+    subject and domain parser. It does not import or name execution.tasks.
+  - >-
+    The execution.tasks transport owns TaskSourceInvalidated v1 parsing,
+    schema-exact command construction, source lifecycle staging, and the
+    task-specific consumer adapter over the generic platform consumer.
+  - >-
+    Source lifecycle ports stage invalidations in the same transaction as
+    workflow, briefing, document, and memory mutations; lifecycle and task
+    outbox records use distinct deterministic IDs.
+  - >-
+    Generic outbox staging checks pending session.new rows before the
+    no-autoflush database lookup, accepts an identical envelope exactly once,
+    and raises a deterministic ValueError for staged or persisted same-ID
+    envelope conflicts before commit.
+  - >-
+    Task invalidation delivery uses the execution-owned adapter over a dedicated
+    durable JetStream pull consumer; valid deliveries are acknowledged only
+    after callback reconciliation, while malformed poison messages are
+    terminally acknowledged.
+  - >-
+    Migration 0030 remains execution-only. Memory's positive lifecycle version
+    is added/backfilled by reversible knowledge.memory-owned migration 0031,
+    with a positive database CHECK and matching ORM constraint.
+  - >-
+    Live platform acceptance uses the repository-standard
+    AURA_TEST_DATABASE_URL plus AURA_TEST_DEPENDENCIES_ISOLATED=1 and the
+    operator-provided AURA_TEST_NATS_URL; the prior private migration URL is no
+    longer read by these tests.
+risks:
+  - >-
+    Integration must compose the execution-owned task invalidation adapter with
+    the existing Core worker and ensure its subject is present in the AURA_RUNS
+    stream before admission.
+  - >-
+    In-memory source repositories retain their deterministic test invalidation
+    seams; production SQL source mutations use only the platform outbox and no
+    shared invalidation/checkpoint tables.
+unresolved:
+  - >-
+    The aggregate branch contains concurrent changes outside this handoff;
+    integration must rerun changed-path, module-registry, full pyright, and
+    repository-wide architecture checks after those changes settle.

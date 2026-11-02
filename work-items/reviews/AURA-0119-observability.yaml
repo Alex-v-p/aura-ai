@@ -1,0 +1,53 @@
+agent: observability_steward
+work_item: AURA-0119
+verdict: PASS
+checked:
+  - >-
+    Stable component identities and versions are declared as
+    aura.observatory.run_evidence_ingestion@1.0.0,
+    aura.observatory.run_evidence_storage@1.0.0, and
+    aura.observatory.run_inspection_query@1.0.0, with the owned dependencies,
+    replay declarations, metadata-only capture policy, manual-owner-delete
+    retention, and finite cardinality rules required by ADR-0017.
+  - >-
+    The exact ADR operation boundaries are implemented for validation,
+    deduplication, manifest and object persistence, object deletion and
+    streaming, deletion finalization, metadata and manifest queries, and
+    inspection merge; each owning boundary records its own latency rather than
+    relying on total-run duration.
+  - >-
+    Required outcome counters and component histograms are registered and
+    emitted with bounded operation, outcome, status, dependency, and errorClass
+    dimensions; run correlation remains trace-only and evidence IDs, digests,
+    object keys, and evidence content are prohibited from metrics and spans.
+  - >-
+    Runtime span correlation preserves source trace, parent span, and run ID
+    where authoritative manifest context exists. Missing evidence returns one
+    run-correlated run_evidence.object_stream unavailable span with the bounded
+    postgresql dependency and no false outage error class.
+  - >-
+    The finite ADR-0017 run-evidence failure classes remain enforced for actual
+    queue, validation, transport, manifest, object, collision, digest, and
+    deletion failures; ordinary HTTP 404 absence is represented truthfully as
+    unavailable without database_unavailable or another outage classification.
+  - >-
+    Ingestion ACK, duplicate, collision, out-of-order, deletion recovery, and
+    inspection pagination behavior remain durable and diagnosable. Deletion
+    progress is cumulative and crash-atomic, failed Garage targets remain
+    retryable, deletion finalization retains source correlation, and exactly one
+    end-to-end deletion latency sample is emitted by the service boundary.
+  - >-
+    Run-scoped SSE invalidations contain only observation.changed, resourceType
+    run, the run ID, and metadata-only policy state; authoritative evidence
+    bytes and identifiers remain outside SSE, ClickHouse, logs, and telemetry.
+  - >-
+    Required ingestion-integrity, deletion-recovery, projection-truth,
+    failure-isolation, privacy, outage-isolation, and metadata allowlist
+    evaluators have bounded executable outputs and cover truthful partial,
+    unavailable, paged, deleted, and recovered projections.
+  - >-
+    The focused AURA-0119 acceptance, regression, and topology suite passed with
+    93 passed and 1 skipped, including the runtime 404 telemetry regression;
+    focused Ruff, full Observatory Pyright, the observability governance check,
+    and git diff validation also passed.
+findings: []

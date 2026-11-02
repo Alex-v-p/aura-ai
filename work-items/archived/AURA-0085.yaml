@@ -1,0 +1,198 @@
+id: AURA-0085
+title: Add Observatory ingest quality and self-monitoring
+status: integrated
+change_class: repository_governance
+intent: >
+  Make Observatory ingest and query health diagnosable through bounded,
+  metadata-only history, live notifications, and accessible owner-facing
+  states without coupling Core to Observatory or exposing telemetry payloads.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/foundations.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Define backlog as Observatory-owned pending receipts and the contiguous ClickHouse visibility gap; do not introduce a durable queue or Collector control dependency.
+    - Persist bounded content-free health snapshots in Observatory PostgreSQL and continue deriving high-cardinality observation state from ClickHouse.
+    - Keep health-change SSE events metadata-only and compatible with the existing authenticated replay boundary.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/telemetry/v1/metadata-observation.schema.json
+feature_references:
+  - OBS-005
+  - OBS-035
+  - OBS-039
+  - CMP-020
+  - CMP-021
+ownership_zones:
+  - services.aura-observatory.ingest-health
+  - services.aura-observatory.query-health
+  - contracts.observatory-api
+  - frontend.observatory.system-health
+  - evaluation.observatory-health
+allowed_paths:
+  - work-items/active/AURA-0085.yaml
+  - work-items/archived/AURA-0085.yaml
+  - work-items/handoffs/AURA-0085-*.yaml
+  - work-items/reviews/AURA-0085-*.yaml
+  - work-items/integration/AURA-0085.yaml
+  - services/aura-observatory/src/aura_observatory/ingest.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/settings.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/otlp.py
+  - services/aura-observatory/src/aura_observatory/adapters/memory.py
+  - services/aura-observatory/src/aura_observatory/adapters/postgres.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/worker.py
+  - services/aura-observatory/migrations/postgresql/versions/0005_ingest_health_history.sql
+  - services/aura-observatory/resources/component-manifests/telemetry-ingestion.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/resources/component-manifests/live-updates.yaml
+  - services/aura-observatory/tests/**
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - compose.yaml
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0079_runtime_wiring_regressions.py
+  - tooling/architecture/validate-observability.py
+  - tooling/architecture/tests/test_observability.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - services/aura-core/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - contracts/telemetry/**
+  - deploy/compose/local-http.yaml
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - observatory-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: ingest-health
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+    - aura.observatory.query_api
+    - aura.observatory.live_updates
+  required_metrics:
+    - observatory_ingest_intake_lag_ms
+    - observatory_ingest_visibility_lag_count
+    - observatory_ingest_rejection_count
+    - observatory_ingest_duplicate_count
+    - observatory_ingest_storage_duration_ms
+    - observatory_ingest_worker_heartbeat_age_ms
+    - observatory_ingest_backlog_count
+    - observatory_query_duration_ms
+    - observatory_query_freshness_lag_ms
+  required_evaluators:
+    - observatory_ingest_quality
+    - observatory_self_monitoring
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Rejection reasons are a finite allowlist and never include payloads parser text attribute names identifiers credentials endpoints or exception text.
+    - Health history contains only aggregate counts timestamps finite state enums and bounded latency values.
+    - REST SSE logs metrics and browser state remain metadata-only and never persist raw OTLP or rejected input.
+    - Query and storage diagnostics use bounded labels and do not include run trace observation deployment component or owner identifiers.
+    - The existing owner authorization same-origin session and Last-Event-ID replay boundaries remain unchanged.
+  data_classes:
+    - operational_telemetry_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - frontend_worker
+    - test_evaluation_engineer
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The owner overview reports bounded intake lag visibility watermark and lag finite rejection reasons duplicates storage latency query latency worker heartbeat age backlog depth and oldest backlog age.
+  - Intake lag uses observation time only after successful schema validation and is clamped to a documented finite non-negative range so future-skewed input cannot corrupt health state.
+  - Visibility lag is derived from the service-owned allocation and contiguous ClickHouse visibility watermark and represents pending Observatory storage work rather than Collector or Core queue state.
+  - Rejected malformed duplicate and storage-failure outcomes have finite reason codes with aggregate counts only; rejected payloads and exception text never enter storage logs metrics REST SSE or the browser.
+  - The ingest worker records a recoverable content-free heartbeat and the overview distinguishes healthy delayed partial degraded and unavailable states using explicit thresholds and timestamps.
+  - Observatory PostgreSQL retains a bounded health history with deterministic pruning and idempotent fresh and upgraded migrations; observation retention does not delete this operational history.
+  - Query and storage latency are measured around the owning ports with finite durations bounded resource and outcome labels and no high-cardinality identifiers.
+  - REST exposes a bounded health-history resource and the existing overview additions remain backward compatible and owner-authorized.
+  - Metadata-only SSE emits a health.changed notification only for a material health-state or watermark change preserves Last-Event-ID catch-up semantics and does not turn heartbeat messages into persisted data events.
+  - The Observatory overview presents current state lag freshness backlog rejection breakdown latency and heartbeat with accessible tables explicit units timestamps and non-colour-only state indicators.
+  - Browser behavior covers loading empty delayed partial rejected degraded disconnected stale and service-unavailable states with keyboard-operable retry and no authenticated response persistence.
+  - Service unit integration contract frontend and real-browser tests cover out-of-order visibility delayed intake malformed input storage failure stale heartbeat bounded history SSE reconnect and recovery.
+  - Core and its databases modules requests workers and startup remain unchanged and usable when Observatory is unavailable.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0085.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0085.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0085.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0085.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0085.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - cd services/aura-observatory && uv run ruff check src tests
+  - cd services/aura-observatory && uv run pyright
+  - cd services/aura-observatory && uv run pytest tests
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:lint
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:test
+  - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+  - cd frontend && pnpm exec playwright test --config apps/observatory-web-e2e/playwright.config.ts
+  - bash deploy/compose/run-observatory-full-stack-e2e.sh
+  - python3 -m pytest deploy/compose/test_topology.py deploy/tests/test_aura0079_runtime_wiring_regressions.py
+  - python3 -m unittest tooling.architecture.tests.test_observability
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

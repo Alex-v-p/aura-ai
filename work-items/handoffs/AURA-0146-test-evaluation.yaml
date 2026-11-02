@@ -1,0 +1,145 @@
+agent: test_evaluation_engineer
+work_item: AURA-0146
+status: partial
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0146_tests
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: evaluation.conversational-research-lifecycle
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_research_delivery.py
+  - services/aura-core/tests/test_research_delivery_evaluation.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/system/test_agents_personas_api.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_migration_0033_research_completion_delivery.py
+  - services/aura-core/tests/test_tool_runtime.py
+  - work-items/handoffs/AURA-0146-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.interaction.research_completion_delivery@1
+    - aura.runtime.tool_execution@1
+  metrics_added: []
+  notes: >-
+    Tests assert metadata-only delivery and runtime boundaries, stable opaque
+    references, owner lineage, and independent notification delivery. No
+    telemetry implementation or threshold was changed.
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_research_delivery.py
+      services/aura-core/tests/test_research_delivery_evaluation.py -q
+      (19 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_research_delivery*.py
+      services/aura-core/tests/test_tool_*.py
+      services/aura-core/tests/test_run_*.py
+      services/aura-core/tests/test_conversations.py
+      services/aura-core/tests/test_notifications.py
+      services/aura-core/tests/test_migration_0033_research_completion_delivery.py
+      -q --tb=short (266 passed, 16 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_versioned_agents.py
+      services/aura-core/tests/system/test_agents_personas_api.py
+      -q --tb=short (27 passed, 9 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/tests/test_research_delivery.py
+      services/aura-core/tests/test_research_delivery_evaluation.py
+      services/aura-core/tests/test_versioned_agents.py
+      services/aura-core/tests/system/test_agents_personas_api.py (passed)
+    - git diff --check -- services/aura-core/tests/test_research_delivery.py services/aura-core/tests/test_research_delivery_evaluation.py work-items/handoffs/AURA-0146-test-evaluation.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0146.yaml (passed for 36 shared paths)
+    - Python YAML handoff-shape validation for work-items/handoffs/AURA-0146-test-evaluation.yaml (passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest
+      services/aura-core/tests -q --tb=short -k
+      'not test_delivery_accepts_only_source_authorized_terminal_snapshots'
+      (2066 passed, 124 skipped, 1 deselected)
+    - >-
+      Focused delivery, evaluator, SQL-store, migration, and telemetry suites:
+      159 passed, with the strict snapshot-only regression intentionally
+      exposing the runtime boundary defect below.
+  failed:
+    - >-
+      uv run --project services/aura-core pyright on the owned test slice
+      reports existing test typing debt plus the new synthetic worker/evaluator
+      fixtures (21 diagnostics); runtime behavior and Ruff are clean. This is
+      not a production type-check failure, but remains an integration cleanup
+      item before a complete handoff.
+    - >-
+      The strict snapshot-only delivery regression fails because
+      ResearchCompletionDeliveryService.deliver reaches _trace_context and
+      raises AttributeError for a ResearchTask instead of rejecting the
+      non-snapshot input with the required explicit TypeError.
+  not_run:
+    - >-
+      Isolated PostgreSQL remains unavailable in this environment:
+      AURA_TEST_DATABASE_URL is not configured and
+      AURA_TEST_DEPENDENCIES_ISOLATED is not enabled. Repository-supported SQL
+      fixtures skip without those settings; no infrastructure was invented.
+decisions:
+  - >-
+    Added black-box tests for exact web.research grant/scope behavior,
+    deny-by-default custom agents, immutable policy revisions, bounded
+    admission results, preset budgets, and one-task idempotency across
+    concurrent calls and a recreated application service.
+  - >-
+    Added delivery fixtures for duplicate and concurrent terminal events,
+    unknown append outcomes, notification-only failure/retry, deleted-task
+    suppression, owner/lineage reauthorization, stable activity/citation/
+    artifact references, and content-free notification inputs.
+  - >-
+    Added four typed metadata-only delivery evaluators with positive and
+    adversarial observations. Evaluator fixtures are test-owned and do not
+    modify protected baselines or production behavior.
+  - >-
+    All test doubles use synthetic UUIDs and local public interfaces; no
+    outbound network or provider deployment is enabled.
+  - >-
+    Updated only the two authorized legacy catalog/API tests to include
+    web.research v1 in the built-in Aura catalog and current policy order;
+    legacy policy revisions and custom-agent empty grants remain asserted.
+  - >-
+    Added restart, deletion-race, foreign-owner/origin/citation/artifact,
+    bounded-payload, observability-outage, consumer nack/redelivery, and
+    production-registry privacy/replay coverage. The full Core suite remained
+    green without threshold or golden changes.
+  - >-
+    Added production SQL-store metadata lock/reload checks, workflow ordinal
+    1..8 migration guards, eight-reference message-bound tests, artifact
+    owner/lifecycle/task-lineage reauthorization, source-claim ordering, and
+    real MetadataMetrics one-counter/one-latency/one-span assertions for
+    success, deletion, append failure, and notification failure.
+  - >-
+    Dedicated-origin tests now exercise notification failure and retry,
+    asserting two delivery attempts collapse to exactly one persisted
+    notification while transcript append remains absent.
+risks:
+  - >-
+    The in-memory conversation double cannot prove PostgreSQL transaction
+    serialization; live restart/race and worker-process checks remain required
+    before integration.
+  - >-
+    Client subscription timing and detached UI rendering are represented here
+    by the closed mode/reference contract; full-stack client acceptance remains
+    outside this Core test ownership zone.
+unresolved:
+  - >-
+    ResearchCompletionDeliveryService.deliver is typed for a terminal snapshot
+    but does not runtime-reject a ResearchTask; the strict snapshot-only
+    regression currently fails with AttributeError before delivery. Core should
+    add an explicit TypeError guard and keep the source snapshot boundary
+    closed.

@@ -1,0 +1,20 @@
+agent: aura_ux_ui_reviewer
+work_item: AURA-0136
+verdict: PASS
+checked:
+  - >-
+    Final UX advisory recheck found no material UX findings after the
+    notification lifecycle and capability-copy corrections.
+  - >-
+    Existing approval and notification consumers use typed workflow unions;
+    workflow notifications remain content-free and expose no unavailable
+    workflow route or private details before AURA-0138.
+  - >-
+    Workflow notification lifecycle validation rejects malformed, mixed-source,
+    extra-field, invalid-UUID, invalid-ordinal, and invented-kind fixtures;
+    acknowledgement and focus behavior remain compatible.
+  - >-
+    The corrected capability copy accurately states that workflow details are
+    unavailable in this version, and the reviewed desktop, narrow, and
+    accessibility checks passed.
+findings: []

@@ -1,0 +1,104 @@
+agent: security_privacy_reviewer
+work_item: AURA-0094
+verdict: PASS
+checked:
+  - >-
+    Re-read the active AURA-0094 work item, architecture handover, applicable
+    ADRs, evaluation-v1 contract, current handoffs, prior security/privacy
+    report, and the complete current change. No implementation, contract,
+    migration, deployment, or test file was edited; only this review verdict
+    was updated.
+  - >-
+    Re-verified the owner-action boundary. Label, review, qualification, and
+    revocation services bind durable authorization records to the exact action,
+    resource, and scope fingerprint. Comment artifacts require separately
+    authorized, available, unrevoked, exact-version and exact-digest
+    human-review evidence, and successful revocation remains idempotent and
+    auditable without deleting qualification history.
+  - >-
+    Re-verified the corrected production qualification path. Composition
+    resolves one active qualification by the complete immutable execution
+    scope, independently loads its referenced prior durable CalibrationResult,
+    and never substitutes the current evaluation result identity. The judge
+    definition now carries distinct evaluator and calibration identities, and
+    the judge service compares dataset, suite, evaluator, judge, model, prompt,
+    rubric, artifact, seed, the exact seven-field execution budget,
+    calibration identity/version/result, eligibility, and disposition before
+    enabling a calibrated score. Absent or mismatched durable evidence remains
+    advisory.
+  - >-
+    Re-verified the corrected ensemble boundary. combine_ensemble requires a
+    qualification for every required member, validates each qualification in
+    strict mode, and compares the full suite, dataset, evaluator, judge, model,
+    prompt/rubric artifact, calibration-result, seed, budget, eligibility,
+    action, disposition, and provenance scope. An independent adversarial probe
+    with incomplete active-looking qualifications now returned
+    incomplete_calibration and no score, and the mismatch matrix covers every
+    immutable scope family.
+  - >-
+    Re-verified authorization-purpose separation. controlled_replay is accepted
+    only for an input artifact classified evaluation_input; it cannot authorize
+    prompts, rubrics, review comments, outputs, or evidence-classified content.
+    Prompt, rubric, and optional human-comment bytes retain their distinct
+    authorized purpose, classification, version, digest, dataset, revocation,
+    and bounded-read checks.
+  - >-
+    Re-verified local provider and artifact isolation. LocalOllamaAdapter uses
+    a literal deployment-owned origin allowlist, trust_env=false, no redirects,
+    exact case-sensitive model name and digest admission, GET /api/tags plus
+    POST /api/chat, zero temperature, a pinned seed, no tools, no streaming,
+    and bounded request, response, time, token, and context limits. Garage
+    derives UUID object keys internally, streams within one MiB, and verifies
+    exact length and SHA-256 before returning ephemeral bytes.
+  - >-
+    Re-verified deployment identity and content isolation. Only the evaluation
+    worker and one-shot bootstrap receive the separate file-injected read-only
+    Garage judge identity; bootstrap proves bucket-limited read access with
+    write and owner operations denied. Durable work, PostgreSQL, ClickHouse,
+    logs, metrics, spans, and finite failure codes contain closed metadata and
+    no prompt, response, rationale, comment, object key, endpoint, credential,
+    owner identity, or provider exception text.
+  - >-
+    Re-verified corrected telemetry lifecycle behavior. One context-local trace
+    identity correlates orchestration, PostgreSQL, Garage, Ollama, and
+    ClickHouse dependency spans without including work, artifact, model,
+    endpoint, credential, or owner identifiers. Worker shutdown drains bounded
+    exporter work and accounts for failed or cancelled sends without delaying
+    Core or leaking provider exceptions.
+  - >-
+    Re-ran the current judge, calibration, contract, observability,
+    final-review, worker, topology, and runtime matrix after the amended owner
+    decision: 207 passed with one unrelated Authlib deprecation warning.
+    Coverage includes exact authorization joins, identity/calibration/budget
+    mismatch denial, controlled-replay cross-purpose denial, durable
+    replay/idempotency, revocation, model and provider protocol failures,
+    bounded Garage reads, content-free persistence, telemetry
+    correlation/drain behavior, and secret/network topology.
+  - >-
+    Started an exact project-scoped disposable PostgreSQL 17 container and ran
+    the opt-in AURA-0094 PostgreSQL integration tests against the current
+    working tree: 3 passed. The corrected migration creates the definition and
+    calibration state before provenance upgrades, persists distinct evaluator
+    and calibration identities, and passes fresh schema, upgraded schema,
+    exact rerun, authorization, replay, qualification, revocation, and
+    content-free round trips. The exact disposable container was removed
+    afterward.
+  - >-
+    Re-reviewed the completed platform handoff against the explicit owner
+    decision recorded in the active work item on 2026-10-21. The internal
+    judge network blocks host-gateway and public egress; the adapter and
+    launcher retain literal deployment-owned origins, no redirects, no proxy
+    inheritance, and no caller-selected destinations. Provider-unavailable is
+    finite, content-free, optional to readiness, and now an accepted
+    availability limitation for this checkpoint. No proxy sidecar, general
+    bridge, host networking, privileged capability, or weakened content
+    boundary was introduced.
+  - >-
+    Re-verified credential and service isolation in the effective Compose
+    topology. The file-injected, bucket-limited read-only judge Garage identity
+    is mounted only into the one-shot bootstrap and evaluation worker; API,
+    Web, Core, scheduler, Collector, and normal Observatory workers receive
+    neither that identity nor the judge network. Ollama is absent from worker
+    readiness dependencies, so provider failure cannot impair Core or normal
+    Observatory availability.
+findings: []

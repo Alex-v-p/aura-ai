@@ -1,0 +1,106 @@
+agent: core_worker
+work_item: AURA-0133
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: standard
+  agent_thread_id: /root/aura0133_runtime
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: services.aura-core.briefing-scheduler-admission-and-worker-settlement
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/automation/briefings/scheduler.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/worker.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/delivery.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/recovery.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/public.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/repository.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/execution.py
+  - services/aura-core/src/aura_core/domains/automation/briefings/application.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/app.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/outbox/__init__.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/test_aura0133_execution.py
+  - services/aura-core/tests/test_aura0133_observability.py
+  - work-items/handoffs/AURA-0133-runtime.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.automation.briefing_scheduler
+    - aura.execution.briefing_admission
+    - aura.execution.briefing_context
+    - aura.automation.briefing_persistence
+    - aura.automation.briefing_cancellation
+    - aura.automation.briefing_delivery
+  metrics_added:
+    - briefing_schedule_lag_ms
+    - briefing_schedule_claim_duration_ms
+    - briefing_admission_duration_ms
+    - briefing_context_assembly_duration_ms
+    - briefing_result_persistence_duration_ms
+    - briefing_cancellation_duration_ms
+    - briefing_delivery_duration_ms
+    - briefing_outcome_count
+    - briefing_budget_exhaustion_count
+verification:
+  passed:
+    - "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0133.yaml"
+    - "python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0133.yaml"
+    - "UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/domains/automation/briefings services/aura-core/src/aura_core/entrypoints/worker/app.py services/aura-core/src/aura_core/platform/outbox/__init__.py services/aura-core/src/aura_core/platform/outbox/nats.py services/aura-core/src/aura_core/platform/telemetry.py"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings/scheduler.py services/aura-core/src/aura_core/domains/automation/briefings/worker.py services/aura-core/src/aura_core/domains/automation/briefings/delivery.py services/aura-core/src/aura_core/domains/automation/briefings/recovery.py services/aura-core/src/aura_core/entrypoints/scheduler/app.py services/aura-core/src/aura_core/entrypoints/worker/app.py services/aura-core/src/aura_core/platform/outbox/__init__.py services/aura-core/src/aura_core/platform/outbox/nats.py services/aura-core/src/aura_core/platform/telemetry.py"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings/scheduler.py services/aura-core/src/aura_core/entrypoints/scheduler/app.py (0 errors; structural outbox staging port accepts production SQL and focused test doubles)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_scheduler.py -q (21 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_scheduler.py services/aura-core/tests/system/test_scheduled_briefing.py -q (24 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_briefing_repository_evaluation.py services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_scheduler.py services/aura-core/tests/system/test_scheduled_briefing.py -q (28 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_observability.py services/aura-core/tests/test_notifications.py services/aura-core/tests/test_outbox.py -q (20 passed, 7 skipped)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_*.py services/aura-core/tests/test_briefing_*.py -q (44 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_*.py services/aura-core/tests/test_briefing_*.py services/aura-core/tests/system/test_scheduled_briefing.py -q (47 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_observability.py -q (31 passed; positive and mismatch/revoked policy revalidation covered)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_observability.py -q -k 'worker_composition or cancel_callback or pre_admission or evidence' (7 passed; production recorder injection, typed cancellation callback, and stable pre-admission UNKNOWN lineage coverage)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_execution.py -q (17 passed; wake eventId must equal command.id, deterministic occurrence wake identity rejects valid-UUID replays before application/provider execution, and arbitrary execution/model policy UUIDs fail closed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings/application.py services/aura-core/src/aura_core/domains/automation/briefings/execution.py services/aura-core/src/aura_core/domains/automation/briefings/worker.py services/aura-core/tests/test_aura0133_execution.py (0 errors)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_outbox.py services/aura-core/tests/test_aura0133_execution.py -q (22 passed; exact JetStream lifecycle+wake subject readiness binding and positive supported-policy process_command path)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/entrypoints/worker/app.py services/aura-core/src/aura_core/domains/automation/briefings/application.py services/aura-core/src/aura_core/domains/automation/briefings/execution.py services/aura-core/tests/test_aura0133_outbox.py services/aura-core/tests/test_aura0133_execution.py (0 errors)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_outbox.py services/aura-core/tests/test_aura0133_observability.py -q -k 'not evaluator_bindings_execute_replayable_structured_results' (44 passed, 1 deselected; production process trace-chain assertion)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/domains/automation/briefings/application.py services/aura-core/src/aura_core/domains/automation/briefings/execution.py services/aura-core/src/aura_core/domains/automation/briefings/repository.py services/aura-core/src/aura_core/domains/automation/briefings/delivery.py services/aura-core/src/aura_core/entrypoints/worker/app.py services/aura-core/tests/test_aura0133_execution.py services/aura-core/tests/test_aura0133_outbox.py (0 errors)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_telemetry.py::test_consumer_duplicate_and_ack_are_observed_without_uuid_dimensions services/aura-core/tests/test_aura0133_observability.py -q -k 'not evaluator_bindings_execute_replayable_structured_results' (20 passed; one pre-existing evaluator fixture failure excluded)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_telemetry.py::test_consumer_duplicate_and_ack_are_observed_without_uuid_dimensions services/aura-core/tests/test_aura0133_observability.py -q (16 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_telemetry.py services/aura-core/tests/test_aura0130_observability.py -q (95 passed, 1 skipped)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_outbox.py services/aura-core/tests/test_notifications.py -q (18 passed, 7 skipped)"
+    - "python3 tooling/architecture/validate-import-boundaries.py"
+    - "python3 tooling/architecture/validate-service-isolation.py"
+    - "python3 tooling/architecture/validate-repository-shape.py"
+    - "git diff --check"
+  failed: []
+  not_run:
+    - "Full AURA-0133 required suite remains an integration-maintainer gate."
+decisions:
+  - "Scheduler is polling-only and delegates due claiming/admission to a public Briefings application port with a hard batch limit of 100."
+  - "Worker consumes the existing generic identifier-only outbox envelope and acknowledges only after a terminal/durable settlement result."
+  - "Briefing delivery invokes only CreateBriefingNotification with a deterministic occurrence/result idempotency key; it never reads notification persistence."
+  - "Cancellation recovery accepts only the typed public RunCoordinator.cancel_briefing boundary and applies bounded retry delays and stale-claim limits; generic conversation Run cancellation is never used."
+  - "Telemetry registers finite metadata-only briefing components, metric names, span operations, and trace-only briefing identifiers."
+  - "Production worker now binds a concrete execution application through BriefingApplicationService.set_execution_application, with owner/source/policy revalidation, public state settlement, RunCoordinator provider/cancellation hooks, and notification handoff."
+  - "The API state injects the public RunCoordinator cancellation port into BriefingApplicationService; worker composition also binds its cancellation port after constructing the shared coordinator."
+  - "Briefing polling sleeps after failed claims and stages generic identifier-only wake commands in the same claim transaction; persistence failures cannot create a hot retry loop."
+  - "Briefing execution composition is domain-owned; the worker binds a typed BriefingRunCancellationAdapter, while exhausted deliveries and stale claims durably settle UNKNOWN before acknowledgement."
+  - "Lifecycle event publication remains on the event subject and identifier-only worker wakes use a distinct briefing wake subject; generic consumer telemetry is mapped only to finite registered briefing-scheduler dimensions and trace-only identifiers."
+risks:
+  - "The scheduler now calls the public claim_due_occurrences_and_stage seam and stages identifier-only commands through SqlOutboxRepository in the claim transaction; NATS publication remains the existing Core dispatcher concern."
+  - "Runtime uses only briefing public state/application methods for occurrence lookup, admission, settlement, recovery, and cancellation; concrete source services remain public calendar/reminder/document application ports."
+  - "Admission revalidates the active agent revision and exact pinned model, prompt-bundle, and tool-policy references through the public agent configuration service; the configured Core provider/model resolves the matching pinned model policy, while tool policy is read through the public owner-scoped port and must deny calls."
+  - "Briefing wake transport counters are attributed to the registered briefing scheduler component and declared in its briefing manifest; no run-coordinator manifest change is required."
+  - "Generic run-consumer metrics retain the established received/duplicate/acknowledged vocabulary; redelivery counters are emitted only by NatsBriefingConsumer and remain briefing-scheduler scoped."
+  - "The production worker passes the shared Core run-evidence recorder into the briefing state and execution application; each run constructs one BriefingRunEvidenceAdapter and shares it across context, admission/execution, persistence, and delivery. Capture is bounded metadata-only and nonblocking on recorder rejection/outage."
+  - "The RunCoordinator briefing callback now settles through the typed briefing state port; it never calls generic RunCoordinator.cancel because scheduled briefings do not create conversation Runs."
+  - "Briefing wake validation requires the closed eventId to equal the command identity and the command identity to equal uuid5(BRIEFING_ID_NAMESPACE, wake:<occurrenceId>), preventing valid-UUID replay commands from reaching application/provider execution."
+  - "Admission requires the canonical BRIEFING_EXECUTION_POLICY_ID and existing Core GENERAL_POLICY_ID; request construction pins the canonical execution policy and arbitrary execution/model UUIDs fail closed before source/provider use."
+  - "Worker NATS readiness configures the exact BRIEFING_EVENT_SUBJECT lifecycle stream alongside the identifier-only BRIEFING_WAKE_SUBJECT; the stale BRIEFING_TOPIC is no longer composed."
+  - "One run trace now uses shared briefing_phase_span_id identities: context is the root phase, admission parents context, persistence emits the deterministic persistence span, delivery parents that actual persistence span, and RunCoordinator receives the emitted context span as its parent."
+unresolved: []

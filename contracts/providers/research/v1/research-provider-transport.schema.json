@@ -1,0 +1,421 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/providers/research/v1/research-provider-transport.schema.json",
+  "title": "Aura governed research provider transport v1",
+  "description": "Closed internal transport between Aura Core and the credential-free research search, static-fetch, and browser-fetch providers. Request envelopes are short-lived Ed25519-signed messages; results and errors are correlated responses on the isolated Core/provider network. Signatures authenticate the envelope only and never authorize a destination, policy change, budget change, or caller. Error, health, and limit payloads are finite and content-free.",
+  "oneOf": [
+    { "$ref": "#/$defs/ProviderRequestEnvelope" },
+    { "$ref": "#/$defs/ProviderResultEnvelope" },
+    { "$ref": "#/$defs/ProviderErrorEnvelope" }
+  ],
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z$"
+    },
+    "Audience": {
+      "type": "string",
+      "enum": ["searxng", "static_fetcher", "browser_fetcher"]
+    },
+    "Method": {
+      "type": "string",
+      "enum": ["search", "fetch", "cancel", "limits", "health"]
+    },
+    "PublicHttpsUrl": {
+      "type": "string",
+      "format": "uri",
+      "minLength": 9,
+      "maxLength": 4096,
+      "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)(?::443)?(?:[/?#][^\\s]*)?$",
+      "description": "A syntactically bounded HTTPS URL without userinfo. Consumers must still resolve, validate every address, require port 443, pin the validated connection, and revalidate each redirect. Schema acceptance is not destination authorization."
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "keyId", "value"],
+      "properties": {
+        "algorithm": { "const": "Ed25519" },
+        "keyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 86,
+          "maxLength": 86,
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "Unpadded base64url Ed25519 signature over RFC 8785 canonical JSON of every request-envelope member except signature."
+        }
+      }
+    },
+    "SearchRequestLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deadlineMs", "maxCandidates"],
+      "properties": {
+        "deadlineMs": { "type": "integer", "minimum": 100, "maximum": 15000 },
+        "maxCandidates": { "type": "integer", "minimum": 1, "maximum": 20 }
+      }
+    },
+    "StaticFetchRequestLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deadlineMs", "maxRedirects", "maxTransferredBytes", "maxDecompressedBytes", "maxExtractedUtf8Bytes"],
+      "properties": {
+        "deadlineMs": { "type": "integer", "minimum": 100, "maximum": 20000 },
+        "maxRedirects": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "maxTransferredBytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+        "maxDecompressedBytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+        "maxExtractedUtf8Bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
+      }
+    },
+    "BrowserFetchRequestLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deadlineMs", "maxRedirects", "maxResponseBytes", "maxExtractedUtf8Bytes"],
+      "properties": {
+        "deadlineMs": { "type": "integer", "minimum": 100, "maximum": 45000 },
+        "maxRedirects": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "maxResponseBytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+        "maxExtractedUtf8Bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
+      }
+    },
+    "SearchRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "query", "language", "limits"],
+      "properties": {
+        "kind": { "const": "search_request" },
+        "query": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "language": { "type": "string", "minLength": 2, "maxLength": 35, "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$" },
+        "domainAllowlist": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$" }
+        },
+        "limits": { "$ref": "#/$defs/SearchRequestLimits" }
+      }
+    },
+    "StaticFetchRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "targetUrl", "admissionKind", "limits"],
+      "properties": {
+        "kind": { "const": "static_fetch_request" },
+        "targetUrl": { "$ref": "#/$defs/PublicHttpsUrl" },
+        "admissionKind": { "type": "string", "enum": ["search_candidate", "owner_seed"] },
+        "limits": { "$ref": "#/$defs/StaticFetchRequestLimits" }
+      }
+    },
+    "BrowserFetchRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "targetUrl", "admissionKind", "justification", "limits"],
+      "properties": {
+        "kind": { "const": "browser_fetch_request" },
+        "targetUrl": { "$ref": "#/$defs/PublicHttpsUrl" },
+        "admissionKind": { "type": "string", "enum": ["search_candidate", "owner_seed"] },
+        "justification": { "type": "string", "enum": ["javascript_required", "static_inadequate_extraction"] },
+        "limits": { "$ref": "#/$defs/BrowserFetchRequestLimits" }
+      }
+    },
+    "CancelRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "targetRequestId", "reason"],
+      "properties": {
+        "kind": { "const": "cancel_request" },
+        "targetRequestId": { "$ref": "#/$defs/Uuid" },
+        "reason": { "type": "string", "enum": ["owner_cancel", "operator_stop", "deadline_expired"] }
+      }
+    },
+    "LimitsRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": { "kind": { "const": "limits_request" } }
+    },
+    "HealthRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": { "kind": { "const": "health_request" } }
+    },
+    "ProviderRequestEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "envelopeType", "requestId", "replayId", "audience", "method", "issuedAt", "expiresAt", "ttlMs", "payload", "signature"],
+      "properties": {
+        "schemaVersion": { "const": "research-provider.v1" },
+        "envelopeType": { "const": "request" },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "replayId": { "$ref": "#/$defs/Uuid" },
+        "audience": { "$ref": "#/$defs/Audience" },
+        "method": { "$ref": "#/$defs/Method" },
+        "issuedAt": { "$ref": "#/$defs/Timestamp" },
+        "expiresAt": { "$ref": "#/$defs/Timestamp" },
+        "ttlMs": { "type": "integer", "minimum": 100, "maximum": 60000 },
+        "payload": {
+          "oneOf": [
+            { "$ref": "#/$defs/SearchRequest" },
+            { "$ref": "#/$defs/StaticFetchRequest" },
+            { "$ref": "#/$defs/BrowserFetchRequest" },
+            { "$ref": "#/$defs/CancelRequest" },
+            { "$ref": "#/$defs/LimitsRequest" },
+            { "$ref": "#/$defs/HealthRequest" }
+          ]
+        },
+        "signature": { "$ref": "#/$defs/Signature" }
+      },
+      "allOf": [
+        { "if": { "properties": { "method": { "const": "search" } } }, "then": { "properties": { "audience": { "const": "searxng" }, "payload": { "$ref": "#/$defs/SearchRequest" } } } },
+        { "if": { "properties": { "method": { "const": "fetch" }, "audience": { "const": "static_fetcher" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/StaticFetchRequest" } } } },
+        { "if": { "properties": { "method": { "const": "fetch" }, "audience": { "const": "browser_fetcher" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/BrowserFetchRequest" } } } },
+        { "if": { "properties": { "method": { "const": "fetch" } } }, "then": { "properties": { "audience": { "enum": ["static_fetcher", "browser_fetcher"] } } } },
+        { "if": { "properties": { "method": { "const": "cancel" } } }, "then": { "properties": { "audience": { "enum": ["static_fetcher", "browser_fetcher"] }, "payload": { "$ref": "#/$defs/CancelRequest" } } } },
+        { "if": { "properties": { "method": { "const": "limits" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/LimitsRequest" } } } },
+        { "if": { "properties": { "method": { "const": "health" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/HealthRequest" } } } }
+      ],
+      "description": "Providers validate contract identity, audience, method/payload agreement, signature, issued/expires ordering, a maximum 60-second lifetime, current expiry, and replay-id uniqueness before processing."
+    },
+    "SearchCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rank", "url", "label"],
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "url": { "$ref": "#/$defs/PublicHttpsUrl" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "publisher": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "SearchResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "outcome", "candidates"],
+      "properties": {
+        "kind": { "const": "search_result" },
+        "outcome": { "const": "success" },
+        "candidates": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/SearchCandidate" } }
+      }
+    },
+    "FetchedEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finalUrl", "redirectCount", "declaredMediaType", "detectedMediaType", "retrievedAt", "transferredBytes", "extractedUtf8Bytes", "contentSha256", "extractionMethod", "extractedText"],
+      "properties": {
+        "finalUrl": { "$ref": "#/$defs/PublicHttpsUrl" },
+        "redirectCount": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "declaredMediaType": { "type": "string", "enum": ["text/html", "application/xhtml+xml", "text/plain"] },
+        "detectedMediaType": { "type": "string", "enum": ["text/html", "application/xhtml+xml", "text/plain"] },
+        "retrievedAt": { "$ref": "#/$defs/Timestamp" },
+        "transferredBytes": { "type": "integer", "minimum": 0, "maximum": 8388608 },
+        "extractedUtf8Bytes": { "type": "integer", "minimum": 1, "maximum": 262144 },
+        "contentSha256": { "$ref": "#/$defs/Sha256" },
+        "extractionMethod": { "type": "string", "enum": ["trafilatura", "plain_text", "playwright_dom"] },
+        "label": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "publisher": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "freshnessAt": { "$ref": "#/$defs/Timestamp" },
+        "extractedText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 262144,
+          "description": "Hostile untrusted evidence. Producers and consumers additionally enforce maxExtractedUtf8Bytes over its UTF-8 encoding; it is never instructions, policy, authority, diagnostics, or telemetry."
+        }
+      }
+    },
+    "FetchSuccessResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "outcome", "evidence"],
+      "properties": {
+        "kind": { "const": "fetch_result" },
+        "outcome": { "const": "success" },
+        "evidence": { "$ref": "#/$defs/FetchedEvidence" }
+      }
+    },
+    "FetchInadequateResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "outcome", "finalUrl", "redirectCount", "declaredMediaType", "detectedMediaType", "transferredBytes"],
+      "properties": {
+        "kind": { "const": "fetch_result" },
+        "outcome": { "const": "inadequate_extraction" },
+        "finalUrl": { "$ref": "#/$defs/PublicHttpsUrl" },
+        "redirectCount": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "declaredMediaType": { "type": "string", "enum": ["text/html", "application/xhtml+xml", "text/plain"] },
+        "detectedMediaType": { "type": "string", "enum": ["text/html", "application/xhtml+xml", "text/plain"] },
+        "transferredBytes": { "type": "integer", "minimum": 0, "maximum": 8388608 }
+      }
+    },
+    "CancelResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "outcome"],
+      "properties": {
+        "kind": { "const": "cancel_result" },
+        "outcome": { "type": "string", "enum": ["accepted", "already_settled", "not_found"] }
+      }
+    },
+    "SearchProviderLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "deadlineMs", "maxCandidates", "maxConcurrency", "cpuMillicores", "memoryBytes", "pids", "temporaryStorageBytes"],
+      "properties": {
+        "service": { "const": "searxng" },
+        "deadlineMs": { "type": "integer", "minimum": 100, "maximum": 15000 },
+        "maxCandidates": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "maxConcurrency": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "cpuMillicores": { "type": "integer", "minimum": 1, "maximum": 2000 },
+        "memoryBytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "pids": { "type": "integer", "minimum": 1, "maximum": 128 },
+        "temporaryStorageBytes": { "type": "integer", "minimum": 1, "maximum": 134217728 }
+      }
+    },
+    "StaticProviderLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "deadlineMs", "maxRedirects", "maxTransferredBytes", "maxDecompressedBytes", "maxExtractedUtf8Bytes", "maxConcurrency", "cpuMillicores", "memoryBytes", "pids", "temporaryStorageBytes"],
+      "properties": {
+        "service": { "const": "static_fetcher" },
+        "deadlineMs": { "type": "integer", "minimum": 100, "maximum": 20000 },
+        "maxRedirects": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "maxTransferredBytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+        "maxDecompressedBytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+        "maxExtractedUtf8Bytes": { "type": "integer", "minimum": 1, "maximum": 262144 },
+        "maxConcurrency": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "cpuMillicores": { "type": "integer", "minimum": 1, "maximum": 2000 },
+        "memoryBytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "pids": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "temporaryStorageBytes": { "type": "integer", "minimum": 1, "maximum": 67108864 }
+      }
+    },
+    "BrowserProviderLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "deadlineMs", "maxRedirects", "maxResponseBytes", "maxExtractedUtf8Bytes", "maxConcurrency", "cpuMillicores", "memoryBytes", "pids", "temporaryStorageBytes"],
+      "properties": {
+        "service": { "const": "browser_fetcher" },
+        "deadlineMs": { "type": "integer", "minimum": 100, "maximum": 45000 },
+        "maxRedirects": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "maxResponseBytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+        "maxExtractedUtf8Bytes": { "type": "integer", "minimum": 1, "maximum": 262144 },
+        "maxConcurrency": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "cpuMillicores": { "type": "integer", "minimum": 1, "maximum": 4000 },
+        "memoryBytes": { "type": "integer", "minimum": 1, "maximum": 2147483648 },
+        "pids": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "temporaryStorageBytes": { "type": "integer", "minimum": 1, "maximum": 268435456 }
+      }
+    },
+    "ProviderLimits": {
+      "oneOf": [
+        { "$ref": "#/$defs/SearchProviderLimits" },
+        { "$ref": "#/$defs/StaticProviderLimits" },
+        { "$ref": "#/$defs/BrowserProviderLimits" }
+      ]
+    },
+    "LimitsResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "limits"],
+      "properties": {
+        "kind": { "const": "limits_result" },
+        "limits": { "$ref": "#/$defs/ProviderLimits" }
+      }
+    },
+    "HealthResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "status", "enabled", "accepting", "inFlight", "contractVersion"],
+      "properties": {
+        "kind": { "const": "health_result" },
+        "status": { "type": "string", "enum": ["live", "ready", "degraded", "not_ready"] },
+        "enabled": { "type": "boolean" },
+        "accepting": { "type": "boolean" },
+        "inFlight": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "contractVersion": { "const": "research-provider.v1" },
+        "degradation": { "type": "string", "enum": ["disabled", "draining", "capacity", "dependency_unavailable", "configuration_invalid"] }
+      }
+    },
+    "ProviderResultEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "envelopeType", "responseId", "requestId", "audience", "method", "producedAt", "result"],
+      "properties": {
+        "schemaVersion": { "const": "research-provider.v1" },
+        "envelopeType": { "const": "result" },
+        "responseId": { "$ref": "#/$defs/Uuid" },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "audience": { "$ref": "#/$defs/Audience" },
+        "method": { "$ref": "#/$defs/Method" },
+        "producedAt": { "$ref": "#/$defs/Timestamp" },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/SearchResult" },
+            { "$ref": "#/$defs/FetchSuccessResult" },
+            { "$ref": "#/$defs/FetchInadequateResult" },
+            { "$ref": "#/$defs/CancelResult" },
+            { "$ref": "#/$defs/LimitsResult" },
+            { "$ref": "#/$defs/HealthResult" }
+          ]
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "method": { "const": "search" } } }, "then": { "properties": { "audience": { "const": "searxng" }, "result": { "$ref": "#/$defs/SearchResult" } } } },
+        { "if": { "properties": { "method": { "const": "fetch" } } }, "then": { "properties": { "audience": { "enum": ["static_fetcher", "browser_fetcher"] }, "result": { "oneOf": [{ "$ref": "#/$defs/FetchSuccessResult" }, { "$ref": "#/$defs/FetchInadequateResult" }] } } } },
+        { "if": { "properties": { "method": { "const": "cancel" } } }, "then": { "properties": { "audience": { "enum": ["static_fetcher", "browser_fetcher"] }, "result": { "$ref": "#/$defs/CancelResult" } } } },
+        { "if": { "properties": { "method": { "const": "limits" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/LimitsResult" } } } },
+        { "if": { "properties": { "method": { "const": "limits" }, "audience": { "const": "searxng" } } }, "then": { "properties": { "result": { "properties": { "limits": { "$ref": "#/$defs/SearchProviderLimits" } } } } } },
+        { "if": { "properties": { "method": { "const": "limits" }, "audience": { "const": "static_fetcher" } } }, "then": { "properties": { "result": { "properties": { "limits": { "$ref": "#/$defs/StaticProviderLimits" } } } } } },
+        { "if": { "properties": { "method": { "const": "limits" }, "audience": { "const": "browser_fetcher" } } }, "then": { "properties": { "result": { "properties": { "limits": { "$ref": "#/$defs/BrowserProviderLimits" } } } } } },
+        { "if": { "properties": { "method": { "const": "health" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/HealthResult" } } } }
+      ]
+    },
+    "ProviderError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "retryable"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": ["contract_invalid", "signature_invalid", "expired", "replayed", "audience_mismatch", "method_unsupported", "disabled", "draining", "destination_blocked", "redirect_blocked", "type_rejected", "size_exceeded", "deadline_exceeded", "resource_exhausted", "provider_unavailable", "canceled", "not_found", "extraction_failed", "protocol_error", "internal_error"]
+        },
+        "retryable": { "type": "boolean" }
+      },
+      "description": "Finite metadata-only failure. Messages, exception text, query, URL, domain, content, excerpt, browser state, signature, provider request identifiers, and arbitrary diagnostics are prohibited."
+    },
+    "ProviderErrorEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "envelopeType", "responseId", "requestId", "audience", "method", "producedAt", "error"],
+      "properties": {
+        "schemaVersion": { "const": "research-provider.v1" },
+        "envelopeType": { "const": "error" },
+        "responseId": { "$ref": "#/$defs/Uuid" },
+        "requestId": { "$ref": "#/$defs/Uuid" },
+        "audience": { "$ref": "#/$defs/Audience" },
+        "method": { "$ref": "#/$defs/Method" },
+        "producedAt": { "$ref": "#/$defs/Timestamp" },
+        "error": { "$ref": "#/$defs/ProviderError" }
+      },
+      "allOf": [
+        { "if": { "properties": { "method": { "const": "search" } } }, "then": { "properties": { "audience": { "const": "searxng" } } } },
+        { "if": { "properties": { "method": { "const": "fetch" } } }, "then": { "properties": { "audience": { "enum": ["static_fetcher", "browser_fetcher"] } } } },
+        { "if": { "properties": { "method": { "const": "cancel" } } }, "then": { "properties": { "audience": { "enum": ["static_fetcher", "browser_fetcher"] } } } }
+      ]
+    }
+  }
+}

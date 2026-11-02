@@ -1,0 +1,43 @@
+agent: integration_maintainer
+work_item: AURA-0073
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0073-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0073-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0073-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0073-observability.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0073-tests.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0073.yaml
+checks:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0073.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0073.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0073.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0073.yaml
+    - uv run pyright services/aura-core
+    - uv run ruff check services/aura-core/src services/aura-core/tests
+    - uv run pytest required AURA-0073 focused suite (133 passed, 2 skipped)
+    - python3 deploy/compose/test_topology.py
+    - docker compose --env-file .env config --quiet
+    - git diff --check
+    - uv run pytest additional Ollama/document reliability suite (92 passed)
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks: []

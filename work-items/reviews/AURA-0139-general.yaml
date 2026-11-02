@@ -1,0 +1,49 @@
+agent: general_reviewer
+work_item: AURA-0139
+verdict: PASS
+checked:
+  - >-
+    Re-read the active work item and final handoffs, then re-traced the exact
+    final contract, generated client, Core telemetry vocabulary, Observatory
+    aggregation and ClickHouse polling paths, frontend parser and store, and
+    focused acceptance coverage against every prior general finding.
+  - >-
+    Verified the closed workflow failure vocabulary now covers every production
+    workflow operation, including execute, validate, persist, cancel, settle,
+    and resume, and preserves the complete bounded Core workflow error-class
+    set. A production-shaped failed agent-step probe returned the expected
+    execute/failed/timeout breakdown and correlated reference.
+  - >-
+    Verified workflow-monitoring self invalidations are identified only by the
+    exact Observatory query-api source and operation, and the production
+    adapter advances its persisted sequence cursor before suppressing such a
+    row. The adapter regression covers a self-only batch followed by a genuine
+    Core event and proves bounded progress and delivery without a hot loop.
+  - >-
+    Verified all fifteen measurements retain their declared count or
+    millisecond units, lifecycle count series stay within the deterministic
+    twelve-series cap with explicit partial metadata, and the analytics
+    catalogue and Automation copy include workflows while excluding scheduler
+    measurements.
+  - >-
+    Rechecked the post-review lifecycle hardening: every one of the fifteen
+    measurements is bound to its exact authoritative Core component and local
+    operation before aggregation. Cross-paired lifecycle, wait-lag, and
+    agent-run rows are discarded before they can affect counts, latency,
+    failure, freshness, or run/trace correlation output, while the three
+    lifecycle operations remain distinct from the broader failure vocabulary.
+    The wait-command duration binding correctly admits both its initial
+    execute path and the Core wait-resumption producer's resume path while
+    continuing to reject unrelated operations.
+  - >-
+    Verified strict closed response parsing and UTC validation, literal empty
+    query semantics, distinct source freshness and transport connectivity,
+    stale-state preservation, coalesced authoritative refresh, exact run/trace
+    correlation constraints, and corrected healthy, partial, loading, empty,
+    unavailable, and dark Storybook fixtures.
+  - >-
+    Independently ran the focused AURA-0139 backend and contract suites (22
+    passed), the Observatory frontend suite (90 passed), generated-client sync,
+    changed-path and observability validators, and git diff validation; all
+    passed on the final tree.
+findings: []

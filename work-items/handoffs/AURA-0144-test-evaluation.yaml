@@ -1,0 +1,111 @@
+agent: test_evaluation_engineer
+work_item: AURA-0144
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: aura0144_tests
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: evaluation.research-provider-security
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/tests/test_aura0144_research_provider_topology.py
+  - deploy/tests/test_aura0144_research_provider_security.py
+  - deploy/tests/test_aura0144_research_provider_limits.py
+  - services/aura-core/tests/test_generated_artifact_observability.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.research.static_fetch@1
+    - aura.research.browser_fetch@1
+    - aura.research.extraction@1
+  metrics_added: []
+  notes: >-
+    Added negative assertions that health, environment, and provider source
+    surfaces remain content-free; no telemetry implementation was changed.
+verification:
+  passed:
+    - >-
+      Default full-Core dependency-gated run of
+      services/aura-core/tests/test_generated_artifact_observability.py
+      collected 22 tests, with 20 passed and the two live SQL tests skipped
+      because AURA_TEST_DEPENDENCIES_ISOLATED=1 and AURA_TEST_DATABASE_URL
+      were not enabled.
+    - >-
+      Explicit live PostgreSQL gate
+      AURA_TEST_DEPENDENCIES_ISOLATED=1 with the disposable
+      AURA_TEST_DATABASE_URL=postgresql+psycopg://aura:aura_test_only@127.0.0.1:55432/aura0143
+      completed the generated-artifact observability file with 22 passed and
+      no skips; both SQL tests executed against a unique schema.
+    - >-
+      Negative gate check with AURA_TEST_DEPENDENCIES_ISOLATED=1 and no
+      AURA_TEST_DATABASE_URL produced 20 passed and two expected configuration
+      failures (not skips), proving an explicitly requested live gate cannot
+      silently omit either SQL test.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check services/aura-core/tests/test_generated_artifact_observability.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/tests/test_generated_artifact_observability.py (0 errors)
+    - >-
+      git diff --check -- services/aura-core/tests/test_generated_artifact_observability.py
+      work-items/handoffs/AURA-0144-test-evaluation.yaml
+    - >-
+      Full services/aura-core pytest suite completed with 1819 passed, 124
+      skipped, and one Authlib deprecation warning; no Core test failures
+      remain after provider-vocabulary stabilization.
+    - >-
+      Exact required AURA-0144 aggregate completed with 133 passed tests
+      across contracts, Core clients/settings/observability, static/browser
+      providers, topology, security, and limits.
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0144.yaml validated all 8 current
+      shared-tree paths.
+    - "UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check assigned AURA-0144 deployment suites"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider deploy/tests/test_aura0144_research_provider_topology.py deploy/tests/test_aura0144_research_provider_security.py deploy/tests/test_aura0144_research_provider_limits.py -q --tb=no (80 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0144_research_provider_contract.py services/aura-research-static-fetcher/tests services/aura-research-browser-fetcher/tests -q --tb=no (23 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research_provider_clients.py services/aura-core/tests/test_research_provider_settings.py services/aura-core/tests/test_research_provider_observability.py -q --tb=no (29 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/providers/research services/aura-core/src/aura_core/platform/research_provider_settings.py services/aura-research-static-fetcher services/aura-research-browser-fetcher deploy/research (0 errors)"
+    - "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0144.yaml"
+    - "python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0144.yaml"
+    - "python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0144.yaml"
+    - "python3 tooling/architecture/validate-service-isolation.py"
+    - "python3 tooling/architecture/validate-repository-shape.py"
+    - "python3 tooling/architecture/validate-import-boundaries.py"
+    - "python3 tooling/architecture/validate-module-registry.py"
+    - "python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v (27 passed)"
+    - "UV_CACHE_DIR=.local-state/uv-cache uv lock --check"
+    - "docker compose -f compose.yaml -f deploy/compose/research-providers.yaml config --quiet"
+    - "PYTHONPATH=services/aura-core/src uv run python negative evaluator fixture check: all four research evaluators return fail/score-zero for hostile evidence (4/4 fail-closed)."
+    - "Telemetry serialization checks for static/browser production sinks and Core provider observability: 11 passed; records remain metadata-only and JSON-serializable."
+    - "Bundled egress declaration checker is verified test-only: it has no enforcement-attestation mode or production attestation token, while provider readiness requires the operator-supplied attestation probe."
+    - "Exact required AURA-0144 pytest command completed with 133 passing tests; all independent contract, provider, topology, security, limit, telemetry, signed-control, replay, cancellation, stream, MIME, and privacy guards passed."
+    - "git diff --check -- assigned AURA-0144 deployment suites"
+  failed: []
+  not_run:
+    - "Full repository-wide aggregate remains Integration Maintainer scope; the required full Core aggregate and exact AURA-0144 aggregate completed successfully."
+decisions:
+  - >-
+    Aligned the generated-artifact SQL helper with the repository-wide
+    isolated dependency gate: ordinary Core runs skip only when the isolated
+    switch is absent, while an enabled switch with no database URL fails as a
+    configuration error and the explicit live gate runs both SQL cases.
+  - "Preserved the platform-authored tests and extended only the three assigned deployment suites with independent hostile-network, sandbox, limit, replay, privacy, and topology assertions."
+  - "Used deterministic socket and HTTPX mocks; no network tools or live destinations were used."
+  - "Tests intentionally inspect provider configuration/source boundaries for no-download, no-persistence, no-credential, and content-free telemetry guarantees without changing provider behavior."
+  - "The browser redirect, DNS pinning, real Core-to-ASGI transport, request-authentication, and owner-lowered-limit guards remain independent fail-closed regression tests."
+  - "The accepted folded topology is enforced: signed SearXNG search is in-process in the single SearXNG deployable, Core targets aura-research-searxng, and public egress is an operator-provisioned external network rather than a Compose-created bridge."
+  - "Signed controls, TTL/replay, decompression/stream/MIME ceilings, drain/stop paths, POST-only search privacy, lock/secrets isolation, and metadata-only telemetry remain independent fail-closed guards."
+  - "The new contract and integration tests are deliberately fail-closed guards for the Architecture/General findings; they do not lower thresholds or replace a golden result."
+risks:
+  - "AURA-0144 provider/security evaluation has no independent assertion failures; final provider enablement still requires immutable image provenance attestation."
+unresolved:
+  - "Deployment owner must complete immutable provider image provenance/signature attestation before enablement; full repository-wide aggregate remains Integration Maintainer scope."

@@ -1,0 +1,123 @@
+agent: observatory_worker
+work_item: AURA-0088
+status: complete
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: services.aura-observatory.run-comparison-and-telemetry-storage
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/migrations/clickhouse/versions/0004_comparison_markers.sql
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/resources/component-manifests/telemetry-storage.yaml
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/contract.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/otlp.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0080_formal_regressions.py
+  - services/aura-observatory/tests/test_aura0086_query_corrections.py
+  - services/aura-observatory/tests/test_aura0088_comparison.py
+  - services/aura-observatory/tests/test_aura0088_contract.py
+contracts:
+  changed: true
+migrations:
+  changed: true
+observability:
+  components:
+    - aura.observatory.query_api
+  metrics_added:
+    - observatory_comparison_duration_ms
+    - observatory_comparison_outcome
+    - observatory_comparison_partial_count
+    - observatory_comparison_unavailable_marker_count
+verification:
+  passed:
+    - .venv/bin/ruff check services/aura-observatory/src services/aura-observatory/tests
+    - .venv/bin/pyright services/aura-observatory/src/aura_observatory
+    - .venv/bin/python -m compileall -q services/aura-observatory/src
+    - .venv/bin/pytest -q services/aura-observatory/tests (425 passed, 3 skipped)
+    - .venv/bin/pytest -q services/aura-observatory/tests/test_aura0088_contract.py services/aura-observatory/tests/test_aura0088_comparison.py services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py (44 passed)
+    - .venv/bin/pytest -q services/aura-observatory/tests/test_aura0088_comparison.py services/aura-observatory/tests/test_aura0087_analytics.py (8 passed)
+    - .venv/bin/pytest -q services/aura-observatory/tests/test_aura0088_contract.py services/aura-observatory/tests/test_aura0088_comparison.py services/aura-observatory/tests/test_aura0087_analytics.py services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py (50 passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests (430 passed, 3 skipped, 2 warnings; executed from repository root so repository-relative Compose fixtures resolve)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0088_test_evaluation.py services/aura-observatory/tests/test_aura0088_comparison.py (7 passed, 1 warning)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0088_comparison.py services/aura-observatory/tests/test_aura0079_otlp_signal_regressions.py services/aura-observatory/tests/test_aura0088_contract.py services/aura-observatory/tests/test_aura0087_analytics.py (56 passed, 1 warning)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests (452 passed, 3 skipped, 2 warnings)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests (488 passed, 3 skipped, 2 warnings)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0088_comparison.py (25 passed, 1 warning)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0088_test_evaluation.py services/aura-observatory/tests/test_aura0088_contract.py services/aura-observatory/tests/test_aura0088_comparison.py (71 passed, 1 warning)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/src services/aura-observatory/tests (passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0080_query_retention.py services/aura-observatory/tests/test_aura0080_formal_regressions.py -k 'retention or purge' (41 passed, 76 deselected, 1 warning)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0088_comparison.py (25 passed, 1 warning)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/src services/aura-observatory/tests/test_aura0080_formal_regressions.py (passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/src services/aura-observatory/tests (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests (489 passed, 3 skipped, 2 warnings)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0080_query_retention.py services/aura-observatory/tests/test_aura0080_formal_regressions.py -k 'retention or purge' (41 passed, 76 deselected, 1 warning)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0088_comparison.py (25 passed, 1 warning)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0080_formal_regressions.py (passed)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0088.yaml (passed)
+    - git diff --check (passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q services/aura-observatory/tests/test_aura0088_comparison.py (20 passed, 1 warning)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-observatory/src services/aura-observatory/tests
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/src/aura_observatory/contract.py services/aura-observatory/src/aura_observatory/otlp.py services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/src/aura_observatory (0 errors)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-observatory/src/aura_observatory/query.py (0 errors)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      No additional Observatory-owned checks remain outstanding; aggregate
+      checks and composed-stack acceptance are recorded by the integration
+      maintainer.
+decisions:
+  - Kept v1 contract model closed and added a separate MetadataObservationV2 model selected only by schemaVersion 2; v1 payloads with v2 fields remain rejected.
+  - Accepted only bounded image/configuration and execution revision markers from the closed OTLP allowlist; no prompt, response, content, arbitrary attribute, or credential data is retained.
+  - Kept v2 markers as nullable explicit ClickHouse columns and omitted marker columns from v1 insert rows for backward-compatible rolling migrations.
+  - Implemented comparison through a narrow query port and the same deterministic builder for memory and production adapter parity; production ClickHouse requests use typed HTTP query parameters, a one-million-row read cap, and a five-second execution bound.
+  - Comparison snapshots are computed on demand, returned with Cache-Control no-store, never persisted or emitted through SSE, and retention naturally removes their source evidence.
+  - Alignment keys use component, operation, and structural parent lineage; left-only, right-only, duplicate, missing-parent, cyclic, ambiguous, and truncated/partial evidence remains explicit.
+  - Corrected trace integrity classification to retain cyclic nodes as cyclic, including closed parent cycles with no root, while genuinely absent parents remain missing_parent and valid ancestors entering a cycle are not mislabeled. Malformed structurally unmatched spans are emitted as explicit incompatible comparisons; duplicate and retained/truncated evidence stays visible.
+  - Zero is represented as an available measurement, while missing and unavailable markers remain distinct and deltas are emitted only for finite compatible pairs.
+  - Added only fixed low-cardinality comparison duration/outcome/partial/unavailable metrics and declared them on the existing query-api manifest.
+  - Corrected comparison freshness to the authoritative AnalyticsFreshness shape: latestObservedAt, lagMs, and state; the legacy observedAt/ageMs keys are no longer emitted by memory or production comparison paths.
+  - OTLP resource and signal schemaUrl values are now validated against the versioned v1/v2 URLs. Missing schema provenance is legacy v1 only; marker-free explicit v2 remains v2, and v1/v2 marker-direction mismatches are rejected before storage.
+  - Comparison reference and ClickHouse paths retain at most 10,000 observations plus a per-run sentinel, enforce 5,000 spans per side and a global 2,000 measurement-pair budget, and propagate observation_limit, span_limit, and measurement_limit partial reasons.
+  - Trace alignment now uses side-independent component/operation/ancestor-path/sibling-ordinal keys derived from iterative memoized structural signatures. Timing, duration, outcome, and raw IDs never determine structural order; reordered distinct roots/siblings align, while indistinguishable repeats become incompatible. Cycle detection and lineage traversal are iterative and bounded for the full 5,000-span side limit.
+  - Marker availability is aggregated over the bounded run: v1-only evidence is unavailable for v2-only markers, explicit v2 omission is missing, and any valid retained marker is selected deterministically rather than erased by a newest-row gap.
+  - Durations use any non-negative millisecond span observation as an invocation boundary and use only the closed canonical duration allowlist for spanless metric fallback; negative and unrelated spanless measurements do not inflate timing. Terminal outcomes are selected from explicit terminal metadata in deterministic observation order.
+  - Comparison duration/outcome/partial/unavailable metrics are emitted once in a finally path for success, partial, not-found, execution-limit, and failure outcomes using fixed low-cardinality labels.
+  - Every OTLP v2 deployment and execution marker receives bounded private-shape validation before it can be normalized or stored.
+  - ModelIdentifier now follows the authoritative lowercase local-model grammar, including letter-bearing tags such as qwen3:8b and llama3.2:latest; model-id normalization and comparison reject URL, path, credential, owner, token, endpoint, whitespace, uppercase, and untagged-private shapes while other revision markers remain colon-free.
+  - Comparison marker aggregation defensively treats an invalid model identifier as unavailable, preventing malformed storage doubles or legacy rows from appearing in owner-facing output.
+  - ClickHouse comparison reads capture and validate physical progress, report bounded scannedRows, and mark scan_limit on the one-million-row overflow/break boundary or missing/malformed progress; exact 10,000 observations without a sentinel remain complete, while the 10,001st sentinel is partial.
+  - Comparison assembly shares a monotonic five-second budget with the bounded adapter query and returns an execution_limit partial snapshot when Python construction exceeds it. Comparison duration metrics use the wrapper wall clock exactly once and never substitute response scan executionMs.
+  - RevisionIdentifier and ModelIdentifier now share the authoritative telemetry-v2/OpenAPI grammar at both direct Pydantic and normalized OTLP boundaries. Delimited, case-varied owner/identity/credential/bearer/token/secret/password/private/content/hash/digest values are rejected, while qwen3:8b, llama3.2:latest, sha256_abc, contention, privateer, ownerless, digestive, and contenthash remain accepted where applicable.
+  - Trace structural signatures are fixed-size SHA-256 digests with length-delimited component/operation/child inputs. The deep-chain regression confirms constant 32-byte signatures and the serial 5,000-span run passes without descendant-string accumulation.
+  - Negative or non-millisecond span measurements remain bounded but are explicitly retained_partial evidence; they are never presented as complete zero-duration spans. Valid metric fallbacks remain limited to the canonical duration allowlist.
+  - Telemetry-storage manifest now declares metadata-observation-v1-or-v2 compatibility and the v2 privacy, comparison-bounds, alignment, retention, and self-monitoring evaluators while preserving metadata_only/manual retention and stable dependencies.
+  - Singular marker aggregation now returns unavailable/null whenever a bounded run retains multiple distinct valid values for deployment, git, image, configuration, model, agent, prompt-bundle, or policy markers; one value remains available and v1 absence remains unavailable versus v2 omission missing.
+  - Run-side startedAt, finishedAt, and durationMs now come from one canonical interval: earliest valid span observedAt minus duration through latest valid span observedAt. Metric-only and invalid/partial-span runs expose all three timing fields as unavailable rather than combining unrelated timestamps or choosing a synthetic duration.
+  - Retention target observation counts now come from the ordered ClickHouse rows durably captured in the PostgreSQL target ledger, rather than a separate aggregate read that can lag a just-visible run. The aggregate remains a bounded planning hint; the deletion result therefore reflects the immutable target scope and cannot report a visible purge as zero.
+  - Retention target run counts now come from PostgreSQL count(DISTINCT run_id) over the immutable target ledger as well. ClickHouse aggregate run counts are never used for deletion results or audit metrics, preserving correct run counts when a newly visible run races aggregate visibility.
+risks: []
+unresolved: []

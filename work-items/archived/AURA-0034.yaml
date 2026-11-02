@@ -1,0 +1,123 @@
+id: AURA-0034
+title: Render safe rich assistant responses
+status: integrated
+change_class: feature
+intent: >
+  Render useful Markdown and copyable fenced code in assistant messages while
+  preserving plain-text user messages and enforcing a conservative sanitization
+  boundary during complete and streaming responses.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/clients-and-voice.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Conversation Productivity Feature Set
+    - Use the already-approved marked and dompurify dependencies and do not add Shiki
+    - Assistant messages alone use rich rendering while user messages remain escaped plain text
+    - Angular owns code-block controls and no security bypass API is permitted
+  contracts: []
+feature_references: [AUI-003, RUN-009]
+ownership_zones:
+  - frontend.aura.interaction.conversations
+  - frontend.aura-web.e2e
+  - frontend.dependencies
+allowed_paths:
+  - work-items/active/AURA-0034.yaml
+  - work-items/archived/AURA-0034.yaml
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - frontend/libs/aura/interaction/conversations/src/**
+  - frontend/apps/aura-web-e2e/src/safe-rich-responses.spec.ts
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - contracts/**
+  - services/**
+  - frontend/libs/platform/**
+  - frontend/libs/observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: frontend.aura.interaction.conversations
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: none
+security_privacy:
+  applicable: true
+  concerns:
+    - Untrusted assistant Markdown and streaming fragments must be sanitized before DOM insertion
+    - User messages must remain escaped plain text
+    - Only http https and mailto links are permitted and external links require noopener noreferrer
+    - Images scripts styles forms buttons iframes media event attributes and javascript data or file URLs are forbidden
+    - Untrusted Markdown cannot create interactive controls and Angular security bypass APIs are forbidden
+  data_classes:
+    - private conversation transcript content
+    - untrusted model-generated Markdown and code
+required_agents:
+  implementation: [frontend_worker, test_evaluation_engineer]
+  review: [general_reviewer, architecture_guardian, security_privacy_reviewer]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 2
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Marked and DOMPurify are added with a synchronized pnpm lockfile and no Shiki dependency.
+  - Assistant messages support headings paragraphs emphasis lists blockquotes tables rules safe links inline code and fenced code.
+  - User messages remain escaped plain text.
+  - Sanitization uses a conservative allowlist and permits only http https and mailto link schemes with safe external-link attributes.
+  - Images scripts styles forms buttons iframes embedded media event attributes and javascript data or file URLs never render.
+  - No Angular security bypass API is used and Angular remains an additional sanitization boundary.
+  - Fenced code renders through Angular-owned UI with normalized language labels copy controls and accessible copy feedback.
+  - Streaming partial Markdown is sanitized on every render and malformed fragments remain inert.
+  - Unit Storybook and focused browser security tests cover malicious and large inputs nested content fenced code copy feedback and streaming fragments.
+  - All required checks pass and the reviewed change is committed without pushing.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0034.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0034.yaml
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/safe-rich-responses.spec.ts --config playwright.config.ts --project=desktop
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0034.yaml
+  - docker compose config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

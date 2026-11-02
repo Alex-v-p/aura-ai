@@ -1,0 +1,74 @@
+agent: observatory_worker
+work_item: AURA-0123
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0123_observatory
+  worktree: shared-main
+scope:
+  ownership_zone: aura-observatory.live-event-projection
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/tests/test_aura0123_live_efficiency.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0123.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0123.yaml
+    - .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0123_live_efficiency.py -q (5 passed)
+    - .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0080_formal_regressions.py -q -k 'production_sse_replay_is_continuous_beyond_one_thousand_rows or sse_projection or events_after_query or sse' (6 passed)
+    - .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0119_acceptance.py -q -k 'sse or invalidation_is_run_scoped' (2 passed)
+    - .venv/bin/python -m pytest services/aura-observatory/tests/test_aura0080_api.py -q -k 'sse_terminates_after_session_revocation' (1 passed)
+    - git diff --check
+  failed:
+    - >-
+      The legacy AURA-0080 replay-catch-up test failed in the shared baseline
+      because the in-memory query stream returned only the snapshot and did not
+      emit the newly inserted observation. The failure is unrelated to the
+      payload classifier; the dedicated AURA-0123 tests and existing SSE
+      invalidation tests pass.
+  not_run:
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0123.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0123.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0123.yaml
+    - pnpm --dir frontend exec nx lint observatory-web
+    - pnpm --dir frontend exec nx test observatory-web
+    - pnpm --dir frontend exec nx test observatory
+    - pnpm --dir frontend exec nx e2e observatory-web-e2e
+decisions:
+  - >-
+    Query observation.changed events now classify as a run invalidation only
+    when runId is a canonical UUID accepted by the existing contract. Missing
+    or malformed run correlations retain observation/observationId identity,
+    and health.changed remains system/null.
+  - >-
+    The existing closed LiveEvent field set and metadata_only capture policy
+    are preserved. No trace, content, or other observation attributes are
+    copied into SSE payloads.
+  - >-
+    The production query projection now carries component_id only as internal
+    classification context. Observations emitted by aura.observatory.* retain
+    observation/observationId identity even when correlated to a run, which
+    prevents run-inspection telemetry from refreshing the inspection again.
+    The component context is omitted from the public SSE payload.
+risks:
+  - >-
+    Full aggregate AURA-0123 checks remain integration-owned and were not run
+    in this Observatory backend handoff.
+unresolved: []

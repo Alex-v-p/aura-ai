@@ -1,0 +1,43 @@
+agent: test_evaluation_engineer
+work_item: AURA-0096
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0096_tests
+  worktree: shared
+scope:
+  ownership_zone: evaluation.aura0096-tests
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0096_experiments.py
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0096.yaml
+    - uv run ruff check services/aura-observatory/tests/test_aura0096_experiments.py
+    - uv run pyright services/aura-observatory/tests/test_aura0096_experiments.py
+    - uv run pytest services/aura-observatory/tests/test_aura0096_experiments.py -q (15 passed)
+    - Static migration checks cover forward-only, rerunnable, metadata-only, no-TTL, and bounded regression storage declarations.
+    - In-memory and ASGI tests cover closed definitions, bounded variants/cohorts, owner-only and CSRF-protected experiment routes, idempotency conflicts, exact suite and cohort binding, manual promotion, immutable promotion races, deterministic absolute and relative decisions, metric-class separation, missing and insufficient evidence, attribution references, pagination, retention, privacy, and protected-baseline non-mutation through the service boundary.
+  failed: []
+  not_run:
+    - Optional PostgreSQL 17 migration tests were skipped because AURA_AURA0096_POSTGRES_URL was not configured and no scoped database container was running.
+    - Optional ClickHouse 25.8 provider execution was not available; static migration checks ran instead.
+    - Full repository, frontend, browser, and aggregate integration checks remain integration-maintainer scope.
+decisions:
+  - Used deterministic service-owned evidence keyed by opaque result identities; no prompt, response, artifact content, owner identity, endpoint, or credential fixtures were added.
+  - Treated prompt and policy revision identifiers as allowed metadata while recursively asserting that content-bearing keys remain absent from regression output.
+  - Kept live database checks opt-in and schema-isolated so tests cannot alter shared Observatory state.
+  - Kept the provider reachability limitation non-blocking for this deterministic metadata and baseline slice; live local-provider acceptance remains the composed-stack scope.
+risks:
+  - Live PostgreSQL and ClickHouse migration execution still requires the integration environment to provide pinned PostgreSQL 17 and ClickHouse 25.8 endpoints or scoped disposable containers.
+unresolved: []

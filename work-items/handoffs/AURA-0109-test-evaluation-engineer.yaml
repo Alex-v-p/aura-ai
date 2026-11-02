@@ -1,0 +1,105 @@
+agent: test_evaluation_engineer
+work_item: AURA-0109
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: shared-main
+scope:
+  ownership_zone: evaluation.observatory-ingest-throughput
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/tests/test_aura0109_ingest_throughput.py
+  - work-items/handoffs/AURA-0109-test-evaluation-engineer.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0109.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0109.yaml
+      --role test_evaluation_engineer
+      --path services/aura-observatory/tests/test_aura0109_ingest_throughput.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory
+      ruff check services/aura-observatory/tests/test_aura0109_ingest_throughput.py
+    - >-
+      UV_CACHE_DIR=/tmp/aura-0109-uv uv run --project services/aura-observatory
+      pyright services/aura-observatory/tests/test_aura0109_ingest_throughput.py
+      (0 errors, 0 warnings, 0 informations)
+    - >-
+      Twenty-two focused AURA-0109 tests passed and five environment-gated live
+      cases were skipped without live-service variables: bounded concurrency,
+      exact release waves including a configured 5,000-observation batch, mixed
+      claim settlement, provider-write and settlement cancellation cleanup,
+      production registry claim cancellation, stable provider-failure recovery,
+      complete-batch validation, aggregate health accounting, set-based
+      catalogue idempotency, duplicate identifiers rejected before
+      memory-registry mutation, content-free ClickHouse diagnostics, corrected
+      phase-span correlation, and a barrier-controlled retention-vs-batch race.
+    - >-
+      Selected legacy regression checks passed: 108 passed and 10 skipped across
+      AURA-0078, AURA-0092, AURA-0094, AURA-0108, and AURA-0109 after the
+      owner correction. The additional skips are the environment-gated live
+      cases when the regression command is run without service variables.
+    - >-
+      Fresh live PostgreSQL 17 plus ClickHouse 25.8 acceptance passed all five
+      live cases in 6.24 seconds: production claim/settle/abort/restart
+      recovery; exact multi-deployment unequal-role catalogue associations;
+      the complete TelemetryIngestService admission path through PostgresCatalog,
+      PostgresObservationIdRegistry, and ClickHouse for 128 observations within
+      the 90-second window; the direct 128-observation contiguous-watermark
+      check with zero lag and no duplicate rows; and ambiguous response-loss
+      redelivery using ClickHouse SETTINGS with exactly one row and one immutable
+      sequence. Random-port containers used ephemeral credentials and were
+      removed with their volumes after the run.
+    - >-
+      git diff --check was clean for the test and handoff paths.
+  failed:
+    - >-
+      validate-observability.py reports the pre-existing work-item governance
+      mismatch that observatory_ingest_bounded_concurrency is absent from the
+      component manifest; AURA-0109 forbids manifest edits.
+    - >-
+      The selected legacy run has the known overlapping AURA-0104 migration
+      baseline failure: test_postgres_migrations_are_fresh_apply_ordered_and_contiguous
+      expects migration 14 while the dirty shared tree contains migration 15;
+      this run otherwise passed 108 tests and skipped 10 environment-gated
+      tests.
+  not_run:
+    - >-
+      The composed AURA-0098 full-stack acceptance remains with the integration
+      flow.
+    - >-
+      Full repository validators and the full Observatory suite were not
+      repeated in this test lane because the shared checkout contains unrelated
+      AURA-0098/AURA-0104 changes; the owner handoff records their known results.
+decisions:
+  - >-
+    Added only test/evaluation coverage under the AURA-0109-authorized test
+    path; no production, contract, migration, Core, Aura Web, deployment, or
+    manifest file was changed.
+  - >-
+    Kept the duplicate-registry test strict because acceptance requires
+    deterministic repeated-identifier handling and weakening it would hide a
+    cross-adapter inconsistency.
+  - >-
+    Used deterministic in-process provider and health doubles with opaque
+    identifiers, bounded payloads, and no network or secret material.
+risks: []
+unresolved:
+  - >-
+    Parent integration must resolve the observability-validator mismatch through
+    the work-item/manifest governance path and retain the known AURA-0104
+    migration-baseline attribution.

@@ -1,0 +1,169 @@
+agent: contract_steward
+work_item: AURA-0141
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: deep
+  agent_thread_id: /root/aura0141_contract
+  worktree: shared
+scope:
+  ownership_zone: >-
+    contracts.aura-api.research, contracts.aura-api.artifacts,
+    contracts.aura-api.tasks, contracts.events.knowledge.research,
+    contracts.events.artifacts.generated, contracts.events.execution.tasks,
+    contracts.events.runs.research-lineage,
+    frontend.aura-api-client.generated, repository.contract-module-registry,
+    delivery.aura0141
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/active/AURA-0141.yaml
+  - work-items/handoffs/AURA-0141-contract.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/knowledge/v1/research-events.schema.json
+  - contracts/events/artifacts/v1/generated-artifact-events.schema.json
+  - contracts/events/execution/v1/task-events.schema.json
+  - contracts/events/runs/v1/run-events.schema.json
+  - contracts/tests/test_aura0141_research_artifact_task_contract.py
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - contracts/tests/test_aura0132_briefing_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - tooling/architecture/modules.yaml
+contracts:
+  changed: true
+  id: aura-v1
+  version: 1.22.0
+  compatibility: backward_compatible
+  producers:
+    - Aura Core research application API and lifecycle-event publisher
+    - Aura Core generated-artifacts application API and lifecycle-event publisher
+    - Aura Core execution Task Center projection API and task-source invalidation publisher
+    - Aura Core conversation and run snapshot/event publishers
+  consumers:
+    - generated Aura TypeScript transport client
+    - AURA-0142 Core generated-artifacts implementation
+    - AURA-0143 Core federated Task Center implementation
+    - AURA-0145 durable governed-research coordinator
+    - AURA-0146 conversational research admission and completion delivery
+    - AURA-0147 Aura Web research, task, and artifact features
+  rollout: >-
+    Additive producer-first rollout. Deploy the new Core producers and
+    metadata-only event publishers before enabling consumers; the regenerated
+    client may ship earlier because all new paths and fields are optional to
+    existing callers. Keep research admission and provider capabilities
+    disabled until their later runtime and security work items pass. Existing
+    clients continue using aura-v1 1.22.0 and may omit or ignore every added
+    field. Rollback disables admission and new consumers while retaining the
+    additive schemas and readable task, artifact, and deletion history.
+  generated_outputs:
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  notes: >-
+    Adds owner-authorized no-store research settings, admission, detail,
+    evidence, cancellation, one-time extension, deletion, cleanup retry, and
+    reconciliation resources; generated text-artifact list, detail, immutable
+    revision, preview, download, deletion, retry, and reconciliation resources;
+    and Task Center list, detail, metadata-only SSE, cancel, and retry
+    resources. New research, artifact, task-source invalidation, source-owned
+    internal task projection snapshot, and additive run-event schemas are
+    closed and versioned. The internal projection boundary is defined only in
+    the execution event contract and is absent from public OpenAPI and the
+    generated browser client. Active and deleted resource representations are discriminated;
+    deleted research immediately excludes private content and artifact
+    tombstones retain only required integrity truth. web.research@1 is
+    represented only by an opaque admission result. No public artifact
+    upload/revision mutation, provider transport, storage reference, executor
+    behavior, or Observatory dependency is present.
+migrations:
+  changed: false
+  notes: The additive transport and event contracts require no persistence migration.
+observability:
+  components: []
+  metrics_added: []
+  notes: Observability implementation is outside AURA-0141; event and SSE additions remain metadata-only.
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0141.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0141.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0141.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0141.yaml
+    - pytest -q contracts/tests/test_aura0141_research_artifact_task_contract.py (16 passed)
+    - >-
+      pytest -q contracts/tests/test_aura0141_research_artifact_task_contract.py
+      contracts/tests/test_aura0128_calendar_contract.py::test_calendar_contract_is_v119_additive_and_operations_are_unique
+      contracts/tests/test_aura0132_briefing_contract.py::test_openapi_remains_additive_except_for_authorized_typed_unions
+      (18 passed)
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated
+    - cd frontend && NX_DAEMON=false pnpm exec nx run aura-api-client:lint
+    - git diff --check
+  failed:
+    - >-
+      pytest -q contracts/tests: 114 passed and 2 failed. The remaining
+      test_notification_union_preserves_legacy_shape_and_closes_briefing_source
+      and test_notification_event_v1_preserves_legacy_definitions_additively
+      failures are the two pre-existing AURA-0132 notification baseline
+      failures. AURA-0141 leaves both notification contracts and assertions
+      untouched.
+  not_run: []
+decisions:
+  - >-
+    Kept aura-v1 at 1.22.0 because every new resource and field is additive;
+    existing callers can omit or ignore the additions, while the generated
+    TypeScript client is synchronized to the complete contract.
+  - >-
+    Made research questions, seed URLs, domains, source metadata, excerpts,
+    titles, artifact digests, and source display values available only through
+    owner-authorized no-store REST bodies. Events and Task Center SSE carry
+    opaque identifiers, versions, bounded states, and timestamps only.
+  - >-
+    Defined task-source invalidation with exactly source kind, source ID, and
+    source version beyond the standard versioned event envelope. Added closed
+    TaskProjectionSnapshotQueryV1 and TaskProjectionSnapshotV1 live/rebuild
+    boundary definitions exclusively to the internal execution contract so
+    projection status, owner scope, progress, and capabilities are resolved
+    through source-owned module APIs without direct table access or private
+    display content. These nondelegable authority-bearing types are excluded
+    from aura-v1 and the generated browser transport client.
+  - >-
+    Preserved Run.citations and Message.citations byte-for-byte as legacy
+    DocumentCitation arrays. Added optional webCitations arrays for validated
+    task-scoped ResearchCitation values, so existing citation consumers remain
+    compatible and research citations cannot be confused with document
+    evidence.
+  - >-
+    Separated positive admitted ResearchBudget values from zero-capable
+    ResearchBudgetConsumption values. Active research details require
+    validated citations, while every pending, failed, unknown, and completed
+    deletion response is a closed content-free tombstone.
+  - >-
+    Kept business behavior out of schemas and generated code. The contracts
+    close transport vocabularies, bounds, mutation guards, privacy, lineage,
+    and truthful deletion states; runtime authorization, transitions,
+    persistence, provider selection, sanitization, and reconciliation remain
+    in their owning implementation work items.
+  - >-
+    Preserved explicit non-cascading research deletion through the required
+    deleteLinkedArtifacts boolean defaulting false, and separated known cleanup
+    retry from unknown-outcome reconciliation for both research and artifacts.
+  - >-
+    Registered the research, generated-artifact, and task event contracts as
+    explicit dependency-free event-contract modules. This makes contract
+    ownership visible to repository architecture validation without adding a
+    runtime dependency edge.
+risks:
+  - >-
+    The aggregate contract suite retains two pre-existing AURA-0132
+    notification baseline failures. They are unrelated to AURA-0141 and were
+    deliberately not changed.
+  - >-
+    Generated clients expose optional webCitations immediately, so exhaustive
+    consumers should tolerate validated web and deleted-research citation
+    variants before research producers are enabled. Legacy citations remain
+    unchanged.
+unresolved: []

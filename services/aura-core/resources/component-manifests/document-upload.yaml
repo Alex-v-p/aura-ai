@@ -1,0 +1,21 @@
+component:
+  id: aura.knowledge.document_upload
+  version: 1.0.0
+  owner: knowledge.documents
+  category: persistence
+input:
+  schema: document-upload-v1
+  replayable: false
+output:
+  schema: document-metadata-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies: [postgresql, object_storage]
+metrics: [document_upload_duration_ms, document_upload_outcome]
+evaluators: [document_format_validation, document_owner_isolation]
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, document_id]
+  prohibited: [content, filename, object_key, digest, owner, credential, vector]

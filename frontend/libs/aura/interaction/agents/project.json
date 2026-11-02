@@ -1,0 +1,7 @@
+{
+  "name": "aura-agents",
+  "projectType": "library",
+  "sourceRoot": "libs/aura/interaction/agents/src",
+  "tags": ["scope:aura", "type:feature"],
+  "targets": { "test": { "executor": "nx:run-commands", "options": { "command": "vitest run --config vitest.workspace.ts --dir libs/aura/interaction/agents" } }, "lint": { "executor": "nx:run-commands", "options": { "command": "eslint libs/aura/interaction/agents" } } }
+}

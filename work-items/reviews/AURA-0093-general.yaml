@@ -1,0 +1,43 @@
+agent: general_reviewer
+work_item: AURA-0093
+verdict: PASS
+checked:
+  - >-
+    Re-read the current AURA-0093 diff and re-ran every remaining reproduction
+    from the prior general review. No reviewed production, test, contract,
+    migration, or work-item file was edited.
+  - >-
+    Reversed retrieval ranks now fail the per-cutoff recall/precision, MRR, and
+    aggregate measurements; valid truncation=allowed evidence passes whether
+    truncated or not, while absent required context evidence remains explicitly
+    not_observed.
+  - >-
+    The closed runtime registry accepts only built-in evaluator identities and
+    the single reviewed legacy exact evaluator identity. An arbitrary UUID with
+    exact_match may be stored as inert definition metadata but cannot be bound
+    to or executed by a suite.
+  - >-
+    Directly verified suite rejection for an arbitrary exact-match evaluator,
+    local_judge reference against a deterministic definition, and a catalogued
+    component outside the evaluator definition's component allowlist.
+  - >-
+    Verified selected-family dispatch and score provenance: one selected exact
+    evaluator emits only exact measurements, and mismatched dataset, suite,
+    evaluator, case, or component context is rejected rather than persisted.
+  - >-
+    Verified source/capture/purpose compatibility between datasets and cases,
+    bounded authorization metadata lookup, exact artifact-reference matching,
+    and fail-closed rejection of incompatible source authorization.
+  - >-
+    Verified response evaluation reports missing digest and refusal evidence as
+    not_observed and fails missing instruction/style/property or contradictory
+    refusal evidence. Rubric/calibration variants remain fingerprint-bound.
+  - >-
+    Re-ran the focused Observatory AURA-0093 contract, definition, evaluator,
+    migration, score, and observability matrix: 160 passed.
+  - >-
+    Retained prior live PostgreSQL 17 evidence: fresh migrations, migration
+    0009 rerun, concurrent identical creation, immutable conflict, and durable
+    conflict/rejected audit all passed in an isolated disposable schema; the
+    scoped container was removed after verification.
+findings: []

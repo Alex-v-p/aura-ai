@@ -1,0 +1,217 @@
+id: AURA-0066
+title: Add conversational reminder management
+status: integrated
+change_class: contract
+intent: >
+  Extend Aura's governed one-tool-per-run runtime with owner-authorized reminder
+  discovery and always-confirmed recurring-reminder commands, deterministic target
+  resolution, pinned run timezones, typed private command proposals, and an
+  immutable built-in policy successor while preserving historical policies,
+  reminder.create@1, one-shot APIs, and metadata-only operational surfaces.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/tools-automation-and-integrations.md
+  decisions:
+    - Owner-approved read tools reminder.list@1 and reminder.inspect@1 with at most ten owner-authorized results and optional query or state filtering.
+    - Owner-approved always-confirmed reminder.series.create@1 reminder.reschedule@1 reminder.series.update@1 reminder.series.pause@1 reminder.series.resume@1 and reminder.cancel@1 tools.
+    - Owner-approved deterministic owner-scoped resolution that creates no proposal for zero or multiple exact-enough matches.
+    - Owner-approved use of the run's validated pinned IANA timezone for conversational creation and rescheduling with clarification when absent.
+    - Owner-approved typed private reminder-command proposals that pin operation normalized arguments target identifier and expected version before approval.
+    - Owner-approved one approval per conversational command and one tool call per run.
+    - Owner-approved immutable built-in Aura policy successor while existing conversations retain pinned revisions and custom agents remain deny-by-default.
+    - Existing reminder.create@1 one-shot APIs v1 reminder events and historical tool policies remain unchanged.
+  contracts:
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - AUT-002
+  - AUT-003
+  - AUT-004
+  - AUT-013
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUT-020
+ownership_zones:
+  - aura-core.runtime.tools
+  - aura-core.execution.runs
+  - aura-core.automation-reminders.public-api
+  - aura-core.automation-reminders.proposals
+  - aura-core.governance.approvals
+  - aura-core.interaction.agents.policies
+  - aura-core.database.migrations
+  - evaluation.conversational-reminders
+allowed_paths:
+  - work-items/active/AURA-0066.yaml
+  - work-items/archived/AURA-0066.yaml
+  - docs/specifications/tools-automation-and-integrations.md
+  - services/aura-core/migrations/versions/0018_conversational_reminders.py
+  - services/aura-core/resources/component-manifests/tool-selection.yaml
+  - services/aura-core/resources/component-manifests/tool-execution.yaml
+  - services/aura-core/resources/component-manifests/approval-workflow.yaml
+  - services/aura-core/resources/component-manifests/execution-run-coordinator.yaml
+  - services/aura-core/src/aura_core/runtime/tools/public.py
+  - services/aura-core/src/aura_core/runtime/tools/__init__.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/public.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/proposals.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/repository.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/public.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/repository.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/persistence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/domains/execution/runs/events.py
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/postgres.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/sql_store.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  - services/aura-core/src/aura_core/bootstrap/approval_uow.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/bootstrap/database.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/approvals.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/outbox/service.py
+  - services/aura-core/src/aura_core/platform/outbox/nats.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/test_tool_runtime.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_approval_evaluation.py
+  - services/aura-core/tests/test_approvals.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/test_reminders.py
+  - services/aura-core/tests/test_migration_0018_conversational_reminders.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/test_outbox.py
+  - services/aura-core/tests/test_reminder_series.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_tool_evaluation.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/system/test_agents_personas_api.py
+  - services/aura-core/tests/system/test_production_adapters.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_notification_api.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/openapi/**
+  - contracts/events/automation/**
+  - contracts/events/notifications/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-core/src/aura_core/domains/automation/notifications/**
+  - services/aura-observatory/**
+  - frontend/**
+  - deploy/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - runtime tool descriptors and results
+    - private reminder command proposals
+    - immutable built-in tool policy revisions
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: automation.reminders
+observability:
+  applicable: true
+  affected_components:
+    - aura.runtime.tool_selection
+    - aura.runtime.tool_execution
+    - aura.governance.approval_workflow
+    - aura.execution.run_coordinator
+  required_metrics:
+    - reminder_tool_selection_outcome
+    - reminder_tool_resolution_outcome
+    - reminder_command_approval_outcome
+    - reminder_command_execution_outcome
+  required_evaluators:
+    - conversational_reminder_owner_isolation
+    - conversational_reminder_approval_before_side_effect
+    - conversational_reminder_metadata_only_capture
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Tool reads and deterministic target resolution are owner-scoped and expose no cross-owner existence signal.
+    - Zero-match multiple-match and missing-timezone clarification produces no proposal approval or side effect.
+    - Every mutation proposal pins operation normalized arguments target identifier expected version and run timezone before approval.
+    - Tool arguments content recurrence details target queries raw results owner identity due times and timezone values remain absent from run events SSE NATS audit metadata logs and telemetry.
+    - Owner-authorized approval detail may reveal only the private command summary through the established protected approval API.
+    - Rejection expiry cancellation duplicate wakeups and approval races produce one terminal result and no unapproved side effect.
+    - Existing conversations retain historical policies and custom agents do not receive grants automatically.
+  data_classes:
+    - private_reminder_content
+    - private_recurrence_configuration
+    - owner_scoped_targets_and_queries
+    - pinned_command_arguments_and_versions
+    - private_timezone_and_due_values
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - reminder.list@1 returns at most ten owner-authorized reminder or series summaries with bounded optional query and state filters and reminder.inspect@1 returns one uniquely resolved owner record or a deterministic clarification result.
+  - reminder.series.create@1 reminder.reschedule@1 reminder.series.update@1 reminder.series.pause@1 reminder.series.resume@1 and reminder.cancel@1 are always-confirmed mutations and reminder.cancel@1 requires explicit occurrence or series scope.
+  - Natural-language target resolution is deterministic and mutation proceeds only for one exact-enough owner match; zero or multiple matches return clarification without creating a proposal or approval.
+  - Conversational creation and rescheduling use only the run's validated pinned IANA timezone and missing timezone produces clarification without server-timezone fallback.
+  - Private typed command proposals pin the resolved target identifier expected version operation normalized arguments and timezone before approval and are immutable afterward.
+  - Approved commands execute through the existing durable resume path with one terminal result across rejection expiry cancellation duplicate wakeups and approval races and with no side effect before approval.
+  - One tool call remains the per-run maximum and ambiguity is resolved in a later user turn rather than an autonomous tool loop.
+  - A successor immutable built-in Aura revision grants the new tools; prior conversations retain pinned revisions and custom agents remain deny-by-default.
+  - Existing reminder.create@1 one-shot APIs reminder event v1 contracts and historical policy revisions remain behaviorally and wire compatible.
+  - Tool arguments reminder content recurrence data raw results target queries owner identity due times and timezone values are absent from run events SSE NATS audit metadata logs traces and metrics while protected approval detail may show a private command summary.
+  - Automated coverage proves permissions owner isolation unique ambiguous and zero-match resolution timezone clarification proposal pinning approval-before-side-effect rejection expiry cancellation redelivery policy immutability and metadata-only telemetry.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0066.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0066.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0066.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0066.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0066.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests/test_tool_runtime.py services/aura-core/tests/test_conversations.py services/aura-core/tests/test_approval_evaluation.py services/aura-core/tests/test_reminder_series.py services/aura-core/tests/test_telemetry.py services/aura-core/tests/test_tool_evaluation.py
+  - uv run --project services/aura-core pytest services/aura-core/tests
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

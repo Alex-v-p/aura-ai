@@ -1,0 +1,11 @@
+agent: security_privacy_reviewer
+work_item: AURA-0131
+verdict: PASS
+checked:
+  - Private calendar teardown clears content, authorization paths, cursors, notices, errors, and every in-flight request generation.
+  - Calendar-scoped 403 handling remains isolated while 401 session expiry invokes the shared session boundary.
+  - OAuth navigation accepts only validated same-origin relative paths and does not persist or expose the opaque authorization path.
+  - Mutation requests fail closed without secure randomness and use CSRF plus crypto.randomUUID idempotency headers.
+  - Fresh discovery replaces stale optimistic versions, incomplete discovery cannot save, and event and conflict request bodies remain contract-specific.
+  - Hybrid focus settlement passes OAuth recovery, disconnect confirmation, and permission-denied isolation regressions.
+findings: []

@@ -1,0 +1,28 @@
+agent: general_reviewer
+work_item: AURA-0089
+verdict: PASS
+checked:
+  - >-
+    Formalized the final security_privacy_reviewer PASS verdict without
+    impersonating that specialist role; reviewed the privacy decisions,
+    evaluation schemas, lifecycle events, negative contract tests, and all
+    implementation handoffs.
+  - >-
+    Confirmed content-bearing evaluation records require explicit controlled
+    authorization, purpose, capture classification, scope, and manual-only
+    retention, while metadata_only production telemetry remains the default.
+  - >-
+    Confirmed durable lifecycle events are closed and content-free: raw
+    content, prompts, rubrics, comments, credentials, endpoints, object keys,
+    filenames, owner identity, exception text, arbitrary attributes, and
+    hidden reasoning are prohibited.
+  - >-
+    Confirmed artifact references are opaque and bounded, baseline promotion
+    is explicit and immutable, local judging is constrained to later approved
+    boundaries, and untrusted evaluation content cannot grant authority.
+  - >-
+    Reviewed negative coverage for unknown fields, missing bounds,
+    metadata-only content, credentials, endpoints, object keys, owner
+    identity, and untrusted instructions; no unresolved security or privacy
+    findings remain.
+findings: []

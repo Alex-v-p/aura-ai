@@ -21,6 +21,7 @@ Read this file first, then select the smallest document relevant to the task:
 | Shell, conversation UI, controls, overlays, or interaction states | [Components and interactions](components-and-interactions.md) |
 | Errors, degraded operation, recovery, or sensitive diagnostics | [Failure and recovery states](failure-and-recovery-states.md) |
 | Inspiration analysis, research, or source attribution | [Reference research](reference-research.md) |
+| Governed web research, generated artifacts, Task Center, or their delivery decomposition | [Governed research, artifacts, and Task Center](governed-research-artifacts-and-tasks.md) |
 
 The documentation index and [context routing](../context-routing.md) are the
 discovery paths for this directory. A work item may narrow the context further.
@@ -42,6 +43,10 @@ It can identify likely surfaces (for example conversation, artifacts,
 approvals, memory, and settings), but it does not expand this design work into
 those product capabilities. Aura Observatory remains a separate product and
 must not be treated as an admin route inside Aura Web.
+
+The governed research document is an approved architecture and delivery design
+under ADR-0018. It authorizes only the bounded behavior and follow-on work-item
+decomposition recorded there; it does not itself create runtime scope.
 
 ## Design direction at a glance
 

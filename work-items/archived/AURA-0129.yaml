@@ -1,0 +1,172 @@
+id: AURA-0129
+title: Establish the Google Calendar OAuth platform boundary
+status: integrated
+change_class: repository_governance
+intent: >
+  Establish a disabled-by-default, runtime-secret-backed platform boundary for
+  Google Calendar OAuth with fixed endpoints, least-privilege scopes, exact
+  callback validation, versioned credential-encryption key delivery, and
+  least-privilege deployment wiring, without implementing calendar domain
+  persistence, provider calls, API routes, or frontend behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/specifications/tools-automation-and-integrations.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - work-items/archived/AURA-0128.yaml
+    - The owner approved server-held encrypted OAuth credentials, revocation before removal when reachable, disabled reads with recoverable uncertain revocation, and reauthorization after expiry on 2026-10-26.
+    - Provider credential encryption will use AES-256-GCM with per-record random nonces and owner-and-connection associated data in AURA-0130; this slice delivers a versioned key ring with one active encryption key and retained decrypt-only keys for rotation.
+    - The versioned key ring and Google OAuth client secret are runtime file secrets and never environment values, source-controlled values, browser values, logs, telemetry, prompts, or error detail.
+    - Google authorization token revocation and Calendar API origins are fixed application constants; user-controlled endpoints discovery and redirects are prohibited.
+    - Network-enforced destination allowlisting is not introduced. The existing API-only Core egress network and fixed validated HTTPS endpoints are the approved boundary for this stage.
+    - Only the Aura Core API process receives Google Calendar client and encryption secrets because connection and on-demand calendar reads are API-owned; workers schedulers browsers and Observatory receive neither.
+    - This is Stage 2 slice 2 only; calendar persistence provider HTTP behavior lifecycle routes and product UI remain later sequential work items.
+    - Baseline verification at parent checkpoint 99e497b records two unrelated Pyright failures in test_aura0125_idle_memory_telemetry.py and one unrelated Garage substring assertion failure in deploy/compose/test_topology.py; this item keeps focused type and topology gates without changing or waiving those baselines.
+    - The local HTTP overlay depends on the local identity overlay for the aura-identity network; its required Compose validation uses compose.yaml then local-identity.yaml then local-http.yaml in documented overlay order.
+    - Calendar secret mounts and enabled-only file-path environment entries live in an explicit deploy/compose/google-calendar.yaml opt-in overlay; the base and local HTTP deployments remain disabled and require no Calendar secret files.
+    - Docker Compose may present mounted secrets as root-owned read-only mode 0444 or 0644; descriptor-level validation requires a regular no-follow file with no group-or-other write bits, while local source placeholders remain owner-only mode 0600.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AUT-014
+  - AUT-016
+  - GOV-007
+  - GOV-024
+  - INT-007
+ownership_zones:
+  - platform.google-calendar-oauth
+  - deploy.google-calendar-secrets-and-egress
+  - repository.core-module-registry
+  - evaluation.google-calendar-platform
+  - delivery.aura0129
+allowed_paths:
+  - work-items/active/AURA-0129.yaml
+  - work-items/archived/AURA-0129.yaml
+  - work-items/handoffs/AURA-0129-*.yaml
+  - work-items/reviews/AURA-0129-*.yaml
+  - work-items/integration/AURA-0129.yaml
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/calendar_oauth.py
+  - services/aura-core/tests/test_aura0129_calendar_oauth_platform.py
+  - services/aura-core/tests/test_security_configuration.py
+  - compose.yaml
+  - .env.example
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/google-calendar.yaml
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0129_calendar_oauth.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/tests/test_modules.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - services/aura-core/src/aura_core/domains/**
+  - services/aura-core/src/aura_core/providers/**
+  - services/aura-core/src/aura_core/entrypoints/**
+  - services/aura-core/src/aura_core/bootstrap/**
+  - services/aura-core/migrations/**
+  - services/aura-observatory/**
+  - frontend/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected:
+    - aura-v1 calendar integration resources
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - OAuth client secrets and credential encryption keys must be file-backed repr-safe process secrets available only to Aura Core API.
+    - The encryption key ring must require unique bounded key identifiers exactly one active AES-256 key and retained decrypt-only keys so rotation never destroys still-authorized credentials.
+    - Callback URI validation must require the exact configured stable Aura public HTTPS origin and fixed calendar callback path with no query fragment credentials or alternate origin.
+    - Authorization token revocation and Calendar API endpoints must be fixed Google HTTPS constants and must reject discovery runtime override redirects or user input.
+    - The enabled integration must fail closed and report content-free readiness when configuration or secret material is missing malformed or insecure.
+    - Deployment output tests must prove secret values cannot enter rendered environment command output logs or browser and that workers schedulers and Observatory receive no calendar secret.
+  data_classes:
+    - Google OAuth client secret
+    - versioned provider credential encryption key ring
+    - non-secret OAuth client identifier and exact callback configuration
+    - content-free calendar integration readiness
+required_agents:
+  implementation:
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 4
+  max_parallel_writers: 2
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Google Calendar integration configuration is disabled by default and requires no calendar secret while disabled; enabling it requires a non-empty client identifier client secret exact callback and valid encryption key ring and otherwise fails closed before readiness.
+  - The platform publishes only fixed HTTPS constants for the Google authorization token revocation and Calendar API endpoints and the exact read-only calendar scope; no setting environment input discovery document redirect or caller can replace them.
+  - The exact callback is the configured stable Aura public origin plus the fixed calendar callback path; production rejects HTTP localhost query fragments userinfo credentials alternate ports and origin mismatch while the existing explicit local-http overlay remains development-only.
+  - The client secret and credential encryption key ring are read only from mounted secret files reject simultaneous plaintext environment values and remain excluded from repr serialization logs errors and rendered Compose environment.
+  - The versioned JSON key ring accepts one active and bounded retained decrypt-only 32-byte keys with unique safe identifiers rejects unknown duplicate malformed short or oversized input and exposes key bytes only through a narrow repr-safe platform value object.
+  - Credential encryption policy is fixed to AES-256-GCM with fresh 96-bit nonces owner-and-connection associated data and a stored key version; cryptographic persistence and use remain AURA-0130 scope.
+  - Only aura-core-api receives the two calendar secret mounts and external egress; Aura Web worker scheduler migration evaluation Observatory and other services receive neither secret and gain no new network.
+  - Deployment configuration documents disabled defaults runtime secret paths exact callback read-only scope and key rotation without including usable secret values; local bootstrap creates only permission-restricted development placeholders.
+  - Content-free readiness distinguishes disabled ready missing configuration and invalid configuration without exposing paths key identifiers client identifiers endpoint values or validation detail.
+  - Focused tests cover production and development configuration exact origins secret-file precedence and exclusivity key-ring bounds fixed endpoints scope least privilege service secret isolation rendered-config redaction and fail-closed readiness.
+  - No contract domain provider HTTP route migration persistence frontend Observatory dependency package lock or protected baseline changes occur.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0129.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0129.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0129.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0129.yaml
+  - python3 -m unittest tooling.architecture.tests.test_common tooling.architecture.tests.test_modules -v
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/src/aura_core/platform/auth.py services/aura-core/src/aura_core/platform/calendar_oauth.py services/aura-core/tests/test_aura0129_calendar_oauth_platform.py services/aura-core/tests/test_security_configuration.py deploy/tests/test_aura0129_calendar_oauth.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/src/aura_core/platform/auth.py services/aura-core/src/aura_core/platform/calendar_oauth.py services/aura-core/tests/test_aura0129_calendar_oauth_platform.py services/aura-core/tests/test_security_configuration.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_aura0129_calendar_oauth_platform.py services/aura-core/tests/test_security_configuration.py deploy/tests/test_aura0129_calendar_oauth.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider deploy/compose/test_topology.py::ComposeTopologyTests::test_calendar_secret_mounts_are_api_only_and_api_keeps_external_egress deploy/compose/test_topology.py::ComposeTopologyTests::test_calendar_secret_definitions_are_file_only_and_values_never_rendered deploy/compose/test_topology.py::ComposeTopologyTests::test_local_calendar_placeholders_are_owner_readable_only_and_generated_without_values -q
+  - docker compose config --quiet
+  - AURA_GOOGLE_CALENDAR_CLIENT_ID=compose-validation-client AURA_GOOGLE_CALENDAR_CLIENT_SECRET_FILE=/dev/null AURA_PROVIDER_CREDENTIAL_KEY_RING_FILE=/dev/null docker compose -f compose.yaml -f deploy/compose/google-calendar.yaml config --quiet
+  - docker compose -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - AURA-0130 must define the durable credential record lifetime key-rotation rewrite process and revocation-recovery workflow inside the approved AES-256-GCM key-version boundary.

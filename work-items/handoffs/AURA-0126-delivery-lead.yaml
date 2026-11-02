@@ -1,0 +1,48 @@
+agent: delivery_lead
+work_item: AURA-0126
+status: complete
+runtime:
+  model: gpt-6-astra
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: delivery.daily-action-initiative-planning
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - docs/design/daily-action-and-workflow-initiative.md
+  - work-items/archived/AURA-0126.yaml
+  - work-items/handoffs/AURA-0126-delivery-lead.yaml
+  - work-items/reviews/AURA-0126-general.yaml
+  - work-items/reviews/AURA-0126-architecture.yaml
+  - work-items/reviews/AURA-0126-security-privacy.yaml
+  - work-items/reviews/AURA-0126-observability.yaml
+  - work-items/reviews/AURA-0126-ux.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0126.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0126.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0126.yaml
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - Stage 1 is immediately activatable as a contract-preserving Aura Web slice.
+  - Stages 2 through 4 remain gated by the owner decisions recorded in the initiative plan.
+  - Future runtime component and evaluator identities are proposed planning contracts and require registration by each implementation work item.
+risks:
+  - Google Calendar credential lifecycle remains an owner decision before Stage 2.
+  - Briefing delivery and retention remain owner decisions before Stage 3.
+  - The initial workflow step catalogue and retention remain owner decisions before Stage 4.
+unresolved:
+  - Owner decision gates listed in work-items/archived/AURA-0126.yaml and the initiative plan.

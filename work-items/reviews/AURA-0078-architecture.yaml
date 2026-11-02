@@ -1,0 +1,11 @@
+agent: architecture_guardian
+work_item: AURA-0078
+verdict: PASS
+checked:
+  - Production API and worker composition use isolated Observatory-owned PostgreSQL and ClickHouse adapters; memory adapters remain explicit test implementations and no Aura Core import or database access exists.
+  - The closed metadata-observation v1 contract, runtime validation, complete ClickHouse row mapping, service-owned migrations, explicit persistence ports, thin entrypoints, and granular module registry match the approved ownership and dependency direction.
+  - PostgreSQL receipts distinguish acquired, active-pending, stale-pending, and completed states; active work is retryable rather than counted as duplicate, stale leases are atomically reclaimed, and only completed receipts classify as duplicates.
+  - ClickHouse writes complete receipts only after a successful response, retain pending state across failures, reuse the stable observation ID as the retry token, and configure non_replicated_deduplication_window to make token deduplication effective for the non-replicated ReplacingMergeTree table.
+  - Focused tests cover concurrent claims, PostgreSQL completed/fresh/stale classification, crash recovery, pre-insert failure, ambiguous response recovery, stable token reuse, and the ClickHouse migration deduplication setting.
+  - All required architecture checks passed; Observatory pytest reported 65 passed, tooling tests reported 52 passed, and Pyright, Ruff, repository-shape, module-registry, import-boundary, service-isolation, contract, observability, changed-path, baseline, and diff checks were clean.
+findings: []

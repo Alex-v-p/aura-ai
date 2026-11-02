@@ -1,0 +1,21 @@
+agent: aura_ux_ui_reviewer
+work_item: AURA-0156
+verdict: PASS
+checked:
+  - >-
+    The corrected README stacks both 1920x1080 screenshots at full width,
+    links their original-resolution assets, and provides accurate alt text and
+    visible captions suitable for common GitHub content widths.
+  - >-
+    Aura Web shows an authenticated connected new-conversation workspace with
+    no private content; Observatory shows a signed-in operational overview
+    containing sanitized aggregate metadata only.
+  - >-
+    The Observatory caption explicitly identifies its visible Partial and
+    Degraded signals as a sanitized degraded-state diagnostic example, so the
+    failure presentation is intentional rather than an unexplained product
+    condition.
+  - >-
+    No credentials, tokens, private conversations, hostnames, run identifiers,
+    provider payloads, or accidental focus outline are visible.
+findings: []

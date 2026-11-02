@@ -1,0 +1,61 @@
+agent: platform_worker
+work_item: AURA-0076
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/impl_0076_platform
+  worktree: dev
+scope:
+  ownership_zone: aura-core.runtime.models, aura-core.providers.models.ollama, aura-core.providers.object-storage, aura-core.platform.object-store, repository.module-registry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - pyproject.toml
+  - uv.lock
+  - services/aura-core/src/aura_core/domains/execution/runs/ports.py
+  - services/aura-core/src/aura_core/platform/object_store/__init__.py
+  - services/aura-core/src/aura_core/platform/object_store/image_inspection.py
+  - services/aura-core/src/aura_core/providers/object_storage/__init__.py
+  - services/aura-core/src/aura_core/providers/object_storage/image_inspection.py
+  - services/aura-core/src/aura_core/providers/models/ollama/adapter.py
+  - services/aura-core/src/aura_core/providers/models/ollama/fake.py
+  - services/aura-core/src/aura_core/runtime/models/ports.py
+  - services/aura-core/tests/test_ollama_vision_attachments.py
+  - tooling/architecture/modules.yaml
+  - work-items/handoffs/AURA-0076-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.models.inference
+  metrics_added: []
+verification:
+  passed:
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest services/aura-core/tests/test_ollama_vision_attachments.py services/aura-core/tests/test_ollama.py -q (31 passed)
+    - uv lock (resolved 60 packages and added Pillow 12.3.0)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-core/src/aura_core/runtime/models/ports.py services/aura-core/src/aura_core/domains/execution/runs/ports.py services/aura-core/src/aura_core/providers/models/ollama/adapter.py services/aura-core/src/aura_core/providers/models/ollama/fake.py services/aura-core/src/aura_core/providers/object_storage services/aura-core/src/aura_core/platform/object_store services/aura-core/src/aura_core/bootstrap/attachment_uow.py services/aura-core/tests/test_ollama_vision_attachments.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core/src/aura_core/runtime/models/ports.py services/aura-core/src/aura_core/domains/execution/runs/ports.py services/aura-core/src/aura_core/providers/models/ollama/adapter.py services/aura-core/src/aura_core/providers/models/ollama/fake.py services/aura-core/src/aura_core/providers/object_storage services/aura-core/src/aura_core/platform/object_store services/aura-core/src/aura_core/bootstrap/attachment_uow.py services/aura-core/tests/test_ollama_vision_attachments.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run python3 tooling/architecture/validate-module-registry.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run python3 tooling/architecture/validate-import-boundaries.py
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0076.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Full Core, frontend, contract, observability, and full-stack suites remain integration-owned.
+    - Current active-work-item changed-path validation covers the provider object-storage paths and the concurrently changed API errors path.
+decisions:
+  - ChatMessage gained an additive image_parts tuple with a compatibility images property; existing text-only producers remain unchanged.
+  - Provider-neutral image parts carry only an allowlisted media type and bounded normalized bytes; filenames, EXIF, object keys, and attachment identifiers do not cross the model port.
+  - Ollama maps provider spellings such as multimodal, image, and visual to canonical vision, and serializes bytes only into native base64 images fields for plain, tool, and title/synthesis requests.
+  - Vision verification force-refreshes provider inventory and requires both provider digest and revision before accepting an advertised vision capability; the cache key includes model identity, digest, revision, and capability.
+  - PillowImageInspector is content-free at its error boundary and enforces the 25 MB, 40 megapixel, static PNG/JPEG/WebP, and 2048-pixel derivative limits.
+  - PillowImageInspector now directly implements the attachment ImageInspector inward port; its richer provider result remains compatible with Core's bounded InspectedImage shape.
+  - The module registry was extended for artifacts.attachments and all Core import dependencies introduced by the concurrent attachment implementation.
+  - Pillow is an explicit locked runtime dependency so production attachment composition can inject the bounded decoder-backed inspector.
+risks:
+  - The approved plan permits a future image-capable model addition; no Ollama model identifier or automatic routing was added here.
+unresolved: []

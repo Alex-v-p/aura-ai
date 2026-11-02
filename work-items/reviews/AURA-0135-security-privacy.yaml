@@ -1,0 +1,16 @@
+agent: security_privacy_reviewer
+work_item: AURA-0135
+verdict: PASS
+checked:
+  - Confirmed ambiguous effects enter nonterminal resolution_required, block later steps, expose only reconcile or cancel, and never offer replay.
+  - Confirmed expected-version PostgreSQL locking governs reconciliation, cancellation, deadline, and settlement races without reopening terminal truth.
+  - Confirmed the value algebra, four step objects, selectors, identifiers, statuses, outcomes, recovery capabilities, checkpoints, approval triples, and unknown-field handling are closed and bounded.
+  - Confirmed the first slice is manual-only with one tools-disabled, memory-disabled, nondelegating, nonreplayable five-minute agent run.
+  - Confirmed workflow input and prior results are bounded untrusted evidence and cannot alter instructions, control flow, grants, confirmations, notifications, or nested execution.
+  - Confirmed approval presentation is immutable, system-derived, exact-step-bound, and cannot absorb prior outputs or bypass nested confirmation.
+  - Confirmed service identities carry no owner authority and every admission or resume revalidates pinned narrowed context and grants.
+  - Confirmed replay and transport redelivery identities prevent duplicate effects and terminal instances cannot reopen.
+  - Confirmed deletion is owner-authorized, CSRF-protected, idempotent, scope-specific, non-cascading, and preserves content-free lineage tombstones.
+  - Confirmed private workflow values remain excluded from URLs, ordinary events, outbox payloads, SSE, telemetry, logs, browser persistence, caches, screenshots, and arbitrary evidence export.
+  - Confirmed PostgreSQL authority, public domain boundaries, executor privacy, and ADR-0017 isolation remain intact.
+findings: []

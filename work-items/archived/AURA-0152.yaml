@@ -1,0 +1,158 @@
+id: AURA-0152
+title: Make notification idempotency race fixture winner-aware
+status: integrated
+change_class: bugfix
+intent: >
+  Correct the PostgreSQL briefing-notification concurrency fixture so its
+  duplicate-delivery phase follows whichever changed-payload request actually
+  won the advisory-lock race, preserving the production race semantics while
+  removing an order-dependent false failure from AURA-0146 validation.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - work-items/archived/AURA-0055.yaml
+    - work-items/archived/AURA-0132.yaml
+    - work-items/archived/AURA-0146.yaml
+    - work-items/active/AURA-0148.yaml
+    - >-
+      The AURA-0146 aggregate Core command produced 298 passed, one failed,
+      and seven skipped. The only failure was
+      test_postgresql_briefing_idempotency_serializes_changed_payload_and_duplicates;
+      a targeted fresh-database run reproduced the failure once and then
+      passed four times, establishing an order-dependent fixture failure.
+    - >-
+      The two concurrent same-key changed-payload requests correctly serialize
+      through PostgreSQL advisory locking, but either request may acquire the
+      lock first. Exactly one request succeeds and one returns
+      NotificationIdempotencyConflict; their positional order is not part of
+      the notification contract.
+    - >-
+      The duplicate phase currently uses first_result_id unconditionally. If
+      the second changed-payload request won, that phase creates a second
+      notification instead of exercising source-neutral duplicate delivery for
+      the persisted winner. The correction must derive the duplicate result
+      identity from the successful changed-payload response and retain the
+      exact conflict, single-notification, replay, and cleanup assertions.
+    - >-
+      This is a test-fixture correction only. Production notification code,
+      public contracts, migrations, persistence constraints, component
+      manifests, telemetry, and protected baselines must remain unchanged, so
+      no new ADR is required.
+    - >-
+      The exact archived AURA-0146 aggregate Core test selection must run with
+      AURA_0055_DATABASE_URL and AURA_TEST_DATABASE_URL pointing at the same
+      fresh isolated migrated PostgreSQL database. The corrected notification
+      node must execute rather than skip.
+  contracts: []
+feature_references: []
+ownership_zones:
+  - evaluation.notification-idempotency-postgresql
+  - delivery.aura0152
+allowed_paths:
+  - work-items/active/AURA-0152.yaml
+  - work-items/archived/AURA-0152.yaml
+  - work-items/handoffs/AURA-0152-*.yaml
+  - work-items/reviews/AURA-0152-*.yaml
+  - work-items/integration/AURA-0152.yaml
+  - services/aura-core/tests/test_notifications.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - deploy/**
+  - evaluations/**
+  - frontend/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - tooling/**
+  - services/aura-observatory/**
+  - services/aura-research-static-fetcher/**
+  - services/aura-research-browser-fetcher/**
+  - services/aura-core/src/**
+  - services/aura-core/migrations/**
+  - services/aura-core/resources/**
+  - services/aura-core/tests/conftest.py
+  - services/aura-core/tests/test_aura0148_governed_research.py
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation:
+    - core_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - >-
+    The changed-payload concurrency phase still proves exactly one successful
+    briefing notification and exactly one NotificationIdempotencyConflict for
+    the same owner and idempotency key, without assuming acquisition order.
+  - >-
+    The distinct-key duplicate phase uses the briefing result identity from
+    the successful changed-payload response, returns one notification identity
+    for both requests, and leaves exactly one replay event for the owner.
+  - >-
+    Four consecutive targeted executions pass against four independently fresh
+    migrated PostgreSQL databases with no skip, expected failure, retry of a
+    failed attempt, or production-code modification.
+  - >-
+    The exact AURA-0146 aggregate Core test selection passes against a fresh
+    isolated PostgreSQL database, and the corrected notification node executes
+    rather than skips while the archived command's unrelated conditional skips
+    remain unchanged.
+  - >-
+    No product code contract migration persistence constraint component
+    manifest telemetry protected baseline dependency or AURA-0148 validation
+    file changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0152.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0152.yaml --path work-items/active/AURA-0152.yaml --path services/aura-core/tests/test_notifications.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0152.yaml
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0152.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core/tests/test_notifications.py
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core/tests/test_notifications.py
+  - for database_url in "${AURA_0152_DATABASE_URL_1:?fresh isolated PostgreSQL URL 1 required}" "${AURA_0152_DATABASE_URL_2:?fresh isolated PostgreSQL URL 2 required}" "${AURA_0152_DATABASE_URL_3:?fresh isolated PostgreSQL URL 3 required}" "${AURA_0152_DATABASE_URL_4:?fresh isolated PostgreSQL URL 4 required}"; do AURA_0055_DATABASE_URL="$database_url" AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_notifications.py::test_postgresql_briefing_idempotency_serializes_changed_payload_and_duplicates -q || exit 1; done
+  - AURA_0055_DATABASE_URL=${AURA_TEST_DATABASE_URL:?fresh isolated PostgreSQL URL required} AURA_TEST_DATABASE_URL=${AURA_TEST_DATABASE_URL:?fresh isolated PostgreSQL URL required} AURA_TEST_DEPENDENCIES_ISOLATED=1 UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_research_delivery*.py services/aura-core/tests/test_tool_*.py services/aura-core/tests/test_run_*.py services/aura-core/tests/test_conversations.py services/aura-core/tests/test_notifications.py services/aura-core/tests/test_migrations.py -q
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

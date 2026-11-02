@@ -1,0 +1,46 @@
+agent: observability_steward
+work_item: AURA-0121
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the final work item, ADR-0017, Observatory specification,
+    generated run-inspection contracts, affected component manifest, complete
+    final diff, implementation handoff, and acceptance handoff.
+  - >-
+    Verified the affected component retains stable identity
+    aura.observatory.run_inspection_query@1.0.0, versioned input/output
+    contracts, PostgreSQL, ClickHouse, and session-store dependencies, run-only
+    trace correlation, metadata-only telemetry capture, manual owner deletion
+    retention, bounded metric dimensions, and read-only replay posture.
+  - >-
+    Verified component latency remains covered by the named
+    run_inspection_query_latency_ms and run_inspection_merge_latency_ms
+    measurements at their query and merge operation boundaries; total-run
+    duration was not accepted as component coverage. Existing bounded
+    operation, outcome, status, dependency, and errorClass classifications
+    remain unchanged.
+  - >-
+    Verified the work item requires the existing
+    run_inspection_projection_truth, run_inspection_outage_isolation, and
+    metadata_v2_allowlist evaluators declared by the affected component, and
+    the observability validator passes.
+  - >-
+    Verified manifest-derived captured, excluded, partial, dropped, deleted,
+    unavailable, and not-observed coverage; distinct deleted and unavailable
+    copy; independently stale inspection state; matching run-scoped SSE
+    invalidation; repeat aggregation before the UI bound; bounded selected-run
+    timeout/retry and deletion convergence; and captured-to-deleted disclosure
+    cleanup.
+  - >-
+    Verified the hierarchical execution and trace trees expose stable level,
+    parent lineage, branch, start offset, duration, outcome, and partial-state
+    information without placing evidence content or unbounded identifiers in
+    telemetry, metrics, SSE, URLs, or browser persistence.
+  - >-
+    Independently reran the corrected AURA-0114 scenario successfully, the
+    Observatory unit suite with 70 passing tests, observability governance, and
+    git diff whitespace validation. The acceptance handoff additionally reports
+    sixteen passing AURA-0121 desktop/mobile scenarios plus passing full-stack
+    shell, ESLint, changed-path, diff, and handoff checks.
+findings: []
+unresolved: []

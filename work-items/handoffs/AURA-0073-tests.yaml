@@ -1,0 +1,58 @@
+agent: test_evaluation_engineer
+work_item: AURA-0073
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: fix/aura-0072-compose-network-routing
+scope:
+  ownership_zone: aura-core tests and deployment topology tests
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/compose/test_topology.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/test_document_processing.py
+  - services/aura-core/tests/test_settings.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.runtime.embedding_gateway
+    - aura.knowledge.document_processing
+  metrics_added: []
+verification:
+  passed:
+    - AURA_WORK_ITEM=AURA-0073 UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check services/aura-core/tests/test_embedding_adapter.py services/aura-core/tests/test_document_processing.py services/aura-core/tests/test_settings.py services/aura-core/tests/system/test_api_document_flow.py services/aura-core/tests/system/test_contract_and_deployment.py deploy/compose/test_topology.py
+    - AURA_WORK_ITEM=AURA-0073 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright services/aura-core/tests/test_embedding_adapter.py services/aura-core/tests/test_document_processing.py services/aura-core/tests/test_settings.py services/aura-core/tests/system/test_api_document_flow.py services/aura-core/tests/system/test_contract_and_deployment.py
+    - AURA_WORK_ITEM=AURA-0073 python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0073.yaml
+    - AURA_WORK_ITEM=AURA-0073 python3 deploy/compose/test_topology.py
+    - docker compose --env-file .env config --quiet
+    - git diff --check
+    - >-
+      AURA_WORK_ITEM=AURA-0073 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-core/tests/test_embedding_adapter.py
+      services/aura-core/tests/test_document_processing.py
+      services/aura-core/tests/test_settings.py
+      services/aura-core/tests/system/test_api_document_flow.py
+      services/aura-core/tests/system/test_contract_and_deployment.py
+      deploy/compose/test_topology.py -q (52 passed)
+    - >-
+      AURA_WORK_ITEM=AURA-0073 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest
+      services/aura-core/tests/test_ollama.py
+      services/aura-core/tests/test_documents.py
+      services/aura-core/tests/test_document_worker.py
+      services/aura-core/tests/test_document_retrieval.py
+      services/aura-core/tests/test_document_reliability.py -q (92 passed)
+  failed: []
+  not_run:
+    - Full repository checks outside the assigned test and deployment paths were not rerun.
+decisions:
+  - Document adapter coverage already proves qwen3-embedding:4b and dimensions=768 are sent in the Ollama request.
+  - Added composition coverage proving memory processing and recall adapters are constructed without the document-only dimension override.
+  - Added deployment-source coverage proving API and worker bind their configured document dimension and Compose propagates the same model and dimension defaults.
+  - Added a fail-closed settings regression because the document index is fixed at vector(768); accepting another configured width would silently create incompatible embeddings.
+risks: []
+unresolved: []

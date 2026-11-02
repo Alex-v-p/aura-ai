@@ -1,0 +1,26 @@
+agent: general_reviewer
+work_item: AURA-0077
+verdict: PASS
+checked:
+  - Reviewed the final expanded diff against the active work item, authoritative attachment contracts, and all implementation handoffs.
+  - Durable replay after service recreation accepts only the original expected version plus one after idempotency and media validation.
+  - API replay returns the same attachment without new lifecycle events or object writes.
+  - SQLAlchemy stages normalized attachment links through the message relationship and eagerly hydrates them for conversation and direct-message reads.
+  - SQL message hydration prefers the immutable JSON snapshot and falls back to normalized links only when that snapshot is absent or empty.
+  - Message run payloads serialize nonempty attachment summaries through the existing bounded attachment payload shape and omit the field for legacy empty messages.
+  - PostgreSQL production conversation creation persists conversation message link run outbox and idempotency atomically; late failure compares complete pre-failure and post-failure row sets.
+  - Edit-and-branch caches selections by conversation and source message, preserves exact additions and removals across same-conversation refresh and A-to-B-to-A navigation, and forwards that set across branch conflict retry without cross-conversation leakage.
+  - Reactive attachment selection synchronizes asynchronous deletion and upload changes into the active branch cache; cancel, direct success, and successful conflict retry restore the captured ordinary composer selection and remove both scoped snapshots.
+  - Branch editing renders a single attachment-chip surface and requests textarea focus after the edit form has rendered; cancel and success restore the originating branch action focus.
+  - Composer, picker, upload, and configuration guards derive edit state directly from selectedBranch().editingMessageId through branchEditActive(), eliminating the stale computed-flag path observed in browser testing.
+  - Conversation navigation re-reads the bounded branch query per selected conversation, keeps the route request pending until the requested head is rendered, and stops automatic retry after a failed detail read while preserving the explicit retry action.
+  - Branch detail reconciliation reads the latest conversation state after awaiting I/O, so a cancellation during the request cannot resurrect an edit; retryable failures retain the edit draft and explicit retry action.
+  - Orphaned edit text is held separately from the sendable composer draft, while ordinary composer attachments are restored and scoped branch snapshots are cleared; restore, replacement, and discard remain explicit recovery actions.
+  - Orphan recovery confirmation uses post-render focus, focuses a safe confirmation control only after it exists, returns cancel focus to the originating replace or discard action, and restores composer focus after completion.
+  - Branch-detail failures are written to the originating conversation rather than the currently selected conversation, and session guards reject late success or failure writes after logout or principal replacement.
+  - Core focused suites passed with 76 tests and 3 configured PostgreSQL tests skipped because AURA_0077_DATABASE_URL is unavailable.
+  - Conflict and failed attempts retain the modified explicit branch set, while a successful retry uses the same finishBranchEdit cleanup as first-attempt success without copying branch attachments into the ordinary composer draft.
+  - Owner reset and component destruction clear branch and ordinary attachment snapshots.
+  - Frontend conversation library passed 167 tests, including cancellation, A-to-B failure isolation, logout, orphan recovery, draft preservation, and explicit replacement coverage; ESLint reported no errors and four warnings.
+  - Changed-path and frontend-boundary validators, focused Ruff and Pyright, and git diff --check passed.
+findings: []

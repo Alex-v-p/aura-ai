@@ -1,0 +1,40 @@
+component:
+  id: aura.integration.calendar_connection
+  version: 1.0.0
+  owner: integrations.calendar
+  category: persistence
+input:
+  schema: aura-calendar-connection-command-v1
+  replayable: false
+  replay_reason: Connection lifecycle commands mutate authorization and revocation state and must not be replayed as synthetic work.
+output:
+  schema: aura-calendar-connection-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - valkey
+metrics:
+  - calendar_connection_command_duration_ms
+  - calendar_connection_command_outcome
+  - calendar_connection_health
+metric_semantics:
+  calendar_connection_command_duration_ms: Owner-scoped lifecycle command duration in milliseconds.
+  calendar_connection_command_outcome: Content-free connection lifecycle outcome.
+  calendar_connection_health: Coarse connection health state without owner or provider identity.
+capture_policy: metadata_only
+evaluators:
+  - calendar.credential-lifecycle.v1
+  - calendar.provider-boundary.v1
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, status, connection_health]
+  trace_only: [trace_id, span_id, parent_span_id, correlation_id, attempt_id, command_id]
+  prohibited: [content, payload, event_title, calendar_name, provider_identifier, owner_identity, credential, token, url, endpoint]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown

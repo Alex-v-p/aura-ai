@@ -1,0 +1,83 @@
+agent: observatory_worker
+work_item: AURA-0139
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0139_backend
+  worktree: shared-main
+scope:
+  ownership_zone: services.aura-observatory.workflow-analytics; services.aura-observatory.workflow-query-adapter
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/resources/component-manifests/query-api.yaml
+  - services/aura-observatory/tests/test_aura0139_backend.py
+contracts:
+  changed: false
+  notes: Implemented against the concurrent observatory-v1 contract handoff; contract and generated client files were not modified in this ownership zone.
+migrations:
+  changed: false
+  notes: Aggregate monitoring reads existing Observatory-owned ClickHouse telemetry and retention metadata only.
+observability:
+  components:
+    - aura.observatory.query_api
+  metrics_added: []
+  capture_policy: metadata_only
+  notes: Reused bounded observatory_query_duration_ms, observatory_query_outcome, and observatory_query_freshness_lag_ms instrumentation; added workflow_monitoring to the finite query resource label vocabulary and metadata-only ClickHouse query-storage spans on both bounded adapter read paths with finite operation/dependency/outcome/error labels.
+verification:
+  passed:
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check assigned Observatory source and AURA-0139 test paths
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright assigned Observatory source paths (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-observatory/tests/test_aura0139_backend.py (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest services/aura-observatory/tests/test_aura0139_backend.py -q (13 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-observatory/tests/test_aura0114_backend.py services/aura-observatory/tests/test_aura0115_duration.py -q (18 passed)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0139.yaml (passed; 12 changed paths, including concurrent contract zone)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0139.yaml
+    - git diff --check
+    - Direct bounded snapshot probe (UTC buckets, lifecycle/failure/correlation caps, scheduler exclusion, privacy fields) passed.
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -q contracts/tests/test_aura0139_workflow_monitoring_contract.py services/aura-observatory/tests/test_aura0139_backend.py (15 passed)
+    - Query API component-span allowlist/ClickHouse success and unavailable-path tests passed; workflow count-series and genuinely-empty snapshot semantics passed.
+    - Production-shaped workflow operation/error vocabulary, delayed self-invalidation filtering, and genuine Core observation preservation tests passed.
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-observatory/tests/test_aura0139_backend.py contracts/tests/test_aura0139_workflow_monitoring_contract.py -q (19 passed)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-observatory/tests/test_aura0139_backend.py contracts/tests/test_aura0139_workflow_monitoring_contract.py -q (22 passed after wait-command resume binding regression)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-observatory/src/aura_observatory services/aura-observatory/tests/test_aura0139_backend.py (0 errors)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0139.yaml (passed)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+    - AURA-0080 persisted SSE replay metadata compatibility regression passed after keeping internal self-filter context out of the public event projection (14 tests in combined focused run).
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-observatory/tests/test_aura0085_adversarial.py services/aura-observatory/tests/test_aura0086_acceptance.py services/aura-observatory/tests/test_aura0119_acceptance.py services/aura-observatory/tests/test_aura0123_live_efficiency.py -q (114 passed, 2 warnings)
+    - python3 tooling/architecture/validate-import-boundaries.py (passed)
+    - python3 tooling/architecture/validate-service-isolation.py (passed)
+  failed:
+    - >-
+      Full services/aura-observatory pytest (1559 passed, 44 skipped, 4 failed) has
+      four unrelated existing/concurrent failures: AURA-0080 SSE catch-up race,
+      AURA-0080 migration rerunnable assertion, and two AURA-0087 full-stack
+      script-shape assertions. None exercise AURA-0139 files or workflow monitoring.
+  not_run:
+    - Full repository architecture, contract, generated-sync, frontend, browser, and full-stack checks remain with AURA-0139 integration after all ownership zones converge.
+    - Full-service Pyright still reports pre-existing unrelated diagnostics in AURA-0123/AURA-0124 tests; assigned source and AURA-0139 test paths are clean.
+decisions:
+  - Added the exact fifteen AURA-0137 workflow measurements to the closed Observatory analytics allowlist and classified all under automation; no scheduler metrics were added.
+  - Added a public workflow monitoring query port and a parameterized ClickHouse adapter projection selecting only bounded workflow measurement metadata plus opaque agent-run run/trace correlation fields.
+  - Kept aggregate computation in Observatory-owned query code with explicit UTC window and bucket bounds, count-vs-milliseconds unit separation, deterministic failure ordering, newest-first correlation ordering, and finite result caps.
+  - Returned explicit freshness, unavailable-signal, partial-reason, scan, series, point, correlation, execution, and storage-limit metadata; storage or execution failures yield bounded partial snapshots and dependency failures remain isolated as service-unavailable responses.
+  - Added the owner-authenticated no-store API route without exposing workflow definitions, revisions, instances, steps, lifecycle events, content, owner identity, arbitrary dimensions, or Core state.
+  - Used existing query instrumentation and health freshness persistence; no new telemetry contract, migration, Core import, Core database access, manifest copy, command path, or per-instance projection was introduced.
+  - Added defensive validation for raw adapter rows so malformed operation/component/error labels are omitted or normalized to unknown before any aggregate or correlation response, even though the ingest contract already rejects them.
+  - Added count time-series for all three outcome measurements with deterministic priority under the established 12-series cap; latency and count summaries leave rate fields null because rate is not in the workflow catalogue. Empty telemetry returns empty summary/series arrays while freshness and unavailable signals remain explicit.
+  - Added the query-api component span allowlist, manifest trace-only declaration, and parameterized ClickHouse-boundary spans for success/unavailable/validation outcomes without query text or payloads.
+  - Aligned the monitoring projection with the AURA-0137 finite production vocabulary: failure operations are workflow.transition, workflow.command, workflow.repository, execute, validate, persist, cancel, settle, and resume; error classes are the bounded authorization/database/database_programming/idempotency/internal/not_found/persistence/serialization/execution/budget/capability/provider_protocol/provider/timeout/validation/conflict set plus unknown. Production-shaped failed wait-resume data is covered explicitly.
+  - Added an exact fifteen-measurement binding registry for component and operation pairs. Invalid but schema-valid cross-pairs are discarded before aggregation, preventing lifecycle execute/resume poisoning, latency contamination, failure rows, or false correlations. Wait-command duration explicitly allows both execute and resume, while wait-lag remains resume-only.
+  - Kept correlation dimensions separate from failure dimensions per the closed contract: only agent-run duration rows with component aura.automation.workflow_step.agent_run and operation execute can emit run/trace references; lifecycle and failure rows remain dotted operation values.
+  - Marked workflow-monitoring query spans with closed operation metadata and excluded only that exact query-api projection from the Observatory adapter's persisted invalidation stream after advancing the cursor across every inspected row, with a query-service defense-in-depth filter. Self-only batches cannot hot-loop, and later Core observations remain deliverable; the public SSE event contract remains unchanged.
+risks:
+  - The concurrent contract and Observatory frontend changes must be reviewed together so their generated response types and aggregate payload semantics remain synchronized.
+unresolved: []

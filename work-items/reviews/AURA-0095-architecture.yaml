@@ -1,0 +1,21 @@
+agent: architecture_guardian
+work_item: AURA-0095
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the final diff against the architecture handover, module
+    boundaries, accepted ADRs, AURA-0095 ownership zones, and service-owned
+    migration boundaries.
+  - >-
+    Observatory remains independent from Core: API, query, storage, live
+    events, migrations, generated transport, and Web feature code use public
+    boundaries and introduce no Core imports, Core tables, or Core readiness
+    dependency.
+  - >-
+    The additive observatory-v1 contract preserves the existing operational
+    stream and uses a dedicated evaluation stream; generated output remains
+    transport-only and feature code owns state reconciliation.
+  - >-
+    Repository shape, module registry, service isolation, changed paths, and
+    contract validators passed on the final worktree.
+findings: []

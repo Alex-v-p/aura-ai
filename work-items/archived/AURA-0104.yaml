@@ -1,0 +1,187 @@
+id: AURA-0104
+title: Expose governed Observatory acceptance capabilities
+status: integrated
+change_class: repository_governance
+intent: >
+  Provide the smallest owner-authorized public admission and operational
+  evidence surfaces needed to complete AURA-0098 from a fresh composed stack,
+  including real evaluation artifact and local-judge work admission, bounded
+  component metric queries, and the service-owned persistence needed for those
+  capabilities. Preserve the independent Aura Core and Observatory products
+  and do not weaken or take ownership of any AURA-0098 acceptance gate.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-authorized acceptance setup uses authenticated versioned Observatory APIs and existing service-owned use cases rather than private SQL, in-process adapters, or new cross-service database access.
+    - Existing analytics is extended additively for the bounded Core evaluation_runner_nats_recovery_count measurement; no new Core-to-Observatory request dependency is introduced.
+    - Evaluation artifact and local-judge admission remain Observatory-owned, owner-only, CSRF-protected, idempotent, bounded, and compatible with the existing evaluation-v1 model.
+    - Full-content fixtures are deterministic synthetic acceptance data governed by explicit capture authorization and manual retention; credentials provider-hidden reasoning and ordinary owner content are excluded.
+    - AURA-0098 remains the owner of the complete composed resilience matrix; this prerequisite adds capabilities and focused tests but does not claim AURA-0098 acceptance by itself.
+  contracts:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/evaluation/v1/evaluation.schema.json
+feature_references: [OBS-003, OBS-006, OBS-008, OBS-009, OBS-011, OBS-025]
+ownership_zones:
+  - contracts.observatory-api
+  - services.aura-observatory.evaluation-admission
+  - services.aura-observatory.query-api
+  - frontend.observatory-api-client
+  - evaluation.observatory-acceptance-capabilities
+  - deploy.observatory-api-object-storage
+  - delivery.aura0104
+allowed_paths:
+  - work-items/active/AURA-0104.yaml
+  - work-items/archived/AURA-0104.yaml
+  - work-items/handoffs/AURA-0104-*.yaml
+  - work-items/reviews/AURA-0104-*.yaml
+  - work-items/integration/AURA-0104.yaml
+  - contracts/openapi/observatory-v1.yaml
+  - contracts/evaluation/v1/evaluation.schema.json
+  - contracts/tests/test_observatory_v1.py
+  - contracts/tests/test_observatory_v1_compatibility.py
+  - contracts/tests/test_evaluation_v1.py
+  - services/aura-observatory/src/aura_observatory/evaluation_api.py
+  - services/aura-observatory/src/aura_observatory/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/evaluation_judges.py
+  - services/aura-observatory/src/aura_observatory/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/composition.py
+  - services/aura-observatory/src/aura_observatory/ports.py
+  - services/aura-observatory/src/aura_observatory/metrics.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_storage.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/adapters/evaluation_orchestration.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/src/aura_observatory/evaluation_definitions.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/migrations/postgresql/versions/0015_evaluation_public_admission.sql
+  - services/aura-observatory/resources/component-manifests/evaluation-api.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-definitions.yaml
+  - services/aura-observatory/resources/component-manifests/evaluation-orchestration.yaml
+  - services/aura-observatory/tests/test_aura0104_acceptance_capabilities.py
+  - tooling/architecture/modules.yaml
+  - compose.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/local-http.yaml
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0104_acceptance_capabilities.py
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+  - frontend/libs/platform/observatory-api-client/tools/validate-contract.mjs
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.spec.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - services/aura-core/**
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/aura-wall/**
+  - frontend/libs/aura/**
+  - frontend/libs/shared/**
+  - frontend/libs/observatory/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/observatory-v1.yaml
+    - contracts/evaluation/v1/evaluation.schema.json
+    - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: observatory.evaluation
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.query_api
+    - aura.observatory.evaluation_api
+    - aura.observatory.evaluation_definitions
+    - aura.observatory.evaluation_artifact_storage
+    - aura.observatory.evaluation_orchestration
+    - aura.observatory.local_judges
+  required_metrics:
+    - observatory_evaluation_artifact_operation_count
+    - observatory_local_judge_provider_failure_count
+  required_evaluators:
+    - observatory_public_evaluation_admission
+  capture_policy: metadata-only operational evidence plus explicitly authorized synthetic evaluation fixtures; no credentials or ordinary owner content
+security_privacy:
+  applicable: true
+  concerns:
+    - New owner mutations require the existing Observatory session audience owner authorization CSRF same-origin and no-store protections.
+    - Artifact bytes are bounded streamed digest-verified and stored only through the existing Observatory evaluation Garage boundary with explicit full-content capture authorization and manual retention.
+    - Local-judge admission never returns prompts provider payloads credentials hidden reasoning or raw provider diagnostics and exposes only bounded typed terminal state.
+    - Public metrics retain allowlisted names dimensions cardinality scan limits owner scoping and content-free responses.
+    - Acceptance output screenshots traces videos logs reports URLs and browser storage contain no credentials session material provider content or private telemetry.
+    - Aura Web remains free of Observatory links references imports configuration sessions and browser communication.
+  data_classes:
+    - synthetic_evaluation_content
+    - operational_metadata
+    - opaque_run_and_evaluation_identifiers
+    - owner_session_state
+required_agents:
+  implementation:
+    - contract_steward
+    - observatory_worker
+    - platform_worker
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The owner-authenticated Observatory API admits a bounded digest-verified synthetic evaluation artifact and a real local-judge evaluation job through versioned public contracts using explicit capture authorization idempotency CSRF and no-store protections, without private SQL or in-process acceptance seams.
+  - The existing analytics catalogue and query accept evaluation_runner_nats_recovery_count as a bounded metadata-only measurement so the full-stack harness can prove a new Core recovery observation after a real shared-NATS outage.
+  - The composed Observatory API receives a distinct write-only Garage identity and only the private object-storage network required for artifact upload; it does not reuse worker judge or Core credentials and receives no read or owner permission.
+  - All new public request and response schemas are closed bounded additive and covered by contract compatibility generated-client malformed-input owner-authorization CSRF idempotency and no-store tests.
+  - No change under Aura Web Aura feature libraries or Aura Core is present and an architectural regression proves the main product contains no Observatory reference or client dependency.
+  - AURA-0098 retains ownership of causal Garage worker scheduler local-judge operations and public-origin browser recovery acceptance and remains fail-closed until those checks pass.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0104.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0104.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0104.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0104.yaml
+  - UV_CACHE_DIR=/tmp/aura-0104-uv uv run pytest -q contracts/tests/test_observatory_v1.py contracts/tests/test_observatory_v1_compatibility.py contracts/tests/test_evaluation_v1.py
+  - UV_CACHE_DIR=/tmp/aura-0104-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0104_acceptance_capabilities.py
+  - UV_CACHE_DIR=/tmp/aura-0104-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory services/aura-observatory/tests/test_aura0104_acceptance_capabilities.py
+  - UV_CACHE_DIR=/tmp/aura-0104-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory services/aura-observatory/tests/test_aura0104_acceptance_capabilities.py
+  - pnpm --dir frontend nx test observatory-api-client
+  - pnpm --dir frontend nx lint observatory-api-client
+  - UV_CACHE_DIR=/tmp/aura-0104-uv uv run pytest -q deploy/tests/test_aura0104_acceptance_capabilities.py
+  - docker compose --profile observatory config --quiet
+  - bash -n deploy/compose/local-http.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

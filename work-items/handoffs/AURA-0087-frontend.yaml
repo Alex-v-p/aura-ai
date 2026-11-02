@@ -1,0 +1,168 @@
+agent: frontend_worker
+work_item: AURA-0087
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0087_frontend
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory.operational-analytics
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/observatory-web/src/main.ts
+  - frontend/apps/observatory-web/src/styles.css
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/features/analytics/analytics.component.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - work-items/handoffs/AURA-0087-frontend.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0087.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0087.yaml --role frontend_worker with explicit
+      frontend-owned paths (8 paths validated)
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - git diff --check
+    - >-
+      Added closed-enum, bounded-facet, UTC-window, and private-marker runtime
+      validation in observatory-models; observatory library tests passed.
+    - >-
+      Added owner-facing UTC ordering/31-day guidance and explicit clearing of
+      previously applied bounds; observatory-web tests and lint passed.
+    - >-
+      Added local-overflow containment for analytics cards, controls, charts,
+      and semantic tables; production observatory-web build passed.
+    - cd frontend && NX_DAEMON=false NX_CLOUD=false pnpm exec nx test observatory --skip-nx-cache
+    - cd frontend && NX_DAEMON=false NX_CLOUD=false pnpm exec nx lint observatory --skip-nx-cache
+    - cd frontend && NX_DAEMON=false NX_CLOUD=false pnpm exec nx test observatory-web --skip-nx-cache
+    - cd frontend && NX_DAEMON=false NX_CLOUD=false pnpm exec nx lint observatory-web --skip-nx-cache
+    - cd frontend && NX_DAEMON=false NX_CLOUD=false pnpm exec nx build observatory-web --configuration=production --skip-nx-cache
+    - >-
+      Focused analytics browser rerun: 13 tests passed across the analytics
+      failure, focus-view, catalogue-option, UTC, keyboard chart, disconnected,
+      privacy, and recovery cases.
+    - >-
+      Previous full mocked browser collection: 132 passed across desktop,
+      tablet, and mobile; includes axe, focus, responsive, reduced motion,
+      stale/disconnected, unavailable, and analytics privacy cases.
+    - >-
+      Integration-host full mocked browser run reached 162 passing tests; its
+      six residual failures were strict locator ambiguities in the UTC and
+      component-health assertions and were corrected by scoping locators to
+      their owning feature surfaces.
+  failed:
+    - >-
+      The focused Playwright collection could not start in this restricted
+      execution environment: the configured Nx web server exited before
+      serving the browser tests. No application assertion failure was produced
+      by the correction-focused run.
+  not_run:
+    - >-
+      Focused and full mocked Playwright collection, including private-marker,
+      UTC-bound, multi-series, and zoom cases; rerun by the integration
+      maintainer in the normal repository execution environment.
+    - >-
+      Post-UX-re-review focused browser collection for multi-series, 200-point,
+      and 200%/400% analytics scenarios; the same restricted web-server
+      startup limitation prevented browser execution after the correction.
+    - >-
+      Full-stack Compose acceptance and whole-repository service/contract/
+      observability checks remain integration-maintainer owned.
+decisions:
+  - >-
+    Added a standalone Observatory Analytics feature component and registered it
+    in the existing application composition shell; no Aura product feature
+    library or shared UI product code was imported.
+  - >-
+    Analytics state and request generations live in ObservatoryStore. REST
+    snapshots and metric catalogues remain memory-only, are refreshed through
+    the generated transport client, and are invalidated with bounded SSE
+    refresh coordination.
+  - >-
+    The UI exposes all six declared focus areas, bounded UTC time controls,
+    allowlisted metric/unit/aggregation/grouping/bucket controls, explicit
+    freshness/partial/unavailable semantics, and no synthesized values for
+    missing measurements.
+  - >-
+    Every visual series has a semantically equivalent scrollable table with
+    units, sample counts, availability, exact point labels, non-colour status
+    labels, visible keyboard focus, and reduced-motion-safe styles.
+  - >-
+    Retention invalidates in-flight analytics responses and clears the deleted
+    snapshot before requesting a fresh bounded aggregate; logout/reset clears
+    analytics state and filters.
+  - >-
+    Added mocked browser fixtures for the generated analytics resources and
+    acceptance coverage for focused views, semantic chart tables, unavailable
+    recovery, responsive layouts, dark theme, and browser-storage/URL privacy.
+  - >-
+    Strengthened the app dark-theme selector to avoid stale light tokens after
+    an in-session prefers-color-scheme change exposed by the accessibility run.
+  - >-
+    Derived metric, aggregation, grouping, and focus options from the selected
+    catalogue definition; deterministic validation now resets unsupported
+    combinations before transport and leaves rejected responses recoverable.
+  - >-
+    Standardized analytics summary, table, and freshness times to explicit UTC
+    rendering; chart previews are decorative and exact values remain in the
+    adjacent keyboard-accessible semantic tables.
+  - >-
+    Added a disconnected analytics state that preserves cached snapshots,
+    announces stream loss, and clears after bounded reconnect refresh; existing
+    retention/session generations prevent stale responses from being restored.
+  - >-
+    Added defensive snapshot parsing and mocked coverage for malformed,
+    rejected, sparse, partial, stale, disconnected, and unavailable responses,
+    all six focused analytics views, catalogue option transitions, privacy,
+    keyboard focus, and responsive state handling.
+  - >-
+    Replaced per-point chart buttons with a bounded decorative trend preview
+    marked aria-hidden; exact values remain in adjacent semantic tables, so a
+    200-point or multi-series response adds no point-level tab stops or shared
+    live-region announcements.
+  - >-
+    Added mocked multi-series and 200-point fixtures plus assertions for table
+    and series association, bounded focusability, long identifiers, dark and
+    reduced-motion preferences, and 200%/400% zoom reflow.
+  - >-
+    Added strict closed-enum catalogue/snapshot parsing with field-specific
+    OpenAPI patterns for facets, series keys, and breakdown dimensions;
+    contract-invalid private-content rejection, bounded UTC range guidance,
+    stale-bound clearing, and local overflow containment for zoomed analytics
+    cards and tables.
+  - >-
+    Scoped browser assertions to the Metric explorer and Component catalogue
+    feature roots so hidden composition-shell views cannot create ambiguous
+    accessible-name matches.
+  - >-
+    The browser UTC acceptance uses November 2 for the over-limit rejection and
+    November 1 for the exact 31-day inclusive boundary, matching the
+    implementation's strictly-positive, maximum-31-day window semantics.
+  - >-
+    Aligned the runtime metric-catalogue item bound with OpenAPI's maxItems
+    128 and added exact 128/129 boundary unit coverage.
+risks:
+  - >-
+    The analytics feature requests the initial metric catalogue and aggregate
+    snapshot when the authenticated Observatory shell starts; the request is
+    bounded and failure is isolated to the analytics panel.
+  - >-
+    Browser execution still needs an execution host that permits the configured
+    local web server; the owning code and assertions are ready for that matrix.
+unresolved: []

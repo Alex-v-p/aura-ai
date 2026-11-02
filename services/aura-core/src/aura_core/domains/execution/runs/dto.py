@@ -1,0 +1,154 @@
+"""Public execution run DTOs and lifecycle values."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import TYPE_CHECKING, NamedTuple
+from uuid import UUID, uuid4
+
+if TYPE_CHECKING:
+    from aura_core.domains.interaction.conversations.dto import (
+        AttachmentSummary,
+        Conversation,
+        DeletedResearchCitation,
+        DocumentCitation,
+        Message,
+        ResearchActivityReference,
+        ResearchRunOrigin,
+        WebCitation,
+    )
+
+
+class RunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    CANCEL_REQUESTED = "cancel_requested"
+    CANCELED = "canceled"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+    WAITING_FOR_CONFIRMATION = "waiting_for_confirmation"
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+@dataclass(slots=True)
+class RunError:
+    code: str
+    message: str
+    retryable: bool
+    trace_id: str
+
+
+@dataclass(slots=True)
+class Run:
+    conversation_id: UUID | None
+    user_message_id: UUID | None
+    agent_revision_id: UUID
+    model_policy_revision_id: UUID
+    provider: str
+    model_id: str
+    retry_of_run_id: UUID | None = None
+    status: RunStatus = RunStatus.QUEUED
+    id: UUID = field(default_factory=uuid4)
+    assistant_message_id: UUID | None = None
+    created_at: datetime = field(default_factory=_now)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: RunError | None = None
+    attempt_id: UUID | None = None
+    attempt_count: int = 0
+    lease_expires_at: datetime | None = None
+    persona_revision_id: UUID | None = None
+    prompt_bundle_revision_id: UUID | None = None
+    prompt_hash: str | None = None
+    # The exact immutable memory-policy revision admitted with this run.  It
+    # is deliberately separate from the agent revision: retries must reuse the
+    # run snapshot even when the agent's current configuration changes.
+    memory_policy_revision_id: UUID | None = None
+    memory_embedding_generation_id: UUID | None = None
+    # Identifier-only recall metadata.  Memory text and vectors never belong
+    # in a run DTO; the memory domain owns the durable snapshot projection.
+    memory_recall_metadata: dict[str, object] | None = None
+    # Immutable execution-tool policy snapshot.  Optional for legacy rows.
+    tool_policy_revision_id: UUID | None = None
+    tool_call_limit: int = 0
+    tool_calls_used: int = 0
+    tool_timeout_ms: int = 30_000
+    tool_retry_limit: int = 0
+    # Browser-supplied IANA zone pinned at admission.  The server clock remains
+    # authoritative; this is only used to render deterministic local context.
+    client_time_zone: str | None = None
+    # Identifier-only approval lifecycle markers.  Proposal arguments remain
+    # owned by automation/governance and are never copied into a run DTO.
+    approval_id: UUID | None = None
+    pending_tool_call_id: UUID | None = None
+    tool_lifecycle_status: str | None = None
+    citations: tuple[DocumentCitation, ...] = ()
+    document_search_used: bool = False
+    # Optional lineage fields preserve compatibility with pre-branch runs.
+    branch_id: UUID | None = None
+    regenerated_from_run_id: UUID | None = None
+    # Immutable resource summaries admitted with the source user message.
+    attachments: tuple[AttachmentSummary, ...] = ()
+    # Workflow lineage is complete only for manual workflow-admitted runs;
+    # ordinary runs retain conversation lineage and leave these fields null.
+    workflow_id: UUID | None = None
+    workflow_revision_id: UUID | None = None
+    workflow_instance_id: UUID | None = None
+    workflow_step_ordinal: int | None = None
+    workflow_step_execution_id: UUID | None = None
+    # Additive opaque research lineage; research content never enters a run.
+    research_origin: ResearchRunOrigin | None = None
+    research_activity: ResearchActivityReference | None = None
+    web_citations: tuple[WebCitation | DeletedResearchCitation, ...] = ()
+    artifact_refs: tuple[UUID, ...] = ()
+
+    def __post_init__(self) -> None:
+        lineage = (
+            self.workflow_id,
+            self.workflow_revision_id,
+            self.workflow_instance_id,
+            self.workflow_step_ordinal,
+            self.workflow_step_execution_id,
+        )
+        has_workflow = any(value is not None for value in lineage)
+        ordinary = self.conversation_id is not None and self.user_message_id is not None
+        workflow = self.conversation_id is None and self.user_message_id is None and all(
+            value is not None for value in lineage
+        )
+        if not ordinary and not workflow:
+            raise ValueError(
+                "run lineage must be either complete conversation/user-message or complete workflow"
+            )
+        if ordinary and has_workflow:
+            raise ValueError("ordinary runs cannot carry workflow lineage")
+        if workflow and any(
+            type(value) is not UUID
+            for value in (
+                self.workflow_id,
+                self.workflow_revision_id,
+                self.workflow_instance_id,
+                self.workflow_step_execution_id,
+            )
+        ):
+            raise ValueError("workflow run lineage must use UUIDs")
+        if self.workflow_step_ordinal is not None and not 1 <= self.workflow_step_ordinal <= 8:
+            raise ValueError("workflow step ordinal is out of bounds")
+
+
+class RunClaim(NamedTuple):
+    """Atomic result of acquiring a queued run lease."""
+
+    conversation: Conversation
+    run: Run
+    user_message: Message
+    acquired: bool
+
+
+class RunClaimLost(RuntimeError):
+    """Raised when a stale worker tries to mutate a run it no longer owns."""

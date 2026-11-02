@@ -1,0 +1,118 @@
+agent: platform_worker
+work_item: AURA-0081
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0081_platform
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: deployment.observatory-web, deployment.build-context, repository.module-registry
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .dockerignore
+  - compose.yaml
+  - deploy/docker/observatory-web.Dockerfile
+  - deploy/docker/observatory-web.Dockerfile.dockerignore
+  - deploy/docker/aura-web.Dockerfile.dockerignore
+  - deploy/docker/observatory-web.nginx.conf
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - deploy/compose/test_topology.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/path-ownership.yaml
+  - tooling/architecture/validate-repository-shape.py
+  - work-items/handoffs/AURA-0081-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.web
+  metrics_added: []
+verification:
+  passed:
+    - bash -n deploy/compose/run-observatory-full-stack-e2e.sh
+    - python3 -m py_compile deploy/compose/test_topology.py
+    - python3 deploy/compose/test_topology.py (33 passed)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0081.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0081.yaml --role platform_worker with the eleven
+      platform-owned changed paths
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - timeout 30s docker compose --env-file .env --profile observatory config --quiet
+    - >-
+      git diff --check -- .dockerignore compose.yaml deploy/compose/test_topology.py
+      deploy/docker/observatory-web.Dockerfile
+      deploy/docker/observatory-web.Dockerfile.dockerignore
+      deploy/docker/observatory-web.nginx.conf tooling/architecture/modules.yaml
+      tooling/architecture/path-ownership.yaml
+  failed: []
+  not_run:
+    - Docker image build and full-stack browser acceptance were intentionally not run per the platform assignment.
+    - Frontend lint, tests, production build, and Playwright checks are owned by the frontend and test/evaluation workers.
+    - Full repository integration validators remain for the integration maintainer.
+decisions:
+  - >-
+    Observatory Web now uses a service-owned Angular production build and an
+    unprivileged Nginx runtime instead of a placeholder Nginx image.
+  - >-
+    Nginx listens on container port 8080, binds the published port only to
+    loopback, proxies same-origin API and SSE traffic without buffering or
+    caching, and serves only static shell assets from its read-only image.
+  - >-
+    The full-stack runner creates disposable fixture environment and override
+    artifacts, uses project-scoped named volumes and environment-sourced
+    secrets, bridges only test containers to the fixture provider, supplies both
+    product origins with owner OIDC variables, runs the real browser acceptance,
+    stops Observatory services, reruns only the existing spec outage test to
+    submit a normal Core request, and probes Core liveness/readiness before
+    cleanup.
+  - >-
+    The module registry retains the Observatory generated client and feature
+    library registrations against generic shared UI; the deployable Angular
+    application shell is intentionally not registered, matching the existing
+    absence of Aura application-root entries, and no Aura product feature
+    dependency was introduced.
+  - >-
+    The Observatory Web Dockerfile-specific ignore file mirrors the existing
+    web-image safety exclusions, removes credentials, state, and test artifacts
+    from the build context, excludes unrelated repository roots, and re-includes
+    only the Dockerfile and Nginx configuration needed by the production image.
+  - >-
+    The full-stack runner allocates two non-overlapping /28 private subnets by
+    inspecting existing Docker IPAM and selecting from bounded fallback pools,
+    so it can coexist with the normal Aura private-network defaults. Cleanup
+    selects only networks prefixed with the disposable Compose project and runs
+    with all Observatory/check profiles enabled, covering partial startup.
+  - >-
+    The runner keeps only transient Compose environment and override artifacts
+    beneath an external temporary directory; state is held in project-scoped
+    named volumes and fixture secrets are environment-sourced, while the exit
+    trap removes the temporary artifacts.
+  - >-
+    The disposable Compose override replaces every selected state-root bind with
+    project-scoped named volumes and replaces production file-backed secrets
+    with fixture-only environment-sourced secrets using !override. Cleanup uses
+    --volumes and an idempotent signal-safe trap, so a partial startup cannot
+    retain state volumes or re-enter after the fixture directory is removed.
+  - >-
+    The repository-wide Docker ignore protects every root-context image built by
+    the runner from .git, .env*, .secrets, .aura-e2e.*, state, and generated
+    test artifacts while retaining required source trees. Its deployment
+    ownership is registered for platform validation; the existing Aura Web
+    Dockerfile-specific ignore is extended with the same credential and state
+    exclusions because Dockerfile-specific rules take precedence.
+  - >-
+    The disposable override resets host-published ports for both web services;
+    browser traffic uses their isolated Compose networks, so an existing Aura
+    stack cannot cause 4200/4300 host-port allocation conflicts.
+risks:
+  - >-
+    The full-stack runner requires Docker, the existing fixture provider, and
+    the frontend Playwright image; it was not executed in this handoff.
+unresolved: []

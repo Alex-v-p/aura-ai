@@ -1,0 +1,83 @@
+agent: platform_worker
+work_item: AURA-0100
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: null
+scope:
+  ownership_zone: deploy.local-http.compose
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-http.sh
+  - compose.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0100.yaml
+    - Effective local-http Compose config rendered successfully with the NATS entrypoint bind and disposable named data volume
+    - Effective Compose config rendered successfully with CMD-form evaluation worker and scheduler healthchecks using /app/.venv/bin/python
+    - Focused Compose assertions confirmed the evaluation healthchecks scan /proc for exact service argv prefixes, cannot self-match their -c process, and preserve timing and CMD structure
+    - Live supported Compose recreation of observatory-evaluation-worker and observatory-evaluation-scheduler completed successfully; both containers reported healthy and their process tables showed the expected /app/.venv/bin/python -m service modules
+    - bash -n deploy/compose/local-http.sh
+    - Launcher-only disposable fixture checks covered valid access/secret preservation, exact GK plus 24 lowercase-hex and 64 lowercase-hex generation, bounded invalid-default rotation, normalized explicit-default classification, custom invalid-path rejection without replacement, no-newline preservation, and symlink rejection
+    - UV_CACHE_DIR=/tmp/aura-0100-uv uv run pytest -q deploy/tests/test_aura0100_observatory_startup.py (20 passed)
+    - Observatory Garage bootstrap rendered command shell-validity and grant/parser regression tests (5 passed)
+    - Static command assertions confirmed the dependent Observatory bootstrap has no node-ID or cluster-layout mutation while retaining status wait, key import, distinct-bucket guard, grants, denies, and permission verification
+    - Core Garage key import and bucket grant commands redirect both output streams and emit only bounded generic failure categories; Observatory and evaluation Garage credential-bearing commands remain redirected
+    - UV_CACHE_DIR=/tmp/aura-0100-uv uv run pytest -q deploy/tests/test_aura0094_runtime.py deploy/tests/test_aura0094_topology.py (7 passed)
+    - git diff --check
+  failed:
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0100.yaml (pre-existing AURA-0098 working-tree paths are outside this work item)
+  not_run:
+    - ./deploy/compose/local-http.sh up (integration/evaluation worker owns full disposable-stack launch)
+decisions:
+  - >
+    Restored the base read-only NATS entrypoint bind in the local-http
+    !override volume list next to the disposable project-scoped data volume.
+    Removed only the redundant node-ID acquisition and cluster-layout mutation
+    commands from the dependent Observatory Garage bootstrap because the
+    successful aura-garage-bootstrap dependency already owns cluster layout.
+    Distinct-bucket, secret-file, fail-closed key import, grant/deny, and
+    permission verification behavior remains unchanged.
+  - >
+    Garage access IDs now use secrets.token_hex(12). Existing valid IDs are
+    preserved byte-for-byte. Garage secrets now use secrets.token_hex(32) and
+    require exactly 64 lowercase hexadecimal characters, with at most one
+    final newline. Both credential kinds use bounded reads. Only an absent
+    value or a normalized path equal to one of the three launcher-managed
+    defaults may rotate a securely permissioned invalid regular file, using a
+    same-directory 0600 O_EXCL/O_NOFOLLOW temporary file, file and parent
+    directory fsync, and os.replace; a genuinely custom invalid path fails
+    closed without rotation.
+  - >
+    Evaluation worker and scheduler healthchecks now invoke the packaged
+    interpreter at /app/.venv/bin/python with stdlib-only /proc process
+    identity probes for the exact service module argv prefix. Their own -c
+    healthcheck processes cannot self-match; CMD form, timing, and all other
+    service configuration remain unchanged.
+  - >
+    Core Garage key import and read/write grant output is suppressed on both
+    stdout and stderr because Garage can echo the file-injected access-key ID.
+    Nonzero results remain fail-closed with generic bounded errors. The
+    Observatory and evaluation bootstrap commands already suppress output for
+    key import and bucket grant/deny operations, and their verification output
+    remains captured rather than logged.
+risks:
+  - >
+    Full-stack startup and authenticated Observatory redirect evidence remain
+    dependent on the migration and evaluation ownership zones and the
+    disposable Docker environment.
+unresolved:
+  - >
+    Changed-path validation remains blocked by unrelated pre-existing
+    AURA-0098 paths, as documented by the AURA-0100 work item and existing
+    worker handoffs.

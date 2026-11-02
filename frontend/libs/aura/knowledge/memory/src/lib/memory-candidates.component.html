@@ -1,0 +1,97 @@
+<div class="memory-page">
+  <header class="memory-heading">
+    <div>
+      <p class="eyebrow">Memory governance</p>
+      <h1>Review queue</h1>
+      <p class="lede">Ambiguous or sensitive candidates wait here until you decide what Aura may retain.</p>
+    </div>
+    <nav class="memory-tabs" aria-label="Memory sections">
+      <a routerLink="/memory">Records</a>
+      <a class="active" routerLink="/memory/candidates">Review queue</a>
+      <a routerLink="/memory/settings">Settings</a>
+    </nav>
+  </header>
+  @if (store.notice(); as notice) { <p class="notice" role="alert">{{ notice }} <button class="inline-button" type="button" (click)="retryCandidates()">Retry</button></p> }
+  <section class="review-summary" aria-live="polite" aria-describedby="review-count-help">
+    @if (store.candidateListLoadFailed()) { <span class="setup-icon setup-icon-error" aria-hidden="true">!</span> } @else { <span class="setup-icon" aria-hidden="true">✓</span> }
+    <div>
+      @if (store.candidateListLoadFailed()) { <strong>Pending count unavailable</strong> }
+      @else { <strong>{{ store.candidates().length }} pending {{ store.candidates().length === 1 ? 'candidate' : 'candidates' }} loaded</strong> }
+      <p id="review-count-help">This is the number currently loaded for this view, not a server-wide total. Check grounding and scope before deciding what Aura may retain.</p>
+    </div>
+  </section>
+  <section class="memory-layout">
+    <aside class="memory-list-panel" aria-label="Memory review candidates">
+      <div class="memory-items">
+        @for (candidate of store.candidates(); track candidate.id) {
+          <button class="memory-item" [class.selected]="store.candidate()?.id === candidate.id" type="button" (click)="select(candidate.id)">
+            <span class="memory-item-top"><span class="kind-pill">{{ candidateAction(candidate) }}</span><span class="status-pill">{{ candidate.sensitivity }}</span></span>
+            <strong>{{ candidate.content || candidateDiagnostic(candidate) }}</strong>
+            <span class="memory-item-meta">{{ candidate.confidence | percent:'1.0-0' }} confidence · {{ candidate.state }}</span>
+          </button>
+        } @empty {
+          @if (store.candidateListLoadFailed()) { <p class="empty-state">The review queue is unavailable. Retry when it is ready.</p> }
+          @else { <p class="empty-state">Nothing needs review.</p> }
+        }
+      </div>
+      @if (store.candidateNextCursor()) { <button class="secondary-button load-more" type="button" [disabled]="store.candidateLoadingMore()" (click)="store.loadMoreCandidates()">{{ store.candidateLoadingMore() ? 'Loading…' : 'Load more candidates' }}</button> }
+    </aside>
+    @if (store.candidateDetailLoading()) {
+      <section class="memory-detail-panel has-selection" aria-busy="true" aria-live="polite">
+        <div class="empty-detail" role="status"><span aria-hidden="true">…</span><h2>Loading candidate details…</h2><p>Retrieving the authorized review proposal.</p></div>
+      </section>
+    } @else if (store.candidateDetailError(); as candidateError) {
+      <section class="memory-detail-panel has-selection" aria-live="polite">
+        <div class="empty-detail" role="alert"><span aria-hidden="true">!</span><h2>Candidate details are unavailable</h2><p>{{ candidateError }}</p><button class="secondary-button" type="button" (click)="retryCandidate()">Retry details</button></div>
+      </section>
+    } @else if (store.candidate(); as candidate) {
+      <section class="memory-detail-panel has-selection">
+        <div class="detail-header">
+          <div>
+            <p class="eyebrow">Memory proposal</p>
+            <h2>{{ candidateContent(candidate) }}</h2>
+            <p class="detail-meta"><span class="status-pill">{{ candidate.sensitivity }}</span><span>{{ candidateScope(candidate) }}</span><span>{{ candidate.confidence | percent:'1.0-0' }} confidence</span></p>
+          </div>
+          <span class="status-pill">{{ candidate.state }}</span>
+        </div>
+        <section class="detail-card candidate-evidence">
+          <h3>Grounding</h3>
+          <p>Grounded message identifiers are available to the authenticated owner for review.</p>
+          <details class="technical-disclosure"><summary>Advanced technical evidence</summary><p class="muted">Identifiers are available to the authenticated owner for audit review.</p><dl><div><dt>Candidate ID</dt><dd>{{ candidate.id }}</dd></div><div><dt>Related memory ID</dt><dd>{{ candidate.relatedMemoryId || 'None' }}</dd></div></dl><ul>@for (messageId of candidate.groundedMessageIds; track messageId) { <li>{{ messageId }}</li> }</ul></details>
+          <dl>
+            <div><dt>Importance</dt><dd>{{ candidate.importance ?? 'Default 50%' }}</dd></div>
+            <div><dt>Half-life</dt><dd>{{ candidate.halfLifeDays ?? 'Default 30' }} days</dd></div>
+            <div><dt>Valid to</dt><dd>{{ candidate.validTo ? (candidate.validTo | date:'medium') : 'No end (optional)' }}</dd></div>
+          </dl>
+        </section>
+        @if (editing() && edit(); as draft) {
+          <form class="editor-card" (ngSubmit)="approve()">
+            <h3>Edit candidate before approval</h3>
+            <p class="muted">Confirm the content, scope, and retention horizon before approving this memory.</p>
+            <label>Content<textarea name="content" [(ngModel)]="draft.content" required></textarea></label>
+            <div class="form-grid">
+              <label>Action<select aria-label="Approval action" name="action" [(ngModel)]="draftAction">@for (action of approvalActions; track action) { <option [value]="action">{{ action }}</option> }</select></label>
+              <label>Kind<select aria-label="Memory kind" name="kind" [(ngModel)]="draftKind">@for (kind of kinds; track kind) { <option [value]="kind">{{ kind }}</option> }</select></label>
+              <label>Scope <span class="muted">(confirm where Aura may use this)</span><select aria-label="Memory scope" name="scopeType" [(ngModel)]="draftScopeType"><option value="user">Shared user</option><option value="agent">Private agent</option></select></label>
+              @if (draftScopeType === 'agent') { <label>Agent<select name="agent" [(ngModel)]="draftAgentProfileId" required><option value="">Select agent</option>@for (agent of agents.activeAgents(); track agent.id) { <option [value]="agent.id">{{ agent.displayName }}</option> }</select></label> }
+              <label>Confidence<input name="confidence" type="number" min="0" max="1" step="0.01" [(ngModel)]="draft.confidence" /></label>
+              <label>Importance<input aria-label="Memory importance" name="importance" type="number" min="0" max="1" step="0.01" [(ngModel)]="draft.importance" /></label>
+              <label>Half-life<input aria-label="Memory half-life" name="halfLife" type="number" min="0.25" max="3650" step="0.25" [(ngModel)]="draft.halfLifeDays" /><span class="muted">How long this stays relevant; starts at 30 days when omitted.</span></label>
+              <label>Valid to <span class="muted">(optional; leave blank for no expiry)</span><input name="validTo" type="date" [(ngModel)]="draftValidTo" /></label>
+              <label>Related memory ID<input name="relatedMemoryId" [(ngModel)]="draftRelatedMemoryId" /></label>
+            </div>
+            <div class="form-actions"><button class="secondary-button" type="button" (click)="editing.set(false)">Keep reviewing</button><button class="primary-button" type="submit" [disabled]="store.saving()">Approve edited candidate</button></div>
+          </form>
+        } @else {
+          @if (!isCandidateActionable(candidate)) { <p class="notice notice-error" role="status">This proposal is incomplete or has invalid provider diagnostics. Review actions are unavailable.</p> }
+          <div class="detail-actions"><button class="primary-button" type="button" (click)="approve()" [disabled]="store.saving() || !isCandidateActionable(candidate)">Approve memory</button><button class="secondary-button" type="button" (click)="beginEdit()" [disabled]="!isCandidateActionable(candidate)">Edit and approve</button></div>
+        }
+        <form class="reject-card" (ngSubmit)="reject()"><label>Reject reason<textarea name="rejectReason" [value]="rejectReason()" (input)="rejectReason.set($any($event.target).value)" required></textarea></label><button class="danger-button" type="submit" [disabled]="!isCandidateActionable(candidate) || !rejectReason().trim() || store.saving()">Reject candidate</button></form>
+      </section>
+    } @else {
+      <section class="memory-detail-panel">
+        <div class="empty-detail"><span aria-hidden="true">✓</span><h2>Select a candidate</h2><p>Review grounding and proposed scope before deciding.</p></div>
+      </section>
+    }
+  </section>
+</div>

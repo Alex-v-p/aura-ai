@@ -1,0 +1,81 @@
+agent: contract_steward
+work_item: AURA-0071
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/handoff_0071_contract
+  worktree: dev
+scope:
+  ownership_zone: contracts.openapi.aura-v1, contracts.events.runs.v1, aura-api-client.generated
+  allowed_paths_respected: true
+commits:
+  - 215454c5be3d0873d756272b0919fd45045330ff
+files_changed:
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/runs/v1/run-events.schema.json
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - work-items/handoffs/AURA-0071-contracts.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward audit; no contract edits were made during handoff reconciliation
+  compatibility: backward_compatible
+  definitions:
+    - id: Aura Core API
+      version: 1.17.0
+      source: contracts/openapi/aura-v1.yaml
+      changes:
+        - Added branch list, branch detail, immutable edit-and-branch, and run-regeneration operations.
+        - Added optional branch and regeneration lineage to run, message, conversation detail, accepted-run, and create-run shapes.
+    - id: https://aura.local/contracts/events/runs/v1/run-events.schema.json
+      version: 1
+      source: contracts/events/runs/v1/run-events.schema.json
+      changes:
+        - Added optional opaque branch and regeneration lineage to run snapshots.
+        - Added optional opaque branch and parent-message lineage to message snapshots.
+  compatibility_notes:
+    - Existing operations and required fields are unchanged; all lineage additions to existing shapes are optional.
+    - Historical and pre-1.17 API producers may omit lineage, and existing consumers may ignore the additive fields and operations.
+    - Run-event schemaVersion remains 1 because the added properties are optional and preserve existing event envelopes.
+  producers:
+    - aura-core conversation and run HTTP entrypoints
+    - aura-core run SSE event serializer
+  consumers:
+    - Aura Web conversation client
+    - generated aura-api-client TypeScript consumers
+    - run-stream and replay consumers that accept run-events v1
+  rollout:
+    - Apply migration 0021 before enabling branch mutations so historical conversations receive a root lineage.
+    - Deploy Aura Core producers before or with Aura Web; additive fields permit mixed-version consumers during rollout.
+    - No dual-write, protocol negotiation, or consumer flag is required for pre-1.17 readers.
+  generated_outputs:
+    - path: frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+      generator: frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+      source_sha256: 68465a574b80a0d5873ed5f82bf1c90fa1c420061e88696da80d18b7d6f1d0c7
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0071.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0071.yaml against isolated uncommitted replay of commit 215454c (contract changes explicitly classified)
+    - python3 tooling/architecture/validate-generated-sync.py against isolated uncommitted replay of commit 215454c
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0071.yaml against isolated uncommitted replay of commit 215454c (48 paths validated)
+    - python3 tooling/architecture/validate-generated-sync.py on current dev
+    - pnpm --dir frontend exec nx check-generated aura-api-client
+    - pnpm --dir frontend exec nx lint aura-api-client
+    - UV_CACHE_DIR=/tmp/aura-0071-uv-cache uv run pytest services/aura-core/tests/test_run_events.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/system/test_contract_and_deployment.py -q (31 passed)
+    - git diff --check
+  failed: []
+  not_run:
+    - Remaining AURA-0071 checks are assigned to the Core, frontend, test/evaluation, review, and integration handoffs.
+decisions:
+  - OpenAPI 1.17.0 is an additive minor contract revision; no existing request or response requirement was tightened.
+  - Run-events remains schemaVersion 1 because lineage fields are optional and old payloads continue to validate.
+  - Generated-client output contains transport types and operation descriptors only; no business behavior was added.
+risks:
+  - The current-dev contract-change validator reports skipped when no contract files are uncommitted; the committed patch was therefore replayed in an isolated clone and passed classification, synchronization, and path authorization checks.
+unresolved: []

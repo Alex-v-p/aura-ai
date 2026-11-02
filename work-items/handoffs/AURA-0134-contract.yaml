@@ -1,0 +1,138 @@
+agent: contract_steward
+work_item: AURA-0134
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: deep
+  agent_thread_id: /root/aura0134_contract
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: contracts.aura-api.briefing-capabilities
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/aura-v1.yaml
+  - contracts/tests/test_aura0128_calendar_contract.py
+  - contracts/tests/test_aura0132_briefing_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - work-items/handoffs/AURA-0134-contract.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward after AURA-0134 authorized the
+    Aura v1 OpenAPI, focused contract test, and generated Aura client paths; no
+    other agent was assigned contract authorship.
+  compatibility: backward_compatible
+  definitions:
+    - id: aura-v1
+      version: 1.21.0
+      source: contracts/openapi/aura-v1.yaml
+      changes:
+        - >-
+          Added owner-authenticated GET /api/v1/briefing-capabilities as
+          getBriefingCapabilities with a required Cache-Control no-store
+          response and typed 401 and 403 failures.
+        - >-
+          Added the closed BriefingCapabilities response containing exactly the
+          canonical execution policy revision UUID, textual policy revision,
+          fixed deadline, token and character budgets, daily-only cadence, and
+          explicit memory-disabled and tools-disabled flags.
+        - >-
+          Added exact contract, privacy-omission, operation, generated-type,
+          generated-descriptor, digest, and backward-compatibility checks.
+  compatibility_notes:
+    - >-
+      Aura v1 advances additively from 1.20.0 to 1.21.0. Existing paths,
+      operations, request fields, response fields, and briefing mutations are
+      unchanged.
+    - >-
+      The capability schema is closed and exposes no provider, model, prompt,
+      tool grant, owner, source, calendar, document, result, run, or private
+      runtime fields.
+    - >-
+      The generated client remains transport-only and contains no feature
+      state, authorization, retry, persistence, or business behavior.
+  producers:
+    - Aura Core owner-authenticated briefing capability query
+  consumers:
+    - Aura Web scheduled briefing creation feature
+    - Aura Core contract and API drift tests
+    - Aura generated-client synchronization checks
+  rollout:
+    - >-
+      Deploy the additive Aura Core query before or with Aura Web. Older clients
+      remain compatible because all existing Aura v1 resources are unchanged.
+    - >-
+      Aura Web reads getBriefingCapabilities in authenticated memory, uses only
+      executionPolicyRevisionId to construct the existing create request, and
+      does not persist or hard-code the canonical UUID.
+    - >-
+      The capability response remains no-store and has no mutation, event,
+      migration, provider, or deployment-protocol change.
+  generated_outputs:
+    - source: contracts/openapi/aura-v1.yaml
+      generator: frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0134.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0134.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0134.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - cd frontend && pnpm exec nx run aura-api-client:generate
+    - cd frontend && pnpm exec nx run aura-api-client:check-generated
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check contracts/tests/test_aura0132_briefing_contract.py
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0132_briefing_contract.py -q (10 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0128_calendar_contract.py
+      services/aura-core/tests/test_conversation_attachments.py
+      services/aura-core/tests/test_document_contract.py
+      services/aura-core/tests/test_memory_product_api.py
+      services/aura-core/tests/test_notification_api.py
+      services/aura-core/tests/test_reminder_api.py
+      services/aura-core/tests/system/test_contract_and_deployment.py -q
+      (93 passed, 3 skipped)
+    - work-items/schema/implementation-handoff.schema.json validation for work-items/handoffs/AURA-0134-contract.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Aggregate Core and frontend checks remain assigned to their owners and the integration maintainer.
+decisions:
+  - >-
+    Used /api/v1/briefing-capabilities and getBriefingCapabilities for the one
+    non-mutating capability resource, consistent with Aura collection-style API
+    naming while returning one fixed closed object rather than an extensible list.
+  - >-
+    Named the UUID executionPolicyRevisionId to match the existing
+    BriefingExecutionPolicyReferences create field and prevent frontend mapping
+    or hard-coded policy identity.
+  - >-
+    Embedded the canonical fixed values as OpenAPI const constraints so Core,
+    generated consumers, and drift tests share one exact public contract.
+  - >-
+    Inherited root owner-session security and prohibited operation-level
+    anonymous security; no CSRF or idempotency header is present because this is
+    a read-only query.
+  - >-
+    Mechanically advanced existing Aura OpenAPI version-pin assertions and the
+    calendar contract test docstring from 1.20.0 to 1.21.0 without changing any
+    asserted resource behavior.
+risks:
+  - >-
+    Core must source every response value from the canonical briefing execution
+    policy constants and fail its drift tests if those constants change without
+    a corresponding additive contract revision.
+unresolved: []

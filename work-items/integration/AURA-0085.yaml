@@ -1,0 +1,86 @@
+agent: integration_maintainer
+work_item: AURA-0085
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0085-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0085-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0085-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0085-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0085-ux-ui.yaml
+  - reviewer: contract_steward
+    status: PASS
+    verdict: work-items/handoffs/AURA-0085-contract.yaml
+  - reviewer: frontend_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0085-frontend.yaml
+  - reviewer: observatory_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0085-observatory.yaml
+  - reviewer: platform_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0085-platform.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0085-test-evaluation.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0085.yaml
+checks:
+  passed:
+    - >-
+      All five implementation handoffs and all five required review verdicts
+      were present, schema-shaped, complete, PASS, and had no unresolved
+      findings or risks requiring return to an owner.
+    - >-
+      Active work-item validation and changed-path validation passed for 42
+      changed paths within the approved AURA-0085 scope; the archived work
+      item was produced by the normal active-to-archive transition.
+    - >-
+      Repository-shape, module-registry, service-isolation,
+      frontend-boundary, observability, contract-change, generated-sync,
+      baseline-protection, and diff-hygiene checks passed with no protected
+      baseline changes.
+    - >-
+      Observatory validation passed: 330 service tests, Ruff, and Pyright;
+      focused migration and latency regressions passed 4 tests.
+    - >-
+      Observatory frontend lint, unit tests, and production build passed for
+      the observatory and observatory-web projects.
+    - >-
+      Mocked real-browser acceptance passed 93 tests across desktop, tablet,
+      and mobile, including accessibility, keyboard, responsive, privacy,
+      health-state, SSE, and retention coverage.
+    - >-
+      Compose topology and runtime-wiring checks passed 49 tests, and
+      observability governance unit checks passed 8 tests.
+    - >-
+      One scoped Docker full-stack acceptance phase passed real Core provider
+      and ClickHouse preflights, owner authentication, Core-to-Observatory
+      telemetry, SSE and retention behavior, owner session restart and reset
+      recovery, and Core usability after Observatory services stopped. The
+      runner's disposable project resources and fixture directory were
+      removed and independently verified absent.
+    - >-
+      Fresh production PostgreSQL and ClickHouse migrations completed in the
+      full-stack phase; existing-schema upgrade and rerun/idempotence behavior
+      passed the AURA-0080 migration regression suite and the AURA-0085
+      migration checks without changing protected baselines.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    No integration commit was created. The reviewed and validated AURA-0085
+    working tree is ready for the Delivery Lead's focused Conventional Commit;
+    no push is authorized.

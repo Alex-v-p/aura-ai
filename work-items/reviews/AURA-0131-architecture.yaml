@@ -1,0 +1,11 @@
+agent: architecture_guardian
+work_item: AURA-0131
+verdict: PASS
+checked:
+  - Event and conflict request inputs use generated CalendarEventQuery and CalendarConflictQuery types and construct separate contract-correct bodies.
+  - Conflict requests use conflictLimit and never inherit the event-only limit property.
+  - The integrations-calendar public API and dependency direction preserve the daily-action, shell, Core, provider, and Observatory boundaries.
+  - Core remains authoritative for lifecycle, selection, normalized events, and conflicts; the shell remains a composition boundary.
+  - All changed paths are authorized, all implementation handoffs are complete, and architecture, generated-sync, isolation, frontend-boundary, registry, repository-shape, baseline, and diff checks passed.
+  - No ADR is required.
+findings: []

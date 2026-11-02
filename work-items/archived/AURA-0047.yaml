@@ -1,0 +1,202 @@
+id: AURA-0047
+title: Add conservative per-agent recall modes
+status: integrated
+change_class: repository_governance
+intent: >
+  Replace unconditional conversational recall with immutable off or automatic
+  per-agent policy modes, conservative automatic admission, explicit owner
+  controls, and live recall validation while preserving extraction and
+  reserving model-driven memory search for the future governed tool runtime.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved AURA-0047 conservative per-agent recall modes plan
+    - Off disables automatic recall only and leaves extraction review reinforcement and storage active
+    - The built-in Aura agent defaults to automatic while newly created custom agents default to off
+    - Existing current agent configurations migrate to automatic with no more than two memories five percent context and a 0.70 automatic query-match threshold
+    - Existing conversations and runs retain their immutable pinned agent and policy revisions
+    - Historical policies remain hydratable as automatic while deterministic successor policy and agent revisions become each profile's current configuration
+    - Automatic admission uses the maximum of lexical term overlap and clamped cosine similarity and foreign-agent fallback compares query-match relevance rather than age decay
+    - Future memory.search is documentation-only and must reuse the authorized recall use case through the future general tool runtime
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references: [AGT-002, AGT-008, AGT-019, CTX-004, CTX-005, CTX-006, CTX-007, CTX-008, CTX-009, CTX-010, MEM-007, MEM-008, MEM-009, MEM-018, MEM-019, MEM-020, MEM-022, MEM-023, MEM-035, TOL-001, EVA-007, CMP-003]
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - aura-core.interaction.agents
+  - aura-core.knowledge.memory
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.platform.telemetry
+  - aura-web.api-client
+  - aura-web.knowledge.memory
+  - aura-web.interaction.agents
+  - aura-web.e2e
+  - frontend.storybook
+  - documentation.specifications
+allowed_paths:
+  - work-items/active/AURA-0047.yaml
+  - work-items/archived/AURA-0047.yaml
+  - contracts/openapi/aura-v1.yaml
+  - docs/specifications/memory-and-knowledge.md
+  - docs/specifications/tools-automation-and-integrations.md
+  - services/aura-core/migrations/versions/0011_memory_recall_modes.py
+  - services/aura-core/migrations/versions/0010_memory_recall_policies.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/public.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/postgres.py
+  - services/aura-core/src/aura_core/domains/interaction/agents/adapters/sql_store.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/recall.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/memory/repository.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/context.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/store.py
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/bootstrap/memory_uow.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/agents.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/resources/component-manifests/memory-retrieval.yaml
+  - services/aura-core/resources/component-manifests/memory-extraction.yaml
+  - services/aura-core/tests/test_agent_memory_policy_sql.py
+  - services/aura-core/tests/test_memory_domain.py
+  - services/aura-core/tests/test_memory_recall.py
+  - services/aura-core/tests/test_memory_processing.py
+  - services/aura-core/tests/test_memory_evaluation.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_migration_0011_memory_recall_modes.py
+  - services/aura-core/tests/test_conversations.py
+  - services/aura-core/tests/test_versioned_agents.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/system/test_memory_api.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/aura/knowledge/memory/**
+  - frontend/libs/aura/interaction/agents/**
+  - frontend/apps/aura-web-e2e/src/memory-product.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/memory-product.stories.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/documents/**
+  - services/aura-core/src/aura_core/domains/knowledge/world_model/**
+  - services/aura-core/src/aura_core/domains/interaction/personas/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-core/src/aura_core/providers/models/**
+  - deploy/**
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.agents
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.memory_retrieval
+    - aura.knowledge.memory_extraction
+    - aura.interaction.agent_configuration
+  required_metrics:
+    - memory_retrieval_duration_ms
+    - memory_recall_count
+    - memory_context_tokens
+    - memory_retrieval_errors
+    - memory_recall_gate_outcome
+    - memory_policy_configuration_outcome
+  required_evaluators:
+    - memory_retrieval_quality
+    - memory_scope_authorization
+    - memory_context_budget_compliance
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Off mode must bypass query embedding and storage retrieval without disabling extraction or widening future permissions
+    - Automatic recall must preserve owner agent lifecycle validity generation and fallback authorization gates
+    - Foreign-agent fallback remains retrieval-only and may not disclose ungranted scopes or invoke another agent
+    - Recall and policy telemetry may contain bounded modes outcomes identifiers and scores but no memory text embeddings prompts responses credentials or owner subjects
+    - Existing conversations and runs must retain their immutable pinned policy provenance across migration
+    - Future memory.search documentation must not create a tool grant contract or executable shortcut
+  data_classes:
+    - private durable memory content used as model context
+    - semantic query and memory embeddings
+    - owner agent conversation run policy and embedding-generation identifiers
+required_agents:
+  implementation: [contract_steward, core_worker, platform_worker, frontend_worker, test_evaluation_engineer]
+  review: [general_reviewer, architecture_guardian, security_privacy_reviewer, observability_steward]
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Memory policies expose immutable off and automatic modes plus an automatic query-match threshold while older create-policy clients retain automatic defaults.
+  - Off mode performs no query embedding lexical vector or fallback lookup and records a metadata-only policy-off outcome without blocking conversation delivery.
+  - Off mode leaves completed-turn memory extraction review reinforcement embedding and persistence behavior unchanged.
+  - Production worker composition enables the same pinned-policy recall service as the API composition, and schema-valid but domain-invalid extraction output settles for review instead of retrying forever.
+  - Automatic mode admits only candidates whose maximum lexical overlap or clamped cosine similarity meets the pinned threshold and foreign-agent fallback uses query-match relevance rather than age decay.
+  - The built-in Aura agent defaults to automatic with two memories five percent context and threshold 0.70 while newly created custom agents default to off with the same dormant ceilings.
+  - Migration 0011 is forward-only and idempotently hydrates historical policies as automatic then creates deterministic conservative successor policy and agent revisions for every current profile without changing conversation or run pins.
+  - A fresh PostgreSQL migration chain reaches 0011 by repairing the 0010 memory-policy uniqueness prerequisite when declarative bootstrap tables already exist.
+  - The migration preserves stricter existing limits all scope flags shared-user promotion and fallback grants and never widens owner or agent access.
+  - Retrieval remains bounded by lifecycle validity authorization active embedding generation RRF deterministic reranking and the selected immutable policy limits.
+  - Retrieval version and component metadata distinguish automatic selected empty skipped degraded and fallback outcomes without emitting private content.
+  - Aura Web provides accessible Off and Automatic controls hydrates attached revisions and shows a small non-blocking explanation that Off does not disable memory creation.
+  - Memory and tool specifications reserve future governed memory.search reuse without adding a tool contract executor on-demand mode or hybrid mode.
+  - Evaluation fixtures retain recall-at-K and precision of 1.0 for relevant cases with zero stale irrelevant or unauthorized automatic admissions.
+  - An authenticated Compose test proves one persisted embedded fact is recalled in a later automatic conversation and absent from recall under an attached off policy while conversations and extraction remain healthy.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0047.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0047.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0047.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0047.yaml
+  - uv run --project services/aura-core pytest services/aura-core/tests/test_agent_memory_policy_sql.py services/aura-core/tests/test_memory_domain.py services/aura-core/tests/test_memory_recall.py services/aura-core/tests/test_memory_evaluation.py services/aura-core/tests/test_memory_product_api.py services/aura-core/tests/test_migration_0011_memory_recall_modes.py services/aura-core/tests/test_conversations.py services/aura-core/tests/test_versioned_agents.py services/aura-core/tests/test_telemetry.py services/aura-core/tests/system/test_memory_api.py services/aura-core/tests/system/test_api_conversation_flow.py
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pyright services/aura-core/src
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - pnpm --dir frontend exec playwright test apps/aura-web-e2e/src/memory-product.spec.ts --config=playwright.config.ts --project=desktop
+  - ./deploy/compose/local-http.sh up
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

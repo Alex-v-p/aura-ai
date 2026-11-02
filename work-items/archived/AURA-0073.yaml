@@ -1,0 +1,148 @@
+id: AURA-0073
+title: Use a dimension-safe Qwen model for document embeddings
+status: integrated
+change_class: bugfix
+intent: >
+  Make live document ingestion, retrieval, and citations use the installed
+  Qwen3 embedding model with an explicit dimension compatible with the existing
+  document vector index, while leaving memory embedding configuration and
+  provider-neutral domain contracts unchanged.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - Owner-approved use of an installed Qwen embedding model instead of the existing Nomic default for documents.
+    - Owner-approved qwen3-embedding:4b selection with 768-dimensional Matryoshka output so the existing vector(768) document index remains valid.
+  contracts: []
+feature_references: []
+ownership_zones:
+  - aura-core.knowledge.documents
+  - aura-core.providers.embeddings.ollama
+  - aura-core.bootstrap
+  - aura-core.runtime.configuration
+  - deployment.compose
+allowed_paths:
+  - work-items/active/AURA-0073.yaml
+  - work-items/archived/AURA-0073.yaml
+  - .env.example
+  - compose.yaml
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/bootstrap/document_uow.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/ports.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  - services/aura-core/src/aura_core/providers/embeddings/ollama/adapter.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/tests/test_document_processing.py
+  - services/aura-core/tests/test_document_contract.py
+  - services/aura-core/tests/test_document_retrieval.py
+  - services/aura-core/tests/test_document_sql.py
+  - services/aura-core/tests/test_documents.py
+  - services/aura-core/tests/test_embedding_adapter.py
+  - services/aura-core/tests/test_settings.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/system/test_api_document_flow.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - deploy/compose/test_topology.py
+  - deploy/compose/e2e/fake_provider.py
+  - deploy/compose/e2e/test_fake_provider.py
+  - services/aura-core/resources/component-manifests/document-retrieval.yaml
+  - work-items/handoffs/AURA-0073-*.yaml
+  - work-items/reviews/AURA-0073-*.yaml
+  - work-items/integration/AURA-0073.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - frontend/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: knowledge.documents
+observability:
+  applicable: true
+  affected_components:
+    - aura.runtime.embedding_gateway
+    - aura.knowledge.document_processing
+    - aura.knowledge.document_retrieval
+  required_metrics:
+    - embedding_duration_ms
+    - provider_errors
+    - document_processing_outcome
+    - document_retrieval_duration_ms
+    - document_retrieval_outcome
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Embedding requests remain local to the configured provider and preserve existing content-minimizing telemetry.
+    - Model and dimension configuration cannot widen document ownership or retrieval boundaries.
+  data_classes:
+    - private_document_content
+    - metadata_only_model_identity
+required_agents:
+  implementation:
+    - core_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Document embedding defaults to qwen3-embedding:4b and sends an explicit 768-dimensional request compatible with the existing document_chunks vector(768) column.
+  - Memory embeddings and other Ollama embedding consumers retain their existing model and output dimensions unless they explicitly opt into a dimension.
+  - Compose passes the documented document embedding model setting to both API and worker with qwen3-embedding:4b as the local default.
+  - The Ollama adapter verifies the exact tagged Qwen model artifact and rejects malformed or wrong-dimensional responses without logging document content.
+  - Hybrid retrieval never compares a Qwen query vector with chunks produced by another embedding model; incompatible chunks remain eligible only through lexical ranking until reprocessed.
+  - Retrieval emits a bounded metadata-only identity_mismatch degradation signal when incompatible prior-model vectors are excluded, without placing model digests or document content in metric dimensions.
+  - A real browser can upload a plain-text document, wait for ready, ask Aura a grounded question, render a validated document citation, open the authorized document detail, and preserve the expected source locator.
+  - Existing document retry semantics can successfully reprocess a document that failed under the prior embedding configuration.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0073.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0073.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0073.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0073.yaml
+  - uv run pyright services/aura-core
+  - uv run ruff check services/aura-core/src services/aura-core/tests
+  - uv run pytest services/aura-core/tests/test_embedding_adapter.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_document_processing.py services/aura-core/tests/test_document_retrieval.py services/aura-core/tests/test_document_sql.py services/aura-core/tests/test_documents.py services/aura-core/tests/test_settings.py services/aura-core/tests/test_telemetry.py services/aura-core/tests/system/test_api_document_flow.py services/aura-core/tests/system/test_contract_and_deployment.py deploy/compose/e2e/test_fake_provider.py
+  - python3 deploy/compose/test_topology.py
+  - docker compose --env-file .env config --quiet
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

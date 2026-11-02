@@ -1,0 +1,46 @@
+agent: integration_maintainer
+work_item: AURA-0120
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0120-general.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0120-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0120.yaml
+  - work-items/integration/AURA-0120.yaml
+checks:
+  passed:
+    - >-
+      Both implementation handoffs are schema-valid complete records with
+      allowed paths respected and no unresolved items; both required review
+      artifacts are schema-valid PASS verdicts with no findings.
+    - >-
+      Work-item, changed-path, contract-change, service-isolation, and
+      frontend-boundary validators passed; contract changes correctly reported
+      none.
+    - >-
+      The focused AURA-0119 topology and AURA-0120 Garage-grant parser suite
+      passed with 12 tests.
+    - >-
+      Scoped Ruff validation passed for the authorized topology and parser test
+      files.
+    - >-
+      Both default and Observatory-profile Docker Compose configuration checks
+      passed, and git diff whitespace validation passed.
+    - >-
+      The work item was moved from active to archived with status integrated,
+      and all discovered changed paths remain within its authorized scope.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The focused checks use deterministic Garage 2.1 parser fixtures; a fresh
+    live Garage bootstrap remains an environment-level validation concern,
+    although the reviewed deployment evidence observed the corrected bootstrap
+    containers exiting successfully against persisted state.

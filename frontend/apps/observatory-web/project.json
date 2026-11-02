@@ -1,0 +1,18 @@
+{
+  "name": "observatory-web",
+  "projectType": "application",
+  "sourceRoot": "apps/observatory-web/src",
+  "tags": ["scope:observatory-web", "type:app"],
+  "targets": {
+    "build": {
+      "executor": "@angular-devkit/build-angular:application",
+      "outputs": ["{options.outputPath}"],
+      "options": { "outputPath": "dist/apps/observatory-web", "index": "apps/observatory-web/src/index.html", "browser": "apps/observatory-web/src/main.ts", "polyfills": ["zone.js"], "tsConfig": "apps/observatory-web/tsconfig.app.json", "inlineStyleLanguage": "css", "assets": ["apps/observatory-web/src/assets"], "styles": ["apps/observatory-web/src/styles.css"], "scripts": [], "serviceWorker": false },
+      "configurations": { "production": { "budgets": [{ "type": "initial", "maximumWarning": "2mb", "maximumError": "5mb" }], "outputHashing": "all" }, "development": { "optimization": false, "extractLicenses": false, "sourceMap": true } },
+      "defaultConfiguration": "production"
+    },
+    "serve": { "executor": "@angular-devkit/build-angular:dev-server", "options": { "buildTarget": "observatory-web:build" }, "configurations": { "production": { "buildTarget": "observatory-web:build:production" }, "development": { "buildTarget": "observatory-web:build:development" } }, "defaultConfiguration": "development" },
+    "test": { "executor": "nx:run-commands", "options": { "command": "vitest run --config vitest.workspace.ts apps/observatory-web/src" } },
+    "lint": { "executor": "nx:run-commands", "options": { "command": "eslint apps/observatory-web" } }
+  }
+}

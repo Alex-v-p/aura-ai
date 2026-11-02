@@ -1,0 +1,46 @@
+agent: general_reviewer
+work_item: AURA-0105
+verdict: PASS
+checked:
+  - >-
+    Read the Aura review skill, approved AURA-0105 work item, platform handoff,
+    repository guidance, applicable architecture/specification/ADR sources,
+    and the complete scoped diff. Reviewed only deploy/compose/test_topology.py
+    and AURA-0105 governance artifacts; concurrent AURA-0098 changes were
+    treated as unrelated shared-worktree state.
+  - >-
+    Verified service_block selects top-level two-space Compose service keys and
+    the corrected Observatory bootstrap range ends at
+    aura-evaluation-runner-garage-bootstrap. Its assertions therefore inspect
+    only the Observatory worker identity and continue to require write grant,
+    explicit read and owner denial, and exact compact permission flag W.
+  - >-
+    Verified the evaluation-runner bootstrap is now selected independently up
+    to observatory-api-garage-bootstrap and is required to use its distinct
+    credential, grant read-write, deny owner, report exact compact permission
+    flag RW, and depend on the Observatory bootstrap. The test cannot satisfy
+    either write-only identity from the runner's legitimate read grant.
+  - >-
+    Verified the Observatory API bootstrap remains independently bounded up to
+    observatory-judge-garage-bootstrap and retains write-only W assertions.
+    The Observatory API service is now inspected through its own service block
+    for its distinct secrets, private object-storage network, and successful
+    bootstrap dependency rather than through the Aura Core API block.
+  - >-
+    Confirmed compose.yaml and all production credential grants, networks,
+    dependencies, services, and runtime behavior are unchanged. The remaining
+    diff outside the service selections and assertions is formatting-only in
+    the same test file.
+  - >-
+    Required focused topology test passed, and the complete static Compose
+    topology suite passed with 50 tests. Ruff, Compose profile rendering,
+    work-item validation, repository-shape validation, service-isolation
+    validation, contract-change validation, baseline protection, and git diff
+    validation passed.
+  - >-
+    validate-changed-paths reported only concurrent AURA-0098 files outside
+    AURA-0105 allowed_paths. The AURA-0105 implementation itself changes only
+    deploy/compose/test_topology.py plus its authorized work item, handoff, and
+    this review artifact, so that shared-worktree failure is not an AURA-0105
+    finding.
+findings: []

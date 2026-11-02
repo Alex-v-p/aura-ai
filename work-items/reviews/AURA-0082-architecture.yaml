@@ -1,0 +1,9 @@
+agent: architecture_guardian
+work_item: AURA-0082
+verdict: PASS
+checked:
+  - The work item declares exact platform and Observatory ownership zones with separate complete handoffs and passing path-role validation.
+  - Core, Observatory, and Authentik retain separate data and network boundaries; production encrypted AURA_STATE_ROOT behavior is unchanged.
+  - ClickHouse requests require Basic authentication, Collector authentication remains file-backed, and Observatory Web remains read-only with writable paths confined to hardened tmpfs mounts.
+  - No new service, protocol, dependency direction, data ownership rule, or architectural exception was introduced; no ADR is required.
+findings: []

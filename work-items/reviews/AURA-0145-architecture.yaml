@@ -1,0 +1,24 @@
+agent: architecture_guardian
+work_item: AURA-0145
+verdict: PASS
+checked:
+  - >-
+    Verified the research entity-resolution and structured-synthesis ports remain
+    inward Core boundaries with exact task and run correlation, bounded identity,
+    closed provenance, canonical claim rendering, and fail-closed behavior.
+  - >-
+    Confirmed worker-only provider composition, live capability narrowing,
+    atomic mutation idempotency, transactional outbox and Task Center
+    invalidation, public artifact API use, migration ownership, thin routes,
+    disabled-provider defaults, Core/Observatory isolation, and module registry
+    declarations remain intact.
+  - >-
+    Verified the exact metric and span tuple tables cover all manifest-declared
+    provider and deletion outcomes and errors, including failed plus
+    storage_unavailable, while rejecting invalid cross-component combinations.
+  - >-
+    Architecture, changed-path, contract, import-boundary, service-isolation,
+    module-registry, repository-shape, observability, baseline, Ruff, Pyright,
+    and diff checks passed. Focused research passed 217 tests; full Core passed
+    2006 with 124 skipped; isolated live PostgreSQL passed 219 tests.
+findings: []

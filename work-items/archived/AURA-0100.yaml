@@ -1,0 +1,150 @@
+id: AURA-0100
+title: Restore supported Observatory Docker startup
+status: integrated
+change_class: bugfix
+intent: >
+  Make the supported disposable local HTTP Docker workflow start Aura
+  Observatory from a fresh schema and expose its authenticated web product
+  without private SQL, temporary Compose overlays, weakened dependency gates,
+  or changes to public contracts.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/system-context.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - Observatory owns its PostgreSQL migrations and remains independently gated from Aura Core.
+    - The existing forward-only rerunnable PostgreSQL migration model is preserved; the missing ledger prerequisite is added before any ledger write.
+    - The local HTTP overlay preserves the base NATS entrypoint bind while replacing only durable NATS state with a project-scoped Docker volume.
+    - The completed Core Garage bootstrap remains the sole cluster-layout owner; the dependent Observatory bootstrap provisions only its separate key bucket and least-privilege grants.
+    - Disposable Garage access IDs use the provider-valid GK plus 24 lowercase hexadecimal format and Garage secret keys use 64 lowercase hexadecimal characters; existing valid local files are preserved and invalid generated local credentials are replaced atomically without exposing either value.
+    - Observatory evaluation process healthchecks use the image-owned virtual-environment interpreter for a bounded stdlib-only scan that verifies the expected child module process without importing the full product dependency graph.
+    - Live validation uses only disposable local-http state and bounded health or redirect evidence; credentials cookies tokens and authenticated content are not captured.
+    - AURA-0098 remains independently blocked by its missing public admission and governed health surfaces; this work item resolves only the fresh-schema and supported-launcher prerequisites.
+  contracts: []
+feature_references: [OBS-002, OBS-003, OBS-006]
+ownership_zones:
+  - services.aura-observatory.migrations
+  - deploy.local-http.compose
+  - evaluation.observatory-startup
+  - delivery.aura0100
+allowed_paths:
+  - work-items/active/AURA-0100.yaml
+  - work-items/archived/AURA-0100.yaml
+  - work-items/handoffs/AURA-0100-*.yaml
+  - work-items/reviews/AURA-0100-*.yaml
+  - work-items/integration/AURA-0100.yaml
+  - services/aura-observatory/migrations/postgresql/versions/0001_observatory_foundation.sql
+  - services/aura-observatory/tests/test_aura0100_startup.py
+  - services/aura-observatory/tests/test_aura0097_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0097_test_evaluation.py
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-http.sh
+  - compose.yaml
+  - deploy/compose/test_topology.py
+  - deploy/tests/test_aura0100_observatory_startup.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/**
+  - contracts/**
+  - deploy/docker/**
+  - frontend/**
+  - services/aura-core/**
+  - services/aura-observatory/migrations/clickhouse/**
+  - services/aura-observatory/src/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - pyproject.toml
+  - uv.lock
+  - package.json
+  - pnpm-lock.yaml
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-observatory
+  owning_module: observatory.persistence
+observability:
+  applicable: true
+  affected_components:
+    - aura.observatory.migrations
+    - aura.observatory.query_api
+  required_metrics: []
+  required_evaluators:
+    - observatory_fresh_schema_startup
+    - observatory_migration_rerun
+    - local_http_nats_entrypoint_wiring
+    - observatory_authenticated_edge_startup
+  capture_policy: bounded service health and redacted redirect metadata only
+security_privacy:
+  applicable: true
+  concerns:
+    - Local identity secrets remain file-injected and absent from command arguments logs reports URLs and committed files.
+    - Validation must not persist or capture owner cookies bearer tokens credentials authenticated payloads or private telemetry.
+    - The separate Observatory OIDC client audience owner session CSRF and same-origin BFF boundary remain unchanged.
+  data_classes:
+    - operational_metadata
+    - owner_session_state
+required_agents:
+  implementation:
+    - observatory_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A fresh Observatory PostgreSQL schema creates every prerequisite before migrations 0013 and 0014 write their guarded ledger records, and the complete ordered migration chain succeeds transactionally.
+  - Re-running the PostgreSQL migration chain is idempotent and preserves a single ledger row for each migration that explicitly records itself.
+  - The exact supported local HTTP Compose merge retains the read-only NATS entrypoint bind at /usr/local/bin/aura-nats-entrypoint while using the disposable named data volume.
+  - The Observatory Garage bootstrap performs no node or cluster-layout mutation after its successful Core Garage bootstrap dependency and retains its separate fail-closed key bucket and permission verification.
+  - Local HTTP secret bootstrapping preserves valid Garage access IDs and secret keys, generates them in the exact provider-valid GK plus 24 lowercase hexadecimal and 64 lowercase hexadecimal shapes, and atomically replaces only invalid disposable local Garage credential files while retaining mode 0600 and no-follow protections.
+  - ./deploy/compose/local-http.sh up completes without a temporary override and observatory-migrate exits zero from disposable fresh state.
+  - Observatory PostgreSQL ClickHouse session API and web containers become healthy, and no Observatory container remains restarting or blocked in Created state.
+  - Observatory evaluation worker and scheduler healthchecks use /app/.venv/bin/python to find the exact expected module-process argv under /proc within the existing three-second bound, and both services become healthy under the supported launcher.
+  - http://observatory.localhost:4300 returns the web product and its login endpoint redirects through the separate Observatory Authentik authorization path without exposing query values in evidence.
+  - Aura Core remains healthy and independent while the Observatory repair adds no cross-service database access contract change package framework or architecture exception.
+  - AURA-0098 uncommitted work and its unrelated acceptance blockers remain preserved and are not claimed as resolved.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0100.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0100.yaml
+  - UV_CACHE_DIR=/tmp/aura-0100-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0100_startup.py services/aura-observatory/tests/test_aura0097_test_evaluation.py
+  - UV_CACHE_DIR=/tmp/aura-0100-uv uv run --project services/aura-observatory ruff check services/aura-observatory/tests/test_aura0100_startup.py services/aura-observatory/tests/test_aura0097_test_evaluation.py
+  - UV_CACHE_DIR=/tmp/aura-0100-uv uv run --project services/aura-observatory pyright services/aura-observatory/tests/test_aura0100_startup.py
+  - UV_CACHE_DIR=/tmp/aura-0100-uv uv run pytest -q deploy/tests/test_aura0100_observatory_startup.py deploy/tests/test_aura0094_runtime.py deploy/tests/test_aura0094_topology.py
+  - UV_CACHE_DIR=/tmp/aura-0100-uv uv run python -m unittest deploy.compose.test_topology
+  - docker compose --env-file .env --env-file .env.local-http -f compose.yaml -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml --profile local-identity --profile observatory config --quiet
+  - bash -n deploy/compose/local-http.sh
+  - ./deploy/compose/local-http.sh reset
+  - ./deploy/compose/local-http.sh up
+  - Bounded Docker health and redacted Observatory web login redirect verification
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0100.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0100.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

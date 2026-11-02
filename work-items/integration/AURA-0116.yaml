@@ -1,0 +1,55 @@
+agent: integration_maintainer
+work_item: AURA-0116
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0116-general.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0116-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0116.yaml
+  - work-items/integration/AURA-0116.yaml
+checks:
+  passed:
+    - >-
+      Both implementation handoffs were read and report complete status,
+      authorized ownership paths, no contract or migration changes, and no
+      unresolved items. Both required review artifacts are schema-valid PASS
+      verdicts with no findings.
+    - >-
+      The archived work item and changed paths passed work-item, changed-path,
+      repository-shape, import-boundary, service-isolation, observability,
+      contract-change, baseline-protection, and whitespace checks.
+    - >-
+      The Observatory frontend suite passed 63 tests. Observatory lint and
+      Observatory Web E2E lint passed with no errors and only pre-existing
+      warnings. The Observatory Web production build passed.
+    - >-
+      The required focused desktop Playwright run passed all five AURA-0116
+      scenarios against a manually served Node 24/pnpm 12 Observatory with
+      server startup bypassed. The related bounded trace-unavailable recovery
+      scenario also passed, for six focused browser cases total, including Axe
+      accessibility checks.
+    - >-
+      Review evidence confirms selected-run snapshots remain visible during
+      invalidation bursts, at most one trailing refresh is scheduled, final
+      reconciliation behavior remains bounded, and selection/session fences
+      prevent stale responses from overwriting private state.
+    - >-
+      Handoff, review, archived work-item, and integration-report documents
+      validate against their repository schemas.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Unrelated run invalidations may still trigger coalesced selected-run reads
+    because resource-ID filtering is outside this item.
+  - >-
+    Direct Angular TestBed coverage of the decorated store remains unavailable
+    under the current standalone Vitest transform; the state-machine behavior
+    is covered by focused browser acceptance and existing coordinator tests.

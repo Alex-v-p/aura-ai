@@ -1,0 +1,43 @@
+agent: architecture_guardian
+work_item: AURA-0144
+verdict: PASS
+checked:
+  - >-
+    The 2026-10-30 owner decision explicitly defers production provider egress
+    and image publication; it does not treat Cloudflare Tunnel or Nginx Proxy
+    Manager as outbound enforcement and therefore does not weaken ADR-0018.
+  - >-
+    This PASS is limited to disabled-only repository integration. The
+    research-providers Compose profile is opt-in, all provider switches default
+    false, Core admission and dispatch capabilities default false, and the
+    operator attestation path defaults empty.
+  - >-
+    Provider readiness remains fail closed without a separately supplied
+    machine-verifiable egress attestation. The bundled egress probe identifies
+    itself as diagnostic-only and cannot emit the production attestation marker.
+  - >-
+    Local HTTP Aura ingress is orthogonal to provider destination policy:
+    private Core-to-provider transport may use HTTP, while fetched destinations
+    remain restricted to public HTTPS port 443. No HTTP research destination is
+    authorized.
+  - >-
+    Local unpublished image builds are development evidence only. The owner
+    decision does not authorize enabling or promoting them without reviewed
+    immutable manifest digests and provenance or signatures.
+  - >-
+    ADR-0018's three authorized deployables remain the only provider services:
+    folded SearXNG, static fetcher, and browser fetcher. No additional egress
+    deployable or architectural exception was introduced.
+  - >-
+    Module ownership, public dependency direction, provider isolation, thin
+    composition seams, and Core/Observatory separation remain valid.
+  - >-
+    validate-work-item, validate-changed-paths, import-boundary,
+    service-isolation, module-registry, repository-shape, and git diff checks
+    passed.
+  - >-
+    Future provider enablement remains gated on a separately authorized and
+    deployed controlled-DNS public-TCP-443 egress dataplane with
+    machine-verifiable attestation, plus reviewed immutable image digests and
+    provenance or signatures.
+findings: []

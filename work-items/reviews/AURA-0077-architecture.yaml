@@ -1,0 +1,10 @@
+agent: architecture_guardian
+work_item: AURA-0077
+verdict: PASS
+checked:
+  - Attachment digest lookup remains an inward owner-scoped repository port with memory and PostgreSQL adapters.
+  - Conversation-owned message links retain opaque sources and use an ORM parent relationship only for flush ordering.
+  - Existing transaction boundaries contracts schema module direction and service isolation are preserved.
+  - No migration ADR provider frontend Observatory or generated-client change was introduced.
+  - Architecture and changed-path validators passed.
+findings: []

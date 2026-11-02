@@ -1,0 +1,3933 @@
+"""PostgreSQL adapter for the public memory repository port."""
+
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+import hashlib
+import inspect
+import math
+from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from typing import cast
+from uuid import UUID, uuid4, uuid5
+
+from sqlalchemy import and_, delete, func, or_, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
+
+from aura_core.domains.knowledge.memory.persistence import (
+    MemoryActionOutcomeRow,
+    MemoryCandidateRow,
+    MemoryEmbeddingGenerationRow,
+    MemoryEmbeddingJobRow,
+    MemoryEmbeddingRow,
+    MemoryIdempotencyRow,
+    MemoryMaintenanceStateRow,
+    MemoryModelConfigurationRow,
+    MemoryProcessingJobRow,
+    MemoryProvenanceRow,
+    MemoryPurgeAuditRow,
+    MemoryRelationRow,
+    MemoryRevisionRow,
+    MemoryRow,
+)
+from aura_core.domains.knowledge.memory.public import (
+    DEFAULT_MEMORY_HALF_LIFE_DAYS,
+    DEFAULT_MEMORY_IMPORTANCE,
+    MEMORY_ID_NAMESPACE,
+    PURGE_CONFIRMATION,
+    CandidateState,
+    MemoryAction,
+    MemoryActivityItem,
+    MemoryActivitySnapshot,
+    MemoryAuditRecord,
+    MemoryCandidate,
+    MemoryEmbedding,
+    MemoryEmbeddingGeneration,
+    MemoryEmbeddingJob,
+    MemoryFilters,
+    MemoryIdempotencyConflict,
+    MemoryKind,
+    MemoryLifecycleStatus,
+    MemoryModelConfiguration,
+    MemoryNotFound,
+    MemoryProcessingJob,
+    MemoryProvenance,
+    MemoryPurgeConfirmationRequired,
+    MemoryPurgeReplayNotFound,
+    MemoryRecord,
+    MemoryRelation,
+    MemoryRetentionBasis,
+    MemoryRevision,
+    MemoryScope,
+    MemoryScopeAuthorizationRequired,
+    MemoryScopeType,
+    MemorySensitivity,
+    MemoryValidationError,
+    MemoryVersionConflict,
+    ProcessingJobStatus,
+    classify_sensitivity,
+    decide_candidate,
+    memory_activity_id,
+    normalize_candidate_for_approval,
+    validate_memory_text,
+    validate_provenance,
+    validate_revision,
+)
+from aura_core.domains.knowledge.memory.public import fingerprint as make_fingerprint
+
+MAX_RECALL_CANDIDATES = 50
+
+
+def _uuid_or_none(value: object) -> UUID | None:
+    try:
+        return UUID(str(value)) if value is not None else None
+    except TypeError, ValueError:
+        return None
+
+
+def _scope_type(value: object) -> MemoryScopeType | None:
+    if value is None:
+        return None
+    return value if isinstance(value, MemoryScopeType) else MemoryScopeType(str(value))
+
+
+def _as_int(value: object) -> int:
+    if isinstance(value, (int, float, str)):
+        return int(value)
+    raise TypeError("expected an integer value")
+
+
+def _as_float(value: object) -> float:
+    if isinstance(value, (int, float, str)):
+        return float(value)
+    raise TypeError("expected a numeric value")
+
+
+def _uuid_set(value: object) -> frozenset[UUID]:
+    if value is None:
+        return frozenset()
+    if not isinstance(value, Iterable) or isinstance(value, (str, bytes)):
+        raise TypeError("expected an iterable of UUIDs")
+    result: set[UUID] = set()
+    for item in cast(Iterable[object], value):
+        parsed = _uuid_or_none(item)
+        if parsed is None:
+            raise ValueError("invalid UUID")
+        result.add(parsed)
+    return frozenset(result)
+
+
+def _retention_basis(row: object) -> MemoryRetentionBasis:
+    value = getattr(row, "retention_basis", None)
+    try:
+        return MemoryRetentionBasis(str(value)) if value is not None else MemoryRetentionBasis.NONE
+    except ValueError:
+        return MemoryRetentionBasis.NONE
+
+
+def _vector_tuple(value: object, dimension: int) -> tuple[float, ...] | None:
+    """Normalize psycopg/pgvector values without evaluating driver text."""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not (text.startswith("[") and text.endswith("]")):
+            raise ValueError("invalid persisted embedding vector")
+        inner = text[1:-1].strip()
+        values = () if not inner else tuple(float(part.strip()) for part in inner.split(","))
+    else:
+        values = tuple(float(item) for item in cast(Iterable[float], value))
+    if len(values) != dimension or not all(math.isfinite(item) for item in values):
+        raise ValueError("persisted embedding dimension is invalid")
+    return values
+
+
+class SqlMemoryRepository:
+    """Transactional owner-scoped implementation of :class:`MemoryRepository`."""
+
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        clock: Callable[[], datetime] | None = None,
+        source_outbox: object | None = None,
+    ) -> None:
+        self.sessions = sessions
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._source_outbox = source_outbox
+        self._run_recall_metadata_loader: Callable[..., Awaitable[object]] | None = None
+        self._candidate_evidence_loader: Callable[..., Awaitable[object]] | None = None
+        self._embedding_queue_boundary: Callable[..., Awaitable[object]] | None = None
+
+    def set_run_recall_metadata_loader(
+        self, loader: Callable[..., Awaitable[object]] | None
+    ) -> None:
+        self._run_recall_metadata_loader = loader
+
+    def set_candidate_evidence_loader(
+        self, loader: Callable[..., Awaitable[object]] | None
+    ) -> None:
+        self._candidate_evidence_loader = loader
+
+    def set_embedding_queue_boundary(
+        self, boundary: Callable[..., Awaitable[object]] | None
+    ) -> None:
+        self._embedding_queue_boundary = boundary
+
+    def _now(self) -> datetime:
+        """Return the repository clock as an aware UTC instant.
+
+        The injectable clock is intentionally limited to lease/backoff state so
+        production keeps real-time pacing while tests can deterministically
+        advance retry availability.
+        """
+
+        value = self._clock()
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+    async def _append_task_source_invalidation(
+        self,
+        session: AsyncSession,
+        *,
+        source_id: UUID,
+        source_version: int,
+        occurred_at: datetime,
+        correlation_id: UUID,
+        causation_id: UUID,
+    ) -> None:
+        """Stage through the bootstrap-composed platform outbox port."""
+        stage = getattr(self._source_outbox, "stage_task_source_invalidation", None)
+        if not callable(stage):
+            # Direct repository fixtures may omit the transport; production
+            # composition always injects the platform outbox port.  Never
+            # fall back to execution-owned persistence here.
+            return
+        event_id = uuid5(
+            UUID("4c2a5df3-8b07-4a6d-a9ca-3d19f4ee0d4e"),
+            f"memory_reindex:{source_id}:{source_version}",
+        )
+        payload = {
+            "schemaVersion": 1,
+            "eventId": str(event_id),
+            "eventType": "task.source_invalidated",
+            "sourceKind": "memory_reindex",
+            "sourceId": str(source_id),
+            "sourceVersion": source_version,
+            "occurredAt": occurred_at.isoformat(),
+            "correlationId": str(correlation_id),
+            "causationId": str(causation_id),
+        }
+        result = stage(session, payload=payload)
+        if inspect.isawaitable(result):
+            await result
+
+    def set_clock_for_testing(self, clock: Callable[[], datetime]) -> None:
+        """Replace the clock through an explicit deterministic test seam."""
+
+        self._clock = clock
+
+    async def get_run_memory_activity(
+        self, run_id: UUID, issuer: str, subject: str
+    ) -> MemoryActivitySnapshot:
+        async with self.sessions() as session:
+            jobs = cast(
+                list[MemoryProcessingJobRow],
+                (
+                    await session.execute(
+                        select(MemoryProcessingJobRow).where(
+                            MemoryProcessingJobRow.run_id == run_id,
+                            MemoryProcessingJobRow.principal_issuer == issuer,
+                            MemoryProcessingJobRow.principal_subject == subject,
+                        )
+                    )
+                )
+                .scalars()
+                .all(),
+            )
+            recall_metadata: dict[str, object] | None = None
+            last_event_id: UUID | None = None
+            run_known = False
+            recall_loader = self._run_recall_metadata_loader
+            if recall_loader is not None:
+                recalled = await recall_loader(run_id, issuer, subject)
+                # A successful owner-scoped loader response proves that the
+                # run exists even when no recall metadata was recorded.
+                run_known = True
+                metadata, raw_event_id = cast(tuple[object, object], recalled)
+                recall_metadata = cast(dict[str, object] | None, metadata)
+                last_event_id = raw_event_id if isinstance(raw_event_id, UUID) else None
+            if not jobs and not run_known:
+                raise MemoryNotFound("run memory activity not found")
+            job_ids = [item.id for item in jobs]
+            candidates = cast(
+                list[MemoryCandidateRow],
+                (
+                    (
+                        await session.execute(
+                            select(MemoryCandidateRow).where(
+                                MemoryCandidateRow.job_id.in_(job_ids),
+                                MemoryCandidateRow.principal_issuer == issuer,
+                                MemoryCandidateRow.principal_subject == subject,
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                    if job_ids
+                    else []
+                ),
+            )
+            items: list[MemoryActivityItem] = []
+            for candidate in candidates:
+                # Ignored and rejected extraction decisions are content-free
+                # diagnostics, not owner-facing memory activity.
+                if candidate.state == CandidateState.REJECTED.value:
+                    continue
+                scope: dict[str, object] | None = None
+                if candidate.scope_type is not None:
+                    scope = {"type": candidate.scope_type}
+                    if candidate.agent_profile_id is not None:
+                        scope["agentProfileId"] = str(candidate.agent_profile_id)
+                if candidate.state == CandidateState.ACCEPTED.value:
+                    action = {
+                        MemoryAction.CREATE.value: "created",
+                        MemoryAction.REINFORCE.value: "reinforced",
+                        MemoryAction.DISPUTE.value: "disputed",
+                        MemoryAction.SUPERSEDE.value: "disputed",
+                    }.get(candidate.action, "queued_for_review")
+                    status = "completed"
+                else:
+                    action = "queued_for_review"
+                    candidate_job = next(
+                        (item for item in jobs if item.id == candidate.job_id), None
+                    )
+                    status = (
+                        "completed"
+                        if candidate_job is not None
+                        and candidate_job.status in {"completed", "failed"}
+                        else "queued"
+                    )
+                items.append(
+                    MemoryActivityItem(
+                        memory_activity_id(candidate.job_id),
+                        action,
+                        status,
+                        scope,
+                        candidate_id=candidate.id,
+                        memory_id=candidate.memory_id,
+                        occurred_at=candidate.decided_at or candidate.created_at or self._now(),
+                    )
+                )
+            if recall_metadata is not None:
+                policy_id = recall_metadata.get("policyRevisionId")
+                generation_id = recall_metadata.get("embeddingGenerationId")
+                selections = recall_metadata.get("selections")
+                if isinstance(selections, list):
+                    for raw_selection in cast(list[object], selections):
+                        if not isinstance(raw_selection, dict):
+                            continue
+                        selection = cast(dict[str, object], raw_selection)
+                        memory_id = _uuid_or_none(selection.get("memoryId"))
+                        revision_id = _uuid_or_none(selection.get("revisionId"))
+                        if memory_id is None or revision_id is None:
+                            continue
+                        scope_value = selection.get("scope")
+                        scope = {"type": str(scope_value)} if scope_value else None
+                        agent_id = _uuid_or_none(selection.get("agentProfileId"))
+                        if agent_id is not None and scope is not None:
+                            scope["agentProfileId"] = str(agent_id)
+                        items.append(
+                            MemoryActivityItem(
+                                uuid5(
+                                    MEMORY_ID_NAMESPACE,
+                                    f"recalled:{run_id}:{memory_id}:{revision_id}",
+                                ),
+                                "recalled",
+                                "completed",
+                                scope,
+                                memory_id=memory_id,
+                                memory_revision_id=revision_id,
+                                policy_revision_id=_uuid_or_none(policy_id),
+                                embedding_generation_id=_uuid_or_none(generation_id),
+                                occurred_at=self._now(),
+                            )
+                        )
+            processing = (
+                "running"
+                if any(item.status == "running" for item in jobs)
+                else "queued"
+                if any(item.status in {"queued", "retryable"} for item in jobs)
+                else "settled"
+            )
+            return MemoryActivitySnapshot(
+                run_id,
+                processing,
+                tuple(sorted(items, key=lambda item: (item.occurred_at, item.id))[:100]),
+                last_event_id=last_event_id,
+                reconciled_at=self._now(),
+            )
+
+    async def get_embedding_generation(
+        self, issuer: str, subject: str, generation_id: UUID
+    ) -> MemoryEmbeddingGeneration:
+        async with self.sessions() as session:
+            row = await session.get(MemoryEmbeddingGenerationRow, generation_id)
+            if row is None or row.principal_issuer != issuer or row.principal_subject != subject:
+                raise MemoryNotFound("embedding generation not found")
+            return MemoryEmbeddingGeneration(
+                row.id,
+                row.generation,
+                row.model_id,
+                row.model_revision,
+                row.dimension,
+                row.status,
+                row.created_at or datetime.now(UTC),
+                row.activated_at,
+                row.model_digest,
+                row.principal_issuer,
+                row.principal_subject,
+                row.task_projection_version,
+            )
+
+    async def list_embedding_generations(
+        self, issuer: str, subject: str, *, status: str | None = None
+    ) -> list[MemoryEmbeddingGeneration]:
+        async with self.sessions() as session:
+            query = (
+                select(MemoryEmbeddingGenerationRow)
+                .where(
+                    MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                    MemoryEmbeddingGenerationRow.principal_subject == subject,
+                )
+                .order_by(MemoryEmbeddingGenerationRow.generation)
+            )
+            if status is not None:
+                query = query.where(MemoryEmbeddingGenerationRow.status == status)
+            rows = (await session.execute(query)).scalars().all()
+            return [
+                MemoryEmbeddingGeneration(
+                    row.id,
+                    row.generation,
+                    row.model_id,
+                    row.model_revision,
+                    row.dimension,
+                    row.status,
+                    row.created_at or datetime.now(UTC),
+                    row.activated_at,
+                    row.model_digest,
+                    row.principal_issuer,
+                    row.principal_subject,
+                    row.task_projection_version,
+                )
+                for row in rows
+            ]
+
+    async def get_reindex_task(self, generation_id: UUID) -> MemoryEmbeddingGeneration:
+        async with self.sessions() as session:
+            row = await session.get(MemoryEmbeddingGenerationRow, generation_id)
+        if row is None:
+            raise MemoryNotFound("embedding generation not found")
+        return MemoryEmbeddingGeneration(
+            row.id,
+            row.generation,
+            row.model_id,
+            row.model_revision,
+            row.dimension,
+            row.status,
+            row.created_at or datetime.now(UTC),
+            row.activated_at,
+            row.model_digest,
+            row.principal_issuer,
+            row.principal_subject,
+            row.task_projection_version,
+        )
+
+    async def list_reindex_tasks(
+        self, *, cursor: str | None = None, limit: int = 100
+    ) -> tuple[MemoryEmbeddingGeneration, ...]:
+        from .task_cursor import decode_task_cursor
+
+        position = decode_task_cursor(cursor) if cursor else None
+        filters: list[ColumnElement[bool]] = []
+        if position:
+            fence, stamp, item_id = position
+            filters.append(
+                or_(
+                    and_(MemoryEmbeddingGenerationRow.created_at <= fence,
+                        MemoryEmbeddingGenerationRow.created_at < stamp),
+                    and_(
+                        MemoryEmbeddingGenerationRow.created_at == stamp,
+                        MemoryEmbeddingGenerationRow.id < item_id,
+                    ),
+                )
+            )
+        else:
+            fence = datetime.now(UTC)
+            filters.append(MemoryEmbeddingGenerationRow.created_at <= fence)
+        async with self.sessions() as session:
+            rows = list(
+                (
+                    await session.scalars(
+                        select(MemoryEmbeddingGenerationRow)
+                        .where(*filters)
+                        .order_by(
+                            MemoryEmbeddingGenerationRow.created_at.desc(),
+                            MemoryEmbeddingGenerationRow.id.desc(),
+                        )
+                        .limit(limit)
+                    )
+                ).all()
+            )
+        return tuple(
+            MemoryEmbeddingGeneration(
+                row.id,
+                row.generation,
+                row.model_id,
+                row.model_revision,
+                row.dimension,
+                row.status,
+                row.created_at or datetime.now(UTC),
+                row.activated_at,
+                row.model_digest,
+                row.principal_issuer,
+                row.principal_subject,
+                row.task_projection_version,
+            )
+            for row in rows
+        )
+
+    async def get_active_embedding_generation(
+        self, issuer: str, subject: str
+    ) -> MemoryEmbeddingGeneration | None:
+        """Return only the owner-selected active generation."""
+        # Loading configuration also performs the narrow legacy repair for an
+        # owner whose active generation exists but was never linked to the
+        # configuration row.
+        configuration = await self.get_model_configuration(issuer, subject)
+        async with self.sessions() as session:
+            if configuration.embedding_generation is None:
+                return None
+            row = (
+                await session.execute(
+                    select(MemoryEmbeddingGenerationRow).where(
+                        MemoryEmbeddingGenerationRow.id == configuration.embedding_generation,
+                        MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                        MemoryEmbeddingGenerationRow.principal_subject == subject,
+                        MemoryEmbeddingGenerationRow.status == "active",
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return MemoryEmbeddingGeneration(
+                row.id,
+                row.generation,
+                row.model_id,
+                row.model_revision,
+                row.dimension,
+                row.status,
+                row.created_at or datetime.now(UTC),
+                row.activated_at,
+                row.model_digest,
+                issuer,
+                subject,
+                row.task_projection_version,
+            )
+
+    async def _ensure_active_embedding_job(
+        self, issuer: str, subject: str, record: MemoryRecord
+    ) -> None:
+        """Repair a missing queue row without invoking an embedding provider."""
+
+        generation = await self.get_active_embedding_generation(issuer, subject)
+        if generation is None:
+            return
+        queue = self._embedding_queue_boundary or self.queue_embedding_job
+        await queue(
+            issuer,
+            subject,
+            memory_id=record.id,
+            revision_id=record.current_revision_id,
+            generation_id=generation.id,
+        )
+
+    @staticmethod
+    def _recall_scope_clause(
+        scopes: tuple[tuple[MemoryScopeType, UUID | None], ...]
+    ) -> ColumnElement[bool]:
+        from sqlalchemy import and_, or_
+
+        return cast(
+            ColumnElement[bool],
+            (
+            or_(
+                *[
+                    and_(MemoryRow.scope_type == scope.value, MemoryRow.agent_profile_id == agent)
+                    if scope is MemoryScopeType.AGENT
+                    else and_(
+                        MemoryRow.scope_type == scope.value, MemoryRow.agent_profile_id.is_(None)
+                    )
+                    for scope, agent in scopes
+                ]
+            )
+                if scopes
+                else text("FALSE")
+            ),
+        )
+
+    async def search_lexical(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        query: str,
+        scopes: tuple[tuple[MemoryScopeType, UUID | None], ...],
+        now: datetime,
+        historical: bool,
+        statuses: frozenset[MemoryLifecycleStatus],
+        generation: MemoryEmbeddingGeneration,
+        limit: int = 50,
+    ) -> list[MemoryRecord]:
+        """Execute bounded PostgreSQL FTS before hydrating the top candidates."""
+        async with self.sessions() as session:
+            from sqlalchemy import exists, func
+
+            statement = (
+                select(MemoryRow)
+                .join(
+                    MemoryRevisionRow,
+                    MemoryRevisionRow.id == MemoryRow.current_revision_id,
+                )
+                .where(
+                    MemoryRow.principal_issuer == issuer,
+                    MemoryRow.principal_subject == subject,
+                    self._recall_scope_clause(scopes),
+                    MemoryRow.status.in_([item.value for item in statuses]),
+                    func.to_tsvector("simple", MemoryRevisionRow.content).op("@@")(
+                        func.plainto_tsquery("simple", query)
+                    ),
+                    exists(
+                        select(MemoryEmbeddingRow.id).where(
+                            MemoryEmbeddingRow.revision_id == MemoryRevisionRow.id,
+                            MemoryEmbeddingRow.principal_issuer == issuer,
+                            MemoryEmbeddingRow.principal_subject == subject,
+                            MemoryEmbeddingRow.generation_id == generation.id,
+                            MemoryEmbeddingRow.dimension == generation.dimension,
+                            MemoryEmbeddingRow.model_id == generation.model_id,
+                            MemoryEmbeddingRow.model_revision.is_not_distinct_from(
+                                generation.model_revision
+                            ),
+                            MemoryEmbeddingRow.model_digest.is_not_distinct_from(
+                                generation.model_digest
+                            ),
+                        )
+                    ),
+                )
+                .order_by(
+                    func.ts_rank(
+                        func.to_tsvector("simple", MemoryRevisionRow.content),
+                        func.plainto_tsquery("simple", query),
+                    ).desc(),
+                    MemoryRow.id.asc(),
+                )
+                .limit(min(MAX_RECALL_CANDIDATES, max(1, limit)))
+            )
+            if not historical:
+                statement = statement.where(
+                    (MemoryRevisionRow.valid_from.is_(None))
+                    | (MemoryRevisionRow.valid_from <= now),
+                    (MemoryRevisionRow.valid_to.is_(None)) | (MemoryRevisionRow.valid_to >= now),
+                )
+            rows = (await session.execute(statement)).scalars().all()
+            return [await self._hydrate(session, row) for row in rows]
+
+    async def search_vector(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        vector: tuple[float, ...],
+        generation: MemoryEmbeddingGeneration,
+        scopes: tuple[tuple[MemoryScopeType, UUID | None], ...],
+        now: datetime,
+        historical: bool,
+        statuses: frozenset[MemoryLifecycleStatus],
+        limit: int = 50,
+    ) -> list[MemoryRecord]:
+        """Run exact pgvector cosine similarity in the selected generation."""
+        # The vector is bound as pgvector's canonical textual representation;
+        # the generation and dimension are checked in the SQL predicate.
+        vector_literal = "[" + ",".join(format(item, ".17g") for item in vector) + "]"
+        async with self.sessions() as session:
+            statement = (
+                select(MemoryRow)
+                .join(
+                    MemoryRevisionRow,
+                    MemoryRevisionRow.id == MemoryRow.current_revision_id,
+                )
+                .join(
+                    MemoryEmbeddingRow,
+                    MemoryEmbeddingRow.revision_id == MemoryRevisionRow.id,
+                )
+                .where(
+                    MemoryRow.principal_issuer == issuer,
+                    MemoryRow.principal_subject == subject,
+                    self._recall_scope_clause(scopes),
+                    MemoryRow.status.in_([item.value for item in statuses]),
+                    MemoryEmbeddingRow.principal_issuer == issuer,
+                    MemoryEmbeddingRow.principal_subject == subject,
+                    MemoryEmbeddingRow.generation_id == generation.id,
+                    MemoryEmbeddingRow.dimension == generation.dimension,
+                    MemoryEmbeddingRow.model_id == generation.model_id,
+                    MemoryEmbeddingRow.model_revision.is_not_distinct_from(
+                        generation.model_revision
+                    ),
+                    MemoryEmbeddingRow.model_digest.is_not_distinct_from(generation.model_digest),
+                )
+                .order_by(
+                    text("memory_embeddings.vector <=> CAST(:recall_vector AS vector)"),
+                    MemoryRow.id.asc(),
+                )
+                .limit(min(MAX_RECALL_CANDIDATES, max(1, limit)))
+                .params(recall_vector=vector_literal)
+            )
+            if not historical:
+                statement = statement.where(
+                    (MemoryRevisionRow.valid_from.is_(None))
+                    | (MemoryRevisionRow.valid_from <= now),
+                    (MemoryRevisionRow.valid_to.is_(None)) | (MemoryRevisionRow.valid_to >= now),
+                )
+            rows = (await session.execute(statement)).scalars().all()
+            return [await self._hydrate(session, row) for row in rows]
+
+    async def list_processing_owners(self) -> list[tuple[str, str]]:
+        async with self.sessions() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT principal_issuer, principal_subject FROM memories "
+                        "UNION SELECT principal_issuer, principal_subject "
+                        "FROM memory_processing_jobs "
+                        "UNION SELECT principal_issuer, principal_subject "
+                        "FROM memory_model_configurations "
+                        "UNION SELECT principal_issuer, principal_subject "
+                        "FROM memory_embedding_generations"
+                    )
+                )
+            ).all()
+            return [(str(row[0]), str(row[1])) for row in rows]
+
+    async def save_maintenance_state(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        ran_at: datetime,
+        generation: int | None = None,
+        generation_id: UUID | None = None,
+        cursor: UUID | None = None,
+        completed: int = 0,
+    ) -> None:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(
+                MemoryMaintenanceStateRow,
+                (issuer, subject),
+                with_for_update=True,
+            )
+            if row is None:
+                row = MemoryMaintenanceStateRow(
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    task_projection_version=1,
+                    last_run_at=ran_at,
+                    last_reindex_generation=generation,
+                    reindex_generation_id=generation_id,
+                    reindex_cursor=cursor,
+                    reindex_completed=completed,
+                    updated_at=ran_at,
+                )
+                session.add(row)
+            else:
+                row.last_run_at = ran_at
+                if generation is not None:
+                    row.last_reindex_generation = generation
+                row.reindex_generation_id = generation_id
+                row.reindex_cursor = cursor
+                row.reindex_completed = completed
+                row.updated_at = ran_at
+
+    async def reserve_reindex_command(
+        self,
+        issuer: str,
+        subject: str,
+        generation_id: UUID,
+        idempotency_key: str,
+        fingerprint: str,
+    ) -> bool:
+        command_key = f"reindex:{idempotency_key}"
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, command_key)
+            prior = await session.get(MemoryIdempotencyRow, (issuer, subject, command_key))
+            if prior is not None:
+                if prior.fingerprint != fingerprint:
+                    raise MemoryIdempotencyConflict("idempotency key payload conflict")
+                # UUID(0) is the content-free pending receipt.  A completed
+                # command stores its generation id and is safely replayed.
+                return prior.memory_id == UUID(int=0)
+            generation = await session.get(MemoryEmbeddingGenerationRow, generation_id)
+            if (
+                generation is None
+                or generation.principal_issuer != issuer
+                or generation.principal_subject != subject
+            ):
+                raise MemoryNotFound("embedding generation not found")
+            if generation.status != "building":
+                raise MemoryValidationError("embedding generation is not resumable")
+            session.add(
+                MemoryIdempotencyRow(
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    idempotency_key=command_key,
+                    fingerprint=fingerprint,
+                    memory_id=UUID(int=0),
+                )
+            )
+            return True
+
+    async def release_reindex_command(
+        self, issuer: str, subject: str, idempotency_key: str, fingerprint: str
+    ) -> None:
+        command_key = f"reindex:{idempotency_key}"
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, command_key)
+            row = await session.get(MemoryIdempotencyRow, (issuer, subject, command_key))
+            if row is not None and row.fingerprint == fingerprint:
+                await session.delete(row)
+
+    async def complete_reindex_command(
+        self,
+        issuer: str,
+        subject: str,
+        generation_id: UUID,
+        idempotency_key: str,
+        fingerprint: str,
+    ) -> None:
+        command_key = f"reindex:{idempotency_key}"
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, command_key)
+            row = await session.get(MemoryIdempotencyRow, (issuer, subject, command_key))
+            if row is None or row.fingerprint != fingerprint or row.memory_id != UUID(int=0):
+                raise MemoryIdempotencyConflict("reindex command receipt is unavailable")
+            generation = await session.get(MemoryEmbeddingGenerationRow, generation_id)
+            if (
+                generation is None
+                or generation.principal_issuer != issuer
+                or generation.principal_subject != subject
+            ):
+                raise MemoryNotFound("embedding generation not found")
+            row.memory_id = generation_id
+
+    @staticmethod
+    async def _lock_command(session: AsyncSession, issuer: str, subject: str, key: object) -> None:
+        if key:
+            canonical = "".join(f"{len(part)}:{part};" for part in (issuer, subject, str(key)))
+            lock_key = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+                {"lock_key": lock_key},
+            )
+
+    async def _replay(
+        self, session: AsyncSession, issuer: str, subject: str, key: object, fingerprint: str
+    ) -> MemoryRecord | MemoryAuditRecord | None:
+        if not key:
+            return None
+        # Memory commands use their caller-provided key verbatim. Candidate
+        # review commands use the explicit ``candidate:`` namespace below so
+        # they cannot collide with create/reinforce/revise commands.
+        command_key = str(key)
+        prior = await session.get(MemoryIdempotencyRow, (issuer, subject, command_key))
+        if prior is None:
+            return None
+        if prior.fingerprint != fingerprint:
+            raise MemoryIdempotencyConflict("idempotency key payload conflict")
+        if prior.tombstone:
+            raise MemoryIdempotencyConflict("idempotency key is unavailable after purge")
+        if prior.audit_id:
+            audit = await session.get(MemoryPurgeAuditRow, prior.audit_id)
+            if audit is not None:
+                return MemoryAuditRecord(
+                    audit.id,
+                    issuer,
+                    subject,
+                    audit.memory_id,
+                    audit.action,
+                    audit.created_at or datetime.now(UTC),
+                )
+        row = (
+            await session.execute(
+                select(MemoryRow).where(
+                    MemoryRow.id == prior.memory_id,
+                    MemoryRow.principal_issuer == issuer,
+                    MemoryRow.principal_subject == subject,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise MemoryIdempotencyConflict("idempotency key is unavailable after purge")
+        return await self._hydrate(session, row)
+
+    async def _replay_candidate(
+        self,
+        session: AsyncSession,
+        issuer: str,
+        subject: str,
+        candidate_id: UUID,
+        key: object,
+        fingerprint: str,
+    ) -> MemoryCandidate | None:
+        """Replay candidate decisions from the durable command table.
+
+        Candidate decisions cannot use ``_replay`` because that helper returns
+        memory records.  The same owner-partitioned idempotency table is used
+        with the candidate ID as a content-free command target.
+        """
+
+        if not key:
+            return None
+        prior = await session.get(MemoryIdempotencyRow, (issuer, subject, f"candidate:{key}"))
+        if prior is None:
+            return None
+        if prior.fingerprint != fingerprint:
+            raise MemoryIdempotencyConflict("idempotency key payload conflict")
+        if prior.tombstone or prior.memory_id != candidate_id:
+            raise MemoryIdempotencyConflict("idempotency key is unavailable")
+        row = await session.get(MemoryCandidateRow, candidate_id)
+        if row is None or row.principal_issuer != issuer or row.principal_subject != subject:
+            raise MemoryNotFound("memory candidate not found")
+        # A claimed approval has a durable retryable reservation.  Returning
+        # ``None`` lets the same idempotent command resume its action after a
+        # worker/process crash; terminal decisions below replay normally.
+        if row.state == CandidateState.RETRYABLE.value:
+            return None
+        scope = (
+            MemoryScope(MemoryScopeType(row.scope_type), row.agent_profile_id)
+            if row.scope_type is not None
+            else None
+        )
+        return MemoryCandidate(
+            row.id,
+            row.job_id,
+            issuer,
+            subject,
+            MemoryAction(row.action),
+            row.content,
+            MemoryKind(row.kind) if row.kind else None,
+            scope,
+            row.confidence,
+            row.importance,
+            row.half_life_days,
+            row.valid_to,
+            MemorySensitivity(row.sensitivity),
+            tuple(UUID(item) for item in row.grounded_message_ids or []),
+            row.related_memory_id,
+            CandidateState(row.state),
+            row.decision_reason,
+            row.memory_id,
+            version=1 if row.state in {"proposed", "review", "retryable"} else 2,
+            created_at=row.created_at or datetime.now(UTC),
+            decided_at=row.decided_at,
+            retention_basis=_retention_basis(row),
+        )
+
+    @staticmethod
+    def _stage_candidate_idempotency(
+        session: AsyncSession,
+        issuer: str,
+        subject: str,
+        key: object,
+        fingerprint: str,
+        candidate_id: UUID,
+    ) -> None:
+        if key:
+            session.add(
+                MemoryIdempotencyRow(
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    idempotency_key=f"candidate:{key}",
+                    fingerprint=fingerprint,
+                    memory_id=candidate_id,
+                )
+            )
+
+    @staticmethod
+    async def _assert_not_fenced(
+        session: AsyncSession, issuer: str, subject: str, memory_id: UUID
+    ) -> None:
+        fenced = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM memory_purge_fences WHERE principal_issuer = :issuer "
+                    "AND principal_subject = :subject AND memory_id = :memory_id"
+                ),
+                {"issuer": issuer, "subject": subject, "memory_id": memory_id},
+            )
+        ).scalar_one_or_none()
+        if fenced is not None:
+            raise MemoryNotFound("memory not found")
+
+    @staticmethod
+    def _stage_idempotency(
+        session: AsyncSession,
+        issuer: str,
+        subject: str,
+        key: object,
+        fingerprint: str,
+        memory_id: UUID,
+        audit_id: UUID | None = None,
+    ) -> None:
+        if key:
+            session.add(
+                MemoryIdempotencyRow(
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    idempotency_key=str(key),
+                    fingerprint=fingerprint,
+                    memory_id=memory_id,
+                    audit_id=audit_id,
+                )
+            )
+
+    @staticmethod
+    async def _stage_missing_embedding(
+        session: AsyncSession,
+        issuer: str,
+        subject: str,
+        memory_id: UUID,
+        revision_id: UUID,
+    ) -> None:
+        """Queue the selected owner generation for every new revision."""
+
+        configuration = await session.get(MemoryModelConfigurationRow, (issuer, subject))
+        generation_id = configuration.embedding_generation if configuration else None
+        if generation_id is None:
+            return
+        generation = (
+            await session.execute(
+                select(MemoryEmbeddingGenerationRow).where(
+                    MemoryEmbeddingGenerationRow.id == generation_id,
+                    MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                    MemoryEmbeddingGenerationRow.principal_subject == subject,
+                )
+            )
+        ).scalar_one_or_none()
+        if generation is None:
+            raise MemoryNotFound("embedding generation not found")
+        job_id = uuid5(
+            MEMORY_ID_NAMESPACE, f"embedding-job:{issuer}:{subject}:{revision_id}:{generation_id}"
+        )
+        existing = await session.get(MemoryEmbeddingJobRow, job_id)
+        if existing is None:
+            session.add(
+                MemoryEmbeddingJobRow(
+                    id=job_id,
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    memory_id=memory_id,
+                    revision_id=revision_id,
+                    generation_id=generation_id,
+                    status="queued",
+                    attempt_count=0,
+                )
+            )
+
+    @staticmethod
+    def _revision(row: MemoryRevisionRow) -> MemoryRevision:
+        return MemoryRevision(
+            row.id,
+            row.memory_id,
+            row.revision,
+            MemoryKind(row.kind),
+            row.content,
+            row.observed_at,
+            row.created_at or datetime.now(UTC),
+            row.confidence,
+            row.importance,
+            row.half_life_days,
+            row.valid_from,
+            row.valid_to,
+            tuple(UUID(item) for item in (row.provenance_ids or [])),
+            row.correction_reason,
+        )
+
+    @staticmethod
+    def _provenance(row: MemoryProvenanceRow) -> MemoryProvenance:
+        return MemoryProvenance(
+            row.id,
+            row.source_type,
+            row.source_id,
+            row.conversation_id,
+            row.run_id,
+            row.message_id,
+            row.observed_at,
+            row.evidence_digest,
+            row.evidence,
+            row.created_at or datetime.now(UTC),
+        )
+
+    async def _hydrate(self, session: AsyncSession, row: MemoryRow) -> MemoryRecord:
+        revisions = cast(
+            list[MemoryRevisionRow],
+            (await session.execute(
+                select(MemoryRevisionRow)
+                .where(MemoryRevisionRow.memory_id == row.id)
+                .order_by(MemoryRevisionRow.revision)
+            )).scalars().all(),
+        )
+        provenance = cast(
+            list[MemoryProvenanceRow],
+            (await session.execute(
+                select(MemoryProvenanceRow)
+                .where(MemoryProvenanceRow.memory_id == row.id)
+                .order_by(MemoryProvenanceRow.observed_at)
+            )).scalars().all(),
+        )
+        revision_ids = [item.id for item in revisions]
+        embeddings = cast(
+            list[MemoryEmbeddingRow],
+            (await session.execute(
+                select(MemoryEmbeddingRow).where(
+                    MemoryEmbeddingRow.revision_id.in_(revision_ids),
+                    MemoryEmbeddingRow.principal_issuer == row.principal_issuer,
+                    MemoryEmbeddingRow.principal_subject == row.principal_subject,
+                )
+            )).scalars().all()
+            if revision_ids else [],
+        )
+        generation_ids = {item.generation_id for item in embeddings}
+        relation_rows = cast(
+            list[MemoryRelationRow],
+            (await session.execute(
+                select(MemoryRelationRow).where(MemoryRelationRow.memory_id == row.id)
+            )).scalars().all(),
+        )
+        record = MemoryRecord(
+            row.id,
+            row.principal_issuer,
+            row.principal_subject,
+            MemoryKind(row.kind),
+            MemoryScope(MemoryScopeType(row.scope_type), row.agent_profile_id),
+            MemoryLifecycleStatus(row.status),
+            row.pinned,
+            row.version,
+            row.current_revision_id,
+            [self._revision(item) for item in revisions],
+            [self._provenance(item) for item in provenance],
+            [
+                MemoryEmbedding(
+                    item.id,
+                    item.revision_id,
+                    item.generation,
+                    item.model_id,
+                    item.model_revision,
+                    item.dimension,
+                    item.digest,
+                    item.created_at or datetime.now(UTC),
+                    _vector_tuple(item.vector, item.dimension),
+                    item.generation_id,
+                    item.model_digest,
+                )
+                for item in embeddings
+            ],
+            tuple(item.related_memory_id for item in relation_rows),
+            [
+                MemoryRelation(
+                    item.related_memory_id, item.relation, item.created_at or datetime.now(UTC)
+                )
+                for item in relation_rows
+            ],
+            row.reinforced_at,
+            row.dormant_at,
+            row.archived_at,
+            row.created_at or datetime.now(UTC),
+            row.updated_at or datetime.now(UTC),
+        )
+        generation_rows = cast(
+            list[MemoryEmbeddingGenerationRow],
+            (await session.execute(
+                select(MemoryEmbeddingGenerationRow).where(
+                    MemoryEmbeddingGenerationRow.id.in_(generation_ids),
+                    MemoryEmbeddingGenerationRow.principal_issuer == row.principal_issuer,
+                    MemoryEmbeddingGenerationRow.principal_subject == row.principal_subject,
+                )
+            )).scalars().all()
+            if generation_ids else [],
+        )
+        record.embedding_generations = [
+            MemoryEmbeddingGeneration(
+                item.id,
+                item.generation,
+                item.model_id,
+                item.model_revision,
+                item.dimension,
+                item.status,
+                item.created_at or datetime.now(UTC),
+                item.activated_at,
+                item.model_digest,
+                item.principal_issuer,
+                item.principal_subject,
+            )
+            for item in generation_rows
+        ]
+        return record
+
+    async def _owned(
+        self,
+        session: AsyncSession,
+        issuer: str,
+        subject: str,
+        memory_id: UUID,
+        *,
+        lock: bool = False,
+        scope_type: MemoryScopeType | None = None,
+        agent_profile_id: UUID | None = None,
+    ) -> MemoryRow:
+        query = select(MemoryRow).where(
+            MemoryRow.id == memory_id,
+            MemoryRow.principal_issuer == issuer,
+            MemoryRow.principal_subject == subject,
+        )
+        row = (
+            await session.execute(query.with_for_update() if lock else query)
+        ).scalar_one_or_none()
+        if row is None:
+            raise MemoryNotFound("memory not found")
+        if scope_type is None and agent_profile_id is None:
+            if row.scope_type != MemoryScopeType.USER.value:
+                raise MemoryNotFound("memory not found")
+            return row
+        if scope_type is MemoryScopeType.USER and (
+            row.scope_type != "user" or agent_profile_id is not None
+        ):
+            raise MemoryNotFound("memory not found")
+        if scope_type is MemoryScopeType.AGENT and (
+            row.scope_type != "agent" or row.agent_profile_id != agent_profile_id
+        ):
+            raise MemoryNotFound("memory not found")
+        return row
+
+    async def list_memories(
+        self, issuer: str, subject: str, filters: MemoryFilters | None = None
+    ) -> list[MemoryRecord]:
+        criteria = filters or MemoryFilters()
+        async with self.sessions() as session:
+            query = select(MemoryRow).where(
+                MemoryRow.principal_issuer == issuer, MemoryRow.principal_subject == subject
+            )
+            if criteria.kind:
+                query = query.where(MemoryRow.kind == criteria.kind.value)
+            if criteria.scope_type and (
+                not criteria.include_all_scopes or criteria.scope_type is MemoryScopeType.AGENT
+            ):
+                query = query.where(MemoryRow.scope_type == criteria.scope_type.value)
+            if criteria.agent_profile_id:
+                query = query.where(MemoryRow.agent_profile_id == criteria.agent_profile_id)
+            if (
+                criteria.scope_type is MemoryScopeType.AGENT
+                and not criteria.include_all_scopes
+                and criteria.authorized_agent_ids is not None
+                and criteria.agent_profile_id not in criteria.authorized_agent_ids
+            ):
+                # An explicit selector is the minimum authorization at this
+                # foundation boundary; a caller may further restrict grants.
+                if criteria.authorized_agent_ids:
+                    return []
+            if criteria.status:
+                query = query.where(MemoryRow.status == criteria.status.value)
+            elif not criteria.include_historical:
+                query = query.where(MemoryRow.status == MemoryLifecycleStatus.ACTIVE.value)
+            if criteria.created_from is not None:
+                query = query.where(MemoryRow.created_at >= criteria.created_from)
+            if criteria.created_to is not None:
+                query = query.where(MemoryRow.created_at < criteria.created_to)
+            if criteria.cursor_updated_at is not None and criteria.cursor_id is not None:
+                query = query.where(
+                    or_(
+                        MemoryRow.updated_at < criteria.cursor_updated_at,
+                        and_(
+                            MemoryRow.updated_at == criteria.cursor_updated_at,
+                            MemoryRow.id < criteria.cursor_id,
+                        ),
+                    )
+                )
+            rows = (
+                (
+                    await session.execute(
+                        query.order_by(MemoryRow.updated_at.desc(), MemoryRow.id.desc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            values = [await self._hydrate(session, row) for row in rows]
+            if criteria.q:
+                needle = criteria.q.casefold()
+                values = [item for item in values if needle in item.content.casefold()]
+            if criteria.provenance_type:
+                values = [
+                    item
+                    for item in values
+                    if any(
+                        source.source_type == criteria.provenance_type for source in item.provenance
+                    )
+                ]
+            if criteria.confidence_min is not None:
+                values = [
+                    item
+                    for item in values
+                    if item.current_revision.confidence >= criteria.confidence_min
+                ]
+            if criteria.confidence_max is not None:
+                values = [
+                    item
+                    for item in values
+                    if item.current_revision.confidence <= criteria.confidence_max
+                ]
+            return values[: max(1, min(criteria.limit, 100_000))]
+
+    async def get_memory(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
+        async with self.sessions() as session:
+            return await self._hydrate(
+                session,
+                await self._owned(
+                    session,
+                    issuer,
+                    subject,
+                    memory_id,
+                    scope_type=_scope_type(kwargs.get("scope_type")),
+                    agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+                ),
+            )
+
+    async def create_memory(self, issuer: str, subject: str, **kwargs: object) -> MemoryRecord:
+        kind = MemoryKind(str(kwargs["kind"]))
+        scope = kwargs["scope"]
+        if not isinstance(scope, MemoryScope):
+            scope = MemoryScope(
+                MemoryScopeType(str(scope)), _uuid_or_none(kwargs.get("agent_profile_id"))
+            )
+        authorized_agent_ids = _uuid_set(kwargs.get("authorized_agent_ids"))
+        if (
+            scope.type is MemoryScopeType.AGENT
+            and authorized_agent_ids
+            and scope.agent_profile_id not in authorized_agent_ids
+        ):
+            raise MemoryScopeAuthorizationRequired("agent scope is not authorized")
+        content = str(kwargs["content"])
+        confidence, importance = (
+            _as_float(kwargs.get("confidence", 1.0)),
+            _as_float(kwargs.get("importance", 0.5)),
+        )
+        half_life = _as_float(kwargs.get("half_life_days", 30.0))
+        valid_from = cast(datetime | None, kwargs.get("valid_from"))
+        valid_to = cast(datetime | None, kwargs.get("valid_to"))
+        validate_revision(content, confidence, importance, half_life, valid_from, valid_to)
+        now = self._now()
+        memory_id = UUID(str(kwargs["memory_id"])) if kwargs.get("memory_id") else uuid4()
+        revision_id = uuid4()
+        provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", ())))
+        for item in provenance:
+            validate_provenance(item)
+        key = kwargs.get("idempotency_key")
+        fingerprint = make_fingerprint(
+            "create",
+            {k: v for k, v in kwargs.items() if k not in {"idempotency_key", "provenance"}},
+        )
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, key)
+            await self._assert_not_fenced(session, issuer, subject, memory_id)
+            prior = await self._replay(session, issuer, subject, key, fingerprint)
+            if prior is not None:
+                assert isinstance(prior, MemoryRecord)
+                return prior
+            # Idempotency uses the Core command table only through its public
+            # row shape; storing a small per-memory key is sufficient here.
+            row = MemoryRow(
+                id=memory_id,
+                principal_issuer=issuer,
+                principal_subject=subject,
+                kind=kind.value,
+                scope_type=scope.type.value,
+                agent_profile_id=scope.agent_profile_id,
+                current_revision_id=revision_id,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            # The database owns the provenance/revision foreign keys, but the
+            # deliberately thin ORM rows do not declare relationships that
+            # let SQLAlchemy infer insert ordering.  Establish the memory row
+            # before adding dependent immutable evidence rows; otherwise a
+            # later query-triggered autoflush can insert provenance first.
+            await session.flush()
+            session.add(
+                MemoryRevisionRow(
+                    id=revision_id,
+                    memory_id=memory_id,
+                    revision=1,
+                    kind=kind.value,
+                    content=content,
+                    confidence=confidence,
+                    importance=importance,
+                    half_life_days=half_life,
+                    observed_at=cast(datetime | None, kwargs.get("observed_at")) or now,
+                    valid_from=valid_from,
+                    valid_to=valid_to,
+                    provenance_ids=[str(item.id) for item in provenance],
+                    correction_reason=None,
+                )
+            )
+            for item in provenance:
+                session.add(
+                    MemoryProvenanceRow(
+                        id=item.id,
+                        memory_id=memory_id,
+                        source_type=item.source_type,
+                        source_id=item.source_id,
+                        conversation_id=item.conversation_id,
+                        run_id=item.run_id,
+                        message_id=item.message_id,
+                        evidence_digest=item.evidence_digest,
+                        evidence=item.evidence,
+                        observed_at=item.observed_at,
+                        created_at=now,
+                    )
+                )
+            # Stage the durable job in the same transaction as the revision.
+            # ``_defer_embedding_queue`` is retained as an internal compatibility
+            # flag for the post-acceptance instrumentation boundary, but must
+            # never defer durable work.  A boundary outage after acceptance
+            # therefore cannot strand an accepted memory without an embedding
+            # job; the boundary remains an idempotent telemetry/retry hook.
+            await self._stage_missing_embedding(session, issuer, subject, memory_id, revision_id)
+            self._stage_idempotency(session, issuer, subject, key, fingerprint, memory_id)
+        return await self.get_memory(
+            issuer,
+            subject,
+            memory_id,
+            scope_type=scope.type,
+            agent_profile_id=scope.agent_profile_id,
+        )
+
+    async def reinforce_memory(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
+        key = kwargs.get("idempotency_key")
+        provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", ())))
+        fp = make_fingerprint(
+            "reinforce",
+            {
+                "memory_id": str(memory_id),
+                "provenance": [str(item.id) for item in provenance],
+                **(
+                    {
+                        "expected_version": kwargs.get("expected_version"),
+                        "require_active": kwargs.get("require_active") is True,
+                    }
+                    if kwargs.get("expected_version") is not None
+                    or kwargs.get("require_active") is True
+                    else {}
+                ),
+            },
+        )
+        for item in provenance:
+            validate_provenance(item)
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, key)
+            row = await self._owned(
+                session,
+                issuer,
+                subject,
+                memory_id,
+                lock=True,
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+            )
+            prior = await self._replay(session, issuer, subject, key, fp)
+            if prior is not None:
+                assert isinstance(prior, MemoryRecord)
+                return prior
+            expected_version = kwargs.get("expected_version")
+            if expected_version is not None and row.version != _as_int(expected_version):
+                raise MemoryVersionConflict("memory version conflict")
+            if (
+                kwargs.get("require_active") is True
+                and row.status != MemoryLifecycleStatus.ACTIVE.value
+            ):
+                raise MemoryNotFound("memory is no longer active")
+            now = datetime.now(UTC)
+            row.status = MemoryLifecycleStatus.ACTIVE.value
+            row.dormant_at = None
+            row.reinforced_at = now
+            row.updated_at = now
+            row.version += 1
+            for item in provenance:
+                existing_provenance = await session.get(MemoryProvenanceRow, item.id)
+                if existing_provenance is not None:
+                    if existing_provenance.memory_id != memory_id:
+                        raise MemoryValidationError("provenance is already bound to another memory")
+                    continue
+                session.add(
+                    MemoryProvenanceRow(
+                        id=item.id,
+                        memory_id=memory_id,
+                        source_type=item.source_type,
+                        source_id=item.source_id,
+                        conversation_id=item.conversation_id,
+                        run_id=item.run_id,
+                        message_id=item.message_id,
+                        evidence_digest=item.evidence_digest,
+                        evidence=item.evidence,
+                        observed_at=item.observed_at,
+                        created_at=now,
+                    )
+                )
+            self._stage_idempotency(session, issuer, subject, key, fp, memory_id)
+        return await self.get_memory(
+            issuer,
+            subject,
+            memory_id,
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+        )
+
+    async def revise_memory(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
+        content = str(kwargs["content"])
+        reason = kwargs.get("reason")
+        if reason is not None:
+            validate_memory_text(str(reason), "correction reason")
+        key = kwargs.get("idempotency_key")
+        fp = make_fingerprint(
+            "revise",
+            {k: v for k, v in kwargs.items() if k not in {"idempotency_key", "provenance"}}
+            | {"memory_id": str(memory_id)},
+        )
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, key)
+            row = await self._owned(
+                session,
+                issuer,
+                subject,
+                memory_id,
+                lock=True,
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+            )
+            prior = await self._replay(session, issuer, subject, key, fp)
+            if prior is not None:
+                assert isinstance(prior, MemoryRecord)
+                return prior
+            expected = _as_int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
+            if row.version != expected:
+                raise MemoryVersionConflict("memory version conflict")
+            previous = (
+                await session.execute(
+                    select(MemoryRevisionRow).where(MemoryRevisionRow.id == row.current_revision_id)
+                )
+            ).scalar_one()
+            confidence = _as_float(
+                previous.confidence if kwargs.get("confidence") is None else kwargs["confidence"]
+            )
+            importance = _as_float(
+                previous.importance if kwargs.get("importance") is None else kwargs["importance"]
+            )
+            half_life = _as_float(
+                previous.half_life_days
+                if kwargs.get("half_life_days") is None
+                else kwargs["half_life_days"]
+            )
+            valid_from = cast(
+                datetime | None,
+                previous.valid_from
+                if kwargs.get("valid_from") is None
+                else kwargs["valid_from"],
+            )
+            valid_to = (
+                None
+                if kwargs.get("clear_valid_to") is True
+                else previous.valid_to
+                if kwargs.get("valid_to") is None
+                else cast(datetime | None, kwargs["valid_to"])
+            )
+            validate_revision(content, confidence, importance, half_life, valid_from, valid_to)
+            number = (
+                await session.execute(
+                    select(MemoryRevisionRow.revision)
+                    .where(MemoryRevisionRow.memory_id == memory_id)
+                    .order_by(MemoryRevisionRow.revision.desc())
+                    .limit(1)
+                )
+            ).scalar_one() + 1
+            revision_id, now = uuid4(), datetime.now(UTC)
+            provenance = list(cast(Iterable[MemoryProvenance], kwargs.get("provenance", ())))
+            for item in provenance:
+                validate_provenance(item)
+            kind = (
+                MemoryKind(str(kwargs["kind"]))
+                if kwargs.get("kind") is not None
+                else MemoryKind(row.kind)
+            )
+            row.kind = kind.value
+            session.add(
+                MemoryRevisionRow(
+                    id=revision_id,
+                    memory_id=memory_id,
+                    revision=number,
+                    kind=kind.value,
+                    content=content,
+                    confidence=confidence,
+                    importance=importance,
+                    half_life_days=half_life,
+                    observed_at=kwargs.get("observed_at") or now,
+                    valid_from=valid_from,
+                    valid_to=valid_to,
+                    provenance_ids=[str(item.id) for item in provenance],
+                    correction_reason=str(reason) if reason is not None else None,
+                )
+            )
+            for item in provenance:
+                session.add(
+                    MemoryProvenanceRow(
+                        id=item.id,
+                        memory_id=memory_id,
+                        source_type=item.source_type,
+                        source_id=item.source_id,
+                        conversation_id=item.conversation_id,
+                        run_id=item.run_id,
+                        message_id=item.message_id,
+                        evidence_digest=item.evidence_digest,
+                        evidence=item.evidence,
+                        observed_at=item.observed_at,
+                        created_at=now,
+                    )
+                )
+            await self._stage_missing_embedding(session, issuer, subject, memory_id, revision_id)
+            row.current_revision_id, row.version, row.reinforced_at, row.updated_at = (
+                revision_id,
+                row.version + 1,
+                now,
+                now,
+            )
+            self._stage_idempotency(session, issuer, subject, key, fp, memory_id)
+        return await self.get_memory(
+            issuer,
+            subject,
+            memory_id,
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+        )
+
+    async def set_status(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
+        key = kwargs.get("idempotency_key")
+        status = MemoryLifecycleStatus(str(kwargs["status"]))
+        fp = make_fingerprint(
+            "status",
+            {
+                "memory": str(memory_id),
+                "status": status.value,
+                "expected": kwargs.get("expected_version", kwargs.get("expectedVersion")),
+                "related": kwargs.get("related_memory_id"),
+                "scope_type": kwargs.get("scope_type"),
+                "agent_profile_id": kwargs.get("agent_profile_id"),
+            },
+        )
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, key)
+            row = await self._owned(
+                session,
+                issuer,
+                subject,
+                memory_id,
+                lock=True,
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+            )
+            prior = await self._replay(session, issuer, subject, key, fp)
+            if prior is not None:
+                assert isinstance(prior, MemoryRecord)
+                return prior
+            expected = _as_int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
+            if row.version != expected:
+                raise MemoryVersionConflict("memory version conflict")
+            now = datetime.now(UTC)
+            row.status, row.version, row.updated_at = status.value, row.version + 1, now
+            if status is MemoryLifecycleStatus.DORMANT:
+                row.dormant_at = now
+            if status is MemoryLifecycleStatus.ARCHIVED:
+                row.archived_at = now
+            related = kwargs.get("related_memory_id")
+            relation = (
+                "disputes"
+                if status is MemoryLifecycleStatus.DISPUTED
+                else "supersedes"
+                if status is MemoryLifecycleStatus.SUPERSEDED
+                else None
+            )
+            if isinstance(related, UUID) and relation is not None:
+                if related == memory_id:
+                    raise MemoryNotFound("related memory not found")
+                related_row = (
+                    await session.execute(
+                        select(MemoryRow).where(
+                            MemoryRow.id == related,
+                            MemoryRow.principal_issuer == issuer,
+                            MemoryRow.principal_subject == subject,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if related_row is None:
+                    raise MemoryNotFound("related memory not found")
+                authorized_agent_ids = _uuid_set(kwargs.get("authorized_agent_ids"))
+                if (
+                    related_row.scope_type != row.scope_type
+                    or related_row.agent_profile_id != row.agent_profile_id
+                ):
+                    raise MemoryNotFound("related memory not found")
+                if related_row.scope_type == "agent" and (
+                    related_row.agent_profile_id != _uuid_or_none(kwargs.get("agent_profile_id"))
+                    and related_row.agent_profile_id not in authorized_agent_ids
+                ):
+                    raise MemoryNotFound("related memory not found")
+                session.add(
+                    MemoryRelationRow(
+                        memory_id=memory_id,
+                        related_memory_id=related,
+                        relation=relation,
+                        created_at=now,
+                    )
+                )
+            self._stage_idempotency(session, issuer, subject, key, fp, memory_id)
+        return await self.get_memory(
+            issuer,
+            subject,
+            memory_id,
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+        )
+
+    async def set_pinned(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
+        key = kwargs.get("idempotency_key")
+        fp = make_fingerprint(
+            "pin",
+            {
+                "memory": str(memory_id),
+                "expected": kwargs.get("expected_version", kwargs.get("expectedVersion")),
+                "pinned": bool(kwargs["pinned"]),
+                "scope_type": kwargs.get("scope_type"),
+                "agent_profile_id": kwargs.get("agent_profile_id"),
+            },
+        )
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, key)
+            row = await self._owned(
+                session,
+                issuer,
+                subject,
+                memory_id,
+                lock=True,
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+            )
+            prior = await self._replay(session, issuer, subject, key, fp)
+            if prior is not None:
+                assert isinstance(prior, MemoryRecord)
+                return prior
+            expected = _as_int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
+            if row.version != expected:
+                raise MemoryVersionConflict("memory version conflict")
+            row.pinned, row.version, row.updated_at = (
+                bool(kwargs["pinned"]),
+                row.version + 1,
+                datetime.now(UTC),
+            )
+            self._stage_idempotency(session, issuer, subject, key, fp, memory_id)
+        return await self.get_memory(
+            issuer,
+            subject,
+            memory_id,
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+        )
+
+    async def purge(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryAuditRecord:
+        if kwargs.get("confirmation") != PURGE_CONFIRMATION:
+            raise MemoryPurgeConfirmationRequired("exact purge confirmation is required")
+        key = kwargs.get("idempotency_key")
+        fp = make_fingerprint(
+            "purge",
+            {
+                "memory": str(memory_id),
+                "expected": kwargs.get("expected_version", kwargs.get("expectedVersion")),
+                "confirmation": kwargs.get("confirmation"),
+                "scope_type": kwargs.get("scope_type"),
+                "agent_profile_id": kwargs.get("agent_profile_id"),
+            },
+        )
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, key)
+            if key:
+                prior = await session.get(MemoryIdempotencyRow, (issuer, subject, str(key)))
+                if prior is not None:
+                    if prior.tombstone:
+                        raise MemoryPurgeReplayNotFound("memory not found")
+                    if prior.fingerprint != fp:
+                        raise MemoryIdempotencyConflict("idempotency key payload conflict")
+                    audit = (
+                        await session.get(MemoryPurgeAuditRow, prior.audit_id)
+                        if prior.audit_id
+                        else None
+                    )
+                    if audit is not None:
+                        return MemoryAuditRecord(
+                            audit.id,
+                            issuer,
+                            subject,
+                            audit.memory_id,
+                            audit.action,
+                            audit.created_at or datetime.now(UTC),
+                        )
+            row = await self._owned(
+                session,
+                issuer,
+                subject,
+                memory_id,
+                lock=True,
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+            )
+            expected = _as_int(kwargs.get("expected_version", kwargs.get("expectedVersion", 0)))
+            if row.version != expected:
+                raise MemoryVersionConflict("memory version conflict")
+            revisions = (
+                (
+                    await session.execute(
+                        select(MemoryRevisionRow.id).where(MemoryRevisionRow.memory_id == memory_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            await session.execute(
+                delete(MemoryEmbeddingRow).where(MemoryEmbeddingRow.revision_id.in_(revisions))
+            )
+            await session.execute(
+                delete(MemoryProvenanceRow).where(MemoryProvenanceRow.memory_id == memory_id)
+            )
+            await session.execute(
+                delete(MemoryRelationRow).where(
+                    (MemoryRelationRow.memory_id == memory_id)
+                    | (MemoryRelationRow.related_memory_id == memory_id)
+                )
+            )
+            candidate_ids = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT id FROM memory_candidates "
+                            "WHERE principal_issuer = :issuer "
+                            "AND principal_subject = :subject "
+                            "AND (related_memory_id = :memory_id "
+                            "OR memory_id = :memory_id)"
+                        ),
+                        {"issuer": issuer, "subject": subject, "memory_id": memory_id},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            job_ids = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT id FROM memory_processing_jobs "
+                            "WHERE principal_issuer = :issuer "
+                            "AND principal_subject = :subject "
+                            "AND (memory_id = :memory_id "
+                            "OR id IN ("
+                            "SELECT job_id FROM memory_candidates "
+                            "WHERE principal_issuer = :issuer "
+                            "AND principal_subject = :subject "
+                            "AND (related_memory_id = :memory_id "
+                            "OR memory_id = :memory_id)"
+                            ") OR id IN ("
+                            "SELECT job_id FROM memory_action_outcomes "
+                            "WHERE principal_issuer = :issuer "
+                            "AND principal_subject = :subject "
+                            "AND memory_id = :memory_id"
+                            ") OR EXISTS ("
+                            "SELECT 1 FROM memory_command_idempotency AS idem "
+                            "WHERE idem.principal_issuer = :issuer "
+                            "AND idem.principal_subject = :subject "
+                            "AND idem.memory_id = :memory_id "
+                            "AND (idem.idempotency_key = 'memory-job:' "
+                            "|| memory_processing_jobs.id::text "
+                            "OR idem.idempotency_key IN ("
+                            "SELECT 'memory-action:' || c.id::text "
+                            "FROM memory_candidates AS c "
+                            "WHERE c.job_id = memory_processing_jobs.id "
+                            "AND c.principal_issuer = :issuer "
+                            "AND c.principal_subject = :subject"
+                            ") OR (idem.idempotency_key LIKE 'memory-fallback:%' "
+                            "AND EXISTS ("
+                            "SELECT 1 FROM memory_candidates AS fallback_candidate "
+                            "JOIN memory_revisions AS fallback_revision "
+                            "ON fallback_revision.memory_id = :memory_id "
+                            "AND fallback_revision.content = fallback_candidate.content "
+                            "WHERE fallback_candidate.job_id = memory_processing_jobs.id "
+                            "AND fallback_candidate.principal_issuer = :issuer "
+                            "AND fallback_candidate.principal_subject = :subject "
+                            "AND fallback_candidate.decision_reason "
+                            "LIKE 'provider_ignore_deterministic_create%'"
+                            ")))))"
+                        ),
+                        {"issuer": issuer, "subject": subject, "memory_id": memory_id},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            # Derive every processing link from the memory identity, including
+            # rows written in a crash window where candidate linkage was not
+            # yet persisted.  All rows are owner constrained.
+            await session.execute(
+                text(
+                    "UPDATE memory_processing_jobs "
+                    "SET status = 'failed', last_error_class = 'purged', "
+                    "lease_id = NULL, lease_until = NULL, "
+                    "user_message_ids = '[]'::jsonb, "
+                    "assistant_message_ids = '[]'::jsonb, "
+                    "evidence_digest = NULL, memory_id = NULL "
+                    "WHERE principal_issuer = :issuer "
+                    "AND principal_subject = :subject "
+                    "AND (memory_id = :memory_id "
+                    "OR id IN ("
+                    "SELECT job_id FROM memory_candidates "
+                    "WHERE principal_issuer = :issuer "
+                    "AND principal_subject = :subject "
+                    "AND (related_memory_id = :memory_id "
+                    "OR memory_id = :memory_id)"
+                    ") OR id IN ("
+                    "SELECT job_id FROM memory_action_outcomes "
+                    "WHERE principal_issuer = :issuer "
+                    "AND principal_subject = :subject "
+                    "AND memory_id = :memory_id"
+                    ") OR EXISTS ("
+                    "SELECT 1 FROM memory_command_idempotency AS idem "
+                    "WHERE idem.principal_issuer = :issuer "
+                    "AND idem.principal_subject = :subject "
+                    "AND idem.memory_id = :memory_id "
+                    "AND (idem.idempotency_key = 'memory-job:' "
+                    "|| memory_processing_jobs.id::text "
+                    "OR idem.idempotency_key IN ("
+                    "SELECT 'memory-action:' || c.id::text "
+                    "FROM memory_candidates AS c "
+                    "WHERE c.job_id = memory_processing_jobs.id "
+                    "AND c.principal_issuer = :issuer "
+                    "AND c.principal_subject = :subject"
+                    ") OR (idem.idempotency_key LIKE 'memory-fallback:%' "
+                    "AND EXISTS ("
+                    "SELECT 1 FROM memory_candidates AS fallback_candidate "
+                    "JOIN memory_revisions AS fallback_revision "
+                    "ON fallback_revision.memory_id = :memory_id "
+                    "AND fallback_revision.content = fallback_candidate.content "
+                    "WHERE fallback_candidate.job_id = memory_processing_jobs.id "
+                    "AND fallback_candidate.principal_issuer = :issuer "
+                    "AND fallback_candidate.principal_subject = :subject "
+                    "AND fallback_candidate.decision_reason "
+                    "LIKE 'provider_ignore_deterministic_create%'"
+                    ")))))"
+                ),
+                {"issuer": issuer, "subject": subject, "memory_id": memory_id},
+            )
+            # The accepted-action link is also derivable from the deterministic
+            # create idempotency key, covering a crash between memory creation
+            # and candidate/job-link persistence.
+            await session.execute(
+                text(
+                    "UPDATE memory_processing_jobs AS jobs SET status = 'failed', "
+                    "last_error_class = 'purged', lease_id = NULL, lease_until = NULL, "
+                    "user_message_ids = '[]'::jsonb, assistant_message_ids = '[]'::jsonb, "
+                    "evidence_digest = NULL, memory_id = NULL "
+                    "FROM memory_command_idempotency AS idem "
+                    "WHERE idem.principal_issuer = :issuer "
+                    "AND idem.principal_subject = :subject "
+                    "AND idem.memory_id = :memory_id "
+                    "AND idem.idempotency_key = 'memory-job:' || jobs.id::text "
+                    "AND jobs.principal_issuer = :issuer "
+                    "AND jobs.principal_subject = :subject"
+                ),
+                {"issuer": issuer, "subject": subject, "memory_id": memory_id},
+            )
+            if candidate_ids or job_ids:
+                await session.execute(
+                    text(
+                        "DELETE FROM memory_action_outcomes "
+                        "WHERE principal_issuer = :issuer "
+                        "AND principal_subject = :subject "
+                        "AND (candidate_id = ANY(:candidate_ids) "
+                        "OR job_id = ANY(:job_ids) "
+                        "OR memory_id = :memory_id)"
+                    ),
+                    {
+                        "issuer": issuer,
+                        "subject": subject,
+                        "candidate_ids": candidate_ids or [UUID(int=0)],
+                        "job_ids": job_ids or [UUID(int=0)],
+                        "memory_id": memory_id,
+                    },
+                )
+            else:
+                await session.execute(
+                    text(
+                        "DELETE FROM memory_action_outcomes "
+                        "WHERE principal_issuer = :issuer "
+                        "AND principal_subject = :subject "
+                        "AND memory_id = :memory_id"
+                    ),
+                    {"issuer": issuer, "subject": subject, "memory_id": memory_id},
+                )
+            await session.execute(
+                text(
+                    "DELETE FROM memory_candidates WHERE principal_issuer = :issuer "
+                    "AND principal_subject = :subject "
+                    "AND (related_memory_id = :memory_id "
+                    "OR memory_id = :memory_id OR job_id = ANY(:job_ids))"
+                ),
+                {
+                    "issuer": issuer,
+                    "subject": subject,
+                    "memory_id": memory_id,
+                    "job_ids": job_ids or [UUID(int=0)],
+                },
+            )
+            await session.execute(
+                text(
+                    "DELETE FROM memory_embedding_jobs "
+                    "WHERE principal_issuer = :issuer "
+                    "AND principal_subject = :subject "
+                    "AND memory_id = :memory_id"
+                ),
+                {"issuer": issuer, "subject": subject, "memory_id": memory_id},
+            )
+            await session.execute(
+                delete(MemoryRevisionRow).where(MemoryRevisionRow.memory_id == memory_id)
+            )
+            await session.execute(
+                MemoryIdempotencyRow.__table__.update()  # type: ignore[reportAttributeAccessIssue]
+                .where(MemoryIdempotencyRow.memory_id == memory_id)
+                # Retain only a content-free replay tombstone.  The actual
+                # purged memory id must not remain discoverable through the
+                # idempotency table, while the key/fingerprint still fences
+                # replay of the original operation.
+                .values(tombstone=True, audit_id=None, memory_id=UUID(int=0))
+            )
+            await session.delete(row)
+            audit_id = uuid4()
+            audit_row = MemoryPurgeAuditRow(
+                id=audit_id,
+                memory_id=memory_id,
+                principal_issuer=issuer,
+                principal_subject=subject,
+                created_at=datetime.now(UTC),
+            )
+            session.add(audit_row)
+            await session.flush()
+            await session.execute(
+                text(
+                    "INSERT INTO memory_purge_fences "
+                    "(principal_issuer, principal_subject, memory_id) "
+                    "VALUES (:issuer, :subject, :memory_id) ON CONFLICT DO NOTHING"
+                ),
+                {"issuer": issuer, "subject": subject, "memory_id": memory_id},
+            )
+            await session.refresh(audit_row)
+            audit_created_at = audit_row.created_at or datetime.now(UTC)
+            if key:
+                # Keep the purge receipt replayable, but do not preserve the
+                # purged memory identity in command metadata.
+                session.add(
+                    MemoryIdempotencyRow(
+                        principal_issuer=issuer,
+                        principal_subject=subject,
+                        idempotency_key=str(key),
+                        fingerprint=fp,
+                        memory_id=UUID(int=0),
+                        audit_id=audit_id,
+                        tombstone=False,
+                    )
+                )
+        return MemoryAuditRecord(audit_id, issuer, subject, memory_id, "purge", audit_created_at)
+
+    async def register_embedding_generation(
+        self, issuer: str, subject: str, **kwargs: object
+    ) -> MemoryEmbeddingGeneration:
+        generation = _as_int(kwargs["generation"])
+        model_id = str(kwargs["model_id"])
+        dimension = _as_int(kwargs["dimension"])
+        model_digest = kwargs.get("model_digest")
+        if not model_id or dimension < 1:
+            raise ValueError("embedding model and dimension are required")
+        if model_digest is not None and (
+            not isinstance(model_digest, str)
+            or len(model_digest) != 64
+            or not all(char in "0123456789abcdef" for char in model_digest)
+        ):
+            raise ValueError("embedding model digest must be sha256")
+        item = MemoryEmbeddingGeneration(
+            uuid4(),
+            generation,
+            model_id,
+            cast(str | None, kwargs.get("model_revision")),
+            dimension,
+            "building",
+            datetime.now(UTC),
+            None,
+            str(model_digest) if model_digest else None,
+            issuer,
+            subject,
+        )
+        async with self.sessions() as session, session.begin():
+            await self._lock_command(session, issuer, subject, f"embedding-generation:{generation}")
+            existing = (
+                await session.execute(
+                    select(MemoryEmbeddingGenerationRow.id).where(
+                        MemoryEmbeddingGenerationRow.generation == generation,
+                        MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                        MemoryEmbeddingGenerationRow.principal_subject == subject,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                raise MemoryValidationError("embedding generation number already exists")
+            session.add(
+                MemoryEmbeddingGenerationRow(
+                    id=item.id,
+                    generation=item.generation,
+                    model_id=item.model_id,
+                    model_revision=item.model_revision,
+                    model_digest=item.model_digest,
+                    dimension=item.dimension,
+                    status=item.status,
+                    created_at=item.created_at,
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    task_projection_version=1,
+                )
+            )
+            await self._append_task_source_invalidation(
+                session, source_id=item.id, source_version=1,
+                occurred_at=item.created_at, correlation_id=item.id, causation_id=item.id
+            )
+        return item
+
+    async def activate_embedding_generation(
+        self, issuer: str, subject: str, generation_id: UUID
+    ) -> MemoryEmbeddingGeneration:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(
+                MemoryEmbeddingGenerationRow, generation_id, with_for_update=True
+            )
+            if row is None:
+                raise MemoryNotFound("embedding generation not found")
+            if row.principal_issuer != issuer or row.principal_subject != subject:
+                raise MemoryNotFound("embedding generation not found")
+            if row.status != "building":
+                raise MemoryValidationError("only a building embedding generation can be activated")
+            retained = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(MemoryRevisionRow)
+                    .join(MemoryRow, MemoryRow.id == MemoryRevisionRow.memory_id)
+                    .where(
+                        MemoryRow.principal_issuer == issuer,
+                        MemoryRow.principal_subject == subject,
+                    )
+                )
+            ).scalar_one()
+            embedded = (
+                await session.execute(
+                    select(func.count(func.distinct(MemoryEmbeddingRow.revision_id)))
+                    .select_from(MemoryEmbeddingRow)
+                    .join(MemoryRevisionRow, MemoryRevisionRow.id == MemoryEmbeddingRow.revision_id)
+                    .join(MemoryRow, MemoryRow.id == MemoryRevisionRow.memory_id)
+                    .where(
+                        MemoryRow.principal_issuer == issuer,
+                        MemoryRow.principal_subject == subject,
+                        MemoryEmbeddingRow.principal_issuer == issuer,
+                        MemoryEmbeddingRow.principal_subject == subject,
+                        MemoryEmbeddingRow.generation_id == generation_id,
+                    )
+                )
+            ).scalar_one()
+            if retained != embedded:
+                raise MemoryValidationError("embedding generation is incomplete")
+            configuration = await session.get(
+                MemoryModelConfigurationRow, (issuer, subject), with_for_update=True
+            )
+            if (
+                configuration is not None
+                and configuration.embedding_generation != generation_id
+                and (
+                    row.model_id != configuration.embedding_model_id
+                    or row.model_revision != configuration.embedding_model_revision
+                )
+            ):
+                raise MemoryValidationError("embedding generation does not match configured target")
+            previous_generation = configuration.embedding_generation if configuration else None
+            if previous_generation is not None and previous_generation != generation_id:
+                previous = await session.get(
+                    MemoryEmbeddingGenerationRow, previous_generation, with_for_update=True
+                )
+                if (
+                    previous is not None
+                    and previous.principal_issuer == issuer
+                    and previous.principal_subject == subject
+                ):
+                    previous.status = "retired"
+                    previous.task_projection_version += 1
+                    await self._append_task_source_invalidation(
+                        session, source_id=previous.id,
+                        source_version=previous.task_projection_version,
+                        occurred_at=previous.activated_at or self._now(),
+                        correlation_id=previous.id, causation_id=generation_id,
+                    )
+            row.status, row.activated_at = "active", datetime.now(UTC)
+            row.task_projection_version += 1
+            await self._append_task_source_invalidation(
+                session, source_id=row.id, source_version=row.task_projection_version,
+                occurred_at=row.activated_at or self._now(),
+                correlation_id=row.id, causation_id=row.id,
+            )
+            if configuration is not None:
+                configuration.embedding_generation = generation_id
+                configuration.version += 1
+                configuration.updated_at = datetime.now(UTC)
+            return MemoryEmbeddingGeneration(
+                row.id,
+                row.generation,
+                row.model_id,
+                row.model_revision,
+                row.dimension,
+                row.status,
+                row.created_at or datetime.now(UTC),
+                row.activated_at,
+                row.model_digest,
+                row.principal_issuer,
+                row.principal_subject,
+                row.task_projection_version,
+            )
+
+    async def mark_embedding_generation_failed(
+        self, issuer: str, subject: str, generation_id: UUID
+    ) -> MemoryEmbeddingGeneration:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(
+                MemoryEmbeddingGenerationRow, generation_id, with_for_update=True
+            )
+            if row is None or row.principal_issuer != issuer or row.principal_subject != subject:
+                raise MemoryNotFound("embedding generation not found")
+            if row.status != "building":
+                raise MemoryValidationError("only a building embedding generation can fail")
+            row.status = "failed"
+            row.task_projection_version += 1
+            await self._append_task_source_invalidation(
+                session, source_id=row.id, source_version=row.task_projection_version,
+                occurred_at=self._now(), correlation_id=row.id, causation_id=row.id,
+            )
+            return MemoryEmbeddingGeneration(
+                row.id,
+                row.generation,
+                row.model_id,
+                row.model_revision,
+                row.dimension,
+                row.status,
+                row.created_at or datetime.now(UTC),
+                row.activated_at,
+                row.model_digest,
+                row.principal_issuer,
+                row.principal_subject,
+                row.task_projection_version,
+            )
+
+    async def attach_embedding(
+        self, issuer: str, subject: str, memory_id: UUID, **kwargs: object
+    ) -> MemoryRecord:
+        async with self.sessions() as session, session.begin():
+            await self._assert_not_fenced(session, issuer, subject, memory_id)
+            row = await self._owned(
+                session,
+                issuer,
+                subject,
+                memory_id,
+                lock=True,
+                scope_type=_scope_type(kwargs.get("scope_type")),
+                agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+            )
+            generation_id = kwargs["generation_id"]
+            generation = await session.get(MemoryEmbeddingGenerationRow, generation_id)
+            if generation is None:
+                raise MemoryNotFound("embedding generation not found")
+            if generation.principal_issuer != issuer or generation.principal_subject != subject:
+                raise MemoryNotFound("embedding generation not found")
+            revision_id = kwargs.get("revision_id", row.current_revision_id)
+            revision = (
+                await session.execute(
+                    select(MemoryRevisionRow).where(
+                        MemoryRevisionRow.id == revision_id,
+                        MemoryRevisionRow.memory_id == memory_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if revision is None:
+                raise MemoryNotFound("memory revision not found")
+            if revision.memory_id != row.id:
+                raise MemoryNotFound("memory revision not found")
+            vector = [float(value) for value in cast(Iterable[float], kwargs["vector"])]
+            digest = str(kwargs["digest"])
+            if len(vector) != generation.dimension or not all(
+                math.isfinite(value) for value in vector
+            ):
+                raise MemoryValidationError("embedding dimension or values do not match generation")
+            if len(digest) != 64 or not all(char in "0123456789abcdef" for char in digest):
+                raise MemoryValidationError("embedding digest must be sha256")
+            if not {"model_id", "model_revision", "model_digest"} <= kwargs.keys():
+                raise MemoryValidationError("observed embedding identity is required")
+            model_id = str(kwargs["model_id"])
+            model_revision = kwargs["model_revision"]
+            model_digest = kwargs["model_digest"]
+            if (
+                model_id != generation.model_id
+                or model_revision != generation.model_revision
+                or model_digest != generation.model_digest
+            ):
+                raise MemoryValidationError("embedding provider identity does not match generation")
+            duplicate = (
+                await session.execute(
+                    select(MemoryEmbeddingRow.id).where(
+                        MemoryEmbeddingRow.revision_id == revision_id,
+                        MemoryEmbeddingRow.generation_id == generation.id,
+                        MemoryEmbeddingRow.principal_issuer == issuer,
+                        MemoryEmbeddingRow.principal_subject == subject,
+                    )
+                )
+            ).scalar_one_or_none()
+            if duplicate is not None:
+                raise ValueError("embedding already exists for revision and generation")
+            session.add(
+                MemoryEmbeddingRow(
+                    id=uuid4(),
+                    revision_id=revision_id,
+                    generation=generation.generation,
+                    generation_id=generation.id,
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    model_id=model_id,
+                    model_revision=model_revision,
+                    dimension=generation.dimension,
+                    digest=digest,
+                    model_digest=model_digest,
+                    vector=vector,
+                    created_at=datetime.now(UTC),
+                )
+            )
+        return await self.get_memory(
+            issuer,
+            subject,
+            memory_id,
+            scope_type=_scope_type(kwargs.get("scope_type")),
+            agent_profile_id=_uuid_or_none(kwargs.get("agent_profile_id")),
+        )
+
+    async def save_model_configuration(
+        self, issuer: str, subject: str, configuration: MemoryModelConfiguration, **kwargs: object
+    ) -> MemoryModelConfiguration:
+        if configuration.issuer != issuer or configuration.subject != subject:
+            raise MemoryScopeAuthorizationRequired("model configuration owner mismatch")
+        key = kwargs.get("idempotency_key")
+        fingerprint = make_fingerprint(
+            "model.configuration",
+            {
+                "extraction": configuration.extraction_model_id,
+                "embedding": configuration.embedding_model_id,
+                "expectedVersion": kwargs.get("expected_version"),
+                "dimension": kwargs.get("dimension"),
+                "modelDigest": kwargs.get("model_digest"),
+            },
+        )
+        async with self.sessions() as session, session.begin():
+            if key:
+                await self._lock_command(session, issuer, subject, f"model:{key}")
+                command_key = f"model:{key}"
+                prior = await session.get(MemoryIdempotencyRow, (issuer, subject, command_key))
+                if prior is not None:
+                    if prior.fingerprint != fingerprint:
+                        raise MemoryIdempotencyConflict("idempotency key payload conflict")
+                    row = await session.get(MemoryModelConfigurationRow, (issuer, subject))
+                    if row is None:
+                        raise MemoryIdempotencyConflict("idempotency key is unavailable")
+                    return MemoryModelConfiguration(
+                        issuer,
+                        subject,
+                        row.extraction_model_id,
+                        row.embedding_model_id,
+                        row.extraction_model_revision,
+                        row.embedding_model_revision,
+                        row.embedding_generation,
+                        row.version,
+                    )
+            row = await session.get(
+                MemoryModelConfigurationRow, (issuer, subject), with_for_update=True
+            )
+            expected = kwargs.get("expected_version")
+            if row is None and expected is not None and _as_int(expected) != 1:
+                raise MemoryVersionConflict("memory model configuration version conflict")
+            if row is not None and expected is not None and row.version != _as_int(expected):
+                raise MemoryVersionConflict("model configuration version conflict")
+            selected_generation = configuration.embedding_generation
+            missing_generation = row is not None and row.embedding_generation is None
+            if configuration.embedding_generation is not None:
+                selected = await session.get(
+                    MemoryEmbeddingGenerationRow, configuration.embedding_generation
+                )
+                if (
+                    selected is None
+                    or selected.principal_issuer != issuer
+                    or selected.principal_subject != subject
+                ):
+                    raise MemoryNotFound("embedding generation not found")
+            # Early first-run configurations could be persisted before their
+            # initial embedding generation was created.  Repair that narrow
+            # state on the next verified save without treating it as a model
+            # change or requiring a reindex of an empty index.
+            if row is not None and row.embedding_generation is None:
+                dimension = _as_int(kwargs.get("dimension", 0))
+                model_digest = kwargs.get("model_digest")
+                if dimension < 1 or not isinstance(model_digest, str):
+                    raise MemoryValidationError("initial embedding generation is unavailable")
+                existing = (
+                    await session.execute(
+                        select(MemoryEmbeddingGenerationRow)
+                        .where(
+                            MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                            MemoryEmbeddingGenerationRow.principal_subject == subject,
+                            MemoryEmbeddingGenerationRow.status == "active",
+                            MemoryEmbeddingGenerationRow.model_id
+                            == configuration.embedding_model_id,
+                            MemoryEmbeddingGenerationRow.model_revision
+                            == configuration.embedding_model_revision,
+                            MemoryEmbeddingGenerationRow.model_digest == model_digest,
+                            MemoryEmbeddingGenerationRow.dimension == dimension,
+                        )
+                        .order_by(MemoryEmbeddingGenerationRow.generation.desc())
+                    )
+                ).scalars().all()
+                if len(existing) == 1:
+                    selected_generation = existing[0].id
+                else:
+                    next_generation = (
+                        await session.execute(
+                            select(func.max(MemoryEmbeddingGenerationRow.generation)).where(
+                                MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                                MemoryEmbeddingGenerationRow.principal_subject == subject,
+                            )
+                        )
+                    ).scalar_one() or 0
+                    generation_id = uuid4()
+                    session.add(
+                        MemoryEmbeddingGenerationRow(
+                            id=generation_id,
+                            generation=int(next_generation) + 1,
+                            model_id=configuration.embedding_model_id,
+                            model_revision=configuration.embedding_model_revision,
+                            model_digest=model_digest,
+                            dimension=dimension,
+                            status="active",
+                            principal_issuer=issuer,
+                            principal_subject=subject,
+                            created_at=datetime.now(UTC),
+                            activated_at=datetime.now(UTC),
+                        )
+                    )
+                    selected_generation = generation_id
+            # A model change creates a discoverable building generation while
+            # leaving the currently selected generation active until a full
+            # reindex atomically activates its replacement.
+            if (
+                row is not None
+                and not missing_generation
+                and (
+                    row.embedding_model_id != configuration.embedding_model_id
+                    or row.embedding_model_revision != configuration.embedding_model_revision
+                )
+            ):
+                # Only the newest configured target is resumable. Older
+                # building generations remain as audit metadata but cannot
+                # starve the current cutover or be activated later.
+                await session.execute(
+                    update(MemoryEmbeddingGenerationRow)
+                    .where(
+                        MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                        MemoryEmbeddingGenerationRow.principal_subject == subject,
+                        MemoryEmbeddingGenerationRow.status == "building",
+                    )
+                    .values(status="retired")
+                )
+                base = (
+                    await session.get(MemoryEmbeddingGenerationRow, row.embedding_generation)
+                    if row.embedding_generation
+                    else None
+                )
+                dimension = _as_int(
+                    kwargs.get("dimension", base.dimension if base is not None else 0)
+                )
+                if dimension > 0:
+                    next_generation = (
+                        await session.execute(
+                            select(func.max(MemoryEmbeddingGenerationRow.generation)).where(
+                                MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                                MemoryEmbeddingGenerationRow.principal_subject == subject,
+                            )
+                        )
+                    ).scalar_one() or 0
+                    building = MemoryEmbeddingGenerationRow(
+                        id=uuid4(),
+                        generation=int(next_generation) + 1,
+                        model_id=configuration.embedding_model_id,
+                        model_revision=configuration.embedding_model_revision,
+                        model_digest=kwargs.get("model_digest"),
+                        dimension=dimension,
+                        status="building",
+                        principal_issuer=issuer,
+                        principal_subject=subject,
+                        created_at=datetime.now(UTC),
+                    )
+                    session.add(building)
+                    selected_generation = row.embedding_generation
+            if row is None:
+                if selected_generation is None:
+                    dimension = _as_int(kwargs.get("dimension", 0))
+                    model_digest = kwargs.get("model_digest")
+                    if dimension < 1 or not isinstance(model_digest, str):
+                        raise MemoryValidationError("initial embedding generation is unavailable")
+                    generation_id = uuid4()
+                    session.add(
+                        MemoryEmbeddingGenerationRow(
+                            id=generation_id,
+                            generation=1,
+                            model_id=configuration.embedding_model_id,
+                            model_revision=configuration.embedding_model_revision,
+                            model_digest=model_digest,
+                            dimension=dimension,
+                            status="active",
+                            principal_issuer=issuer,
+                            principal_subject=subject,
+                            created_at=datetime.now(UTC),
+                            activated_at=datetime.now(UTC),
+                        )
+                    )
+                    selected_generation = generation_id
+                configuration = replace(
+                    configuration, embedding_generation=selected_generation
+                )
+                row = MemoryModelConfigurationRow(
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    extraction_model_id=configuration.extraction_model_id,
+                    extraction_model_revision=configuration.extraction_model_revision,
+                    embedding_model_id=configuration.embedding_model_id,
+                    embedding_model_revision=configuration.embedding_model_revision,
+                    embedding_generation=selected_generation,
+                    version=configuration.version,
+                    updated_at=datetime.now(UTC),
+                )
+                session.add(row)
+            else:
+                row.extraction_model_id = configuration.extraction_model_id
+                row.extraction_model_revision = configuration.extraction_model_revision
+                row.embedding_model_id = configuration.embedding_model_id
+                row.embedding_model_revision = configuration.embedding_model_revision
+                row.embedding_generation = selected_generation
+                row.version += 1
+                row.updated_at = datetime.now(UTC)
+                configuration = MemoryModelConfiguration(
+                    issuer,
+                    subject,
+                    configuration.extraction_model_id,
+                    configuration.embedding_model_id,
+                    configuration.extraction_model_revision,
+                    configuration.embedding_model_revision,
+                    selected_generation,
+                    row.version,
+                )
+            if key:
+                self._stage_idempotency(
+                    session,
+                    issuer,
+                    subject,
+                    f"model:{key}",
+                    fingerprint,
+                    uuid5(MEMORY_ID_NAMESPACE, f"model-configuration:{issuer}:{subject}"),
+                )
+        return configuration
+
+    async def get_model_configuration(self, issuer: str, subject: str) -> MemoryModelConfiguration:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(
+                MemoryModelConfigurationRow, (issuer, subject), with_for_update=True
+            )
+            if row is None:
+                raise MemoryNotFound("memory model configuration not found")
+            if row.embedding_generation is None:
+                # Some early first-run saves created the configuration and an
+                # active generation in separate operations.  Re-associate only
+                # when there is exactly one owner-scoped active generation
+                # matching the configured model identity; ambiguity remains
+                # fail-closed and can be resolved by an explicit reindex.
+                candidates = (
+                    (
+                        await session.execute(
+                            select(MemoryEmbeddingGenerationRow).where(
+                                MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                                MemoryEmbeddingGenerationRow.principal_subject == subject,
+                                MemoryEmbeddingGenerationRow.status == "active",
+                                MemoryEmbeddingGenerationRow.model_id == row.embedding_model_id,
+                                MemoryEmbeddingGenerationRow.model_revision
+                                == row.embedding_model_revision,
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if len(candidates) == 1:
+                    row.embedding_generation = candidates[0].id
+                    row.version += 1
+                    row.updated_at = datetime.now(UTC)
+            return MemoryModelConfiguration(
+                issuer,
+                subject,
+                row.extraction_model_id,
+                row.embedding_model_id,
+                row.extraction_model_revision,
+                row.embedding_model_revision,
+                row.embedding_generation,
+                row.version,
+            )
+
+    async def get_processing_job(
+        self, job_id: UUID, issuer: str, subject: str
+    ) -> MemoryProcessingJob:
+        async with self.sessions() as session:
+            query = select(MemoryProcessingJobRow).where(
+                MemoryProcessingJobRow.id == job_id,
+                MemoryProcessingJobRow.principal_issuer == issuer,
+                MemoryProcessingJobRow.principal_subject == subject,
+            )
+            row = (await session.execute(query)).scalar_one_or_none()
+            if row is None:
+                raise MemoryNotFound("memory processing job not found")
+            return MemoryProcessingJob(
+                row.id,
+                row.principal_issuer,
+                row.principal_subject,
+                row.run_id,
+                row.conversation_id,
+                ProcessingJobStatus(row.status),
+                row.attempt_count,
+                row.available_at,
+                row.correlation_id,
+                row.causation_id,
+                row.last_error_class,
+                row.agent_revision_id,
+                tuple(UUID(item) for item in row.user_message_ids or []),
+                tuple(UUID(item) for item in row.assistant_message_ids or []),
+                row.evidence_digest,
+                row.lease_id,
+                row.lease_until,
+                agent_profile_id=row.agent_profile_id,
+                memory_id=row.memory_id,
+                allow_shared_user_promotion=row.allow_shared_user_promotion,
+                memory_policy_revision_id=row.memory_policy_revision_id,
+            )
+
+    async def is_processing_command_purged(
+        self, issuer: str, subject: str, command_id: UUID
+    ) -> bool:
+        """Return whether purge fenced this owner's processing command."""
+
+        async with self.sessions() as session:
+            row = await session.get(
+                MemoryIdempotencyRow,
+                (issuer, subject, f"memory-job:{command_id}"),
+            )
+            return row is not None and row.tombstone
+
+    async def enqueue_processing_job(self, job: MemoryProcessingJob) -> MemoryProcessingJob:
+        existing_job_id: UUID | None = None
+        async with self.sessions() as session, session.begin():
+            if job.memory_id is not None:
+                await self._assert_not_fenced(session, job.issuer, job.subject, job.memory_id)
+            existing = (
+                await session.execute(
+                    select(MemoryProcessingJobRow).where(
+                        MemoryProcessingJobRow.principal_issuer == job.issuer,
+                        MemoryProcessingJobRow.principal_subject == job.subject,
+                        MemoryProcessingJobRow.run_id == job.run_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                existing_job_id = existing.id
+            else:
+                session.add(
+                    MemoryProcessingJobRow(
+                        id=job.id,
+                        principal_issuer=job.issuer,
+                        principal_subject=job.subject,
+                        run_id=job.run_id,
+                        conversation_id=job.conversation_id,
+                        causation_id=job.causation_id,
+                        correlation_id=job.correlation_id,
+                        agent_revision_id=job.agent_revision_id,
+                        agent_profile_id=job.agent_profile_id,
+                        allow_shared_user_promotion=job.allow_shared_user_promotion,
+                        memory_policy_revision_id=job.memory_policy_revision_id,
+                        user_message_ids=[str(item) for item in job.user_message_ids],
+                        assistant_message_ids=[str(item) for item in job.assistant_message_ids],
+                        evidence_digest=job.evidence_digest,
+                        status=job.status.value,
+                        attempt_count=job.attempt_count,
+                        available_at=job.available_at,
+                        last_error_class=job.last_error_class,
+                        memory_id=job.memory_id,
+                    )
+                )
+        if existing_job_id is not None:
+            return await self.get_processing_job(existing_job_id, job.issuer, job.subject)
+        return job
+
+    async def claim_processing_job(
+        self, issuer: str, subject: str, *, lease_seconds: float = 60.0
+    ) -> MemoryProcessingJob | None:
+        now = self._now()
+        lease_id = uuid4()
+        async with self.sessions() as session, session.begin():
+            row = (
+                await session.execute(
+                    select(MemoryProcessingJobRow)
+                    .where(
+                        MemoryProcessingJobRow.principal_issuer == issuer,
+                        MemoryProcessingJobRow.principal_subject == subject,
+                        MemoryProcessingJobRow.available_at <= now,
+                        (
+                            (MemoryProcessingJobRow.status.in_(("queued", "retryable")))
+                            | (
+                                (MemoryProcessingJobRow.status == "running")
+                                & (MemoryProcessingJobRow.lease_until < now)
+                            )
+                        ),
+                    )
+                    .order_by(MemoryProcessingJobRow.created_at)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            row.status = "running"
+            row.attempt_count += 1
+            row.lease_id = lease_id
+            row.lease_until = now + timedelta(seconds=max(1.0, lease_seconds))
+            return MemoryProcessingJob(
+                row.id,
+                row.principal_issuer,
+                row.principal_subject,
+                row.run_id,
+                row.conversation_id,
+                ProcessingJobStatus.RUNNING,
+                row.attempt_count,
+                row.available_at,
+                row.correlation_id,
+                row.causation_id,
+                row.last_error_class,
+                row.agent_revision_id,
+                tuple(UUID(item) for item in row.user_message_ids or []),
+                tuple(UUID(item) for item in row.assistant_message_ids or []),
+                row.evidence_digest,
+                row.lease_id,
+                row.lease_until,
+                agent_profile_id=row.agent_profile_id,
+                memory_id=row.memory_id,
+                allow_shared_user_promotion=row.allow_shared_user_promotion,
+                memory_policy_revision_id=row.memory_policy_revision_id,
+            )
+
+    async def claim_processing_job_by_id(
+        self, job_id: UUID, issuer: str, subject: str, *, lease_seconds: float = 60.0
+    ) -> MemoryProcessingJob | None:
+        """Claim exactly the delivered owner-scoped job identifier."""
+
+        now = self._now()
+        lease_id = uuid4()
+        async with self.sessions() as session, session.begin():
+            row = (
+                await session.execute(
+                    select(MemoryProcessingJobRow)
+                    .where(
+                        MemoryProcessingJobRow.id == job_id,
+                        MemoryProcessingJobRow.principal_issuer == issuer,
+                        MemoryProcessingJobRow.principal_subject == subject,
+                        MemoryProcessingJobRow.available_at <= now,
+                        (
+                            MemoryProcessingJobRow.status.in_(("queued", "retryable"))
+                            | (
+                                (MemoryProcessingJobRow.status == "running")
+                                & (MemoryProcessingJobRow.lease_until < now)
+                            )
+                        ),
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            row.status = "running"
+            row.attempt_count += 1
+            row.lease_id = lease_id
+            row.lease_until = now + timedelta(seconds=max(1.0, lease_seconds))
+            return MemoryProcessingJob(
+                row.id,
+                row.principal_issuer,
+                row.principal_subject,
+                row.run_id,
+                row.conversation_id,
+                ProcessingJobStatus.RUNNING,
+                row.attempt_count,
+                row.available_at,
+                row.correlation_id,
+                row.causation_id,
+                row.last_error_class,
+                row.agent_revision_id,
+                tuple(UUID(item) for item in row.user_message_ids or []),
+                tuple(UUID(item) for item in row.assistant_message_ids or []),
+                row.evidence_digest,
+                row.lease_id,
+                row.lease_until,
+                agent_profile_id=row.agent_profile_id,
+                allow_shared_user_promotion=row.allow_shared_user_promotion,
+                memory_policy_revision_id=row.memory_policy_revision_id,
+            )
+
+    async def get_candidate_for_job(
+        self, job_id: UUID, issuer: str, subject: str
+    ) -> MemoryCandidate | None:
+        async with self.sessions() as session:
+            row = (
+                await session.execute(
+                    select(MemoryCandidateRow)
+                    .where(
+                        MemoryCandidateRow.job_id == job_id,
+                        MemoryCandidateRow.principal_issuer == issuer,
+                        MemoryCandidateRow.principal_subject == subject,
+                    )
+                    .order_by(MemoryCandidateRow.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            scope = (
+                MemoryScope(MemoryScopeType(row.scope_type), row.agent_profile_id)
+                if row.scope_type is not None
+                else None
+            )
+            return MemoryCandidate(
+                row.id,
+                row.job_id,
+                row.principal_issuer,
+                row.principal_subject,
+                MemoryAction(row.action),
+                row.content,
+                MemoryKind(row.kind) if row.kind else None,
+                scope,
+                row.confidence,
+                row.importance,
+                row.half_life_days,
+                row.valid_to,
+                MemorySensitivity(row.sensitivity),
+                tuple(UUID(item) for item in row.grounded_message_ids or []),
+                row.related_memory_id,
+                CandidateState(row.state),
+                row.decision_reason,
+                row.memory_id,
+                version=1 if row.state in {"proposed", "review", "retryable"} else 2,
+                created_at=row.created_at or datetime.now(UTC),
+                decided_at=row.decided_at,
+                retention_basis=_retention_basis(row),
+            )
+
+    async def list_candidates(
+        self, issuer: str, subject: str, **kwargs: object
+    ) -> list[MemoryCandidate]:
+        async with self.sessions() as session:
+            query = select(MemoryCandidateRow).where(
+                MemoryCandidateRow.principal_issuer == issuer,
+                MemoryCandidateRow.principal_subject == subject,
+            )
+            run_id = kwargs.get("run_id")
+            if isinstance(run_id, UUID):
+                query = query.join(
+                    MemoryProcessingJobRow,
+                    MemoryProcessingJobRow.id == MemoryCandidateRow.job_id,
+                ).where(MemoryProcessingJobRow.run_id == run_id)
+            if kwargs.get("state") is not None:
+                query = query.where(MemoryCandidateRow.state == str(kwargs["state"]))
+            if kwargs.get("action") is not None:
+                query = query.where(MemoryCandidateRow.action == str(kwargs["action"]))
+            if kwargs.get("sensitivity") is not None:
+                query = query.where(MemoryCandidateRow.sensitivity == str(kwargs["sensitivity"]))
+            cursor_created_at = kwargs.get("cursor_created_at")
+            cursor_id = kwargs.get("cursor_id")
+            if isinstance(cursor_created_at, datetime) and isinstance(cursor_id, UUID):
+                query = query.where(
+                    or_(
+                        MemoryCandidateRow.created_at < cursor_created_at,
+                        and_(
+                            MemoryCandidateRow.created_at == cursor_created_at,
+                            MemoryCandidateRow.id < cursor_id,
+                        ),
+                    )
+                )
+            limit = max(1, min(_as_int(kwargs.get("limit", 30)), 100))
+            rows = (
+                (
+                    await session.execute(
+                        query.order_by(
+                            MemoryCandidateRow.created_at.desc(), MemoryCandidateRow.id.desc()
+                        ).limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            result: list[MemoryCandidate] = []
+            for row in rows:
+                scope = (
+                    MemoryScope(MemoryScopeType(row.scope_type), row.agent_profile_id)
+                    if row.scope_type
+                    else None
+                )
+                result.append(
+                    MemoryCandidate(
+                        row.id,
+                        row.job_id,
+                        row.principal_issuer,
+                        row.principal_subject,
+                        MemoryAction(row.action),
+                        row.content,
+                        MemoryKind(row.kind) if row.kind else None,
+                        scope,
+                        row.confidence,
+                        row.importance,
+                        row.half_life_days,
+                        row.valid_to,
+                        MemorySensitivity(row.sensitivity),
+                        tuple(UUID(item) for item in row.grounded_message_ids or []),
+                        row.related_memory_id,
+                        CandidateState(row.state),
+                        row.decision_reason,
+                        row.memory_id,
+                        version=1 if row.state in {"proposed", "review", "retryable"} else 2,
+                        created_at=row.created_at or datetime.now(UTC),
+                        decided_at=row.decided_at,
+                        retention_basis=_retention_basis(row),
+                    )
+                )
+            return result
+
+    async def get_candidate(self, issuer: str, subject: str, candidate_id: UUID) -> MemoryCandidate:
+        async with self.sessions() as session:
+            row = await session.get(MemoryCandidateRow, candidate_id)
+            if row is None or row.principal_issuer != issuer or row.principal_subject != subject:
+                raise MemoryNotFound("memory candidate not found")
+            result = await self.get_candidate_for_job(row.job_id, issuer, subject)
+            if result is None or result.id != candidate_id:
+                raise MemoryNotFound("memory candidate not found")
+            return result
+
+    async def _claim_candidate(
+        self,
+        issuer: str,
+        subject: str,
+        candidate_id: UUID,
+        expected_version: int,
+        *,
+        idempotency_key: str | None = None,
+        fingerprint: str | None = None,
+        resume: bool = False,
+    ) -> None:
+        """Atomically reserve a candidate for one approving command.
+
+        Approval performs memory creation in a separate transaction because it
+        uses the normal memory command path.  Reserving the candidate first
+        closes the race between two different idempotency keys: only one
+        transaction can move a proposed/review candidate to ``retryable``.
+        A failed provider or memory command can safely be retried by the
+        maintenance path, while a concurrent owner command receives the
+        deterministic version/state conflict.
+        """
+
+        async with self.sessions() as session, session.begin():
+            row = (
+                await session.execute(
+                    select(MemoryCandidateRow)
+                    .where(
+                        MemoryCandidateRow.id == candidate_id,
+                        MemoryCandidateRow.principal_issuer == issuer,
+                        MemoryCandidateRow.principal_subject == subject,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise MemoryNotFound("memory candidate not found")
+            version = 1 if row.state in {"proposed", "review", "retryable"} else 2
+            if version != expected_version:
+                raise MemoryVersionConflict("memory candidate version conflict")
+            pending_key = f"candidate:{idempotency_key}" if idempotency_key else None
+            prior = (
+                await session.get(MemoryIdempotencyRow, (issuer, subject, pending_key))
+                if pending_key is not None
+                else None
+            )
+            if row.state == CandidateState.RETRYABLE.value:
+                if not resume or prior is None or prior.fingerprint != fingerprint:
+                    raise MemoryVersionConflict("memory candidate is already being decided")
+                return
+            if row.state not in {CandidateState.PROPOSED.value, CandidateState.REVIEW.value}:
+                raise MemoryVersionConflict("memory candidate is already decided")
+            row.state = CandidateState.RETRYABLE.value
+            if pending_key is not None and fingerprint is not None:
+                session.add(
+                    MemoryIdempotencyRow(
+                        principal_issuer=issuer,
+                        principal_subject=subject,
+                        idempotency_key=pending_key,
+                        fingerprint=fingerprint,
+                        memory_id=candidate_id,
+                    )
+                )
+
+    async def approve_candidate(
+        self, issuer: str, subject: str, candidate_id: UUID, **kwargs: object
+    ) -> MemoryCandidate:
+        key = kwargs.get("idempotency_key")
+        fingerprint = make_fingerprint(
+            "candidate.approve",
+            {
+                "candidate": str(candidate_id),
+                "expected": kwargs.get("expected_version"),
+                "edit": kwargs.get("edit"),
+            },
+        )
+        pending_command = False
+        replayed: MemoryCandidate | None = None
+        if key:
+            async with self.sessions() as session, session.begin():
+                await self._lock_command(session, issuer, subject, f"candidate:{key}")
+                replay = await self._replay_candidate(
+                    session, issuer, subject, candidate_id, key, fingerprint
+                )
+                if replay is not None:
+                    replayed = replay
+                prior = await session.get(
+                    MemoryIdempotencyRow, (issuer, subject, f"candidate:{key}")
+                )
+                if prior is not None:
+                    candidate_row = await session.get(MemoryCandidateRow, candidate_id)
+                    pending_command = (
+                        candidate_row is not None
+                        and candidate_row.principal_issuer == issuer
+                        and candidate_row.principal_subject == subject
+                        and candidate_row.state == CandidateState.RETRYABLE.value
+                    )
+        if replayed is not None:
+            if replayed.state is CandidateState.ACCEPTED and replayed.memory_id is not None:
+                record = await self.get_memory(issuer, subject, replayed.memory_id)
+                try:
+                    await self._ensure_active_embedding_job(issuer, subject, record)
+                except Exception:
+                    pass
+            return replayed
+        candidate = await self.get_candidate(issuer, subject, candidate_id)
+        expected = _as_int(kwargs.get("expected_version", 1))
+        if expected != candidate.version:
+            raise MemoryVersionConflict("memory candidate version conflict")
+        if candidate.state not in {CandidateState.PROPOSED, CandidateState.REVIEW} and not (
+            pending_command and candidate.state is CandidateState.RETRYABLE
+        ):
+            raise MemoryVersionConflict("memory candidate is already decided")
+        job = await self.get_processing_job(candidate.job_id, issuer, subject)
+        edit = kwargs.get("edit")
+        if isinstance(edit, dict):
+            edit_data = cast(dict[str, object], edit)
+            scope_data = cast(dict[str, object], edit_data["scope"])
+            candidate = replace(
+                candidate,
+                action=MemoryAction(str(edit_data["action"])),
+                content=str(edit_data["content"]),
+                kind=MemoryKind(str(edit_data["kind"])),
+                scope=MemoryScope(
+                    MemoryScopeType(str(scope_data["type"])),
+                    UUID(str(scope_data["agentProfileId"]))
+                    if scope_data.get("agentProfileId")
+                    else None,
+                ),
+                confidence=_as_float(edit_data["confidence"]),
+                importance=_as_float(edit_data["importance"]),
+                half_life_days=_as_float(edit_data["halfLifeDays"]),
+                valid_to=cast(datetime | None, edit_data.get("validTo")),
+                related_memory_id=cast(UUID | None, edit_data.get("relatedMemoryId")),
+            )
+            grounded = set(candidate.grounded_message_ids)
+            if not grounded or not grounded.issubset(set(job.user_message_ids)):
+                raise MemoryValidationError("edited memory candidate grounding is invalid")
+            if (
+                candidate.scope
+                and candidate.scope.type is MemoryScopeType.AGENT
+                and candidate.scope.agent_profile_id != job.agent_profile_id
+            ):
+                raise MemoryScopeAuthorizationRequired("edited agent scope is not authorized")
+            if (
+                candidate.scope
+                and candidate.scope.type is MemoryScopeType.USER
+                and not job.allow_shared_user_promotion
+            ):
+                raise MemoryScopeAuthorizationRequired("shared-user promotion is not authorized")
+            conflicts = await self.list_memories(
+                issuer,
+                subject,
+                MemoryFilters(
+                    scope_type=None,
+                    include_all_scopes=True,
+                    include_historical=True,
+                    limit=100000,
+                ),
+            )
+            existing_conflict = any(
+                item.content == candidate.content and item.scope != candidate.scope
+                for item in conflicts
+            )
+            if existing_conflict:
+                raise MemoryValidationError("edited memory candidate conflicts with another scope")
+            evidence_loader = self._candidate_evidence_loader
+            user_content: str | None = None
+            if evidence_loader is not None:
+                evidence = await evidence_loader(job)
+                user_content = getattr(evidence, "user_content", None)
+                if not isinstance(user_content, str):
+                    raise MemoryValidationError("edited memory evidence is unavailable")
+            decision = decide_candidate(
+                candidate,
+                user_message_ids=frozenset(job.user_message_ids),
+                run_agent_profile_id=job.agent_profile_id,
+                existing_conflict=existing_conflict,
+                user_content=user_content,
+                allow_shared_user_promotion=job.allow_shared_user_promotion,
+            )
+            if decision.state is CandidateState.REJECTED:
+                raise MemoryValidationError("edited memory candidate failed deterministic policy")
+        else:
+            # Provider ``review`` is a disposition, not a durable mutation.
+            # Normalize legacy content-bearing rows at approval time so they
+            # remain owner-approvable without rewriting the database first.
+            candidate = normalize_candidate_for_approval(candidate)
+        if candidate.content is None or not candidate.scope:
+            raise MemoryValidationError("memory candidate content and scope are required")
+        if (
+            classify_sensitivity(candidate.content) is MemorySensitivity.CREDENTIAL
+            or candidate.sensitivity is MemorySensitivity.CREDENTIAL
+        ):
+            raise MemoryValidationError("credential-like candidate content is not accepted")
+        if (
+            candidate.scope.type is MemoryScopeType.AGENT
+            and candidate.scope.agent_profile_id is None
+        ):
+            raise MemoryValidationError("agent candidate scope requires an agent profile")
+        if (
+            candidate.scope.type is MemoryScopeType.AGENT
+            and candidate.scope.agent_profile_id != job.agent_profile_id
+        ):
+            raise MemoryScopeAuthorizationRequired("candidate agent scope is not authorized")
+        validate_revision(
+            candidate.content,
+            candidate.confidence,
+            candidate.importance if candidate.importance is not None else DEFAULT_MEMORY_IMPORTANCE,
+            candidate.half_life_days
+            if candidate.half_life_days is not None
+            else DEFAULT_MEMORY_HALF_LIFE_DAYS,
+            None,
+            candidate.valid_to,
+        )
+        if candidate.action not in {
+            MemoryAction.CREATE,
+            MemoryAction.REINFORCE,
+            MemoryAction.DISPUTE,
+            MemoryAction.SUPERSEDE,
+        }:
+            raise MemoryValidationError("candidate action is not approvable")
+        if (
+            candidate.action in {MemoryAction.DISPUTE, MemoryAction.SUPERSEDE}
+            and candidate.related_memory_id is None
+        ):
+            raise MemoryValidationError("related memory is required")
+        await self._claim_candidate(
+            issuer,
+            subject,
+            candidate_id,
+            expected,
+            idempotency_key=str(key) if key else None,
+            fingerprint=fingerprint,
+            resume=pending_command,
+        )
+        provenance = [
+            MemoryProvenance(
+                uuid5(MEMORY_ID_NAMESPACE, f"candidate-review:{candidate.id}"),
+                "run",
+                observed_at=datetime.now(UTC),
+            )
+        ]
+        if candidate.action in {MemoryAction.CREATE, MemoryAction.REINFORCE}:
+            matches = await self.list_memories(
+                issuer,
+                subject,
+                MemoryFilters(
+                    scope_type=candidate.scope.type,
+                    agent_profile_id=candidate.scope.agent_profile_id,
+                    include_historical=True,
+                    limit=100000,
+                ),
+            )
+            duplicate = next((item for item in matches if item.content == candidate.content), None)
+            if duplicate is not None:
+                record = await self.reinforce_memory(
+                    issuer,
+                    subject,
+                    duplicate.id,
+                    provenance=provenance,
+                    idempotency_key=f"memory-action:{candidate.id}",
+                    scope_type=candidate.scope.type,
+                    agent_profile_id=candidate.scope.agent_profile_id,
+                )
+            else:
+                record = await self.create_memory(
+                    issuer,
+                    subject,
+                    content=candidate.content,
+                    kind=candidate.kind or MemoryKind.SEMANTIC,
+                    scope=candidate.scope,
+                    confidence=candidate.confidence,
+                    importance=(
+                        candidate.importance
+                        if candidate.importance is not None
+                        else DEFAULT_MEMORY_IMPORTANCE
+                    ),
+                    half_life_days=(
+                        candidate.half_life_days
+                        if candidate.half_life_days is not None
+                        else DEFAULT_MEMORY_HALF_LIFE_DAYS
+                    ),
+                    valid_to=candidate.valid_to,
+                    provenance=provenance,
+                    idempotency_key=f"memory-action:{candidate.id}",
+                    # The SQL repository stages the durable job atomically in
+                    # create_memory.  The approval boundary below is still
+                    # invoked separately for instrumentation and retry repair.
+                    _defer_embedding_queue=True,
+                )
+        elif candidate.action in {MemoryAction.DISPUTE, MemoryAction.SUPERSEDE}:
+            if candidate.related_memory_id is None:
+                raise MemoryValidationError("related memory is required")
+            related = await self.get_memory(
+                issuer,
+                subject,
+                candidate.related_memory_id,
+                scope_type=candidate.scope.type,
+                agent_profile_id=candidate.scope.agent_profile_id,
+            )
+            record = await self.set_status(
+                issuer,
+                subject,
+                candidate.related_memory_id,
+                status=(
+                    MemoryLifecycleStatus.DISPUTED
+                    if candidate.action is MemoryAction.DISPUTE
+                    else MemoryLifecycleStatus.SUPERSEDED
+                ),
+                expected_version=related.version,
+                idempotency_key=f"memory-action:{candidate.id}",
+                scope_type=candidate.scope.type,
+                agent_profile_id=candidate.scope.agent_profile_id,
+            )
+        else:
+            raise MemoryValidationError("candidate action is not approvable")
+        decided = replace(
+            candidate,
+            state=CandidateState.ACCEPTED,
+            decision_reason="owner_approved",
+            memory_id=record.id,
+            version=candidate.version + 1,
+            decided_at=datetime.now(UTC),
+        )
+        await self.persist_candidate(decided)
+        try:
+            await self._ensure_active_embedding_job(issuer, subject, record)
+        except Exception:
+            # The candidate receipt is already durable. Queue repair is
+            # retried by an idempotent approval replay and never invokes
+            # inference.
+            pass
+        return decided
+
+    async def reject_candidate(
+        self, issuer: str, subject: str, candidate_id: UUID, **kwargs: object
+    ) -> MemoryCandidate:
+        key = kwargs.get("idempotency_key")
+        reason = str(kwargs.get("reason", "owner_rejected"))
+        # Rejection receipts are content-free, but their bounded reason is
+        # still user-controlled text and must not become a credential sink.
+        validate_memory_text(reason, "rejection reason")
+        fingerprint = make_fingerprint(
+            "candidate.reject",
+            {
+                "candidate": str(candidate_id),
+                "expected": kwargs.get("expected_version"),
+                "reason": reason[:64],
+            },
+        )
+        if key:
+            async with self.sessions() as session, session.begin():
+                await self._lock_command(session, issuer, subject, f"candidate:{key}")
+                replay = await self._replay_candidate(
+                    session, issuer, subject, candidate_id, key, fingerprint
+                )
+                if replay is not None:
+                    return replay
+        candidate = await self.get_candidate(issuer, subject, candidate_id)
+        expected = _as_int(kwargs.get("expected_version", 1))
+        if expected != candidate.version:
+            raise MemoryVersionConflict("memory candidate version conflict")
+        if candidate.state not in {CandidateState.PROPOSED, CandidateState.REVIEW}:
+            raise MemoryVersionConflict("memory candidate is already decided")
+        rejected = replace(
+            candidate,
+            content=None,
+            kind=None,
+            scope=None,
+            importance=None,
+            half_life_days=None,
+            valid_to=None,
+            grounded_message_ids=(),
+            related_memory_id=None,
+            state=CandidateState.REJECTED,
+            decision_reason=reason[:64],
+            version=candidate.version + 1,
+            decided_at=datetime.now(UTC),
+        )
+        await self.persist_candidate(
+            rejected,
+            idempotency_key=str(key) if key else None,
+            fingerprint=fingerprint if key else None,
+            expected_version=expected,
+        )
+        return rejected
+
+    async def settle_processing_job(
+        self,
+        job_id: UUID,
+        lease_id: UUID,
+        *,
+        issuer: str,
+        subject: str,
+        retryable: bool = False,
+        error_class: str | None = None,
+    ) -> MemoryProcessingJob:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(MemoryProcessingJobRow, job_id, with_for_update=True)
+            if (
+                row is None
+                or row.lease_id != lease_id
+                or row.status != "running"
+                or row.principal_issuer != issuer
+                or row.principal_subject != subject
+            ):
+                raise MemoryValidationError("processing job lease is stale")
+            row.status = "retryable" if retryable else "completed"
+            row.last_error_class = error_class
+            row.completed_at = None if retryable else datetime.now(UTC)
+            if retryable:
+                row.available_at = self._now() + timedelta(
+                    seconds=min(3600, 2 ** min(row.attempt_count, 10))
+                )
+            row.lease_id = None
+            row.lease_until = None
+            return MemoryProcessingJob(
+                row.id,
+                row.principal_issuer,
+                row.principal_subject,
+                row.run_id,
+                row.conversation_id,
+                ProcessingJobStatus.RETRYABLE if retryable else ProcessingJobStatus.COMPLETED,
+                row.attempt_count,
+                row.available_at,
+                row.correlation_id,
+                row.causation_id,
+                row.last_error_class,
+                row.agent_revision_id,
+                tuple(UUID(item) for item in row.user_message_ids or []),
+                tuple(UUID(item) for item in row.assistant_message_ids or []),
+                row.evidence_digest,
+                agent_profile_id=row.agent_profile_id,
+                memory_id=row.memory_id,
+                allow_shared_user_promotion=row.allow_shared_user_promotion,
+                memory_policy_revision_id=row.memory_policy_revision_id,
+            )
+
+    async def link_processing_job_memory(
+        self, job_id: UUID, issuer: str, subject: str, memory_id: UUID
+    ) -> None:
+        """Record the accepted memory link before any later retry can run."""
+
+        async with self.sessions() as session, session.begin():
+            job = (
+                await session.execute(
+                    select(MemoryProcessingJobRow)
+                    .where(
+                        MemoryProcessingJobRow.id == job_id,
+                        MemoryProcessingJobRow.principal_issuer == issuer,
+                        MemoryProcessingJobRow.principal_subject == subject,
+                    )
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if job is None:
+                raise MemoryNotFound("memory processing job not found")
+            memory = (
+                await session.execute(
+                    select(MemoryRow.id).where(
+                        MemoryRow.id == memory_id,
+                        MemoryRow.principal_issuer == issuer,
+                        MemoryRow.principal_subject == subject,
+                    )
+                )
+            ).scalar_one_or_none()
+            if memory is None:
+                raise MemoryNotFound("memory not found")
+            await self._assert_not_fenced(session, issuer, subject, memory_id)
+            job.memory_id = memory_id
+
+    async def queue_embedding_job(
+        self, issuer: str, subject: str, *, memory_id: UUID, revision_id: UUID, generation_id: UUID
+    ) -> MemoryEmbeddingJob:
+        item = MemoryEmbeddingJob(
+            uuid5(
+                MEMORY_ID_NAMESPACE,
+                f"embedding-job:{issuer}:{subject}:{revision_id}:{generation_id}",
+            ),
+            issuer,
+            subject,
+            memory_id,
+            revision_id,
+            generation_id,
+        )
+        async with self.sessions() as session, session.begin():
+            await self._assert_not_fenced(session, issuer, subject, memory_id)
+            owned_memory = (
+                await session.execute(
+                    select(MemoryRow.id).where(
+                        MemoryRow.id == memory_id,
+                        MemoryRow.principal_issuer == issuer,
+                        MemoryRow.principal_subject == subject,
+                    )
+                )
+            ).scalar_one_or_none()
+            if owned_memory is None:
+                raise MemoryNotFound("memory not found")
+            owned_revision = (
+                await session.execute(
+                    select(MemoryRevisionRow.id).where(
+                        MemoryRevisionRow.id == revision_id,
+                        MemoryRevisionRow.memory_id == memory_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if owned_revision is None:
+                raise MemoryNotFound("memory revision not found")
+            generation = (
+                await session.execute(
+                    select(MemoryEmbeddingGenerationRow).where(
+                        MemoryEmbeddingGenerationRow.id == generation_id,
+                        MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                        MemoryEmbeddingGenerationRow.principal_subject == subject,
+                    )
+                )
+            ).scalar_one_or_none()
+            if generation is None:
+                raise MemoryNotFound("embedding generation not found")
+            existing = (
+                await session.execute(
+                    select(MemoryEmbeddingJobRow).where(
+                        MemoryEmbeddingJobRow.principal_issuer == issuer,
+                        MemoryEmbeddingJobRow.principal_subject == subject,
+                        MemoryEmbeddingJobRow.revision_id == revision_id,
+                        MemoryEmbeddingJobRow.generation_id == generation_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                # Queue/replay is not a lease capability.  A row may already
+                # be running under another worker; callers must perform an
+                # exact claim before invoking a provider or settling it.
+                return MemoryEmbeddingJob(
+                    existing.id,
+                    issuer,
+                    subject,
+                    existing.memory_id,
+                    existing.revision_id,
+                    existing.generation_id,
+                    ProcessingJobStatus(existing.status),
+                    existing.attempt_count,
+                    existing.available_at,
+                    existing.last_error_class,
+                    None,
+                    None,
+                )
+            session.add(
+                MemoryEmbeddingJobRow(
+                    id=item.id,
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    memory_id=memory_id,
+                    revision_id=revision_id,
+                    generation_id=generation_id,
+                    status=item.status.value,
+                    attempt_count=0,
+                    available_at=item.available_at,
+                )
+            )
+        return item
+
+    async def persist_candidate(
+        self, candidate: MemoryCandidate, **kwargs: object
+    ) -> MemoryCandidate:
+        idempotency_key = kwargs.get("idempotency_key")
+        fingerprint = kwargs.get("fingerprint")
+        async with self.sessions() as session, session.begin():
+            if idempotency_key and isinstance(fingerprint, str):
+                command_key = f"candidate:{idempotency_key}"
+                await self._lock_command(session, candidate.issuer, candidate.subject, command_key)
+                prior = await session.get(
+                    MemoryIdempotencyRow,
+                    (candidate.issuer, candidate.subject, command_key),
+                )
+                if prior is not None and prior.fingerprint != fingerprint:
+                    raise MemoryIdempotencyConflict("idempotency key payload conflict")
+            job_owner = (
+                await session.execute(
+                    select(
+                        MemoryProcessingJobRow.principal_issuer,
+                        MemoryProcessingJobRow.principal_subject,
+                    ).where(MemoryProcessingJobRow.id == candidate.job_id)
+                )
+            ).one_or_none()
+            if job_owner is None or tuple(job_owner) != (candidate.issuer, candidate.subject):
+                raise MemoryNotFound("memory processing job not found")
+            existing = await session.get(MemoryCandidateRow, candidate.id, with_for_update=True)
+            if existing is None:
+                row = MemoryCandidateRow(
+                    id=candidate.id,
+                    job_id=candidate.job_id,
+                    principal_issuer=candidate.issuer,
+                    principal_subject=candidate.subject,
+                    action=candidate.action.value,
+                    content=candidate.content,
+                    kind=candidate.kind.value if candidate.kind else None,
+                    scope_type=candidate.scope.type.value if candidate.scope else None,
+                    agent_profile_id=candidate.scope.agent_profile_id if candidate.scope else None,
+                    confidence=candidate.confidence,
+                    importance=candidate.importance,
+                    half_life_days=candidate.half_life_days,
+                    valid_to=candidate.valid_to,
+                    sensitivity=candidate.sensitivity.value,
+                    grounded_message_ids=[str(item) for item in candidate.grounded_message_ids],
+                    related_memory_id=candidate.related_memory_id,
+                    state=candidate.state.value,
+                    decision_reason=candidate.decision_reason,
+                    memory_id=candidate.memory_id,
+                    created_at=candidate.created_at,
+                    decided_at=candidate.decided_at,
+                )
+                row.retention_basis = candidate.retention_basis.value
+                session.add(row)
+            else:
+                if (
+                    existing.principal_issuer != candidate.issuer
+                    or existing.principal_subject != candidate.subject
+                    or existing.job_id != candidate.job_id
+                ):
+                    raise MemoryNotFound("memory candidate not found")
+                expected_version = kwargs.get("expected_version")
+                if expected_version is not None:
+                    existing_version = (
+                        1
+                        if existing.state
+                        in {
+                            CandidateState.PROPOSED.value,
+                            CandidateState.REVIEW.value,
+                            CandidateState.RETRYABLE.value,
+                        }
+                        else 2
+                    )
+                    if existing_version != _as_int(expected_version):
+                        raise MemoryVersionConflict("memory candidate version conflict")
+                existing.action = candidate.action.value
+                existing.content = candidate.content
+                existing.kind = candidate.kind.value if candidate.kind else None
+                existing.scope_type = candidate.scope.type.value if candidate.scope else None
+                existing.agent_profile_id = (
+                    candidate.scope.agent_profile_id if candidate.scope else None
+                )
+                existing.confidence = candidate.confidence
+                existing.importance = candidate.importance
+                existing.half_life_days = candidate.half_life_days
+                existing.valid_to = candidate.valid_to
+                existing.sensitivity = candidate.sensitivity.value
+                existing.grounded_message_ids = [
+                    str(item) for item in candidate.grounded_message_ids
+                ]
+                existing.related_memory_id = candidate.related_memory_id
+                existing.memory_id = candidate.memory_id
+                existing.state = candidate.state.value
+                existing.decision_reason = candidate.decision_reason
+                existing.decided_at = candidate.decided_at
+                existing.retention_basis = candidate.retention_basis.value
+            if idempotency_key and isinstance(fingerprint, str):
+                prior = await session.get(
+                    MemoryIdempotencyRow,
+                    (candidate.issuer, candidate.subject, f"candidate:{idempotency_key}"),
+                )
+                if prior is None:
+                    self._stage_candidate_idempotency(
+                        session,
+                        candidate.issuer,
+                        candidate.subject,
+                        idempotency_key,
+                        fingerprint,
+                        candidate.id,
+                    )
+        return candidate
+
+    async def record_action_outcome(
+        self,
+        *,
+        candidate_id: UUID | None,
+        job_id: UUID,
+        issuer: str,
+        subject: str,
+        action: str,
+        outcome: str,
+        memory_id: UUID | None = None,
+        revision_id: UUID | None = None,
+        error_class: str | None = None,
+    ) -> None:
+        async with self.sessions() as session, session.begin():
+            job_owner = (
+                await session.execute(
+                    select(
+                        MemoryProcessingJobRow.principal_issuer,
+                        MemoryProcessingJobRow.principal_subject,
+                    ).where(MemoryProcessingJobRow.id == job_id)
+                )
+            ).one_or_none()
+            if job_owner is None or tuple(job_owner) != (issuer, subject):
+                raise MemoryNotFound("memory processing job not found")
+            if candidate_id is not None:
+                candidate_owner = (
+                    await session.execute(
+                        select(
+                            MemoryCandidateRow.principal_issuer,
+                            MemoryCandidateRow.principal_subject,
+                        ).where(MemoryCandidateRow.id == candidate_id)
+                    )
+                ).one_or_none()
+                if candidate_owner is None or tuple(candidate_owner) != (issuer, subject):
+                    raise MemoryNotFound("memory candidate not found")
+            existing = (
+                await session.execute(
+                    select(MemoryActionOutcomeRow)
+                    .where(
+                        MemoryActionOutcomeRow.job_id == job_id,
+                        MemoryActionOutcomeRow.principal_issuer == issuer,
+                        MemoryActionOutcomeRow.principal_subject == subject,
+                        MemoryActionOutcomeRow.action == action,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                existing.candidate_id = candidate_id
+                existing.outcome = outcome
+                existing.memory_id = memory_id
+                existing.revision_id = revision_id
+                existing.error_class = error_class
+                return
+            session.add(
+                MemoryActionOutcomeRow(
+                    id=uuid5(MEMORY_ID_NAMESPACE, f"outcome:{job_id}:{action}"),
+                    candidate_id=candidate_id,
+                    job_id=job_id,
+                    principal_issuer=issuer,
+                    principal_subject=subject,
+                    action=action,
+                    outcome=outcome,
+                    memory_id=memory_id,
+                    revision_id=revision_id,
+                    error_class=error_class,
+                )
+            )
+
+    async def settle_embedding_job(
+        self,
+        job_id: UUID,
+        *,
+        issuer: str,
+        subject: str,
+        lease_id: UUID,
+        retryable: bool = False,
+        failed: bool = False,
+        error_class: str | None = None,
+    ) -> MemoryEmbeddingJob:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(MemoryEmbeddingJobRow, job_id, with_for_update=True)
+            if row is None or row.principal_issuer != issuer or row.principal_subject != subject:
+                raise MemoryNotFound("embedding job not found")
+            if row.status != "running" or row.lease_id != lease_id:
+                raise MemoryValidationError("embedding job lease is stale")
+            await self._assert_not_fenced(session, issuer, subject, row.memory_id)
+            # Provider outages remain recoverable regardless of attempt count;
+            # only explicit purge failures are terminal.  This prevents a
+            # durable accepted revision from becoming permanently unembedded.
+            provider_retry = failed and error_class == "provider"
+            row.status = (
+                "failed"
+                if failed and not provider_retry
+                else ("retryable" if retryable or provider_retry else "completed")
+            )
+            row.last_error_class = error_class
+            if retryable or provider_retry:
+                row.available_at = self._now() + timedelta(
+                    seconds=min(3600, 2 ** min(row.attempt_count, 10))
+                )
+            row.lease_id = None
+            row.lease_until = None
+            return MemoryEmbeddingJob(
+                row.id,
+                row.principal_issuer,
+                row.principal_subject,
+                row.memory_id,
+                row.revision_id,
+                row.generation_id,
+                ProcessingJobStatus(row.status),
+                row.attempt_count,
+                row.available_at,
+                row.last_error_class,
+                row.lease_id,
+                row.lease_until,
+            )
+
+    async def claim_embedding_job(
+        self, issuer: str, subject: str, *, lease_seconds: float = 60.0
+    ) -> MemoryEmbeddingJob | None:
+        """Claim one owner-scoped embedding retry with an expiring lease."""
+
+        now = self._now()
+        lease_id = uuid4()
+        async with self.sessions() as session, session.begin():
+            row = (
+                await session.execute(
+                    select(MemoryEmbeddingJobRow)
+                    .join(
+                        MemoryEmbeddingGenerationRow,
+                        MemoryEmbeddingGenerationRow.id == MemoryEmbeddingJobRow.generation_id,
+                    )
+                    .where(
+                        MemoryEmbeddingJobRow.principal_issuer == issuer,
+                        MemoryEmbeddingJobRow.principal_subject == subject,
+                        MemoryEmbeddingGenerationRow.principal_issuer == issuer,
+                        MemoryEmbeddingGenerationRow.principal_subject == subject,
+                        MemoryEmbeddingGenerationRow.status == "active",
+                        MemoryEmbeddingJobRow.available_at <= now,
+                        (
+                            MemoryEmbeddingJobRow.status.in_(("queued", "retryable"))
+                            | (
+                                (MemoryEmbeddingJobRow.status == "running")
+                                & (MemoryEmbeddingJobRow.lease_until < now)
+                            )
+                        ),
+                    )
+                    .order_by(MemoryEmbeddingJobRow.created_at)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            await self._assert_not_fenced(session, issuer, subject, row.memory_id)
+            row.status = "running"
+            row.attempt_count += 1
+            row.lease_id = lease_id
+            row.lease_until = now + timedelta(seconds=max(1.0, lease_seconds))
+            return MemoryEmbeddingJob(
+                row.id,
+                issuer,
+                subject,
+                row.memory_id,
+                row.revision_id,
+                row.generation_id,
+                ProcessingJobStatus.RUNNING,
+                row.attempt_count,
+                row.available_at,
+                row.last_error_class,
+                row.lease_id,
+                row.lease_until,
+            )
+
+    async def claim_embedding_job_by_id(
+        self, job_id: UUID, issuer: str, subject: str, *, lease_seconds: float = 60.0
+    ) -> MemoryEmbeddingJob | None:
+        now = self._now()
+        lease_id = uuid4()
+        async with self.sessions() as session, session.begin():
+            row = (
+                await session.execute(
+                    select(MemoryEmbeddingJobRow)
+                    .where(
+                        MemoryEmbeddingJobRow.id == job_id,
+                        MemoryEmbeddingJobRow.principal_issuer == issuer,
+                        MemoryEmbeddingJobRow.principal_subject == subject,
+                        MemoryEmbeddingJobRow.available_at <= now,
+                        (
+                            MemoryEmbeddingJobRow.status.in_(("queued", "retryable"))
+                            | (
+                                (MemoryEmbeddingJobRow.status == "running")
+                                & (MemoryEmbeddingJobRow.lease_until < now)
+                            )
+                        ),
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            await self._assert_not_fenced(session, issuer, subject, row.memory_id)
+            row.status = "running"
+            row.attempt_count += 1
+            row.lease_id = lease_id
+            row.lease_until = now + timedelta(seconds=max(1.0, lease_seconds))
+            return MemoryEmbeddingJob(
+                row.id,
+                issuer,
+                subject,
+                row.memory_id,
+                row.revision_id,
+                row.generation_id,
+                ProcessingJobStatus.RUNNING,
+                row.attempt_count,
+                row.available_at,
+                row.last_error_class,
+                row.lease_id,
+                row.lease_until,
+            )
+
+    async def claim_embedding_job_for_revision(
+        self,
+        issuer: str,
+        subject: str,
+        *,
+        revision_id: UUID,
+        generation_id: UUID,
+        lease_seconds: float = 60.0,
+    ) -> MemoryEmbeddingJob | None:
+        """Claim only the embedding work bound to one revision/generation."""
+
+        now = self._now()
+        lease_id = uuid4()
+        async with self.sessions() as session, session.begin():
+            row = (
+                await session.execute(
+                    select(MemoryEmbeddingJobRow)
+                    .where(
+                        MemoryEmbeddingJobRow.principal_issuer == issuer,
+                        MemoryEmbeddingJobRow.principal_subject == subject,
+                        MemoryEmbeddingJobRow.revision_id == revision_id,
+                        MemoryEmbeddingJobRow.generation_id == generation_id,
+                        MemoryEmbeddingJobRow.available_at <= now,
+                        (
+                            MemoryEmbeddingJobRow.status.in_(("queued", "retryable"))
+                            | (
+                                (MemoryEmbeddingJobRow.status == "running")
+                                & (MemoryEmbeddingJobRow.lease_until < now)
+                            )
+                        ),
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            await self._assert_not_fenced(session, issuer, subject, row.memory_id)
+            row.status = "running"
+            row.attempt_count += 1
+            row.lease_id = lease_id
+            row.lease_until = now + timedelta(seconds=max(1.0, lease_seconds))
+            return MemoryEmbeddingJob(
+                row.id,
+                issuer,
+                subject,
+                row.memory_id,
+                row.revision_id,
+                row.generation_id,
+                ProcessingJobStatus.RUNNING,
+                row.attempt_count,
+                row.available_at,
+                row.last_error_class,
+                row.lease_id,
+                row.lease_until,
+            )
+
+
+__all__ = ["SqlMemoryRepository"]

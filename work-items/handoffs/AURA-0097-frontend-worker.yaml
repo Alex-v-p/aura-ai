@@ -1,0 +1,116 @@
+agent: frontend_worker
+work_item: AURA-0097
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0097_frontend
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory.operations-workspaces
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web-e2e/playwright.config.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-operations.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/observatory-web/src/main.ts
+  - frontend/apps/storybook/src/observatory-operations.stories.ts
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-dashboard-contracts.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.store.spec.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.store.ts
+  - frontend/libs/observatory/src/lib/observatory-gateway.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - frontend/libs/platform/observatory-api-client/src/lib/observatory-api-client.spec.ts
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: observatory-v1
+      version: 1.0
+      source: contracts/openapi/observatory-v1.yaml
+      consumer_boundary:
+        - Regenerated the transport-only Angular client from the repository OpenAPI generator and consumed typed dashboard, saved-query, alert, incident, annotation, history, and operations SSE IDs.
+        - Feature state validates page envelopes and keeps annotation text, query bodies, grouping values, evidence, and owner identity out of live notifications and URLs.
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.operations_web
+  metrics_added: []
+verification:
+  passed:
+    - node frontend/libs/platform/observatory-api-client/tools/generate-client.mjs --check
+    - pnpm --dir frontend exec nx lint observatory (passed; only pre-existing gateway/store warnings remain)
+    - pnpm --dir frontend exec nx lint observatory-web (passed)
+    - pnpm --dir frontend exec vitest run --config vitest.workspace.ts (317 passed across 32 files, including the server execution envelope parser, bounded six-kind dispatch, panel identity, compatibility, and multi-filter cases)
+    - pnpm --dir frontend exec nx test observatory --skip-nx-cache (47 passed across 5 files)
+    - pnpm --dir frontend exec nx test observatory-api-client --skip-nx-cache (7 passed)
+    - pnpm --dir frontend exec nx build observatory-web --configuration=production (passed)
+    - pnpm --dir frontend exec nx build storybook --configuration=production (passed; operations states and real trace/incompatible fixtures included)
+    - pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --grep "Observatory operations workspaces" (39 passed across desktop, tablet, and mobile, including all six saved-query result kinds, selected-dashboard 320px/390px/400-percent focus and root scrollWidth/scrollX checks, localized result-table overflow, terminal incompatible panels without retry, real saved-query dashboard measurements/freshness, manual and SSE refresh-failure retention, SSE refresh and resource removal, visualization-specific point parity, confirmation cancel/accept, incident state mapping, failed draft retention, annotation deletion focus restoration, narrow zoom, memory-only checks, and Axe ready/loading/rejected themed states)
+    - pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts --grep "keeps all result kinds|passes axe in ready|passes axe in the rejected" (9 passed across desktop, tablet, and mobile after keyboard-scroll wrappers, unique landmark labels, selected-dashboard Axe setup, and root-bound assertions)
+    - pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts apps/observatory-web-e2e/src/observatory-operations.spec.ts --grep "deletes an annotation" (3 passed across desktop, tablet, and mobile after dialog-close focus repair)
+    - pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts apps/observatory-web-e2e/src/observatory-operations.spec.ts --grep "passes axe" (9 passed across desktop, tablet, and mobile for ready/dark/reduced-motion/high-contrast, loading, and rejected states)
+    - pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts apps/observatory-web-e2e/src/observatory-web.spec.ts -g "reflows the comparison table" --project=desktop --project=tablet --project=mobile (3 passed after adding the authorized operations panel to the panel inventory)
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0097.yaml (passed: all 40 current work-item paths authorized)
+    - git diff --check (passed)
+    - pnpm --dir frontend exec nx build observatory-web --configuration=production (passed after responsive grid containment and root overflow protection)
+    - pnpm --dir frontend exec nx run storybook:build-storybook --configuration=production (passed; Ready story play assertion opens a selected dashboard and verifies a named keyboard-scrollable table region)
+    - targeted eslint for operations component/store, Storybook story, generated client, shell, and browser specs (passed; only pre-existing warnings remain)
+  failed: []
+  not_run:
+    - Full post-fix repository browser matrix was not rerun; the complete AURA-0097 operations matrix is green across desktop, tablet, and mobile, while the aggregate matrix remains integration-maintainer scope.
+    - Full repository aggregate, backend, contract, migration, and integration checks remain integration-maintainer scope.
+decisions:
+  - >-
+    Added a dedicated owner Operations workspace inside the Observatory feature library with tabs for immutable dashboard presets and composition, bounded saved queries, alert triage, suppression windows, incident lifecycle, and exact-target annotations. No Aura feature libraries are imported.
+  - >-
+    Repaired operational state handling so rejected data, unavailable services, stale snapshots, disconnected live updates, and loading snapshots remain distinct. Mutations are disabled during loading and failed forms retain drafts with inline retryable errors; unauthorized responses promote the shell's owner sign-in recovery without a retry loop.
+  - >-
+    Refresh failures now preserve the last dashboard result and authoritative observed-through timestamp while transitioning panel executions from loading to explicit stale/error state. Manual and SSE-triggered failures announce the error and expose the existing retry action without presenting a false empty state.
+  - >-
+    Replaced decorative dashboard bars and placeholder values with bounded execution of each exact versioned saved query through the generated executeSavedQuery API. The server-owned closed result union covers analytics, run search, trace search, run comparison, regression search, and component health; returned series/breakdowns, true units, authoritative freshness, partial/unavailable state, and accessible table/chart parity are rendered without fabricated data. Browser fetch time is shown separately from observed-through time.
+  - >-
+    Dashboard dispatch now uses the exact-version server execution resource for run_search, trace_search, analytics, run_comparison, regression_search, and component_health. The frontend consumes the generated closed union and server state/cursor/freshness fields, accepts the maximum bounded multi-filter shapes, and applies a bounded kind-specific accessible view. Unsupported kind/visualization combinations render an explicit incompatible state instead of issuing a fabricated analytics fallback or rejecting a contract-valid definition in the browser.
+  - >-
+    Panel execution identity now includes the saved-query version, panel ID, and visualization. This prevents compatible and incompatible instances of the same query from sharing retained state, and incompatible panels render before any cached result. Pure contract tests cover all six operation mappings, panel-key isolation, the compatibility matrix, and bounded multi-filter/parser errors.
+  - >-
+    Non-analytics panel results consume the same execution state model as analytics: retained run, trace, comparison, regression, and component-health results show refreshing/stale freshness, explicit refresh failures, and retry actions. Manual and SSE refresh-failure browser scenarios exercise a retained non-analytics run panel across desktop, tablet, and mobile.
+  - >-
+    Re-resolved the exact selected dashboard/version after REST/SSE refreshes, retained prior panel snapshots as explicitly labelled refreshing/stale data during reload, re-executed every available panel query, and cleared selection when the selected version disappeared. Visualization branches now distinguish line/area/bar trends, table, stat, trace, comparison, and regression; trends expose bounded UTC point tables with value/unit/availability/partial parity and meaningful chart names, while non-trend panels avoid generic bars.
+  - >-
+    Added structural loading skeletons so initial loading hides mutation forms and false empty states while refreshes retain a labeled stale snapshot. Failed mutations preserve drafts and inline errors for retry.
+  - >-
+    Incident next-state controls now match the backend state machine exactly, including reopen paths and resolved-to-closed; closed incidents expose no transition and explain the terminal state.
+  - >-
+    Replaced native browser confirmations with an in-app modal confirmation flow naming the resource, scope, and consequence, announcing progress, suppressing duplicate submits, and restoring focus. Alert triage collapses to labelled action cards at narrow widths and remains operable at high zoom.
+  - >-
+    Localized narrow result-table overflow to each dashboard panel and preserved the alert table's responsive stacked-card exception only. Dashboard grids and panel hosts now contain intrinsic table widths, keeping saved-dashboard/result-table reflow and focused controls from shifting the page horizontally at 320–390px and 400% zoom. Deterministic incompatible query/visualization pairs are terminal in the UI with an explanation and no misleading retry action.
+  - >-
+    Moved horizontal scrolling off semantic result tables into named, focusable regions with visible focus styling and arrow-key instructions; table semantics and captions remain intact. Result-region labels distinguish measurements, summaries, health, comparisons, regressions, and breakdowns so Axe landmark uniqueness remains satisfied. Responsive grid tracks and local paint containment prevent descendant scrollable overflow from widening the document root, while preserving keyboard scrolling inside each region. Browser checks verify documentElement scrollWidth, attempted window scrolling, root/heading/workspace bounds before and after dashboard activation at 320px, 390px, and 400% zoom, plus light/dark/forced-colors/reduced-motion Axe states and the Storybook selected-dashboard interaction.
+  - >-
+    Kept operational state in a typed injectable memory-only store. It uses generated client operation IDs, bounded page validation, CSRF/idempotency headers, and refresh-after-command. It clears data and invalidates in-flight generations on auth loss or logout, preventing late responses from repopulating the browser.
+  - >-
+    Added a separate authenticated operations SSE transport that preserves the native EventSource reconnect behavior and refreshes REST snapshots on persisted operations.changed notifications. Events carry only resource metadata; annotation text and other product fields never enter the stream.
+  - >-
+    Used explicit text and state badges in addition to colour, semantic tables, focus-visible controls, keyboard triage, mobile stacking, reduced-motion and high-contrast styles, stale/partial/disconnected/unavailable states, and accessible Storybook fixtures.
+  - >-
+    Added inert Storybook gateway and owner-store providers, a multi-visualization measured dashboard fixture, and a harness that opens the real confirmation dialog. Browser Axe checks cover ready/dark/reduced-motion/high-contrast, loading, and rejected states across desktop, tablet, and mobile; forced-colors primary actions use an explicit high-contrast treatment.
+  - >-
+    Expanded the Storybook dashboard fixture with real-shaped run comparison, regression decision, and component-health results so kind-specific dispatch and accessible output are reviewable without network access.
+  - >-
+    Alert acknowledgement uses a keyboard-selectable bounded reason. Suppression clearing, incident transitions, and annotation deletion require explicit browser confirmation before commands are sent. Annotation forms enforce exact target type/id/version and a 2,000-character bound.
+  - >-
+    Regenerated the Angular client only through tools/generate-client.mjs after the AURA-0097 OpenAPI additions; no generated file was hand-authored.
+  - >-
+    Updated the existing responsive panel inventory assertion for the authorized tenth Observatory panel and expanded browser operations scenarios across desktop, tablet, and mobile, including measured dashboard results, authoritative freshness, SSE refresh/re-execution, dashboard disappearance, all six result kinds, selected-dashboard mobile/400-percent focus-in-view, local table overflow, terminal incompatible state, multi-point visualization parity, modal cancel/accept, valid incident transition options, failed-draft retention, annotation deletion with collection-heading focus fallback, narrow zoom overflow, memory-only checks, and Axe acceptance.
+risks:
+  - >-
+    The full repository browser matrix remains an integration-owner rerun item; the focused operations matrix is green after the UX repair. Storybook production build and the Observatory production build are green.
+  - >-
+    The local provider/Ollama reachability risk remains accepted by AURA-0097/AURA-0098 and is not exercised by this metadata-only operations slice.
+unresolved: []

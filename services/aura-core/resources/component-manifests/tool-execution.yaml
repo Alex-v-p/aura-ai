@@ -1,0 +1,58 @@
+component:
+  id: aura.runtime.tool_execution@1
+  version: 1.3.0
+  owner: runtime.tools
+  category: execution
+input:
+  schema: governed-tool-request-v1
+  replayable: false
+  replay_reason: Tool execution accesses private owner-scoped memory and provider state.
+output:
+  schema: metadata-only-tool-status-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - aura.runtime.policy_evaluation
+  - aura.knowledge.memory_retrieval
+  - aura.knowledge.document_retrieval
+  - reminder_store
+  - core_postgresql
+metrics:
+  - tool_execution_duration_ms
+  - tool_execution_outcomes_total
+  - tool_execution_outcome
+  - tool_timeout_count
+  - reminder_create_tool_outcome
+  - reminder_tool_resolution_outcome
+  - reminder_command_execution_outcome
+  - document_search_tool_outcome
+  - document_citation_validation_outcome
+metric_semantics:
+  tool_execution_duration_ms: Bounded tool handler duration.
+  tool_execution_outcomes_total: Content-free count of terminal tool execution outcomes.
+  tool_execution_outcome: Content-free execution outcome.
+  tool_timeout_count: Bounded execution timeout count.
+  reminder_tool_resolution_outcome: Content-free resolved, clarification, or failure outcome for owner-scoped reminder resolution.
+  reminder_command_execution_outcome: Content-free terminal outcome for an approved reminder command.
+  document_search_tool_outcome: Bounded document.search@1 execution outcome.
+  document_citation_validation_outcome: Bounded same-run citation validation outcome.
+capture_policy: metadata_only
+evaluators:
+  - tool_execution_completion
+  - memory_scope_authorization
+  - confirmation_side_effect_prevention
+  - conversational_reminder_owner_isolation
+  - conversational_reminder_metadata_only_capture
+  - document_citation_validity
+cardinality:
+  metric_attributes: [outcome, error_class, dependency, provider]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, policy_revision_id, tool_policy_revision_id, approval_id, tool_call_id, idempotency]
+  prohibited: [prompt, response, arguments, query, target_query, content, recurrence, timezone, due_at, owner_identity, result, raw_result, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown

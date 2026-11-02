@@ -1,0 +1,157 @@
+agent: core_worker
+work_item: AURA-0136
+status: complete
+runtime:
+  model: gpt-5.6-luna
+  reasoning_effort: high
+  execution_tier: efficient
+  agent_thread_id: /root/aura0136_core_compat
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: services.aura-core.approval-notification-run-compatibility
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/src/aura_core/domains/governance/approvals/public.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/persistence.py
+  - services/aura-core/src/aura_core/domains/governance/approvals/repository.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/public.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/persistence.py
+  - services/aura-core/src/aura_core/domains/automation/notifications/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/dto.py
+  - services/aura-core/src/aura_core/domains/execution/runs/events.py
+  - services/aura-core/src/aura_core/domains/execution/runs/persistence.py
+  - services/aura-core/src/aura_core/domains/execution/runs/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/tests/test_approvals.py
+  - services/aura-core/tests/test_approval_evaluation.py
+  - services/aura-core/tests/test_notifications.py
+  - services/aura-core/tests/test_notification_evaluation.py
+  - services/aura-core/tests/test_run_events.py
+  - work-items/handoffs/AURA-0136-core-compat.yaml
+contracts:
+  changed: true
+  notes: >-
+    Implemented the Core side of the additive typed workflow approval origin
+    and proposal, workflow notification source, and conditional run/run-event
+    lineage. No contract artifact or generated client was edited in this
+    ownership slice.
+migrations:
+  changed: false
+  notes: >-
+    The ORM compatibility checks require a closed lineage union. The migration
+    worker must strengthen the existing run checks so ordinary rows require
+    conversation_id and user_message_id with every workflow column NULL, while
+    workflow rows require both conversation_id and user_message_id NULL plus
+    workflow_id, workflow_revision_id, workflow_instance_id,
+    workflow_step_execution_id, and ordinal 1..8. Run-event checks use the
+    analogous rule without user_message_id. This worker did not edit migration
+    files.
+observability:
+  components:
+    - aura.governance.approval_workflow
+    - aura.automation.notification_delivery
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      python3 -m compileall -q services/aura-core/src/aura_core/domains/governance/approvals
+      services/aura-core/src/aura_core/domains/automation/notifications
+      services/aura-core/src/aura_core/domains/execution/runs
+      services/aura-core/tests/test_approvals.py
+      services/aura-core/tests/test_approval_evaluation.py
+      services/aura-core/tests/test_notifications.py
+      services/aura-core/tests/test_notification_evaluation.py
+      services/aura-core/tests/test_run_events.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run ruff check
+      services/aura-core/src/aura_core/domains/governance/approvals
+      services/aura-core/src/aura_core/domains/automation/notifications
+      services/aura-core/src/aura_core/domains/execution/runs
+      services/aura-core/tests/test_approvals.py
+      services/aura-core/tests/test_approval_evaluation.py
+      services/aura-core/tests/test_notifications.py
+      services/aura-core/tests/test_notification_evaluation.py
+      services/aura-core/tests/test_run_events.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/domains/governance/approvals
+      services/aura-core/src/aura_core/domains/automation/notifications
+      services/aura-core/src/aura_core/domains/execution/runs
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_approvals.py
+      services/aura-core/tests/test_approval_stream.py
+      services/aura-core/tests/test_approval_evaluation.py
+      services/aura-core/tests/test_notifications.py
+      services/aura-core/tests/test_notification_stream.py
+      services/aura-core/tests/test_notification_evaluation.py
+      services/aura-core/tests/test_run_events.py -q (70 passed, 16 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_memory_processing.py
+      services/aura-core/tests/test_streaming.py
+      services/aura-core/tests/test_tool_runtime.py
+      services/aura-core/tests/test_conversation_attachments.py -q
+      (255 passed, 3 skipped)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0136.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0136.yaml
+    - git diff --check
+  failed:
+    - >-
+      A broader run including services/aura-core/tests/test_notification_api.py
+      reported two stale contract assertions (old 1.21.0 and
+      reminder/briefing-only notification union); those assertions are outside
+      this Core slice and the contract steward is advancing the contract.
+  not_run:
+    - >-
+      PostgreSQL lifecycle coverage is present in test_approvals.py but skips
+      when AURA_0056_DATABASE_URL is unavailable; run it after migration 0027
+      is installed against PostgreSQL.
+    - >-
+      Full AURA-0136 aggregate checks remain reserved for the Delivery Lead
+      after all ownership zones converge.
+decisions:
+  - >-
+    Workflow approvals use complete opaque manual-workflow lineage and null
+    legacy run/conversation/tool-call identifiers. Every memory decision,
+    expiry, cancellation, status reconstruction, replay, and event preserves
+    the typed origin; SQL workflow decisions and expiry emit identifier-only
+    governance approval events and never resume a legacy conversation run.
+  - >-
+    CreateWorkflowApproval accepts only the five closed system-derived
+    next-step/consequence/fixed-copy triples, NFC-normalizes bounded inert
+    display labels, validates opaque owner/workspace scopes, requires an
+    instance deadline, and rejects expiry beyond seven days or that deadline.
+    Repository idempotency fingerprints include the complete immutable
+    proposal and timing fields.
+  - >-
+    Workflow notifications use an owner-scoped opaque source and UUID result
+    identity throughout public commands, source DTOs, repositories, and
+    persistence. Source-neutral idempotency, owner/cursor authorization,
+    acknowledgement, replay, and metadata-only payloads preserve legacy
+    behavior without private workflow content.
+  - >-
+    Runs and run events enforce a closed ordinary-or-workflow lineage union:
+    ordinary records require conversation and user-message lineage with no
+    workflow origin; workflow records require null conversation lineage and
+    all five exact workflow fields. Ordinary payloads omit workflowOrigin.
+  - >-
+    Deterministic approval and notification evaluators now exercise workflow
+    creation, durable cursor replay, owner/foreign authorization, duplicate
+    idempotent delivery, decisions/acknowledgement, expiry, and private
+    content absence while retaining reminder and briefing fixtures.
+risks:
+  - >-
+    The migration worker must align 0027's existing run and run-event checks
+    with the closed lineage constraints described above before SQL writes can
+    safely accept workflow rows.
+  - >-
+    The contract steward is concurrently finalizing exact generated wire-shape
+    naming; the Delivery Lead should reconcile any final generated-contract
+    changes before integration.
+unresolved:
+  - >-
+    SQL integration tests require AURA_0056_DATABASE_URL and the installed
+    AURA-0136 migration; this compatibility handoff does not claim those
+    aggregate checks.

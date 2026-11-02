@@ -1,0 +1,63 @@
+agent: integration_maintainer
+work_item: AURA-0097
+status: integrated
+integrated_commits: []
+reviews:
+  - work-items/reviews/AURA-0097-general.yaml (PASS; general_reviewer)
+  - work-items/reviews/AURA-0097-architecture.yaml (PASS; architecture_guardian)
+  - work-items/reviews/AURA-0097-security-privacy.yaml (PASS; security_privacy_reviewer)
+  - work-items/reviews/AURA-0097-observability.yaml (PASS; observability_steward)
+  - work-items/reviews/AURA-0097-test-evaluation.yaml (PASS; test_evaluation_engineer)
+  - work-items/reviews/AURA-0097-ux-ui.yaml (PASS; aura_ux_ui_reviewer)
+conflicts_resolved:
+  - >-
+    Reconciled the stale observatory-worker handoff note about four-facet alert
+    grouping against the current contract-steward output: the contract now
+    allows zero or one facet, the generated client is synchronized, and the
+    producer boundary and tests agree. No semantic conflict remained.
+generated_outputs:
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-observatory/migrations/postgresql/versions/0014_observatory_operations.sql
+checks:
+  passed:
+    - >-
+      All four implementation handoffs and six PASS review verdicts were
+      schema-validated; the archived work item and all 61 current changed
+      paths validated successfully.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - >-
+      Work-item observability, baseline-protection, contract-change, and
+      changed-path validation passed before archival; baseline protection
+      detected no protected baseline or threshold change.
+    - uv run ruff check services/aura-observatory/src services/aura-observatory/tests contracts/tests passed.
+    - uv run pyright services/aura-observatory passed with zero diagnostics.
+    - >-
+      uv run pytest services/aura-observatory/tests contracts/tests -q passed:
+      1243 passed, 37 explicitly gated integration tests skipped, and 2
+      existing deprecation warnings.
+    - node frontend/libs/platform/observatory-api-client/tools/generate-client.mjs --check passed.
+    - pnpm --dir frontend nx lint observatory-web --skip-nx-cache passed.
+    - pnpm --dir frontend nx test observatory --skip-nx-cache passed: 47 tests.
+    - pnpm --dir frontend nx test observatory-api-client --skip-nx-cache passed: 7 tests.
+    - pnpm --dir frontend nx build observatory-web --configuration=production passed.
+    - pnpm --dir frontend nx build storybook --configuration=production passed.
+    - >-
+      pnpm --dir frontend nx e2e observatory-web-e2e passed all 303 browser
+      scenarios across desktop, tablet, and mobile.
+    - git diff --check passed and the changed-tree secret scan found no
+      credentials or private values.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Live PostgreSQL and ClickHouse migration execution remains environment
+    gated when the AURA-specific connection URLs are absent. The scoped tests
+    skip only through their explicit gate; static migration, provider,
+    contract, and browser checks pass.
+  - >-
+    Local Ollama/provider reachability remains the explicitly accepted,
+    non-blocking provider-unavailable limitation and is deferred to the later
+    composed-stack milestone.

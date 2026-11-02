@@ -1,0 +1,59 @@
+agent: integration_maintainer
+work_item: AURA-0111
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0111-general.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0111-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0111.yaml
+checks:
+  passed:
+    - >-
+      The implementation handoff and both required specialist reviews were
+      read and are complete PASS verdicts with no unresolved findings.
+    - >-
+      The staged slice contains only the authorized AURA-0111 adapter, focused
+      tests, handoff, reviews, archived work item, and integration report;
+      unrelated AURA-0098 and other shared-worktree changes remain unstaged.
+    - >-
+      Work-item, explicit changed-path, repository-shape, module-registry,
+      import-boundary, service-isolation, contract-change, and
+      baseline-protection checks passed.
+    - >-
+      The focused AURA-0111 suite passed 11 tests. Ruff and Pyright passed for
+      the changed adapter and focused tests, and git diff whitespace validation
+      passed.
+    - >-
+      A single focused Conventional Commit checkpoint is created for this
+      reviewed and validated AURA-0111 slice; no push is performed.
+  failed:
+    - >-
+      The AURA-0095 backend regression selection passed 71 tests with 9 skips
+      but retained one unrelated migration-inventory failure because the
+      shared checkout contains migration 0015 while the protected assertion
+      still expects version 14.
+    - >-
+      The full Observatory suite passed 1376 tests with 43 skips and retained
+      six unrelated failures in migration-0015 baseline assertions and dirty
+      AURA-0098 runner-shape assertions; no AURA-0111 failure was identified.
+    - >-
+      The unfiltered changed-path command is blocked by unrelated dirty paths
+      in the shared checkout; explicit validation of the two implementation
+      paths passed.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared worktree remains dirty with independently owned AURA-0098 and
+    other integration changes. They were not staged, modified, or claimed as
+    AURA-0111.
+  - >-
+    Existing migration-version and AURA-0098 runner-shape baseline failures
+    remain routed to their owners; this integration does not weaken or update
+    protected baselines.

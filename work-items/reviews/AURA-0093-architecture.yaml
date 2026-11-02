@@ -1,0 +1,10 @@
+agent: architecture_guardian
+work_item: AURA-0093
+verdict: PASS
+checked:
+  - Architecture handover, module boundaries, applicable specifications, ADRs, ownership, and active work-item scope.
+  - Closed evaluator registry, arbitrary exact-match UUID rejection, and evaluator kind, metric, component, dataset, case, and version bindings.
+  - Injected evaluator compatibility, selected-only scoring, trusted provenance, score-port persistence, exact dataset membership, suite foreign keys, and in-memory invariants.
+  - Contract decoder parity, UTC serialization, composition roots, acyclic module graph, provider direction, state ownership, and Core/Observatory isolation.
+  - Architecture, contract, observability, baseline, changed-path, focused Observatory, and focused Core checks.
+findings: []

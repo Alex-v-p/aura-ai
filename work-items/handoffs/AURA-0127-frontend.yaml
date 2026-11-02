@@ -1,0 +1,200 @@
+agent: frontend_worker
+work_item: AURA-0127
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0127_frontend
+  worktree: shared-main
+scope:
+  ownership_zone: frontend.aura-web.daily-action, frontend.aura-web.shell, frontend.aura-web.interaction-conversations, and frontend.aura-web.automation-notifications
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/today.spec.ts
+  - frontend/apps/storybook/src/daily-action.stories.ts
+  - frontend/libs/aura/daily-action/project.json
+  - frontend/libs/aura/daily-action/tsconfig.lib.json
+  - frontend/libs/aura/daily-action/src/index.ts
+  - frontend/libs/aura/daily-action/src/lib/daily-action-aggregation.ts
+  - frontend/libs/aura/daily-action/src/lib/daily-action-page.component.ts
+  - frontend/libs/aura/daily-action/src/lib/daily-action-page.component.html
+  - frontend/libs/aura/daily-action/src/lib/daily-action-page.component.css
+  - frontend/libs/aura/daily-action/src/lib/daily-action-page.component.spec.ts
+  - frontend/tsconfig.base.json
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notification-store.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notification-models.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notification-workspace.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-branching.spec.ts
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - pnpm exec vitest run --config vitest.workspace.ts libs/aura/daily-action (7 passed)
+    - pnpm exec vitest run --config vitest.workspace.ts libs/aura/daily-action (8 passed after retained-session permission-state correction)
+    - pnpm exec vitest run --config vitest.workspace.ts apps/aura-web/src/app/shell/aura-shell.component.spec.ts (5 passed)
+    - pnpm exec nx lint aura-daily-action
+    - pnpm exec nx build aura-web --configuration=production
+    - pnpm exec nx run storybook:build-storybook
+    - pnpm exec nx run storybook:build-storybook (passed after adding deterministic Today loading, partial-failure, permission-denied, offline, reconnecting, and unauthenticated fixtures)
+    - pnpm exec nx run storybook:build-storybook (passed after auth-state fixtures were aligned with permission/unauthenticated non-ready source states and loading projections were emptied)
+    - >-
+      AURA_WEB_E2E_STORYBOOK_PORT=6310 AURA_WEB_E2E_WORKERS=1 AURA_WEB_E2E_REUSE_SERVERS=1
+      pnpm exec playwright test apps/aura-web-e2e/src/storybook-a11y.spec.ts --project=desktop
+      --grep 'Today Storybook' (4 passed)
+    - >-
+      AURA_WEB_E2E_APP_PORT=4310 AURA_WEB_E2E_STORYBOOK_PORT=6310 AURA_WEB_E2E_WORKERS=1
+      AURA_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts
+      --project=desktop --grep 'redirects the root|keeps available sections' (2 passed)
+    - >-
+      AURA_WEB_E2E_APP_PORT=4310 AURA_WEB_E2E_STORYBOOK_PORT=6310 AURA_WEB_E2E_WORKERS=1
+      AURA_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts
+      --project=desktop --grep 'owner source' (1 passed)
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0127.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0127.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - >-
+      pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+      libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts (129 passed)
+    - >-
+      pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts (24 passed)
+    - >-
+      pnpm exec vitest run --config vitest.workspace.ts
+      libs/aura/automation/notifications/src/lib/notification-workspace.spec.ts (11 passed)
+    - pnpm exec nx test aura-conversations (9 files, 171 passed)
+    - pnpm exec nx lint aura-conversations (passed; existing non-blocking warnings in conversation-store.spec.ts)
+    - pnpm exec vitest run --config vitest.workspace.ts libs/aura/daily-action/src/lib/daily-action-page.component.spec.ts (7 passed)
+    - pnpm exec nx lint aura-daily-action (passed)
+    - pnpm exec nx lint aura-daily-action (passed after retained-session permission-state correction)
+    - pnpm exec nx lint aura-notifications (passed)
+    - pnpm exec nx lint aura-web (passed)
+    - pnpm exec nx test aura-web (9 passed)
+    - pnpm exec nx build aura-web --configuration=production (passed)
+    - pnpm exec nx build aura-web --configuration=production (passed after retained-session permission-state correction)
+    - pnpm exec nx test aura-web (9 passed after retained-session permission-state correction)
+    - >-
+      AURA_WEB_E2E_APP_PORT=4310 AURA_WEB_E2E_STORYBOOK_PORT=6310 AURA_WEB_E2E_WORKERS=1
+      AURA_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test apps/aura-web-e2e/src/aura-web.spec.ts
+      --project=desktop --grep 'keeps compact destination controls fixed|closes the tablet conversation library'
+      (2 passed)
+    - >-
+      AURA_WEB_E2E_APP_PORT=4310 AURA_WEB_E2E_STORYBOOK_PORT=6310 AURA_WEB_E2E_WORKERS=1
+      AURA_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test apps/aura-web-e2e/src/aura-web.spec.ts
+      --project=desktop --grep 'expanded sidebar scroll bounded|short desktop viewport' (4 passed)
+      and --project=mobile --grep 'mobile navigation closes on Escape|open mobile navigation isolates header|
+      closed mobile navigation is hidden' (4 passed)
+    - >-
+      AURA_WEB_E2E_APP_PORT=4310 AURA_WEB_E2E_STORYBOOK_PORT=6310 AURA_WEB_E2E_WORKERS=1
+      AURA_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts
+      --project=desktop --grep 'clears private Today|canonical sign-in path|keeps unread notifications fresh|
+      single-column Today canvas' (4 passed)
+    - >-
+      pnpm exec nx run storybook:build-storybook (passed after fixture parity correction for
+      approval/reminder notice and unread projection signals)
+    - >-
+      AURA_WEB_E2E_STORYBOOK_PORT=6310 AURA_WEB_E2E_WORKERS=1 AURA_WEB_E2E_REUSE_SERVERS=1
+      pnpm exec playwright test apps/aura-web-e2e/src/storybook-a11y.spec.ts --project=desktop
+      --grep 'Today Storybook' (4 passed after fixture parity correction)
+    - >-
+      pnpm exec nx run storybook:build-storybook followed by Today Storybook axe coverage
+      (4 passed after source-state precedence correction)
+    - >-
+      python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0127.yaml,
+      python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0127.yaml,
+      and git diff --check (passed; 34 changed paths validated)
+  failed: []
+  not_run:
+    - >-
+      AURA_WEB_E2E_APP_PORT=4320 AURA_WEB_E2E_WORKERS=1 AURA_WEB_E2E_REUSE_SERVERS=0
+      pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts --project=desktop
+      --grep 'accepted session distinct|canonical sign-in path|clears private Today' was
+      not executed because the isolated Angular dev server did not become ready before
+      the Playwright webServer timeout; the downstream-conversation 403 assertion is
+      included in apps/aura-web-e2e/src/today.spec.ts for the test owner's aggregate run.
+    - Playwright Aura Web E2E checks remain assigned to the test/evaluation ownership zone.
+    - Full aggregate checks remain assigned to the Delivery Lead and Integration Maintainer.
+decisions:
+  - >-
+    Added one standalone aura-daily-action feature library. It composes the public ReminderStore,
+    NotificationStore, ApprovalStore, and ConversationStore APIs; it does not import Core internals,
+    own API calls, or start duplicate notification/approval streams.
+  - >-
+    Today and Later use pure bounded aggregation that excludes terminal reminders and suppresses a
+    standalone reminder when it is already represented by an active series next occurrence.
+  - >-
+    Needs attention renders only approval/notification metadata and routes every card to the
+    canonical detail workspace. No inline approval, acknowledgement, completion, or cancellation is exposed.
+  - >-
+    Root and wildcard routes now resolve to Today, and both Aura wordmarks plus the first navigation
+    destination resolve to /today while Conversations remains explicit.
+  - >-
+    Mobile navigation uses aria-hidden and inert semantics while closed, and makes the routed main
+    content inert while the open navigation focus trap is active; desktop navigation remains available.
+  - >-
+    Daily Action Center styling now consumes Aura's shared text, surface, accent, focus, and dark-theme
+    tokens. The outer container is a non-landmark wrapper so the named section regions remain unique.
+  - >-
+    Notification source errors are classified before the unloaded-view check, so a failed 503 response
+    renders scoped recovery instead of remaining indefinitely in the loading state.
+  - >-
+    The expanded wide-layout template gives the destination stack a shrinkable flex basis and the
+    conversation library a bounded flex basis, preserving a visible recent-conversation scroller at 1280px
+    after adding the Today destination.
+  - >-
+    ConversationPanelComponent now keeps a local composer signal and dirty handoff. Input is written to
+    the local signal and store synchronously; when a transient draft selection changes during bootstrap,
+    the local value is handed to the captured origin conversation through the public ID-addressed store API
+    before the component adopts the destination value. Confirmed acceptance clears the local mirror while
+    rejected or uncertain outcomes retain the submitted text.
+  - >-
+    Today source classification checks authorization, explicit status, connection state, and public notice
+    before loading; auth/permission guidance omits retry controls. Today reminder cards are bounded after
+    aggregation, and Needs attention never presents a truncated projection length as an exact total.
+  - >-
+    NotificationStore now maintains a bounded unread projection independently of the selected notification
+    workspace view, allowing Today to remain stable when the user visits notification history; Storybook
+    fixtures provide the public notice, unread collection, and loaded signals consumed by the page. History
+    refreshes and SSE-triggered refreshes reconcile that projection with one bounded delivered-list request;
+    acknowledgements update it regardless of the active workspace view.
+  - >-
+    The expanded sidebar owns desktop rail scrolling so Preferences remains anchored at short heights;
+    Today switches to one column by 1024px to account for the compact rail, and action-card borders use
+    the semantic control-border token. Mobile open state hides and inerts header/main surfaces from AT,
+    keeps the visual scrim pointer-operable, and restores trigger focus after the rendered close state.
+  - >-
+    Today exposes the established ConversationStore.login() action for unauthenticated owners and suppresses
+    all source Retry controls after shared session loss, while preserving transient retries for authenticated
+    owners.
+  - >-
+    Daily source classification preserves auth, explicit errors, and notices first, then treats an active or
+    not-yet-loaded initial refresh as loading before interpreting offline or reconnecting connection states.
+  - >-
+    Today now distinguishes an unauthenticated session from a retained authenticated session with a
+    permission failure: only unauthenticated state presents ConversationStore.login(), while authState
+    error maps Continue to an error and presents access-unavailable guidance without sign-in or retry.
+    The Storybook catalog includes deterministic loading, partial failure, permission, offline,
+    reconnecting, and unauthenticated fixtures for state-specific accessibility coverage.
+risks:
+  - >-
+    The daily page uses the current browser day boundary and existing reminder timestamps; timezone-aware
+    calendar planning remains intentionally outside Stage 1.
+unresolved: []

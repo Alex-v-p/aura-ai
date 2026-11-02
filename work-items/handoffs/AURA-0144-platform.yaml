@@ -1,0 +1,110 @@
+agent: platform_worker
+work_item: AURA-0144
+status: partial
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0144_platform
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: services.research-static-fetcher, services.research-browser-fetcher, deploy.research-providers
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/active/AURA-0144.yaml
+  - services/aura-research-static-fetcher/src/aura_research_static_fetcher/__init__.py
+  - services/aura-research-static-fetcher/src/aura_research_static_fetcher/app.py
+  - services/aura-research-static-fetcher/src/aura_research_static_fetcher/fetcher.py
+  - services/aura-research-static-fetcher/src/aura_research_static_fetcher/models.py
+  - services/aura-research-static-fetcher/src/aura_research_static_fetcher/policy.py
+  - services/aura-research-static-fetcher/src/aura_research_static_fetcher/telemetry.py
+  - services/aura-research-static-fetcher/tests/test_policy_and_fetcher.py
+  - services/aura-research-static-fetcher/tests/test_telemetry.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/__init__.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/app.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/fetcher.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/models.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/policy.py
+  - services/aura-research-browser-fetcher/src/aura_research_browser_fetcher/telemetry.py
+  - services/aura-research-browser-fetcher/tests/test_policy_and_models.py
+  - services/aura-research-browser-fetcher/tests/test_telemetry.py
+  - services/aura-core/tests/test_research_provider_clients.py
+  - deploy/compose/research-providers.yaml
+  - deploy/compose/research-providers.env.example
+  - deploy/compose/e2e/research-providers.yaml
+  - deploy/compose/e2e/research-fixtures/index.html
+  - deploy/compose/e2e/research-fixtures/hostile.html
+  - deploy/docker/research-static-fetcher.Dockerfile
+  - deploy/docker/research-browser-fetcher.Dockerfile
+  - deploy/docker/research-searxng.Dockerfile
+  - deploy/research/provider-seccomp.json
+  - deploy/research/searxng-settings.yml
+  - deploy/research/searxng_adapter.py
+  - deploy/research/searxng_entrypoint.sh
+  - deploy/research/egress-policy.yaml
+  - deploy/research/egress_probe.py
+  - deploy/research/provider-requirements.in
+  - deploy/research/provider-requirements.txt
+  - deploy/research/browser-provider-requirements.in
+  - deploy/research/browser-provider-requirements.txt
+  - deploy/tests/test_aura0144_research_provider_topology.py
+  - deploy/tests/test_aura0144_research_provider_security.py
+  - deploy/tests/test_aura0144_research_provider_limits.py
+  - pyproject.toml
+  - uv.lock
+  - tooling/architecture/path-ownership.yaml
+contracts:
+  changed: true
+  id: contracts/providers/research/v1/research-provider-transport.schema.json
+  version: research-provider.v1
+  compatibility: backward_compatible
+  producers: [services.aura-research-static-fetcher, services.aura-research-browser-fetcher]
+  consumers: [services.aura-core.research-provider-clients]
+  rollout: Providers remain profile-gated and disabled by default; Core capability switches and signed public-key configuration are required before dispatch.
+  notes: Services consume the closed provider envelope and emit bounded evidence only; failures use finite metadata-only provider error envelopes and never include request content, URLs, excerpts, or exception text.
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.research.static_fetch@1
+    - aura.research.browser_fetch@1
+    - aura.research.extraction@1
+  metrics_added: []
+  notes: Provider services expose content-free health and limits; production telemetry remains the Core-owned metadata-only boundary.
+verification:
+  passed:
+    - UV_CACHE_DIR=.local-state/uv-cache uv lock --check
+    - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check on provider services and AURA-0144 deployment tests
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-research-static-fetcher services/aura-research-browser-fetcher deploy/research/searxng_adapter.py (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider contracts/tests/test_aura0144_research_provider_contract.py services/aura-core/tests/test_research_provider_clients.py services/aura-research-static-fetcher/tests services/aura-research-browser-fetcher/tests deploy/tests/test_aura0144_research_provider_limits.py deploy/tests/test_aura0144_research_provider_security.py deploy/tests/test_aura0144_research_provider_topology.py -q (112 passed; includes explicit Core test-only attestation stub, canonical Unicode/no-slash signing, exact TTL/replay bounds, retryable replay-capacity mapping on every signed route, signed POST-only limits, pairwise network denial, loopback SearXNG, streaming pre-limit/decompression, redirect, MIME, per-fetch browser concurrency isolation, runtime drain/stop, hash-lock and hostile-network policy cases)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run python -c 'from deploy.research import searxng_adapter as m; print(m.app.title)' (imported folded signed SearXNG adapter)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run ruff check services/aura-research-static-fetcher services/aura-research-browser-fetcher deploy/research deploy/tests/test_aura0144_research_provider_limits.py deploy/tests/test_aura0144_research_provider_security.py deploy/tests/test_aura0144_research_provider_topology.py (0 errors)
+    - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-research-static-fetcher services/aura-research-browser-fetcher deploy/research (0 errors)
+    - docker compose -f compose.yaml -f deploy/compose/research-providers.yaml config --quiet (provider overlay renders with pairwise private Core-to-provider networks)
+    - git diff --check
+  failed: []
+  not_run:
+    - live provider image build and hostile-network acceptance require deployment environment and organization image provenance/signature verification
+decisions:
+  - Static and browser retrieval are separate no-credential FastAPI services with independent switches, profile-gated overlay services, and no published ports.
+  - Static retrieval uses manual redirect validation, public HTTPS/DNS policy, HTTPX streaming limits, closed MIME allowlist, bounded Trafilatura/plain-text extraction, five-hop and 20-second ceilings, and four-request concurrency.
+  - Browser retrieval uses isolated Playwright contexts with disabled downloads, service workers, extensions, device permissions, persistence, media resources, 45-second/8 MiB/256 KiB ceilings, and two-page concurrency; readiness validates the Ed25519 public key, operator enforcement probe, usable Playwright browser directory or operator-provided Chromium executable, and available capacity.
+  - Browser redirect and response-limit outcome flags are scoped to a per-fetch state object, preventing concurrent page routes from contaminating each other's bounded outcomes; the concurrent regression fixture covers one rejected and one fulfilled route.
+  - Provider request/result models enforce method-to-payload/result discrimination, closed enums, signature shape, replay IDs, bounded limit payloads, and fetch-result evidence shapes from the shared research-provider.v1 schema.
+  - Provider services expose signed POST fetch/cancel/limits/health routes and finite content-free error envelopes; public verification keys are mounted read-only and unsigned operation is not supported.
+  - The signed versioned SearXNG adapter is folded into the single authorized SearXNG image/container; stock SearXNG binds loopback-only while Core reaches only the adapter listener.
+  - Compose uses one distinct private Core-to-provider network per provider plus an operator-provisioned external public-egress network. Providers do not share a private network and no provider has a path to another provider. The signed search adapter is in-process with stock SearXNG, so no fourth deployable or direct stock endpoint is exposed.
+  - Stock SearXNG is loopback-only on port 8081; only the signed adapter binds the provider network on port 8080. Browser resource retrieval streams raw bytes through the pinned transport and applies the signed request's wire/decompressed limits before route fulfilment; redirect limits are checked before each connection and permit exactly five hops.
+  - Provider readiness no longer treats a policy-file string or the bundled diagnostic checker as enforcement: it requires an operator-supplied attestation executable that emits the exact `aura.research.egress.attested.v1` marker after machine-verifying the authorized dataplane, and fails closed when absent, bundled, or invalid. Core ASGI tests use an explicit temporary test-only stub.
+  - Limits are exposed only through signed POST envelopes; request windows require exact `ttlMs` consistency and a maximum 60-second lifetime, and replay caches reject admission at a bounded capacity.
+  - All signed fetch, cancel, limits, and health verification paths map replay-capacity/configuration exhaustion to the finite retryable `503 provider_unavailable` envelope; ordinary replay and signature failures remain non-retryable.
+  - Runtime controls expose reachable in-process `begin_graceful_drain` and `immediate_stop_now` transitions. Verified `operator_stop` cancellation performs the immediate transition and actively cancels tracked static/browser work; the search adapter exposes the same authenticated transition seam while retaining the closed contract's no-search-cancel method set.
+  - Signed request verification precedes disabled-state admission responses, and search-task bookkeeping is cleaned up on cancellation even while queued behind the concurrency semaphore.
+  - SearXNG receives its secret only from a read-only operator-mounted file, the stock query is sent as a POST body, adapter access logs are disabled, and provider-only dependencies are installed from generated hash-locked requirements outside the shared project lock.
+risks:
+  - The overlay currently carries immutable-looking image references, but final built-image provenance/signature attestation and digest refresh are not available in this repository run. The deployment owner must replace the unverified/reused base digest values with attested final image digests before enabling the profile; no digest is treated as validated solely because providers default disabled.
+  - DNS validation occurs immediately before each HTTP request/resource route; static and browser HTTPX transports connect only to the validated address while preserving TLS SNI/hostname verification, and browser navigation is fulfilled through an in-process pinned egress boundary.
+unresolved:
+  - ADR_REQUIRED: no authorized in-repository or available host mechanism currently enforces the external controlled-DNS/public-443 egress boundary. `egress-policy.yaml` and `egress_probe.py` are declarative/diagnostic only; readiness must not claim enforcement. An accepted ADR must authorize an operator firewall/CNI egress gateway or equivalent existing dataplane, plus machine-verifiable negative probes for private, loopback, link-local, metadata, reserved, mixed-DNS, alternate-DNS, and non-443 destinations and a positive public TLS/SNI probe. Only the eventual operator-supplied attestation probe may emit the readiness marker.
+  - Deployment-owner blocker: final provider image digest/provenance attestation is unavailable. Custom image references must be rebuilt and attested with distinct reviewed final digests; this worker did not fabricate or silently accept provenance.

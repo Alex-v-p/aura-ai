@@ -1,0 +1,57 @@
+agent: observability_steward
+work_item: AURA-0136
+verdict: PASS
+checked:
+  - >-
+    Rechecked the complete observability surface against the active work item,
+    architecture handover, component manifests, runtime telemetry registry,
+    workflow instrumentation, evaluator output, approval and notification
+    replay cases, worker handoffs, and the current repository diff.
+  - >-
+    Stable component attribution is complete: aura.automation.workflow_state is
+    version 1.0.0, and the behavior-changing approval and notification
+    components and their runtime registrations are version 1.2.0.
+  - >-
+    Workflow transition, command, and repository paths emit all six required
+    outcome and component-local duration measurements. Operations,
+    dependencies, outcomes, and error classes use finite registered values;
+    validation and conflict failures are distinguished without using total-run
+    latency as component coverage.
+  - >-
+    Reproduced the former trace-topology counterexamples. Immutable per-call
+    WorkflowTraceContext values kept concurrent owners on separate trace IDs;
+    command spans retained their external parents; repository spans used the
+    exact owning command span IDs as parents; and explicit command context
+    composed repository and transition children without repository singleton
+    state or cross-request parent leakage.
+  - >-
+    Reproduced dependency attribution for both adapters. Memory workflow
+    command and repository spans use application_validation, while the SQL
+    repository span uses postgresql; all records were accepted with zero
+    telemetry rejection and retained trace-only correlation identifiers.
+  - >-
+    Workflow evaluator results carry aura.automation.workflow_state@1.0.0,
+    replay keys include the component version, the manifest's two evaluator
+    IDs exactly match executable outputs, and seven bounded synthetic scenario
+    and case identities cover transitions, races, recovery, replay, terminal
+    behavior, selectors, and deletion.
+  - >-
+    Approval and notification manifests and evaluator outputs remain compatible
+    with workflow sources at version 1.2.0. Tests cover owner isolation, cursor
+    authorization, decision or acknowledgement behavior, expiry, idempotent
+    duplication, durable replay, and metadata-only payloads while preserving
+    reminder and briefing cases.
+  - >-
+    Capture remains metadata_only with private workflow content prohibited;
+    identifier lineage is trace-only; metric cardinality is finite; buffering,
+    export failure, and retention are bounded; and no private values, prompts,
+    instructions, mappings, inputs, outputs, results, payloads, credentials, or
+    executor state are captured.
+  - >-
+    No Core-to-Observatory dependency or Observatory change was introduced.
+    Work-item, changed-path, observability, import-boundary, service-isolation,
+    module-registry, and repository-shape validators passed; baseline protection
+    reported no protected change. Focused Ruff and Pyright passed, and 132
+    workflow telemetry, evaluator, approval, notification, replay, and stream
+    tests passed with two skipped.
+findings: []

@@ -1,0 +1,76 @@
+agent: core_worker
+work_item: AURA-0073
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: fix/aura-0072-compose-network-routing
+scope:
+  ownership_zone: aura-core.knowledge.documents, aura-core.providers.embeddings.ollama, aura-core.bootstrap, aura-core.runtime.configuration, deployment.compose
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/compose/test_topology.py
+  - deploy/compose/e2e/fake_provider.py
+  - deploy/compose/e2e/test_fake_provider.py
+  - services/aura-core/src/aura_core/bootstrap/document_uow.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/ports.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/public.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/repository.py
+  - services/aura-core/resources/component-manifests/document-retrieval.yaml
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/app.py
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/providers/embeddings/ollama/adapter.py
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/system/test_api_document_flow.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - services/aura-core/tests/test_document_processing.py
+  - services/aura-core/tests/test_document_sql.py
+  - services/aura-core/tests/test_document_retrieval.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_embedding_adapter.py
+  - services/aura-core/tests/test_settings.py
+  - work-items/active/AURA-0073.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.runtime.embedding_gateway
+    - aura.knowledge.document_processing
+    - aura.knowledge.document_retrieval
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0073.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0073.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0073.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0073.yaml (skipped: no protected baseline changes)
+    - uv run pyright services/aura-core
+    - uv run ruff check services/aura-core/src services/aura-core/tests
+    - uv run pytest services/aura-core/tests/test_embedding_adapter.py services/aura-core/tests/test_document_contract.py services/aura-core/tests/test_document_processing.py services/aura-core/tests/test_document_retrieval.py services/aura-core/tests/test_document_sql.py services/aura-core/tests/test_documents.py services/aura-core/tests/test_settings.py services/aura-core/tests/test_telemetry.py services/aura-core/tests/system/test_api_document_flow.py services/aura-core/tests/system/test_contract_and_deployment.py deploy/compose/e2e/test_fake_provider.py (133 passed, 2 skipped)
+    - python3 deploy/compose/test_topology.py
+    - docker compose --env-file .env config --quiet
+    - git diff --check
+    - uv run pytest services/aura-core/tests/test_ollama.py services/aura-core/tests/test_documents.py services/aura-core/tests/test_document_worker.py services/aura-core/tests/test_document_retrieval.py services/aura-core/tests/test_document_reliability.py
+  failed: []
+  not_run: []
+decisions:
+  - Document composition selects qwen3-embedding:4b by default and passes the only supported 768 dimension only to the document Ollama adapter; settings reject other dimensions because persistence is vector(768).
+  - Memory composition continues constructing its Ollama embedding adapter without a dimension override.
+  - Ollama artifact identity remains fail-closed on an exact inventory tag and verified digest; wrong-dimensional vectors are rejected before persistence.
+  - Retrieval carries the query's verified model ID, optional revision, and digest into both repository adapters; incompatible vectors are excluded while lexical matches remain eligible.
+  - Repository search returns an internal metadata-only result so the service can mark document.search degraded with bounded identity_mismatch classification when incompatible vectors are present; API search hits remain the unchanged public list shape.
+  - Retrieval telemetry uses the production MetadataMetrics allowlist for identity_mismatch; regression coverage proves the correlated search span and duration metric are retained with zero rejects and no filenames, excerpts, document text, or model digests.
+  - SQL identity-mismatch detection uses a LIMIT 1 existence probe scoped to the owner and ready documents; it never performs an unbounded count.
+  - The deterministic Compose provider now requires qwen3-embedding:4b with dimensions=768, matching the production document request.
+risks:
+  - The live host must have the exact qwen3-embedding:4b tag installed in Ollama; qwen3-embedding:latest is intentionally not accepted as a substitute.
+unresolved: []

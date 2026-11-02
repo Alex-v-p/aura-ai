@@ -1,0 +1,782 @@
+"""Session-scoped PostgreSQL conversation repository."""
+
+import hashlib
+import json
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, cast
+from uuid import UUID
+
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy import text as sql_text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
+
+from aura_core.domains.governance.identity.public import SqlIdentityRepository
+from aura_core.domains.interaction.conversations.dto import (
+    AgentAssignment,
+    AssignmentReason,
+    AttachmentSummary,
+    ConversationArchiveState,
+    ConversationBranch,
+    ConversationBranchOrigin,
+    ConversationListFilters,
+    DeletedResearchCitation,
+    DocumentCitation,
+    Message,
+    MessageRole,
+    MessageState,
+    PersonaAssignment,
+    PersonaAssignmentReason,
+    PersonaAssignmentSource,
+    ResearchActivityReference,
+    TitleState,
+    WebCitation,
+    now,
+)
+from aura_core.domains.interaction.conversations.persistence import (
+    ConversationAgentAssignmentRow,
+    ConversationBranchRow,
+    ConversationPersonaAssignmentRow,
+    ConversationRow,
+    IdempotencyRow,
+    MessageAttachmentRow,
+    MessageRow,
+)
+
+
+@dataclass(slots=True)
+class ConversationRecord:
+    id: UUID
+    principal_id: UUID
+    title: str
+    agent_profile_id: UUID
+    agent_revision_id: UUID
+    persona_override_revision_id: UUID | None
+    model_id: str
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    title_state: TitleState = TitleState.LEGACY
+    # Internal list ordering only.  This is deliberately not part of the
+    # conversation response DTO: updated_at remains ordinary metadata while
+    # recent activity is the latest durably accepted user message.
+    activity_at: datetime | None = None
+    archived_at: datetime | None = None
+    client_time_zone: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IdempotencyRecord:
+    fingerprint: str
+    response: dict[str, str]
+
+
+class SqlConversationRepository:
+    @staticmethod
+    def _record(row: ConversationRow, activity_at: datetime | None = None) -> ConversationRecord:
+        return ConversationRecord(
+            row.id,
+            row.principal_id,
+            row.title,
+            row.agent_profile_id,
+            row.agent_revision_id,
+            row.persona_override_revision_id,
+            row.model_id,
+            row.version,
+            row.created_at or now(),
+            row.updated_at or now(),
+            TitleState(row.title_state or TitleState.LEGACY),
+            activity_at,
+            row.archived_at,
+            row.client_time_zone,
+        )
+
+    @staticmethod
+    def _message(row: MessageRow) -> Message:
+        web_citations = cast(
+            Sequence[Mapping[str, object]], getattr(row, "web_citations", None) or ()
+        )
+        research_activity = cast(
+            Mapping[str, object] | None, getattr(row, "research_activity", None)
+        )
+        artifact_refs = cast(
+            Sequence[Mapping[str, object]], getattr(row, "artifact_refs", None) or ()
+        )
+        citations = tuple(
+            DocumentCitation(
+                UUID(str(item["documentId"])),
+                "Document source",
+                str(item["locator"]),
+            )
+            for item in (row.citations or [])
+            if {"documentId", "locator"} <= set(item)
+        )
+        attachment_values = row.attachments or [
+            {
+                "linkId": str(item.id),
+                "kind": item.kind,
+                "sourceId": str(item.source_id),
+                "displayFilename": item.display_filename,
+                "mediaType": item.media_type,
+                "byteCount": item.byte_count,
+                "availability": item.availability,
+                "width": item.width,
+                "height": item.height,
+            }
+            for item in getattr(row, "attachment_links", ())
+        ]
+        return Message(
+            row.conversation_id,
+            MessageRole(row.role),
+            row.content,
+            MessageState(row.state),
+            row.run_id,
+            row.id,
+            row.created_at or now(),
+            row.updated_at or now(),
+            citations,
+            row.branch_id,
+            row.parent_message_id,
+            tuple(
+                AttachmentSummary(
+                    UUID(str(item["linkId"])),
+                    str(item["kind"]),
+                    UUID(str(item["sourceId"])),
+                    str(item["displayFilename"]),
+                    str(item["mediaType"]),
+                    int(cast(Any, item["byteCount"])),
+                    str(item.get("availability", "unavailable")),
+                    int(cast(Any, item["width"])) if item.get("width") is not None else None,
+                    int(cast(Any, item["height"])) if item.get("height") is not None else None,
+                )
+                for item in attachment_values
+                if {"linkId", "kind", "sourceId", "displayFilename", "mediaType", "byteCount"}
+                <= set(item)
+            ),
+            tuple(
+                DeletedResearchCitation(UUID(str(item["sourceId"])))
+                if item.get("kind") == "deleted_research"
+                else WebCitation(
+                    UUID(str(item["sourceId"])),
+                    str(item["label"]),
+                    str(item["url"]),
+                    datetime.fromisoformat(str(item["retrievedAt"])),
+                    str(item["locator"]) if item.get("locator") is not None else None,
+                )
+                for item in web_citations
+                if (
+                    item.get("kind") == "deleted_research"
+                    and {"sourceId", "label", "kind"} <= set(item)
+                )
+                or {"sourceId", "label", "url", "retrievedAt"} <= set(item)
+            ),
+            (
+                ResearchActivityReference(
+                    UUID(str(research_activity["taskId"])),
+                    str(research_activity["mode"]),
+                    str(research_activity["admissionState"]),
+                )
+                if research_activity
+                and {"taskId", "mode", "admissionState"} <= set(research_activity)
+                else None
+            ),
+            tuple(
+                UUID(str(item["artifactId"]))
+                for item in artifact_refs
+                if "artifactId" in item
+            ),
+        )
+
+    @staticmethod
+    def _branch(row: ConversationBranchRow) -> ConversationBranch:
+        return ConversationBranch(
+            conversation_id=row.conversation_id,
+            parent_branch_id=row.parent_branch_id,
+            forked_from_message_id=row.forked_from_message_id,
+            head_message_id=row.head_message_id,
+            id=row.id,
+            created_at=row.created_at or now(),
+            origin=ConversationBranchOrigin(row.origin or "root"),
+        )
+
+    async def exists(self, session: AsyncSession, conversation_id: UUID) -> bool:
+        return await session.get(ConversationRow, conversation_id) is not None
+
+    async def get(
+        self,
+        session: AsyncSession,
+        conversation_id: UUID,
+        principal_id: UUID | None = None,
+        *,
+        lock: bool = False,
+    ) -> ConversationRecord | None:
+        query = select(ConversationRow).where(ConversationRow.id == conversation_id)
+        if principal_id is not None:
+            query = query.where(ConversationRow.principal_id == principal_id)
+        row = (
+            await session.execute(query.with_for_update() if lock else query)
+        ).scalar_one_or_none()
+        return self._record(row) if row else None
+
+    async def list(
+        self,
+        session: AsyncSession,
+        principal_id: UUID,
+        limit: int,
+        cursor: tuple[datetime, UUID] | None,
+        filters: ConversationListFilters | None = None,
+    ) -> list[ConversationRecord]:
+        filters = (filters or ConversationListFilters()).normalized()
+        accepted_user_activity = (
+            select(func.max(MessageRow.created_at))
+            .where(
+                MessageRow.conversation_id == ConversationRow.id,
+                MessageRow.role == MessageRole.USER.value,
+                MessageRow.state == MessageState.COMPLETE.value,
+            )
+            .correlate(ConversationRow)
+            .scalar_subquery()
+        )
+        activity_key = func.coalesce(accepted_user_activity, ConversationRow.created_at)
+        query = (
+            select(ConversationRow, activity_key.label("activity_at"))
+            .where(ConversationRow.principal_id == principal_id)
+            .order_by(activity_key.desc(), ConversationRow.id.desc())
+        )
+        if filters.archive_state is ConversationArchiveState.ACTIVE:
+            query = query.where(ConversationRow.archived_at.is_(None))
+        elif filters.archive_state is ConversationArchiveState.ARCHIVED:
+            query = query.where(ConversationRow.archived_at.is_not(None))
+        if filters.q is not None:
+            query = query.where(ConversationRow.title.icontains(filters.q, autoescape=True))
+        if filters.agent_profile_id is not None:
+            query = query.where(ConversationRow.agent_profile_id == filters.agent_profile_id)
+        if filters.model_id is not None:
+            query = query.where(ConversationRow.model_id == filters.model_id)
+        if filters.activity_from is not None:
+            query = query.where(activity_key >= filters.activity_from)
+        if filters.activity_to is not None:
+            query = query.where(activity_key < filters.activity_to)
+        if cursor:
+            cursor_time, cursor_id = cursor
+            query = query.where(
+                or_(
+                    activity_key < cursor_time,
+                    and_(
+                        activity_key == cursor_time,
+                        ConversationRow.id < cursor_id,
+                    ),
+                )
+            )
+        results = (await session.execute(query.limit(limit))).all()
+        return [self._record(row, activity_at) for row, activity_at in results]
+
+    async def messages(self, session: AsyncSession, conversation_id: UUID) -> list[Message]:
+        rows = (
+            (
+                await session.execute(
+                    select(MessageRow)
+                    .options(selectinload(MessageRow.attachment_links))
+                    .where(MessageRow.conversation_id == conversation_id)
+                    .order_by(MessageRow.created_at, MessageRow.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [self._message(row) for row in rows]
+
+    async def branches(
+        self, session: AsyncSession, conversation_id: UUID
+    ) -> list[ConversationBranch]:
+        rows = (
+            (
+                await session.execute(
+                    select(ConversationBranchRow)
+                    .where(ConversationBranchRow.conversation_id == conversation_id)
+                    .order_by(ConversationBranchRow.created_at, ConversationBranchRow.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [self._branch(row) for row in rows]
+
+    async def assignments(
+        self, session: AsyncSession, conversation_id: UUID
+    ) -> list[AgentAssignment]:
+        rows = (
+            (
+                await session.execute(
+                    select(ConversationAgentAssignmentRow)
+                    .where(ConversationAgentAssignmentRow.conversation_id == conversation_id)
+                    .order_by(
+                        ConversationAgentAssignmentRow.created_at,
+                        ConversationAgentAssignmentRow.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            AgentAssignment(
+                row.agent_profile_id,
+                row.agent_revision_id,
+                AssignmentReason(row.reason),
+                row.effective_after_message_id,
+                row.created_at or now(),
+                row.id,
+            )
+            for row in rows
+        ]
+
+    async def persona_assignments(
+        self, session: AsyncSession, conversation_id: UUID
+    ) -> list[PersonaAssignment]:
+        rows = (
+            (
+                await session.execute(
+                    select(ConversationPersonaAssignmentRow)
+                    .where(ConversationPersonaAssignmentRow.conversation_id == conversation_id)
+                    .order_by(
+                        ConversationPersonaAssignmentRow.created_at,
+                        ConversationPersonaAssignmentRow.id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            PersonaAssignment(
+                row.persona_revision_id,
+                PersonaAssignmentSource(row.source),
+                PersonaAssignmentReason(row.reason),
+                row.effective_after_message_id,
+                row.created_at or now(),
+                row.id,
+            )
+            for row in rows
+        ]
+
+    async def latest_message_id(self, session: AsyncSession, conversation_id: UUID) -> UUID | None:
+        row = (
+            await session.execute(
+                select(MessageRow.id)
+                .where(MessageRow.conversation_id == conversation_id)
+                .order_by(MessageRow.created_at.desc(), MessageRow.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return row
+
+    async def message(self, session: AsyncSession, message_id: UUID) -> Message | None:
+        row = await session.scalar(
+            select(MessageRow)
+            .options(selectinload(MessageRow.attachment_links))
+            .where(MessageRow.id == message_id)
+        )
+        return self._message(row) if row else None
+
+    def stage_conversation(self, session: AsyncSession, record: ConversationRecord) -> None:
+        session.add(
+            ConversationRow(
+                id=record.id,
+                principal_id=record.principal_id,
+                title=record.title,
+                agent_profile_id=record.agent_profile_id,
+                agent_revision_id=record.agent_revision_id,
+                persona_override_revision_id=record.persona_override_revision_id,
+                client_time_zone=record.client_time_zone,
+                model_id=record.model_id,
+                version=record.version,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+                title_state=record.title_state.value,
+                archived_at=record.archived_at,
+            )
+        )
+
+    def stage_message(self, session: AsyncSession, message: Message) -> None:
+        row = MessageRow(
+            id=message.id,
+            conversation_id=message.conversation_id,
+            run_id=message.run_id,
+            role=message.role.value,
+            content=message.content,
+            state=message.state.value,
+            citations=[
+                {
+                    "documentId": str(item.document_id),
+                    "locator": item.locator,
+                }
+                for item in message.citations
+            ],
+            created_at=message.created_at,
+            updated_at=message.updated_at,
+            branch_id=message.branch_id,
+            parent_message_id=message.parent_message_id,
+            attachments=[
+                {
+                    "linkId": str(item.link_id),
+                    "kind": item.kind,
+                    "sourceId": str(item.source_id),
+                    "displayFilename": item.display_filename,
+                    "mediaType": item.media_type,
+                    "byteCount": item.byte_count,
+                    "availability": item.availability,
+                    "width": item.width,
+                    "height": item.height,
+                }
+                for item in message.attachments
+            ],
+            web_citations=[
+                (
+                    {
+                        "kind": item.kind,
+                        "sourceId": str(item.source_id),
+                        "label": item.label,
+                    }
+                    if isinstance(item, DeletedResearchCitation)
+                    else {
+                        "kind": "web",
+                        "sourceId": str(item.source_id),
+                        "label": item.label,
+                        "url": item.url,
+                        "retrievedAt": item.retrieved_at.isoformat(),
+                        "locator": item.locator,
+                    }
+                )
+                for item in message.web_citations
+            ],
+            research_activity=(
+                {
+                    "taskId": str(message.research_activity.task_id),
+                    "mode": message.research_activity.mode,
+                    "admissionState": message.research_activity.admission_state,
+                }
+                if message.research_activity is not None
+                else None
+            ),
+            artifact_refs=[{"artifactId": str(item)} for item in message.artifact_refs],
+        )
+        # Stage links through the relationship so SQLAlchemy knows the
+        # message is their parent and always flushes it before the FK rows.
+        row.attachment_links = [
+            MessageAttachmentRow(
+                id=item.link_id,
+                kind=item.kind,
+                source_id=item.source_id,
+                display_filename=item.display_filename,
+                media_type=item.media_type,
+                byte_count=item.byte_count,
+                availability=item.availability,
+                width=item.width,
+                height=item.height,
+            )
+            for item in message.attachments
+        ]
+        session.add(row)
+
+    def stage_branch(self, session: AsyncSession, branch: ConversationBranch) -> None:
+        session.add(
+            ConversationBranchRow(
+                id=branch.id,
+                conversation_id=branch.conversation_id,
+                parent_branch_id=branch.parent_branch_id,
+                forked_from_message_id=branch.forked_from_message_id,
+                head_message_id=branch.head_message_id,
+                created_at=branch.created_at,
+                origin=branch.origin.value,
+            )
+        )
+
+    async def update_branch_head(
+        self, session: AsyncSession, branch_id: UUID, head_message_id: UUID
+    ) -> None:
+        row = await session.get(ConversationBranchRow, branch_id, with_for_update=True)
+        if row is not None:
+            row.head_message_id = head_message_id
+
+    async def append_research_completion(
+        self,
+        session: AsyncSession,
+        issuer: str,
+        subject: str,
+        conversation_id: UUID,
+        text: str,
+        *,
+        branch_id: UUID | None,
+        idempotency_key: str,
+        citations: tuple[WebCitation, ...] = (),
+        research_activity: ResearchActivityReference | None = None,
+        artifact_refs: tuple[UUID, ...] = (),
+    ) -> Message:
+        """Append an owner-authorized research completion in one transaction."""
+
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "conversationId": str(conversation_id),
+                    "branchId": str(branch_id) if branch_id else None,
+                    "text": text,
+                    "citations": [str(item.source_id) for item in citations],
+                    "artifacts": [str(item) for item in artifact_refs],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        prior = await self.idempotency(session, issuer, subject, idempotency_key)
+        if prior is not None:
+            if prior.fingerprint != fingerprint:
+                raise ValueError("research completion idempotency conflict")
+            message = await self.message(session, UUID(prior.response["messageId"]))
+            if message is None:
+                raise LookupError("research completion message is unavailable")
+            return message
+        principal = await SqlIdentityRepository().find(session, issuer, subject)
+        if principal is None:
+            raise LookupError("conversation owner is unavailable")
+        record = await self.get(session, conversation_id, principal.id, lock=True)
+        if record is None:
+            raise LookupError("conversation is unavailable")
+        branches = await self.branches(session, conversation_id)
+        branch = next(
+            (item for item in branches if item.id == branch_id), None
+        ) if branch_id is not None else next(
+            (item for item in branches if item.parent_branch_id is None), None
+        )
+        if branch is None:
+            raise LookupError("conversation branch is unavailable")
+        created = now()
+        message = Message(
+            conversation_id,
+            MessageRole.ASSISTANT,
+            text,
+            MessageState.COMPLETE,
+            None,
+            created_at=created,
+            updated_at=created,
+            web_citations=citations,
+            research_activity=research_activity,
+            artifact_refs=artifact_refs,
+            branch_id=branch.id,
+            parent_message_id=branch.head_message_id,
+        )
+        self.stage_message(session, message)
+        await session.flush()
+        await self.update_branch_head(session, branch.id, message.id)
+        record.version += 1
+        record.updated_at = created
+        await self.update(session, record)
+        self.stage_idempotency(
+            session,
+            issuer,
+            subject,
+            idempotency_key,
+            fingerprint,
+            {"conversationId": str(conversation_id), "messageId": str(message.id)},
+        )
+        return message
+
+    def stage_assignment(
+        self, session: AsyncSession, assignment: AgentAssignment, conversation_id: UUID
+    ) -> None:
+        session.add(
+            ConversationAgentAssignmentRow(
+                id=assignment.id,
+                conversation_id=conversation_id,
+                agent_profile_id=assignment.agent_profile_id,
+                agent_revision_id=assignment.agent_revision_id,
+                reason=assignment.reason.value,
+                effective_after_message_id=assignment.effective_after_message_id,
+                created_at=assignment.created_at,
+            )
+        )
+
+    def stage_persona_assignment(
+        self, session: AsyncSession, assignment: PersonaAssignment, conversation_id: UUID
+    ) -> None:
+        session.add(
+            ConversationPersonaAssignmentRow(
+                id=assignment.id,
+                conversation_id=conversation_id,
+                persona_revision_id=assignment.persona_revision_id,
+                source=assignment.source.value,
+                reason=assignment.reason.value,
+                effective_after_message_id=assignment.effective_after_message_id,
+                created_at=assignment.created_at,
+            )
+        )
+
+    async def update(
+        self,
+        session: AsyncSession,
+        record: ConversationRecord,
+    ) -> None:
+        row = await session.get(ConversationRow, record.id, with_for_update=True)
+        if row is None:
+            return
+        row.model_id = record.model_id
+        row.title = record.title
+        row.title_state = record.title_state.value
+        row.agent_profile_id = record.agent_profile_id
+        row.agent_revision_id = record.agent_revision_id
+        row.persona_override_revision_id = record.persona_override_revision_id
+        row.client_time_zone = record.client_time_zone
+        row.version = record.version
+        row.updated_at = record.updated_at
+        row.archived_at = record.archived_at
+
+    async def pending_title(
+        self, session: AsyncSession, conversation_id: UUID
+    ) -> ConversationRecord | None:
+        row = await session.get(ConversationRow, conversation_id)
+        if row is None or row.title_state != TitleState.PENDING.value:
+            return None
+        return self._record(row)
+
+    async def settle_title(
+        self,
+        session: AsyncSession,
+        conversation_id: UUID,
+        title: str,
+        state: TitleState,
+    ) -> bool:
+        """Conditionally settle a derived title without changing config version."""
+
+        row = await session.get(ConversationRow, conversation_id, with_for_update=True)
+        if row is None or row.title_state != TitleState.PENDING.value:
+            return False
+        row.title = title
+        row.title_state = state.value
+        row.updated_at = now()
+        return True
+
+    async def append_message(
+        self,
+        session: AsyncSession,
+        message_id: UUID,
+        text: str,
+        state: MessageState,
+    ) -> Message | None:
+        # ``_message`` also renders normalized attachment links.  Explicitly
+        # hydrate that relationship while loading each streamed chunk so the
+        # async repository never falls back to implicit relationship IO.
+        row = await session.get(
+            MessageRow,
+            message_id,
+            options=[selectinload(MessageRow.attachment_links)],
+            with_for_update=True,
+        )
+        if row is None:
+            return None
+        row.content += text
+        row.state = state.value
+        row.updated_at = now()
+        return self._message(row)
+
+    async def set_message_state(
+        self, session: AsyncSession, message_id: UUID, state: MessageState
+    ) -> None:
+        row = await session.get(MessageRow, message_id, with_for_update=True)
+        if row is not None:
+            row.state = state.value
+            row.updated_at = now()
+
+    async def set_message_citations(
+        self,
+        session: AsyncSession,
+        message_id: UUID,
+        citations: tuple[DocumentCitation, ...],
+        *,
+        content: str | None = None,
+    ) -> None:
+        """Atomically settle citations and sanitized assistant content."""
+
+        row = await session.get(MessageRow, message_id, with_for_update=True)
+        if row is not None:
+            row.citations = [
+                {
+                    "documentId": str(item.document_id),
+                    "locator": item.locator,
+                }
+                for item in citations
+            ]
+            if content is not None:
+                row.content = content
+            row.updated_at = now()
+
+    async def idempotency(
+        self, session: AsyncSession, issuer: str, subject: str, key: str
+    ) -> IdempotencyRecord | None:
+        row = await session.get(IdempotencyRow, (issuer, subject, key))
+        if row is None:
+            return None
+        return IdempotencyRecord(row.fingerprint, cast(dict[str, str], row.response))
+
+    def stage_idempotency(
+        self,
+        session: AsyncSession,
+        issuer: str,
+        subject: str,
+        key: str,
+        fingerprint: str,
+        response: dict[str, str],
+    ) -> None:
+        session.add(
+            IdempotencyRow(
+                principal_issuer=issuer,
+                principal_subject=subject,
+                idempotency_key=key,
+                fingerprint=fingerprint,
+                response=response,
+            )
+        )
+
+
+class SqlConversationCompletionService:
+    """Session-owning public adapter for durable research transcript delivery."""
+
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self.sessions = sessions
+        self.repository = SqlConversationRepository()
+
+    async def append_research_completion(
+        self,
+        issuer: str,
+        subject: str,
+        conversation_id: UUID,
+        text: str,
+        *,
+        branch_id: UUID | None,
+        idempotency_key: str,
+        citations: tuple[WebCitation, ...] = (),
+        research_activity: ResearchActivityReference | None = None,
+        artifact_refs: tuple[UUID, ...] = (),
+    ) -> Message:
+        async with self.sessions() as session, session.begin():
+            digest = int.from_bytes(
+                hashlib.sha256(f"{issuer}:{subject}:{idempotency_key}".encode()).digest()[:8],
+                "big",
+            )
+            signed = digest - (1 << 64) if digest >= (1 << 63) else digest
+            await session.execute(
+                sql_text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": signed}
+            )
+            return await self.repository.append_research_completion(
+                session,
+                issuer,
+                subject,
+                conversation_id,
+                text,
+                branch_id=branch_id,
+                idempotency_key=idempotency_key,
+                citations=citations,
+                research_activity=research_activity,
+                artifact_refs=artifact_refs,
+            )

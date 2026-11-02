@@ -1,0 +1,89 @@
+agent: integration_maintainer
+work_item: AURA-0136
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0136-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0136-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0136-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0136-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0136-aura-ux-ui.yaml
+conflicts_resolved: []
+generated_outputs:
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - work-items/archived/AURA-0136.yaml
+  - work-items/reviews/AURA-0136-architecture.yaml
+  - work-items/reviews/AURA-0136-aura-ux-ui.yaml
+  - work-items/reviews/AURA-0136-security-privacy.yaml
+  - work-items/integration/AURA-0136.yaml
+checks:
+  passed:
+    - >-
+      All six implementation handoffs are complete, schema-valid, within
+      their authorized ownership zones, and contain no semantic integration
+      block. The SQL environment note remains an expected aggregate-test skip.
+    - >-
+      All five required review artifacts are schema-valid PASS verdicts with
+      no findings; final reviews cover the corrected implementation tree and
+      all prior general, architecture, security/privacy, observability, and UX
+      findings.
+    - >-
+      Active work-item validation passed before archival, and archived
+      work-item validation passed after status changed to integrated.
+    - >-
+      Changed-path validation passed for 73 authorized implementation paths
+      before archival and 76 authorized paths after archival and review-record
+      additions.
+    - >-
+      Contract-change classification, generated-client synchronization,
+      import boundaries, service isolation, frontend boundaries, module
+      registry, repository shape, and observability validators passed.
+    - >-
+      Baseline protection passed with no protected baseline or threshold
+      changes; the validator reported skipped/not-applicable status.
+    - >-
+      Architecture unit tests passed: 27 tests.
+    - >-
+      Scoped Ruff and Pyright passed with no errors, warnings, or information.
+    - >-
+      Required contract/Core aggregate suite passed: 142 tests passed and 16
+      environment-dependent tests skipped.
+    - >-
+      Aura API client generation, generated-client check, generated-client
+      lint, and Aura Web lint passed.
+    - >-
+      Frontend approval and notification Vitest passed: 39 tests.
+    - >-
+      Aura Web production build and Storybook production build passed.
+    - >-
+      Required Playwright matrix passed: 335 tests passed, 442 expected skips,
+      0 failures across desktop, tablet, and mobile using one worker on the
+      available 4300/6300 servers.
+    - git diff --check passed.
+    - >-
+      No semantic conflicts, unauthorized product paths, provider changes,
+      deployment changes, protected baselines, Observatory changes, or
+      dependency changes were introduced during integration.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    This is an uncommitted local integration checkpoint; the parent delivery
+    lead should create the focused checkpoint commit after reviewing the final
+    diff. No remote push was performed.
+  - >-
+    PostgreSQL-backed compatibility cases remain environment-dependent and
+    were skipped because AURA_0056_DATABASE_URL and the installed migration
+    environment were unavailable; migration structure and memory coverage
+    passed.

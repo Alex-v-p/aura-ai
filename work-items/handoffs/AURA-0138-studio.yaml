@@ -1,0 +1,224 @@
+agent: frontend_worker
+work_item: AURA-0138
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0138_studio
+  worktree: shared
+scope:
+  ownership_zone: frontend.aura-web.workflow-studio
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/storybook/src/workflow-studio.stories.ts
+  - frontend/libs/aura/automation/workflows/project.json
+  - frontend/libs/aura/automation/workflows/tsconfig.lib.json
+  - frontend/libs/aura/automation/workflows/src/index.ts
+  - frontend/libs/aura/automation/workflows/src/lib/workflow-api.ts
+  - frontend/libs/aura/automation/workflows/src/lib/workflow-models.spec.ts
+  - frontend/libs/aura/automation/workflows/src/lib/workflow-models.ts
+  - frontend/libs/aura/automation/workflows/src/lib/workflow-store.spec.ts
+  - frontend/libs/aura/automation/workflows/src/lib/workflow-store.ts
+  - frontend/libs/aura/automation/workflows/src/lib/workflow-studio.component.css
+  - frontend/libs/aura/automation/workflows/src/lib/workflow-studio.component.html
+  - frontend/libs/aura/automation/workflows/src/lib/workflow-studio.component.ts
+contracts:
+  changed: false
+  notes: >-
+    Consumes the generated Aura v1 workflow operations and types; no contract,
+    generated-client, transport schema, or Observatory surface was changed.
+migrations:
+  changed: false
+  notes: The frontend feature owns no persistence or migration.
+observability:
+  components: []
+  metrics_added: []
+  capture_policy: metadata_only
+  notes: >-
+    The feature consumes metadata-only workflow invalidations. Workflow
+    definitions, mappings, inputs, outputs, approvals, and results are kept in
+    Angular memory and are not sent to telemetry, URLs, browser persistence, or
+    SSE.
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0138.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0138.yaml
+    - cd frontend && pnpm exec nx run aura-workflows:test (11 passed)
+    - cd frontend && pnpm exec nx run aura-workflows:lint (passed)
+    - cd frontend && pnpm exec tsc --noEmit -p libs/aura/automation/workflows/tsconfig.lib.json (passed)
+    - cd frontend && pnpm exec nx run aura-web:build:production (passed)
+    - cd frontend && pnpm exec nx run storybook:build (passed)
+    - >-
+      cd frontend && AURA_WEB_E2E_REUSE_SERVERS=1 pnpm exec playwright test
+      apps/aura-web-e2e/src/workflows.spec.ts --project=desktop (passed, 16
+      tests, including SSE cursor recovery/coalescing, unknown-outcome
+      idempotency, auth reset privacy, route rebinding, tombstone scopes,
+      responsive authoring, and run timestamp/result evidence)
+    - >-
+      cd frontend && AURA_WEB_E2E_APP_PORT=4300
+      AURA_WEB_E2E_STORYBOOK_PORT=6465 AURA_WEB_E2E_REUSE_SERVERS=1
+      AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test
+      apps/aura-web-e2e/src/workflows.spec.ts --project=desktop --grep
+      "accessible publish review" (passed; dialog focus, Escape, opener focus
+      restoration, and delayed publish confirmation)
+    - >-
+      cd frontend && AURA_WEB_E2E_APP_PORT=4300
+      AURA_WEB_E2E_STORYBOOK_PORT=6465 AURA_WEB_E2E_REUSE_SERVERS=1
+      AURA_WEB_E2E_WORKERS=1 pnpm exec playwright test
+      apps/aura-web-e2e/src/workflows.spec.ts --project=mobile --grep
+      "authors all four" (passed; two-step navigation focus, mobile
+      authoring, cloning, removal, and accessibility assertions)
+    - >-
+      EOF/reconciliation reconnect handling is covered by bounded stream
+      behavior and the production build: a consumed retry timer cannot strand
+      the stream while authoritative refresh is in flight; successful flush
+      resumes the stream only after required REST reads complete.
+    - git diff --check
+    - >-
+      Bounded workflow stream runtime validation and typed failure behavior
+      covered by workflow-store.spec.ts (passed)
+    - >-
+      Workflow authentication recovery assertion covers the generated
+      same-origin login operation and bounded return path (passed)
+    - >-
+      tooling.architecture.common.validate_document against
+      work-items/schema/implementation-handoff.schema.json (passed)
+  failed: []
+  not_run:
+    - >-
+      Full Aura Web, Storybook, generated-sync, architecture-boundary, and
+      browser matrix checks remain assigned to the platform, application, and
+      integration workers after concurrent app-shell and feature-zone changes
+      converge. The owned workflow browser suite itself passed with reused
+      shared servers.
+decisions:
+  - >-
+    Kept authoring definitions and mappings as signals in WorkflowStore until
+    an explicit create or update command; no draft content is serialized into
+    navigation, persistence, logs, or live events.
+  - >-
+    Wrapped every mutation in the generated AuraApiClient with a CSRF session
+    token and stable Idempotency-Key retention. Unknown network or server
+    outcomes preserve the key and mark the store stale until reconciliation.
+  - >-
+    Treated SSE as an invalidation hint only. The store records the opaque event
+    identifier and reloads authoritative workflow or instance REST state.
+  - >-
+    Kept the UI inside one feature library with standalone component styling,
+    semantic labels, keyboard buttons, responsive breakpoints, and reduced
+    motion support. App routing/navigation remains outside this ownership zone.
+  - >-
+    Exposed explicit seven-scope deletion, approval/notification-safe opaque
+    lineage, cancellation, and recovery methods through the feature API without
+    importing those feature implementations.
+  - >-
+    Treats live events as validated metadata invalidations: cursor errors clear
+    the cursor and reconcile through bounded REST, clean EOF reconnects, and
+    bursts are coalesced to one in-flight plus one queued refresh while stale
+    authoritative detail remains usable.
+  - >-
+    Reconcile recovery now requires an explicit owner choice between completed
+    and failed; run detail renders each completed effect, checkpoint, and
+    terminal result, and approval copy is truthful when no compatible handoff
+    link is present.
+  - >-
+    Mobile authoring exposes the active step plus its immediate predecessor for
+    safe clone/source context, with Previous/Next controls and no rendering of
+    the full ordered list. Navigation focus waits for the rendered step, and a
+    final-step Next action remains a bounded no-op with an announcement. The
+    active card is marked aria-current="step" and visibly distinguished, while
+    programmatically focused headings have a visible focus ring. Agent revision
+    choices use the generated listAgents currentRevision seam; historical
+    revision cataloging remains outside the generated contract.
+  - >-
+    Live invalidation coalescing accumulates list, selected-workflow, and
+    selected-instance projections; the latest event cursor advances only after
+    every required authoritative REST read succeeds. Cursor expiry performs a
+    full visible refresh before reconnect, while SSE 401/403 clears private
+    state without reconnecting.
+  - >-
+    Stream runtime validation follows the workflow OpenAPI envelope: UUID
+    lineage, RFC3339 timestamps, positive bounded versions/ordinals, closed
+    deletion scopes, unique recovery capabilities, exact variant keys, and the
+    required heartbeat schema marker.
+  - >-
+    Workflow creation adopts the authoritative parent definition, route
+    selection is canonical, reset clears owner-private agent and manual-input
+    state, and terminal instance deletion retains a content-free target for
+    remaining deletion scopes.
+  - >-
+    Contextual run, approval, and tombstone panels remain inside the workspace
+    column; mobile add/clone/move/remove updates the active step before focus;
+    authentication errors provide sign-in or permission guidance; manual input
+    errors expose stable aria-invalid and aria-describedby relationships.
+  - >-
+    Authentication recovery uses the generated Aura startLogin operation and
+    a bounded same-origin return_to path (/workflows); external or oversized
+    return paths fall back to the workflow index.
+  - >-
+    Agent option loads carry both the session epoch and a monotonic load
+    generation. Reset increments the generation, clears agent data, revokes
+    the established-session gate, and prevents mounted-route reloads until a
+    new authenticated session is explicitly established; delayed responses
+    therefore cannot repopulate private agent choices.
+  - >-
+    Storybook now covers empty and authored drafts, waiting and recovery runs,
+    authentication and permission failures, reconnecting live updates, and the
+    mobile one-step editor state.
+  - >-
+    Publishing opens an accessible, focus-managed immutable review dialog that
+    enumerates declared input types, ordered typed provenance, authorized agent
+    revisions, confirmation points, and server budgets before the commit. The
+    review captures its opener before asynchronous validation, traps forward and
+    reverse Tab within the modal, inerts the background while open, and restores
+    focus after Escape, cancellation, or completion. Confirmation restores the
+    opener synchronously when the dialog closes, before awaiting a potentially
+    slow or unknown publish response.
+    Run evidence is ordered after the run heading and renders timestamps,
+    completed effects, checkpoints, per-step results, and terminal result
+    details; the empty authoring story explicitly opens the in-memory editor.
+  - >-
+    Reconciliation preserves mutation fingerprints and request keys, allowing
+    only the explicitly safe unknown-create retry while keeping start retries
+    gated. SSE pending event IDs are marked processed only after all required
+    REST projections succeed, replayed processed events advance the cursor
+    without another fetch, and the bounded set is cleared on session/cursor
+    reset. This prevents replay bursts from launching excess reads.
+  - >-
+    If an EOF retry timer fires during an in-flight projection refresh, the
+    refresh completion reopens the metadata stream only after authoritative
+    reads succeed and the cursor remains committed; pending retry timers are
+    otherwise left to perform the reconnect.
+  - >-
+    RFC3339 stream timestamps require a coloned offset or Z and calendar
+    components are validated without Date.parse normalization. A parent route
+    inspection clears same-workflow run selection, while deletion
+    reconciliation preserves only the content-free terminal tombstone target
+    needed for remaining scopes. Workflow-only live invalidations preserve the
+    selected run when the instance route remains active; instance invalidations
+    refresh it independently.
+risks:
+  - >-
+    Agent revision authoring uses the generated listAgents operation and the
+    active agent currentRevision selector. Historical revision selection is not
+    available through the generated workflow-facing contract; exposing it would
+    require an owning agent-library or contract decision.
+  - >-
+    The shared workflow-store.spec.ts contains concurrent TestBed edits owned
+    by the parent/integration stream; this worker preserved that file and the
+    focused workflow test target currently passes after the concurrent edits.
+  - >-
+    The browser stream fallback uses the standard metadata-only SSE endpoint
+    because the generated transport facade is JSON-oriented; all mutation and
+    authoritative reads remain through the generated Aura client operations.
+  - >-
+    The application shell must register the library alias and workflow routes;
+    those changes are owned by the concurrent platform/application worker.
+  - >-
+    Vitest cannot instantiate the Angular-decorated WorkflowStore directly in
+    this lightweight workspace transform; focused tests cover the pure
+    coalescing/cursor projection and contract validator seams, while production
+    build validates the store integration.
+unresolved: []

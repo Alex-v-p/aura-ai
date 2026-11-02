@@ -1,0 +1,96 @@
+agent: observatory_worker
+work_item: AURA-0082
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0078_observatory
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: >-
+    Observatory CLI, ClickHouse/query adapters, legacy ordering migration, and
+    Observatory regression tests assigned by AURA-0082
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/active/AURA-0082.yaml
+  - services/aura-observatory/src/aura_observatory/entrypoints/cli.py
+  - services/aura-observatory/src/aura_observatory/adapters/clickhouse.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+  - services/aura-observatory/tests/test_aura0078_review_fixes.py
+  - services/aura-observatory/tests/test_aura0079_clickhouse_auth_regressions.py
+  - services/aura-observatory/tests/test_aura0080_formal_regressions.py
+  - services/aura-observatory/tests/test_aura0080_migrations_and_privacy.py
+contracts:
+  changed: false
+migrations:
+  changed: true
+  owning_service: aura-observatory
+  paths:
+    - services/aura-observatory/migrations/clickhouse/versions/0003_legacy_ordering_ledger.sql
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0082.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0082.yaml --role observatory_worker with all 8
+      Observatory-owned service, migration, and regression-test paths
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0082.yaml --role test_evaluation_engineer with all
+      4 Observatory regression-test paths
+    - python3 tooling/architecture/validate-repository-shape.py
+    - bash -n deploy/compose/local-http.sh
+    - python3 deploy/compose/test_topology.py (38 passed)
+    - >-
+      PYTHONPATH=services/aura-observatory/src .venv/bin/python -m
+      aura_observatory.entrypoints.cli --help
+    - >-
+      PYTHONPATH=services/aura-observatory/src .venv/bin/python -m pytest -q
+      services/aura-observatory/tests (214 passed, 1 warning)
+    - >-
+      Focused AURA-0078/AURA-0079/AURA-0080 regression suite (136 passed,
+      1 warning)
+    - >-
+      RAYON_NUM_THREADS=1 .venv/bin/ruff check on all changed Observatory
+      Python and test files
+    - >-
+      .venv/bin/pyright on the changed Observatory CLI and adapters (0 errors)
+    - >-
+      Docker Compose merged configuration validation with local-identity and
+      observatory profiles
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      ./deploy/compose/local-http.sh up was left to the platform owner because
+      it starts and mutates the shared disposable Docker stack.
+decisions:
+  - >-
+    ClickHouse 25.8 requests use HTTP Basic Auth and retain only the database
+    query parameter. The CLI fails closed if the HTTP client cannot accept
+    explicit Basic Auth; it never downgrades to a username query parameter.
+  - >-
+    Migration files are split and posted sequentially with quote/comment-aware
+    parsing, preserving statement order and allowing failure-safe retries.
+  - >-
+    Migration ledger reads and FORMAT clauses are sent in SQL bodies rather
+    than as removed ClickHouse HTTP pseudo-parameters.
+  - >-
+    Legacy ordering backfill uses a transient Join lookup and synchronous
+    mutation, rebuilding and dropping the helper on each rerun for recovery
+    from the pre-25.8 helper shape.
+  - >-
+    AURA-0082 ownership_zones now names the exact Observatory implementation,
+    migration, and regression-test paths and their responsible roles while
+    preserving the platform zones.
+risks:
+  - >-
+    Full launcher startup remains dependent on the platform-owned Docker
+    environment and was not exercised by this worker.
+unresolved: []

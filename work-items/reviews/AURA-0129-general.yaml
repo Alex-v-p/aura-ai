@@ -1,0 +1,10 @@
+agent: general_reviewer
+work_item: AURA-0129
+verdict: PASS
+checked:
+  - Re-reviewed the final settled diff, both complete handoffs, deployment corrections, Settings error redaction, and focused regressions.
+  - Verified base and local HTTP deployments contain no Calendar secret mounts or file-path environment entries, while the explicit opt-in overlay enables and mounts both secrets only on aura-core-api.
+  - Verified disabled container creation succeeds without Calendar files and the enabled overlay fails closed when its secret sources are absent.
+  - Verified hide_input_in_errors preserves existing Settings behavior while excluding inline secrets, client identifiers, client-secret paths, and key-ring paths from ValidationError string and repr output.
+  - Independently passed all architecture validators, 27 architecture tests, Ruff, focused Pyright with zero errors, 75 focused tests, 3 topology tests, all required Compose renders, and git diff checking.
+findings: []

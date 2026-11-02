@@ -1,0 +1,19 @@
+agent: observability_steward
+work_item: AURA-0086
+verdict: PASS
+checked:
+  - Re-read the active work item, final implementation and test handoffs, current diff, component manifests, observability specification, and the general, architecture, and security/privacy PASS reviews.
+  - Re-verified every prior observability finding against the final production code and focused regression coverage.
+  - Confirmed the deployed no-argument module path dispatches to migrate, applies service-owned migrations, and synchronizes packaged manifests in the same PostgreSQL transaction; explicit sync-manifests remains an idempotent operator path.
+  - Confirmed migration 0006 uses a generated dependency-edge primary key, nullable required_version, deterministic legacy-row deduplication, and a null-safe uniqueness index for unconstrained provider dependencies.
+  - Confirmed component health uses component and optional version filters, canonical execution/span identities rather than total-run latency, a 24-hour default and 31-day maximum window, five-minute ClickHouse trend buckets, deterministic ordering, and explicit point limits.
+  - Confirmed topology traversal uses stable component/version identities, deterministic visited and enqueued sets, exact requested depth, 200-node and 1000-edge bounds, 64-version/direct-ID caps, and 200 reverse-ID caps without dangling edges.
+  - Confirmed topology definition, observed-component, and reverse-dependency sources use limit-plus-one reads of 2001, 201, and 201 respectively, and every source-cap hit propagates partial so omitted history or relationships are never represented as complete.
+  - Confirmed successful and failed decorated query use cases emit exactly one observatory_query_duration_ms and observatory_query_outcome sample; collection, definition, dependency, and health calls use the finite declared resource-label vocabulary.
+  - Confirmed legacy method-level success instrumentation was removed from decorated overview, history, run, trace, and component-health paths, and component_collection no longer calls the separately instrumented components() fallback, preventing double counting.
+  - Independently invoked successful component collection, definition, dependency, and health use cases and observed three exact components-labelled samples plus one exact component_health-labelled sample in Prometheus output.
+  - Confirmed query-api and telemetry-storage manifests declare stable IDs and versions, owners, typed schemas, dependencies, operational metrics with units and finite labels, trace and correlation boundaries, evaluators, replay support, metadata-only capture, prohibited sensitive fields, manual-owner retention, and bounded cardinality.
+  - Confirmed malformed, missing, unavailable, partial, late, and retained data remain explicit: storage failures are typed retryable failures, source truncation marks topology partial, component trends re-query bounded observation windows, and observed-only components disappear after retention while declared definitions and dependency edges remain.
+  - Ran the focused AURA-0086 correction suite successfully with 25 tests passing, including exact-once success/failure metrics and source-cap partial semantics; reviewed the independent complete-suite result of 371 tests passing with one opt-in PostgreSQL integration test skipped.
+  - Ran the observability validator and git diff check successfully.
+findings: []

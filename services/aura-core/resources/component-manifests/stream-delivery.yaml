@@ -1,0 +1,55 @@
+component:
+  id: aura.runtime.stream_delivery
+  version: 1.5.0
+  owner: aura-core
+  category: delivery
+input:
+  schema: aura-run-events-v1
+  replayable: true
+  replay_description: Durable run events replay from PostgreSQL; model.thinking.delta is live-only, never persisted, replayed, or cursor-bearing.
+output:
+  schema: server-sent-events-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - aura.interaction.conversation_persistence
+  - nats-jetstream
+  - nats-transient
+metrics:
+  - memory_activity_publication_duration_ms
+  - memory_activity_publication_outcome
+  - memory_activity_delivery_duration_ms
+  - memory_activity_delivery_outcome
+  - sse_reconnects
+  - sse_connections
+  - events_delivered
+  - stream_delivery_duration_ms
+  - thinking_stream_outcome
+  - errors
+evaluators:
+  - approval_reconnect_reconciliation
+  - thinking_transport_privacy
+  - thinking_frontend_reconciliation
+metric_semantics:
+  memory_activity_publication_duration_ms: Identifier-only durable activity publication duration.
+  memory_activity_publication_outcome: Metadata-only durable activity publication outcome.
+  memory_activity_delivery_duration_ms: Identifier-only memory activity event delivery duration.
+  memory_activity_delivery_outcome: Metadata-only memory activity delivery outcome.
+  sse_reconnects: Authorized stream requests carrying a valid Last-Event-ID cursor.
+  events_delivered: Events serialized at the SSE boundary; event data is never telemetry.
+  stream_delivery_duration_ms: Component-local serialization or delivery duration from a parented span.
+  thinking_stream_outcome: Metadata-only live thinking stage outcome; published is the coordinator handoff, transport_published is the transient NATS boundary, delivered is the active SSE boundary, and rejection/error outcomes are bounded; reasoning text, prompts, and owner identity are never captured.
+capture_policy: metadata_only
+cardinality:
+  metric_attributes: [error_class, dependency, outcome, status]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, conversation_id, branch_id, regenerated_from_run_id]
+  prohibited: [prompt, response, payload, endpoint, token, credential]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

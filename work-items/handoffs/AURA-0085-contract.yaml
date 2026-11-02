@@ -1,0 +1,95 @@
+agent: contract_steward
+work_item: AURA-0085
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: /root/aura_0085_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.observatory-api
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - work-items/handoffs/AURA-0085-contract.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward; no concurrent writer was authorized for the Observatory OpenAPI source or generated transport client
+  compatibility: backward_compatible
+  definitions:
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - Added owner-authorized GET /api/v1/health/history with opaque cursor pagination, a 200-item page cap, optional UTC bounds, and closed content-free response models.
+        - Added an optional current health snapshot to Overview so existing response consumers remain compatible during a rolling producer rollout.
+        - Added finite healthy, delayed, partial, degraded, and unavailable health states plus a finite OTLP rejection-reason vocabulary.
+        - Added bounded intake, visibility, freshness, heartbeat, backlog, duplicate, rejection, storage-latency, and query-latency metadata to the self-monitoring snapshot.
+        - Added the metadata-only health.changed SSE notification type without changing authentication, Last-Event-ID, event identifiers, or heartbeat behavior.
+  compatibility_notes:
+    - Existing paths, operations, request requirements, response fields, and service-state values are unchanged.
+    - Overview.health is optional for wire compatibility; upgraded producers include it and upgraded consumers tolerate its absence during rolling deployment.
+    - The health-history resource and its schemas are additive, and observatory-v1 remains at version 1.0.0.
+    - health.changed is an additive notification value; it carries only the existing closed LiveEvent envelope and directs consumers to refresh the REST snapshot.
+    - The generated output remains transport-only and contains no retry, refresh, health classification, persistence, or presentation behavior.
+  producers:
+    - Aura Observatory owner-authorized query API
+    - Aura Observatory persisted health-history projection
+    - Aura Observatory authenticated metadata-only SSE stream
+  consumers:
+    - Observatory Web overview and ingest-health workspace
+    - Observatory browser and full-stack acceptance suites
+    - Observatory API contract and generated-client validation
+  rollout:
+    - Deploy the PostgreSQL health-history migration and Observatory API producer before relying on Overview.health or querying the new history resource.
+    - Deploy the regenerated Observatory Web client after or with the compatible API producer; older clients ignore the additive overview field and event name.
+    - Persist and replay health.changed only for material state or visibility-watermark changes; heartbeats remain unpersisted keepalives.
+    - Keep authenticated health responses and SSE data excluded from Workbox and browser persistence.
+  generated_outputs:
+    - source: contracts/openapi/observatory-v1.yaml
+      generator: frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.telemetry_storage
+    - aura.observatory.query_api
+    - aura.observatory.live_updates
+  metrics_added: []
+verification:
+  passed:
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0085.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0085.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0085.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0085.yaml
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:lint
+    - cd frontend && pnpm exec tsc -p libs/platform/observatory-api-client/tsconfig.lib.json --noEmit
+    - implementation-handoff.schema.json validation for work-items/handoffs/AURA-0085-contract.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Service runtime, migration, frontend feature, browser, and full-stack checks remain assigned to the Observatory, frontend, test/evaluation, review, and integration owners.
+decisions:
+  - Kept contract id observatory-v1 and version 1.0.0 because the resource, optional overview field, schemas, and event value are additive and remove no accepted input or output.
+  - Represented self-monitoring as one closed snapshot shared by the overview and history resource so current and historical semantics cannot drift.
+  - Capped history pages at 200 and exposed only opaque cursors and UTC bounds; unbounded arrays, arbitrary groupings, arbitrary labels, and arbitrary attributes remain prohibited.
+  - Capped durations at ten minutes and lags at seven days; intake lag is explicitly non-negative, derived only after validation, and clamps future-skewed input to zero.
+  - Used finite health-state and rejection-reason enums aligned with the existing OTLP classifier, with aggregate counts only and no submitted values or exception text.
+  - Kept health.changed as a metadata-only invalidation notification in the existing LiveEvent envelope rather than embedding diagnostic history in SSE.
+  - Generated the TypeScript output with the repository generator and added no business behavior to the client.
+risks:
+  - Existing SSE consumers that register only known event names will not observe health.changed until their additive frontend rollout, but REST snapshots and all existing events remain unaffected.
+unresolved: []

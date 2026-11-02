@@ -1,0 +1,111 @@
+id: AURA-0025
+title: Fix Alembic 0005 revision identifier length
+status: integrated
+change_class: bugfix
+intent: >
+  Restore the Aura Core Compose migration gate by ensuring migration 0005 uses
+  an Alembic revision identifier that fits the stock version table while
+  preserving the reviewed schema and backfill behavior.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications: []
+  decisions:
+    - User-requested diagnosis and fix for the failing aura-core-migrate container
+    - The affected database remains at 0004 with the 0005 transaction rolled back cleanly
+    - Alembic stock version_num is varchar 32 and every repository revision identifier must fit it
+    - Migration filename schema operations down revision and backfill semantics remain unchanged
+  contracts: []
+feature_references:
+  - DEV-006
+ownership_zones:
+  - aura-core.migrations
+  - aura-core.tests
+allowed_paths:
+  - work-items/active/AURA-0025.yaml
+  - work-items/archived/AURA-0025.yaml
+  - services/aura-core/migrations/versions/0005_conversation_persona_overrides.py
+  - services/aura-core/tests/test_migration_0005_persona_overrides.py
+  - services/aura-core/tests/test_migrations.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - frontend/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/**
+  - services/aura-observatory/**
+  - deploy/**
+  - compose.yaml
+  - infra/**
+  - satellites/**
+  - extensions/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.conversations
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Existing migration data and identifiers must remain unchanged
+    - The fix must not silently rewrite databases with manually altered Alembic version tables
+  data_classes:
+    - service-owned migration metadata
+required_agents:
+  implementation:
+    - core_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 2
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - Migration 0005 has a stable revision identifier no longer than 32 characters and still follows 0004_agent_persona_revisions.
+  - All repository migration revision identifiers are covered by a regression assertion enforcing the Alembic limit.
+  - The affected persistent database upgrades from 0004 to the shortened 0005 revision without changing the reviewed schema or backfill semantics.
+  - The aura-core-migrate Compose service exits successfully and dependent Core services can start.
+  - No contract deployment topology protected baseline or Core Observatory boundary changes are introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0025.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0025.yaml
+  - UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache uv run ruff check services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pyright services/aura-core
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests/test_migration_0005_persona_overrides.py services/aura-core/tests/test_migrations.py -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider services/aura-core/tests -q
+  - UV_CACHE_DIR=.local-state/uv-cache uv run --directory services/aura-core alembic -c alembic.ini history
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - docker compose config --quiet
+  - docker compose build aura-core-migrate
+  - docker compose run --rm aura-core-migrate
+  - docker compose ps -a
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

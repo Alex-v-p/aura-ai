@@ -1,0 +1,12 @@
+agent: observability_steward
+work_item: AURA-0090
+verdict: PASS
+checked:
+  - Confirmed both component manifests declare metadata-only capture, manual-owner retention, bounded attributes, trace-only identifiers, and the complete prohibited privacy-field set.
+  - Confirmed both AURA-0090 component IDs are covered by typed observability validation for metrics, dependencies, export, capture policy, retention, evaluators, and cardinality.
+  - Confirmed evaluation metric names, labels, histogram buckets, failure classes, and persisted series remain finite and content-free.
+  - Confirmed PostgreSQL metric aggregation uses one atomic ON CONFLICT update and metric persistence has a bounded managed lifecycle with classified failures, drop accounting, exception retrieval, timeout cancellation, and shutdown draining.
+  - Confirmed the API persisted-series path exposes worker-produced counts and histograms without shared files or identifier-bearing labels.
+  - Rechecked deletion phases, immutable target recovery, lease fencing, bounded worker failures, content-free audits, and manual-only retention.
+  - Focused AURA-0090 storage/migration, typed-validator, changed-path, observability, Ruff, and diff checks passed; full suite evidence is 618 passed and 4 skipped.
+findings: []

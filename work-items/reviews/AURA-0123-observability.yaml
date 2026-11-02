@@ -1,0 +1,52 @@
+agent: observability_steward
+work_item: AURA-0123
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the final AURA-0123 diff, active work item, architecture and
+    Observatory specification, affected component manifest, live-event routing,
+    route lifecycle, refresh coordinators, replay semantics, and handoffs.
+  - >-
+    Verified production self-observation isolation end to end: the ClickHouse
+    event projection carries componentId only as internal context, observations
+    from aura.observatory.* remain generic observation invalidations even with
+    run correlation, external/Core run observations remain run-scoped, and the
+    public SSE payload retains the closed seven-field metadata-only schema.
+  - >-
+    Verified event IDs are deduplicated across replay/duplicate delivery,
+    heartbeats and generic observations perform no REST reads, active-run bursts
+    retain at most one active and one trailing refresh per 500 ms cadence, and
+    health history uses a separate two-second cadence.
+  - >-
+    Verified inactive workspaces are unmounted and route teardown cancels Runs,
+    Trace, Operations, Analytics, and Comparison work. Analytics and Comparison
+    generation invalidation plus coordinator cancellation prevent an already
+    queued timer from issuing a hidden read after navigation while retaining the
+    last in-memory snapshot.
+  - >-
+    Verified Runs reconciliation now continues only for an active concrete gap,
+    selected-run live invalidation and projection-gap retry retain distinct
+    500 ms and two-second cadences, evidence-deletion polling stops off-route and
+    resumes on return, and Operations permits one in-flight plus one trailing
+    bounded workspace load.
+  - >-
+    Verified stable aura.observatory.run_inspection_query@1.0.0 identity,
+    PostgreSQL, ClickHouse, and session-store dependencies, named query and
+    merge latency measurements rather than total-run latency, bounded operation,
+    outcome, status, dependency, and errorClass dimensions, run-only trace
+    correlation, projection-truth, outage-isolation, and metadata-allowlist
+    evaluators, read-only replay, metadata-only capture/redaction, manual owner
+    deletion retention, and finite cardinality posture remain intact.
+  - >-
+    Independently ran the Observatory unit suite with 80 passing tests, the
+    focused production query/SSE suite with 5 passing tests, the desktop
+    Analytics/Comparison leave-before-cadence request-ledger regression with 1
+    passing test, the observability governance validator, and git diff checking.
+findings: []
+risks:
+  - >-
+    The component discriminator used to prevent self-invalidation remains
+    internal to the server projection and is intentionally absent from SSE;
+    retain the focused production regression when query projection fields
+    change.
+unresolved: []

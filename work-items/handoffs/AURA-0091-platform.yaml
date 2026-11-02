@@ -1,0 +1,197 @@
+agent: platform_worker
+work_item: AURA-0091
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0091_platform
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: deploy.core-evaluation-runner
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/local-http.yaml
+  - deploy/compose/run-evaluation-runner-e2e.sh
+  - deploy/compose/test_topology.py
+  - deploy/docker/aura-evaluation-runner.Dockerfile
+  - deploy/docker/nats-entrypoint.sh
+  - deploy/docker/nats-evaluation-bootstrap.sh
+  - deploy/tests/test_aura0091_topology.py
+  - tooling/architecture/modules.yaml
+  - work-items/handoffs/AURA-0091-platform.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.evaluation.runner
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0091.yaml
+    - python3 -m unittest deploy.compose.test_topology (49 tests)
+    - uv run pytest -q deploy/tests/test_aura0091_*.py (13 passed)
+    - uv run pytest -q deploy/tests/test_aura0090_topology.py (10 passed)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0091.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0091.yaml (40 changed paths)
+    - docker compose --env-file .env --profile observatory config --quiet
+    - bash -n deploy/compose/local-http.sh deploy/compose/run-evaluation-runner-e2e.sh deploy/docker/aura-core-entrypoint.sh deploy/docker/nats-entrypoint.sh deploy/docker/nats-evaluation-bootstrap.sh
+    - git diff --check
+    - uv run ruff check deploy/tests/test_aura0091_topology.py
+    - uv run pyright deploy/tests/test_aura0091_topology.py (0 errors)
+    - >-
+      Bounded Compose resilience assertions: configurable startup, diagnostic,
+      and cleanup budgets; timeout-protected health wait, diagnostics, scoped
+      teardown, and fixture deletion; and fail-closed startup diagnostics.
+    - NATS server startup/config parse smoke with four file-injected identities and denied cross-stream probes
+    - docker compose --env-file .env --profile observatory config --quiet after runner DB bootstrap, secret, network, and resource changes
+    - Runner image startup uses the frozen /app/.venv interpreter and does not resolve packages under the bounded /tmp mount
+    - >-
+      Static correction checks after the latest platform changes: Bash syntax,
+      Python topology tests (13 passed), legacy Compose topology (49 passed),
+      Compose rendering, all assigned architecture validators, and git diff
+      checks pass. The subsequent single serialized cached full-stack E2E is
+      recorded below.
+    - >-
+      Docker Desktop portability checks: production Compose state-root
+      bindings remain encrypted host-path mounts, while the disposable E2E
+      harness generates only project-scoped named volumes for every
+      high-write PostgreSQL, NATS, Garage, ClickHouse, and session data/log
+      target. The generated override declares no external or explicit volume
+      names and is included in bounded diagnostics and `down --volumes`.
+    - >-
+      Compose healthcheck regression: rendered `observatory-postgres` with
+      `docker compose config --format json` and verified its CMD-SHELL test
+      contains the literal `\\000` shell characters, contains no NUL byte, and
+      matches the safe Core PostgreSQL healthcheck escaping.
+    - >-
+      Single serialized Docker Desktop acceptance passed: `COMPOSE_PARALLEL_LIMIT=1
+      AURA_E2E_DEBUG=false AURA_E2E_ASSERT_RUNNER_TELEMETRY=true bash
+      deploy/compose/run-evaluation-runner-e2e.sh`; the harness reported
+      `AURA-0091 evaluation runner deployment acceptance passed` after healthy
+      startup, Collector/API outage independence, Core recovery, and the
+      remaining deployment acceptance phases. Scoped cleanup left no project
+      containers, volumes, or fixture directories.
+  failed: []
+  not_run: []
+decisions:
+  - >-
+    Kept normal Core NATS subjects on a separate ACL namespace and added an
+    internal evaluation bus with distinct dispatch and runner file secrets;
+    both evaluation identities have only their command/result subjects plus
+    the bounded JetStream request API and inbox replies.
+  - >-
+    Provisioned one file-backed AURA_EVALUATION_RUNNER stream with bounded
+    age, bytes, messages, payload size, explicit acknowledgements, max
+    deliveries, and stable durable consumers for dispatch, requests, and
+    cancellations.
+  - >-
+    Added a no-port runner image/service with only the Core database, evaluation
+    NATS, evaluation-object, and Observatory-ingest networks. Deterministic
+    AURA-0091 fixtures do not receive model egress or an Ollama URL. It is
+    read-only with no-new-privileges, dropped capabilities, bounded CPU,
+    memory, PIDs, file descriptors, queue, and execution limits.
+  - >-
+    Added a runner-specific Garage key and one-shot bootstrap that rejects
+    Core-bucket grants, grants only evaluation-bucket read/write access, and
+    denies owner permission. Observatory and Core credentials remain separate.
+  - >-
+    Added an opt-in project-scoped low-memory deployment acceptance script and
+    topology tests; teardown removes only the named project and fixture root.
+  - >-
+    Registered every new Core runner source file in the module registry as
+    required by the work item; repository-governance authorization is recorded
+    by the active work item and the changed-path validator passes.
+  - >-
+    Added a dedicated file-backed runner PostgreSQL login. Bootstrap rotates
+    its password, revokes inherited schema/table access, and grants only the
+    runner ledger/outbox tables plus their sequences; the disposable probe
+    verifies an owner table is denied.
+  - >-
+    Kept one-shot NATS administration separate from long-running identities;
+    existing streams and durable consumers are reconciled fail-closed on
+    configuration drift, while runtime identities receive only exact
+    request/result, consumer, acknowledgement, and inbox subjects.
+  - >-
+    Changed the runner container command to invoke the image's frozen virtual
+    environment directly, preventing runtime dependency resolution and
+    avoiding unbounded package-cache use under the 64 MiB temporary filesystem.
+  - >-
+    Granted the dedicated runner role REFERENCES only on its ledger parent
+    table because the terminal outbox has a service-owned foreign key; the
+    owner-table denial and all other database boundaries remain enforced.
+  - >-
+    Removed publish permission for arbitrary NATS inbox subjects from normal,
+    dispatch, and runner identities while retaining inbox subscription for
+    request/reply. The acceptance matrix includes live denied inbox publishes
+    and allowed bounded JetStream request/reply paths.
+  - >-
+    The runner database bootstrap reads its password through psql \getenv from
+    a file-backed environment assignment, so the value is not present in the
+    psql process argv or emitted in logs. Compose defaults now provide explicit
+    fixture, prompt, and policy revisions rather than relying on an E2E-only
+    environment override.
+  - >-
+    Hardened the acceptance harness to require production module-replay output
+    artifact integrity and reachable deletion, exercise the runner-owned
+    artifact adapter deletion path, and expose an opt-in bounded telemetry
+    acceptance through the existing Collector and Observatory ingest graph.
+    The same opt-in phase stops only the Collector and ingest API and proves
+    runner execution remains independent; default runner telemetry remains
+    disabled.
+  - >-
+    The opt-in telemetry probe starts only the existing Observatory API and
+    Collector through Compose dependencies, queries bounded metadata-only
+    counts in the private ClickHouse network, and uses the file-injected
+    Observatory credential already mounted by the runner. It introduces no
+    service, port, dependency, or external network.
+  - >-
+    The scheduled telemetry-enabled final run exposed an environment-level
+    failure: Compose health waits remained blocked for more than eight minutes
+    across PostgreSQL, ClickHouse, and Valkey, and the scoped Compose teardown
+    also hung. The harness now validates configurable 30-1800 second startup,
+    5-300 second cleanup, and 5-120 second diagnostic budgets; wraps startup,
+    diagnostics, teardown, and fixture deletion with GNU timeout; and emits a
+    bounded `compose ps --all` snapshot on startup failure without retrying or
+    broadening cleanup.
+  - >-
+    Kept production encrypted state-root bindings unchanged. To avoid the
+    observed Docker Desktop bind-mounted high-write stall, the E2E script
+    writes an ephemeral Compose override with project-scoped named volumes
+    for all disposable state/log targets, retains file-backed secret and
+    configuration mounts, and removes those volumes with its existing scoped
+    `down --volumes --remove-orphans` cleanup.
+  - >-
+    Corrected Observatory PostgreSQL's `tr -d` healthcheck to double-escape
+    `\\000` in the Compose YAML scalar, matching Core. Compose rendering now
+    proves the container receives shell escape characters rather than an
+    embedded NUL; no other production healthcheck behavior changed.
+  - >-
+    Bound every E2E request's provenance deployment revision to the exact
+    bounded `AURA_TELEMETRY_DEPLOYMENT_ID` inherited from the deployed runner,
+    defaulting safely to `local` only when absent and rejecting empty,
+    oversized, unsafe, or sensitive values. This keeps telemetry correlation
+    and request reproducibility evidence identical without changing fixture,
+    prompt, or policy revisions.
+risks:
+  - >-
+    Core source and contract implementation checks remain owned by their
+    respective workers; this handoff records only platform-zone evidence.
+  - >-
+    The final telemetry-enabled acceptance passed after the deployment-revision,
+    healthcheck, outage-probe, and disposable-volume corrections. No temporary
+    resources remain and no broad cleanup, retry, restart, or prune was
+    performed.
+unresolved: []

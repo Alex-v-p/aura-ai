@@ -1,0 +1,266 @@
+agent: test_evaluation_engineer
+work_item: AURA-0092
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: evaluation.observatory-orchestration-tests
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/tests/test_aura0092_e2e.py
+  - deploy/tests/test_aura0092_topology.py
+  - deploy/compose/run-evaluation-orchestration-e2e.sh
+  - services/aura-observatory/tests/test_aura0092_metrics.py
+  - services/aura-observatory/tests/test_aura0092_migration.py
+  - services/aura-observatory/tests/test_aura0092_orchestration.py
+  - services/aura-observatory/tests/test_aura0092_postgres_integration.py
+  - services/aura-observatory/tests/test_aura0092_transport.py
+  - services/aura-observatory/tests/test_aura0092_worker.py
+  - work-items/handoffs/AURA-0092-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check on the new Observatory
+      and deployment test files.
+    - >-
+      UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright on the new Observatory
+      and deployment test files (0 errors, 0 warnings, 0 informations).
+    - >-
+      AURA_WORK_ITEM=AURA-0092 UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q
+      services/aura-observatory/tests/test_aura0092_*.py
+      deploy/tests/test_aura0092_*.py (77 passed, 5 PostgreSQL-gated skips).
+    - bash -n deploy/compose/run-evaluation-orchestration-e2e.sh
+    - git diff --check
+    - >-
+      AURA_WORK_ITEM=AURA-0092 python3
+      tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0092.yaml (34 changed paths validated, including
+      this handoff).
+    - >-
+      AURA_AURA0092_POSTGRES_URL=... UV_CACHE_DIR=/tmp/aura-uv-cache uv run
+      pytest -q services/aura-observatory/tests/test_aura0092_postgres_integration.py
+      (12 passed) against fresh disposable Docker Desktop PostgreSQL 17,
+      covering migration upgrade/rerun, retry/max-attempt, durable receipt
+      acknowledgement, deadline/cancellation races, scheduler cadence,
+      deterministic occurrence advancement, and lease recovery.
+    - >-
+      Focused real PostgreSQL 17 regression run against a fresh disposable
+      Docker Desktop container: deadline/cancellation result race, retry and
+      max-attempt durable receipt acknowledgement, and scheduler claim/cadence
+      plus lease recovery (3 passed).
+    - >-
+      The parent Observatory worker reported its full suite at 670 passed and
+      9 skipped after the production orchestration changes; this worker reused
+      that report and did not rerun the full suite.
+    - >-
+      An earlier clean expanded Docker Desktop acceptance passed the functional
+      reliability and isolation matrix: initial real Core admission and
+      durable result, worker restart recovery, cancellation, strict deadline
+      terminal state, true JetStream ack-failure/redelivery, duplicate
+      idempotency, scheduler replica exclusivity, scheduled execution through
+      Core, expired-lease restart recovery, heartbeat fresh/stale/recovered
+      states, NATS outage/recovery, PostgreSQL outage/recovery, Core health and
+      authenticated-request independence while Observatory evaluation services
+      were stopped, persisted metrics scrape including histogram count and
+      bounded labels, and health/privacy canaries. The later final log scan is
+      recorded below as the remaining blocker.
+      Cleanup removed the generated Compose project, named volumes, networks,
+      containers, and fixture directory.
+    - >-
+      The latest clean rerun reached and passed the initial admission, durable
+      Core result, worker restart, cancellation, strict deadline terminal,
+      result-durable JetStream redelivery/idempotency, persisted health/privacy,
+      scheduler replica exclusivity and scheduled Core execution, expired lease
+      recovery, and heartbeat fresh/stale/recovered phases before stopping at
+      the NATS outage phase.
+    - >-
+      After the metric persistence placeholder fix, the unchanged clean Docker
+      Desktop matrix passed the NATS outage assertion with a pending unleased
+      request row, bounded `transport_unavailable`, two publish attempts, and
+      a finite persisted failed-publication metric. It then passed NATS
+      recovery to a succeeded result and classified PostgreSQL outage and
+      heartbeat recovery while keeping the worker and scheduler alive.
+    - >-
+      The latest clean serialized Docker Desktop matrix passed every phase
+      through Core-independence: admission, durable result, restart,
+      cancellation, strict deadline, JetStream redelivery, scheduler
+      exclusivity and execution, heartbeat aging/recovery, NATS/PostgreSQL
+      outage-recovery, Core operation while evaluation services were stopped,
+      and persisted health/privacy checks. It then reached `trace_verify`,
+      which exhausted its bounded 90-second wait because no required
+      orchestration component spans were queryable in ClickHouse. Cleanup
+      verified zero `aura-0092-e2e` containers, volumes, networks, or fixture
+      directories.
+    - >-
+      After the platform trace-wiring correction, the clean serialized full
+      matrix passed JetStream redelivery ordering, scheduler execution and
+      lease/heartbeat recovery, NATS outage/recovery, PostgreSQL
+      outage/recovery, and Core restart/independence. Core restart followed
+      the required NATS bootstrap ordering and did not reproduce the
+      previously reported stream-not-found condition. The run stopped only at
+      the final trace gate and cleanup removed all scoped resources.
+    - >-
+      Final clean serialized Docker Desktop acceptance passed every phase,
+      including admission, durable result, cancellation and deadline
+      precedence, JetStream redelivery/idempotency, scheduler exclusivity and
+      scheduled Core execution, lease/heartbeat recovery, NATS and PostgreSQL
+      outage/recovery, Core independence, persisted health/privacy checks, and
+      the final OTLP trace gate. `trace_verify` reported 512 bounded rows,
+      2 components, 13 traces, 6 operations, 2 dependencies, no duplicate
+      spans, full privacy compliance, and a persisted transport-failure span.
+      The process exited 0 and cleanup verified zero scoped containers,
+      volumes, networks, or fixture directories.
+    - >-
+      After adding aggregate-only trace failure diagnostics, the complete
+      focused owned suite passed with 77 passed and 5 PostgreSQL-gated skips;
+      the deterministic scheduler barrier, terminal metric/idempotency,
+      validation-span attribution, scheduler heartbeat, and manifest parity
+      regressions passed. Ruff, Pyright, bash syntax, git diff, and changed-path
+      validation also passed.
+    - >-
+      The clean serialized Docker Desktop matrix reached all terminal/race,
+      JetStream redelivery, scheduler, heartbeat, NATS/PostgreSQL outage and
+      recovery, Core-independence, and trace phases successfully. Trace
+      verification reported 512 spans, 2 components, 13 traces, 6 operations,
+      2 dependencies, no duplicates, and privacy compliance. Collector
+      self-metrics also passed with queue_size=11, queue_capacity=256, and
+      send_attempt_count=133. The run then failed at the Collector outage log
+      privacy gate because a bounded endpoint-or-secret-path predicate matched;
+      no matched value was emitted and scoped cleanup completed.
+    - >-
+      After correcting the owned privacy-scan regex and bounded Collector
+      recovery polling, a clean serialized Docker Desktop matrix exited 0.
+      All terminal/race, JetStream redelivery, scheduler exclusivity and
+      scheduled Core execution, lease/heartbeat recovery, NATS/PostgreSQL
+      outage and recovery, Core independence, persisted health/privacy,
+      Collector outage/recovery, exact metrics, and final privacy phases
+      passed. Trace verification reported 512 spans, 2 components, 13
+      traces, 6 operations, 2 dependencies, no duplicate spans, a failure
+      span, and privacy_ok=true. Collector recovery drained queue_size from
+      11 to 0 with capacity 256 and send_attempt_count=164. Scoped cleanup
+      verified zero containers, volumes, networks, and fixture directories.
+    - >-
+      Final clean serialized Docker Desktop rerun after adding bounded
+      Collector self-metrics classifications exited 0. It passed admission,
+      durable result, cancellation/deadline precedence, JetStream
+      redelivery, scheduler exclusivity and scheduled execution,
+      lease/heartbeat recovery, NATS and PostgreSQL outage/recovery, Core
+      independence, persisted health/privacy, and both OTLP trace gates.
+      Trace verification reported 512 spans, 2 components, 11 traces, 6
+      operations, 2 dependencies, no duplicates, a failure span, and
+      privacy_ok=true. The bounded NATS outage snapshot recorded
+      transport_unavailable, one pending unleased outbox row, three publish
+      attempts, and published_at null; recovery succeeded. The Collector
+      outage gate reported queue_size=12, queue_capacity=256, and
+      send_attempt_count=145; recovery reported queue_size=0 and
+      send_attempt_count=178. Scoped cleanup verified zero containers,
+      volumes, networks, and fixture directories.
+  failed: []
+  not_run:
+    - >-
+      Full repository validators, Core checks, review verdicts, and aggregate
+      integration checks remain with the integration maintainer and the other
+      AURA-0092 ownership zones.
+decisions:
+  - >-
+    Added opt-in real PostgreSQL coverage using isolated schemas, applying all
+    Observatory migrations twice and exercising the real repository for
+    idempotent admission, transactional initial outbox state, result receipts,
+    concurrent admission, lease expiry, and restart recovery. The default
+    suite remains database-independent and skips only when its explicit URL is
+    absent.
+  - >-
+    Added in-memory public-behavior coverage for concurrent duplicate
+    admission, bounded retry/max-attempt behavior, permanent failure,
+    acknowledgement after rejection, lease exclusivity/recovery, and
+    cancellation/late-result terminal precedence.
+  - >-
+    Added a project-scoped Docker Desktop acceptance harness with bounded
+    commands, COMPOSE_PARALLEL_LIMIT=1, file-backed fixture secrets, internal
+    repository admission, real Core runner dispatch, metadata-only request
+    data, and disposable named volumes that leave production state-root binds
+    unchanged.
+  - >-
+    The acceptance harness prints only bounded phase/status classes; it does
+    not print identifiers, payloads, credentials, or provider diagnostics.
+  - >-
+    Expanded independent coverage now includes real-PostgreSQL retry/max-attempt
+    and durable acknowledgement, deadline/cancellation races, scheduler claim
+    cadence and deterministic occurrences, lease recovery, result redelivery,
+    worker restart, dependency outage/recovery, Core independence, persisted
+    health bounds, and privacy scans of persisted/log output.
+  - >-
+    The E2E fixture uses UUID-shaped worker and scheduler identities and a
+    bounded running-state wait so Docker Desktop health probes do not mask the
+    actual evaluation behavior; production resource bindings remain unchanged.
+  - >-
+    The expanded harness intentionally uses a real JetStream durable consumer
+    and no direct repository replay for redelivery; the acceptance observed
+    duplicate delivery and completed the second delivery with an ack.
+  - >-
+    The deadline assertion required the terminal `deadline` state, and the
+    scheduled-occurrence assertion required execution through the Core runner;
+    both passed without weakening their assertions.
+  - >-
+    The final acceptance correction targets the Observatory result durable
+    `aura-evaluation-dispatch`, creates a real local owner session through the
+    repository SessionService and Redis backend for authenticated Core API
+    access, checks finite NATS failure state and worker liveness, and verifies
+    exact persisted metric types and histogram buckets. The latest clean run
+    also verified the persisted failed-publication metric, NATS recovery,
+    PostgreSQL outage classification/recovery, and Core independence. The
+    runner traceback blocker and the approved API startup-line classification
+    are both resolved by the final scan.
+  - >-
+    The source diagnosis is based on the pinned NATS client's default error
+    callback and the evaluation-runner connect site; no production change was
+    made in this test/evaluation ownership zone.
+  - >-
+    Added a static guard that recursively enumerates external JSON Schema
+    references from the authoritative runner transport contract and requires
+    each referenced document to be copied into the Observatory image. This
+    prevents a root-schema-only image from passing topology checks while
+    failing real admission.
+  - >-
+    Security adjudication authorized one exact exception for the standard
+    `observatory-api` Uvicorn wildcard-container-interface/8000 startup line.
+    The harness retrieves only that service without Compose prefixes, removes
+    only the fully anchored fixed line, and then applies the unchanged broad
+    privacy/raw-diagnostic scan. Negative static coverage proves that alternate
+    URLs, ports, providers, and traceback lines do not match the exception.
+  - >-
+    Added Docker verification for the authorized OTLP boundary: both
+    orchestration components, required operations and dependencies, stable
+    trace/span correlation, configured deployment identity, NATS failure
+    classification, and metadata-only privacy are checked from persisted
+    ClickHouse rows. The E2E-only override is limited to acceptance topology;
+    production wiring remains authoritative.
+  - >-
+    The final trace correction preserves the bounded transport failure
+    classification as `errorClass`; the complete matrix then verified the
+    authenticated OTLP `/v1/traces` path through Collector and ClickHouse
+    with metadata-only component spans and no duplicate lineage.
+  - >-
+    Trace verification failure output is intentionally aggregate-only: it
+    reports bounded counts, finite missing allowlist sets, and boolean
+    predicate results without serializing rows, identifiers, content,
+    credentials, or endpoints. A static regression test protects this shape.
+  - >-
+    The final privacy scan now includes observatory-collector startup and
+    outage logs. Its bounded matcher rejects collector endpoints and
+    /run/secrets filenames; a static negative regression covers both patterns
+    without printing the matched value.
+risks: []
+unresolved: []

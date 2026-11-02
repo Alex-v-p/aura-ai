@@ -1,0 +1,52 @@
+agent: general_reviewer
+work_item: AURA-0098
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the active work item and actual shared diff against the reduced
+    foundation scope only. Live evaluation browser scenarios 2-6, owner
+    operations, session reset, and the exhaustive dependency outage/restart
+    matrix were treated as explicitly deferred rather than acceptance gaps.
+  - >-
+    Verified the recorded exit-zero foundation run exercised fresh
+    Core-to-Collector-to-Observatory visibility, the real evaluation-runner
+    database identity gate, storage/deletion and worker-restart preflights,
+    authenticated SSE/REST run inspection, Trace, Components, Analytics,
+    comparison, privacy sinks, retention, and project-scoped cleanup.
+  - >-
+    Verified the composed evaluation-orchestration harness separately records
+    durable success, cancellation, deadlines, duplicate/redelivery behavior,
+    scheduler recovery, PostgreSQL and NATS recovery, Core independence, and
+    metadata-only trace evidence without relying on the deferred live browser
+    evaluation workflow.
+  - >-
+    Traced the score-projection execution path through the typed definition
+    repository, orchestration acknowledgement boundary, stable score IDs, and
+    retryable versus permanent failures; focused Observatory tests passed 32
+    tests and the current Observatory frontend unit suite passed 53 tests.
+  - >-
+    Re-ran work-item and changed-path validation, diff whitespace checks,
+    frontend lint, acceptance-scope, evaluator-boundary, capture, definition,
+    artifact, diagnostic, Core-availability, and observability-path regressions;
+    all passed against current source after the owning correction.
+  - >-
+    Reverified both prior blockers: the observability-path regression now
+    recognizes wrapper-based optional metric sampling plus explicit foundation
+    branching while preserving ordering assertions, and repository-shape
+    validation passes after retained ignored failure artifacts were removed.
+  - >-
+    Re-reviewed the selected-run reconciliation correction. Removing the
+    loading-state veto allows the first delayed trace retry to be scheduled;
+    the existing single-timer gate, selected-run identity check, sequence
+    suppression, 30-attempt cap, and session/reset/logout cancellation remain
+    intact. The exact recovery/cap browser regression passed 6 tests across
+    desktop, tablet, and mobile; 53 unit tests, lint, production build,
+    changed-path validation, and diff checks also passed.
+findings: []
+risks:
+  - >-
+    The reduced work item proves the Observatory foundation only. Deferred
+    live evaluation, owner operations, restart/session-reset, and exhaustive
+    outage behavior must remain explicit follow-up scope and must not be
+    described as accepted by AURA-0098.
+unresolved: []

@@ -1,0 +1,94 @@
+component:
+  id: aura.execution.task_projection@1
+  version: 1.0.0
+  owner: aura-core.domains.execution.tasks
+  category: projection
+input:
+  schema: TaskProjectionInvalidationV1
+  replayable: true
+output:
+  schema: TaskProjectionUpdateResultV1
+  replayable: true
+  capture:
+    content: none
+    metadata: allowlisted
+boundaries:
+  accepts:
+    - TaskProjectionInvalidationV1
+    - TaskProjectionRebuildPageV1
+  emits:
+    - TaskProjectionUpdateResultV1
+  excludes:
+    - owner_identity
+    - question
+    - title
+    - url
+    - excerpt
+    - provider_payload
+    - object_key
+    - credentials
+dependencies:
+  - core_postgresql
+  - source_snapshot_api
+span: task_projection.reconcile
+metrics:
+  - task_projection_outcome_count
+  - task_projection_reconcile_latency_ms
+  - task_projection_lag_ms
+metric_definitions:
+  - name: task_projection_outcome_count
+    type: counter
+    unit: count
+    labels: [operation, outcome, error_class, dependency]
+    dependencies: [core_postgresql, source_snapshot_api]
+    trace: task_projection.reconcile
+    correlation: source_invalidation
+    export: prometheus
+  - name: task_projection_reconcile_latency_ms
+    type: histogram
+    unit: milliseconds
+    labels: [operation, outcome, error_class, dependency]
+    dependencies: [core_postgresql, source_snapshot_api]
+    trace: task_projection.reconcile
+    correlation: source_invalidation
+    export: prometheus
+  - name: task_projection_lag_ms
+    type: histogram
+    unit: milliseconds
+    labels: [operation, outcome, error_class, dependency]
+    dependencies: [core_postgresql, source_snapshot_api]
+    trace: task_projection.reconcile
+    correlation: source_invalidation
+    export: prometheus
+metric_semantics:
+  task_projection_outcome_count: Finite identifier-only reconciliation and rebuild-page outcomes.
+  task_projection_reconcile_latency_ms: Active source snapshot or projection mutation duration, excluding queue lag and other rebuild pages.
+  task_projection_lag_ms: Difference between observation time and source invalidation time.
+evaluators:
+  - task_projection_consistency@1
+  - task_projection_authorization@1
+  - task_projection_rebuild_equivalence@1
+  - task_projection_privacy@1
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, event_id, correlation_id, causation_id, pass_id]
+  prohibited: [owner, owner_identity, subject, source_id, task_id, question, title, url, excerpt, content, payload, object_key, credentials]
+capture_policy: metadata_only
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+replay:
+  mode: deterministic
+  input: identifier_and_version_only
+  clock: injected
+  random: prohibited
+privacy:
+  capture: metadata_only
+  content: forbidden
+  owner_identity: forbidden
+  credentials: forbidden
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

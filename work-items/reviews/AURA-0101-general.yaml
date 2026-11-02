@@ -1,0 +1,46 @@
+agent: general_reviewer
+work_item: AURA-0101
+verdict: PASS
+checked:
+  - >-
+    Re-reviewed the approved amended work item, actual Core adapter, NATS
+    authorization, evaluator-manifest and topology-test diffs, all three
+    implementation handoffs, and the complete worker composition path.
+  - >-
+    Traced fresh creation, duplicate-default deduplication, stable custom
+    subjects, in-place existing-stream reconciliation, delayed concurrent
+    creation, persistent absence, malformed metadata, and wrong-name
+    fail-closed behavior. The adapter preserves existing subjects, performs no
+    delete or purge, and re-raises the original provider error when the named
+    stream never becomes visible.
+  - >-
+    Verified the normal Core identity now has exact current-client
+    $JS.API.INFO and $JS.API.STREAM.LIST access plus exact AURA_RUNS
+    create/info/update and five durable/filter INFO, CREATE, NEXT and ACK
+    subject sets. No JetStream API wildcard, consumer wildcard, obsolete
+    ACCOUNT.INFO or normal DURABLE.CREATE grant, evaluation authority, stream
+    deletion, or purge permission was introduced.
+  - >-
+    Ran work-item validation, the focused Core suite (7 passed), Ruff,
+    Pyright, the NATS topology suite (17 passed), shell syntax, repository
+    shape, module registry, service isolation, observability, contract and
+    baseline checks, and full diff whitespace validation successfully.
+  - >-
+    Changed-path validation reports only the intentionally preserved
+    AURA-0098 and AURA-0100 working-tree paths outside AURA-0101; every actual
+    AURA-0101 implementation, test, manifest, handoff and review path is
+    authorized by the amended work item.
+  - >-
+    Performed a supported disposable reset followed by
+    ./deploy/compose/local-http.sh up using rebuilt current images. On the
+    fresh NATS volume, aura-core-worker reached running with restart count
+    zero, aura-core-api was healthy with restart count zero, and Observatory
+    API and web were healthy with restart count zero.
+  - >-
+    Ran ./deploy/compose/local-http.sh up again against the existing stream and
+    durable consumers. The same Core worker container remained running with
+    restart count zero; the same Core API and Observatory API/web containers
+    remained healthy with restart count zero. Bounded broker and worker log
+    scans across both launches found no authorization violation, duplicate
+    subjects, stream-not-found error, or traceback.
+findings: []

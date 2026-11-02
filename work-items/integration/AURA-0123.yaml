@@ -1,0 +1,46 @@
+agent: integration_maintainer
+work_item: AURA-0123
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0123-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0123-architecture.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0123-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0123.yaml
+  - work-items/integration/AURA-0123.yaml
+checks:
+  passed:
+    - >-
+      All three implementation handoffs are complete, schema-valid, within
+      the authorized ownership zones, and contain no unresolved items.
+    - >-
+      All three required review artifacts are PASS verdicts with no findings
+      or unresolved blocking issues; reviewer follow-up covered the original
+      refresh-cadence, lifecycle, and backend self-observation findings.
+    - >-
+      Work-item, changed-path, contract-change, generated-sync, import-boundary,
+      service-isolation, frontend-boundary, observability, repository-shape, and
+      baseline-protection validators passed; contract and baseline checks had no
+      applicable changes.
+    - ".venv/bin/python -m pytest services/aura-observatory/tests/test_aura0123_live_efficiency.py -q (5 passed)"
+    - "pnpm --dir frontend exec nx lint observatory-web"
+    - "pnpm --dir frontend exec nx test observatory-web (2 passed)"
+    - "pnpm --dir frontend exec nx test observatory (81 passed)"
+    - "pnpm --dir frontend exec nx build observatory-web --configuration=production"
+    - "pnpm --dir frontend exec playwright test --config apps/observatory-web-e2e/playwright.config.ts (471 passed in 10m28s; prior aggregate run)"
+    - "git diff --check"
+    - >-
+      The active work item was archived with status integrated and the
+      integration report records only authorized AURA-0123 paths.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks: []

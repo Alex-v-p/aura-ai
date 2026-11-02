@@ -1,0 +1,70 @@
+agent: test_evaluation_engineer
+work_item: AURA-0147
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0147_tests
+  worktree: shared
+scope:
+  ownership_zone: frontend.aura-web.research-task-artifact-acceptance
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/aura-web-e2e/playwright.config.ts
+  - frontend/apps/aura-web-e2e/storybook.config.ts
+  - frontend/apps/storybook/src/research-tasks-artifacts.stories.ts
+  - work-items/handoffs/AURA-0147-test-evaluation.yaml
+contracts:
+  changed: false
+  notes: Browser fixtures consume the reviewed generated contracts and never modify OpenAPI, events, or generated clients.
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+  capture_policy: metadata_only
+  notes: Tests assert that SSE invalidations contain only opaque identifiers, versions, and timestamps; private fixture text is never sent to telemetry or browser persistence.
+verification:
+  passed:
+    - cd frontend && pnpm exec prettier --check apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/storybook.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts apps/storybook/src/research-tasks-artifacts.stories.ts (passed; full-stack.spec.ts retains repository's existing compact style)
+    - cd frontend && pnpm exec eslint apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/storybook.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts apps/storybook/src/research-tasks-artifacts.stories.ts apps/aura-web-e2e/src/full-stack.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts --list (42 tests discovered across desktop, tablet, and mobile projects; app served on loopback HTTP with synthetic fixtures)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/storybook.config.ts --reporter=line (251 passed, 0 failed, 251 total; research, task recovery, artifact preview/deletion, dark theme, and memory-draft states all pass)
+    - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook --skip-nx-cache (passed after owner fixes)
+    - git diff --check
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts --reporter=line (42 passed, 0 failed, 42 total across desktop/tablet/mobile after Task Center initialization fix)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts --grep 'reconciles duplicate, stale, and reconnecting Task Center invalidations through REST' --trace on --reporter=line (3 passed; desktop, tablet, and mobile traces each show GET `/api/v1/tasks?limit=50`, task detail GET, SSE events, and the rendered `.task-card` assertion)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts --reporter=line (108 passed, 6 failed, 114 total across desktop/tablet/mobile; deletion-status focus and mobile 200% zoom now pass in all projects; only successful-admission draft clearing and current-activity focus remain failing)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts --grep '200 percent zoom' --reporter=line (3 passed; desktop, tablet, and mobile have no horizontal loss at 200% zoom with reduced motion)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts --grep 'validates one-time extensions' --reporter=line (3 passed; desktop, tablet, and mobile extension-error rendering now pass after the owner fix)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/storybook.config.ts --reporter=line (251 passed, 0 failed, 251 total; full desktop Storybook matrix including Research/Tasks/Artifacts states)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/storybook.config.ts --grep 'Research, Tasks, and Artifacts' --reporter=line (16 passed, 0 failed; affected production Research/Tasks/Artifacts stories pass in light and dark themes after the owner fix)
+    - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook --skip-nx-cache (passed; Storybook output built in frontend/dist/storybook)
+    - cd frontend && pnpm exec eslint apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts apps/aura-web-e2e/src/full-stack.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/storybook.config.ts apps/storybook/src/research-tasks-artifacts.stories.ts (passed)
+    - cd frontend && pnpm exec prettier --check apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/storybook.config.ts apps/storybook/src/research-tasks-artifacts.stories.ts (passed; full-stack.spec.ts retains the repository's existing compact-style warning)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts --grep 'rejects unsafe' --project=desktop --reporter=line (1 passed; includes media-unavailable, MIME, missing-length, and oversize download cases)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts --grep 'clears all draft fields' --reporter=line (3 passed; corrected draft-clearing flow passes in desktop, tablet, and mobile after waiting for detail navigation, returning to `/research`, reopening Advanced settings, and checking DOM/storage redaction)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts --grep 'announces admitted research and focuses' --reporter=line (3 passed; fresh clean Aura Web compile, desktop/tablet/mobile; heading focus and the polite "Research started." announcement both pass)
+    - cd frontend && pnpm exec prettier --check apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts (passed after replacing raw lifecycle tokens with exact human-readable announcements and adding cursor-backed artifact Load more coverage)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts --grep 'rejects budget dimensions below one' --reporter=line (3 passed across desktop, tablet, and mobile in 8.3 seconds; browserPages=0 is accepted per the authoritative contract while the other four dimensions reject zero)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/playwright.config.ts apps/aura-web-e2e/src/research-tasks-artifacts.spec.ts --reporter=line (117 passed, 0 failed, 117 total across desktop, tablet, and mobile in 1.2 minutes)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/storybook.config.ts --grep 'Research, Tasks, and Artifacts' --reporter=line (16 passed, 0 failed in 21.8 seconds after completing the production-store fixture contract)
+    - cd frontend && pnpm exec playwright test --config apps/aura-web-e2e/storybook.config.ts --reporter=line (251 passed, 0 failed, 251 total in 3.3 minutes)
+  failed: []
+  not_run:
+    - Real provider research acceptance; AURA_E2E_RESEARCH_ENABLED remains opt-in and governed providers are disabled in this deployment.
+decisions:
+  - Synthetic owner-scoped fixtures use opaque UUIDs and bounded fake source content; no private content is captured in URLs, local/session storage, caches, or metadata-only streams.
+  - Browser coverage asserts all four research modes, durable Task Center reconciliation for stale and duplicate invalidations, source-owned recovery, artifact revisions and inert previews, deletion truth, memory-only drafts, responsive zoom, reduced motion, and axe accessibility.
+  - Storybook uses the production ResearchPageComponent, TasksPageComponent, and ArtifactsPageComponent with injected synthetic stores and exact generated contract shapes; no standalone lookalike markup remains.
+  - The real-stack journey is environment-gated and validates admitted budgets, terminal outcomes, Task Center lineage, and absence of the private question from projection responses.
+risks:
+  - New browser assertions use the reviewed semantic labels and routes; if the owning frontend worker changes those public accessibility names, the acceptance suite should be updated in the same work item review rather than weakened.
+  - Full-stack provider acceptance remains environment-gated; synthetic fixtures intentionally never contact real providers or persist private research text.
+unresolved:
+  - None for the synthetic application and Storybook acceptance scope; real provider acceptance remains environment-gated.

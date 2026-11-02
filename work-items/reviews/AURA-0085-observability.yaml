@@ -1,0 +1,14 @@
+agent: observability_steward
+work_item: AURA-0085
+verdict: PASS
+checked:
+  - Re-verified every prior observability finding against the final production wiring, shared ordering and visibility ledger, independent API-lifecycle health projector, exact ingest accounting, query-boundary timing, typed replay events, component manifests, and repository validator.
+  - Confirmed that PostgreSQL now persists a fixed cumulative storage-latency histogram count, sum, and declared bucket counters atomically under a row lock while retaining a separate 128-sample UI reservoir.
+  - Confirmed that more than 128 samples leave the cumulative histogram exact and monotonic, the accumulators survive adapter restart, and the bounded reservoir remains at 128 samples.
+  - Confirmed that ProductionObservatoryStore exposes the PostgreSQL-backed histogram through the API /metrics path and that Prometheus exposition uses its cumulative count, sum, fixed buckets, and +Inf bucket without a shared filesystem dependency.
+  - Confirmed that the affected component manifests and validator cover stable identity and version, dependencies, component-local trace and correlation boundaries, metric names/types/units/labels, evaluators, typed replay, metadata-only capture, redaction prohibitions, manual retention, and bounded cardinality.
+  - Rechecked lag, freshness, watermark, backlog, heartbeat, rejection classification, malformed accounting, storage failure recovery, material health history/SSE changes, query latency, and Core/Observatory isolation against the actual diff.
+  - Confirmed that BoundedLatencyWindow now preserves the final insertion-ordered sample for latestMs while using a separate sorted copy for P50 and P95.
+  - Confirmed non-monotonic, 129-sample rollover, PostgreSQL hydration, and authenticated overview/history API round-trip coverage for latestMs, with the retained sample count bounded at 128.
+  - Ran the AURA-0085 adversarial, health, and architecture observability suites with 41 passing tests, ran the observability validator successfully, and ran git diff --check successfully.
+findings: []

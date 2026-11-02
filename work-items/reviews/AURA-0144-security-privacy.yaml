@@ -1,0 +1,67 @@
+agent: security_privacy_reviewer
+work_item: AURA-0144
+verdict: PASS
+checked:
+  - >-
+    This PASS is limited to integrating the provider code as disabled-only
+    development capability. It does not authorize any real provider profile,
+    Core research admission, release image, or outbound research deployment.
+  - >-
+    Local Aura HTTP ingress is independent of provider egress. Core-to-provider
+    endpoints may use HTTP on isolated private Compose networks with signed,
+    expiring, replay-protected envelopes; fetched external destinations remain
+    restricted to public HTTPS on port 443.
+  - >-
+    services/aura-core/src/aura_core/platform/research_provider_settings.py
+    defaults admission, search, static fetch, and browser fetch to false.
+    services/aura-core/src/aura_core/bootstrap/research_providers.py passes
+    those switches independently to each client, and no AURA-0144 code exposes
+    research admission through Aura Web.
+  - >-
+    deploy/compose/research-providers.yaml profile-gates all three services,
+    publishes no host ports, uses separate internal Core-to-provider networks,
+    requires an operator-provisioned external egress network, and defaults
+    every provider switch to false.
+  - >-
+    Provider readiness fails closed without a valid public verification key and
+    an external executable attestation emitting the exact approved marker. The
+    bundled deploy/research/egress_probe.py is diagnostic-only and cannot
+    satisfy that attestation.
+  - >-
+    Identity and authorization remain Core-scoped: providers receive no owner,
+    session, OAuth, database, NATS, Valkey, Garage, browser-profile, signing, or
+    agent credentials. Requests require the Core public-key-verifiable envelope;
+    providers have no memory, home-action, confirmation, or tool-grant authority.
+  - >-
+    Filesystem and process exposure remains bounded by non-root users, read-only
+    roots, dropped capabilities, no-new-privileges, restrictive seccomp, bounded
+    tmpfs and resources, and no host, device, container-socket, or Aura secret
+    mounts. Browser contexts are ephemeral and deny downloads, persistent state,
+    permissions, and privileged browser hooks.
+  - >-
+    External content remains untrusted bounded evidence. Destination, DNS,
+    redirect, MIME, transferred and decompressed byte, extracted-text, deadline,
+    concurrency, replay, and cancellation controls remain covered; fetched
+    content cannot alter policy, permissions, budgets, tools, or lifecycle truth.
+  - >-
+    Telemetry and health surfaces remain metadata-only and exclude queries,
+    target URLs, content, excerpts, credentials, signatures, request IDs, and
+    exception text. Temporary fetched bytes and browser state are not retained.
+  - >-
+    The 2026-10-30 owner decision correctly treats Cloudflare Tunnel and Nginx
+    Proxy Manager as inbound transport only. It does not claim either as the
+    controlled-DNS and public-443 provider egress boundary.
+  - >-
+    Future enablement gate: real provider profiles and admission remain blocked
+    until a separately authorized enforcing controlled-DNS and public-TCP-443
+    dataplane passes its machine-verifiable positive and negative attestation
+    suite.
+  - >-
+    Future release gate: provider images remain local development artifacts and
+    remain blocked from promotion or enablement until reviewed immutable
+    manifest digests and provenance or signature evidence are supplied.
+  - >-
+    Revalidation passed: the AURA-0144 work item validated, the exact provider
+    aggregate passed 133 tests, the Compose overlay rendered successfully, and
+    git diff checking passed.
+findings: []

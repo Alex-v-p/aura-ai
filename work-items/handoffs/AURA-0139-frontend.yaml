@@ -1,0 +1,162 @@
+agent: frontend_worker
+work_item: AURA-0139
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0139_frontend
+  worktree: shared
+scope:
+  ownership_zone: frontend.observatory.workflow-monitoring, frontend.observatory.workflow-monitoring-browser-acceptance
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web/src/app/app.component.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-workflows.spec.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-workflows-storybook.spec.ts
+  - frontend/apps/observatory-web-e2e/playwright.config.ts
+  - frontend/apps/observatory-web-e2e/storybook.config.ts
+  - frontend/apps/storybook/src/observatory-workflows.stories.ts
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/features/analytics/analytics.component.ts
+  - frontend/libs/observatory/src/lib/features/workflows/workflow-monitoring-parser.ts
+  - frontend/libs/observatory/src/lib/features/workflows/workflow-monitoring-contracts.spec.ts
+  - frontend/libs/observatory/src/lib/features/workflows/workflow-monitoring-contracts.ts
+  - frontend/libs/observatory/src/lib/features/workflows/workflow-monitoring.component.ts
+  - frontend/libs/observatory/src/lib/features/workflows/workflow-monitoring.store.spec.ts
+  - frontend/libs/observatory/src/lib/features/workflows/workflow-monitoring.store.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - work-items/active/AURA-0139.yaml
+contracts:
+  changed: false
+  notes: >-
+    Consumed the already-generated getWorkflowMonitoring operation and its
+    closed DTO types without modifying the contract or generated client.
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+  capture_policy: metadata_only
+verification:
+  passed:
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:lint
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:lint
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory:test (90 passed)
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:test (2 passed)
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+    - cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook
+    - >-
+      Dedicated Storybook runtime browser target: 7 passed, covering all five
+      workflow states plus dark theme, Axe checks, reduced-motion,
+      forced-colors, and responsive overflow.
+    - AURA_WORK_ITEM=AURA-0139 python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0139.yaml
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - git diff --check
+    - >-
+      Focused Playwright workflow acceptance through the standard matcher:
+      30 passed across desktop, tablet, and mobile, including exact empty
+      backend snapshots, delayed invalidation coalescing, mobile keyboard
+      navigation, and malformed run/trace correlation with no page errors.
+    - >-
+      Standard Observatory browser target: 495 passed and 3 pre-existing
+      Observatory Web reconciliation cases failed (desktop delayed run,
+      tablet/mobile equal-length run-scoped invalidation); all workflow
+      cases passed.
+    - >-
+      Strict recursive snapshot parser unit coverage rejects extra nested
+      fields, forbidden content/owner data, invalid UUID/trace identifiers,
+      duplicate metadata reasons, impossible UTC calendar dates, equal or
+      reversed windows, oversized windows, and out-of-contract bounds.
+    - >-
+      UTC values now use calendar-component round-trip validation and workflow
+      windows require a positive duration no longer than the governed 31-day
+      maximum before any monitoring state is created.
+    - >-
+      Architecture changed-path, frontend-boundary, module-registry, and
+      git-diff checks passed after authorizing the Storybook browser spec.
+  failed: []
+  not_run:
+    - Aggregate full-stack checks are owned by the integration lead after all AURA-0139 zones land.
+decisions:
+  - >-
+    Added a dedicated memory-only WorkflowMonitoringStore under the Observatory
+    feature boundary; it uses only the generated gateway operation, validates
+    the closed response at runtime, bounds refreshes, and preserves a stale
+    snapshot during reconnect or service failure.
+  - >-
+    Extended ObservatoryStore with a monotonic metadata-only workflow
+    invalidation signal so the feature can coalesce authoritative REST refreshes
+    without opening a second SSE connection or carrying analytical payloads.
+  - >-
+    Added explicit UTC controls, lifecycle and latency summaries, unit-labelled
+    charts with adjacent tables, bounded failure breakdowns, and existing
+    run/trace correlation inspection actions; workflow content and instances are
+    not represented in the UI.
+  - >-
+    Added Monitor → Workflows navigation and isolated Storybook states for
+    healthy, partial/stale, loading, empty, and unavailable monitoring.
+  - >-
+    Guarded the disconnected-state projection in WorkflowMonitoringStore so a
+    closed mocked SSE connection cannot cause an effect self-update loop while
+    the first aggregate snapshot is arriving.
+  - >-
+    Consumed each monotonic workflow invalidation revision once and coalesced
+    queued refreshes, preventing repeated effect passes from turning a finite
+    invalidation burst into an unbounded REST loop while preserving reconnect
+    refresh and session reset behavior.
+  - >-
+    Added runtime shape guards at the selected-run detail, inspection, and
+    trace boundary so malformed empty responses preserve usable metadata and
+    never reach run/trace components as unsafe projections.
+  - >-
+    Added the complete closed recursive monitoring snapshot parser as a pure
+    feature helper, including canonical UUID/32-hex trace validation and
+    finite bounds, so malformed responses cannot create UI or navigation
+    state.
+  - >-
+    Added all fifteen allowlisted workflow measurements to the existing
+    Analytics catalogue, updated the automation focus description, and
+      removed the client-side time heuristic for self-observation suppression;
+      the stabilized backend source-filters only exact query_api workflow
+      monitoring telemetry, so every genuine public observation invalidation
+      remains refreshable even after delayed delivery.
+  - >-
+    Kept stale, partial, unavailable, and disconnected source states explicit
+    in the UI; wait lag is labelled P95 (or explicitly average when P95 is
+    unavailable), and UTC validation is connected to its accessible error.
+  - >-
+    Moved the workflow store provider to the application composition root so
+    Storybook can inject deterministic fixtures, then added a dedicated
+    runtime Storybook config/spec with all five states and accessibility/media
+    checks.
+  - >-
+    Kept successful query state separate from source freshness: unavailable
+    freshness with empty arrays renders an explicit empty window, while
+    transport failures remain unavailable/stale. Source observed time, lag,
+    unavailable signals, and missing aggregate values remain explicit.
+  - >-
+    Aligned frontend fixtures and closed parsing with the generated workflow
+    vocabulary: exactly three lifecycle operations, all nine failure
+    operations including wait resume, and all generated error classes including
+    timeout, validation, and conflict. Added direct rejection coverage for
+    arbitrary operations and error classes while retaining agent-run execute
+    correlations.
+risks:
+  - >-
+    The dedicated workflow-monitoring Playwright fixture mocks owner session,
+    initial Observatory reads, finite live endpoints, and the bounded
+    monitoring snapshot. The standard browser target still has three unrelated
+    pre-existing Observatory Web reconciliation failures; the workflow suite
+    itself is green across all configured projects.
+  - >-
+    Storybook uses its existing application shell and generated story index;
+    the dedicated browser config disables only page-level landmark rules that
+    do not apply to an isolated iframe and retains component-level Axe checks;
+    the dark story asserts computed dark tokens at runtime.
+unresolved:
+  []

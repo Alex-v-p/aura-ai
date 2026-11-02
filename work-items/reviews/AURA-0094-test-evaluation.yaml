@@ -1,0 +1,78 @@
+agent: test_evaluation_engineer
+work_item: AURA-0094
+verdict: PASS
+checked:
+  - >-
+    Re-read the amended AURA-0094 work item, evaluation-v1 contract, current
+    implementation and test handoffs, prior test findings, migrations,
+    provider and artifact adapters, worker integration, telemetry, and Compose
+    topology. No implementation or test file was edited during this review;
+    only this review verdict was updated.
+  - >-
+    Re-ran the focused AURA-0094 and deployment matrix: 214 tests passed and
+    5 opt-in live-database tests were skipped because their repository-scoped
+    database URLs were absent. The full Observatory suite passed with 1075
+    passed and 15 skipped; the AURA-0094 deployment tests passed 7/7.
+  - >-
+    Re-ran work-item, changed-path, observability, and git diff checks. The
+    active work item validates, all 53 changed paths remain within its
+    allowlist, observability obligations validate, and git diff --check passes.
+  - >-
+    Re-verified the previously reported test findings as resolved. Contract
+    coverage exercises every additive evaluation-v1 resource and required,
+    null, enum, private-field, digest/byte, threshold, and integer-ppm
+    ensemble boundary. Durable PostgreSQL and ClickHouse tests cover fresh,
+    upgrade, exact-rerun, round-trip, claim, result, recovery, replay,
+    qualification, revocation, and content-free persistence behavior.
+  - >-
+    Re-verified concurrent and recovery behavior. Judge and calibration
+    idempotency conflicts, concurrent claims and revocation, stale-claim
+    recovery, provider failure, score-write retry, lease loss, terminal
+    failure, and fresh-worker redelivery are covered without duplicate durable
+    score or qualification state.
+  - >-
+    Re-verified provider and artifact boundary coverage. MockTransport tests
+    cover exact local Ollama inventory and chat protocol, digest drift,
+    missing/ambiguous models, redirect, timeout, unavailable/resource failure,
+    malformed/closed response, invalid UTF-8, bounded overflow, and privacy.
+    Garage tests cover authorization, redirect, bounded streaming,
+    size/digest integrity, timeout, recovery, and opaque UUID key derivation.
+  - >-
+    Re-verified provider-unavailable behavior under the amended owner
+    decision. The internal judge network remains intentionally fail-closed and
+    blocks host.docker.internal and public egress; runtime topology coverage
+    proves that boundary. Provider-unavailable is mapped to finite
+    content-free failure state, does not complete required local work, does
+    not expose provider details, and does not become a Core or normal
+    Observatory readiness dependency. This accepted availability limitation
+    is explicitly deferred to AURA-0098 and is not a test-review blocker.
+  - >-
+    Re-verified production-path tests for score provenance, exact
+    evaluator/judge/calibration identity, canonical timestamps, complete
+    seed/budget equality, qualification and ensemble fail-closed behavior,
+    human-review authorization/idempotency, dependency attribution, trace
+    correlation, bounded metrics, exporter drain, and content isolation.
+  - >-
+    Re-verified that all mocked provider evidence is clearly distinguished
+    from live provider acceptance. No test treats the internal-network probe
+    as successful Ollama execution, and the remaining real-model acceptance is
+    explicitly assigned to AURA-0098.
+findings: []
+notes:
+  passed:
+    - >-
+      All prior test/evaluation findings are resolved by the current
+      deterministic, production-path, migration, and deployment evidence.
+    - >-
+      The owner decision dated 2026-10-21 accepts provider-unavailable for
+      this checkpoint while retaining the internal fail-closed trust boundary;
+      the test review therefore records no finding for unreachable real Ollama.
+    - >-
+      No protected golden result, repository baseline, Core path, or unrelated
+      implementation was changed by this review.
+  not_run:
+    - >-
+      Live Ollama execution remains intentionally deferred to AURA-0098 under
+      the amended work item. The live PostgreSQL and ClickHouse checks remain
+      opt-in and require their repository-scoped URLs; the independently
+      recorded disposable runs are preserved in the test handoff.

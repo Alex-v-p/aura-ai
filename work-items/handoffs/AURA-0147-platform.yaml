@@ -1,0 +1,60 @@
+agent: platform_worker
+work_item: AURA-0147
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0147_platform
+  worktree: shared-feature-branch
+scope:
+  ownership_zone: frontend platform registry, aliases, and module dependency direction
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/tsconfig.base.json
+  - tooling/architecture/modules.yaml
+  - work-items/handoffs/AURA-0147-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0147.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - >-
+      cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production
+      (passed; resolves all three lazy feature aliases and application
+      composition imports)
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Feature lint/unit, generated-client synchronization, Storybook, and
+      Playwright checks remain with their owning frontend/test workers.
+decisions:
+  - >-
+    Added only transport-facing aliases for the Research, Artifacts, and
+    Activity Tasks libraries; no generated client or product behavior was
+    changed.
+  - >-
+    Registered each feature as a frontend-feature whose only public boundary is
+    its src/index.ts. All three currently import only the generated Aura
+    transport boundary; no unused shared-ui or conversation dependency is
+    declared. Conversation research activity remains inside the existing
+    conversation public boundary.
+  - >-
+    Kept lazy route/session composition represented by the application's
+    dynamic imports and reset-handler registration; no static feature import or
+    eager module dependency was introduced in the registry.
+  - >-
+    Kept Core and Observatory boundaries unchanged and did not add deployables,
+    contracts, persistence, service-worker state, or external publication.
+risks: []
+unresolved: []

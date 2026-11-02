@@ -1,0 +1,117 @@
+agent: frontend_worker
+work_item: AURA-0122
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0121_frontend
+  worktree: shared-main
+scope:
+  ownership_zone: observatory-web.run-inspection and observatory-web.component-catalogue
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace-inspector.utils.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.spec.ts
+  - frontend/libs/observatory/src/lib/features/components/components.component.ts
+  - frontend/apps/storybook/src/observatory-trace.stories.ts
+  - frontend/apps/storybook/src/observatory-destinations.stories.ts
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0122.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0122.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0122.yaml (no contract changes)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0122.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0122.yaml (no protected changes)
+    - AURA_WORK_ITEM=AURA-0122 pnpm --dir frontend exec nx test observatory (78 passed)
+    - pnpm --dir frontend exec nx lint observatory-web
+    - AURA_WORK_ITEM=AURA-0122 pnpm --dir frontend exec nx build observatory-web --configuration=production
+    - pnpm --dir frontend exec nx build-storybook storybook
+    - git diff --check
+  failed: []
+  not_run:
+    - pnpm --dir frontend exec nx test observatory-web (not required by the owned library-only change; parent may run aggregate checks)
+    - pnpm --dir frontend exec nx e2e observatory-web-e2e (acceptance/integration-owned)
+    - Full-stack compose acceptance (acceptance/integration-owned)
+decisions:
+  - >-
+    Trace now opens with a concise operator summary containing the plain-language
+    verdict, authoritative duration, longest recorded operation, recorded errors,
+    and evidence coverage. Aggregate stage accordions are limited to the ten
+    defined lifecycle categories and expose at most twenty bounded preview rows.
+  - >-
+    Exact inspection steps, measurement records, evidence manifests, continuation
+    records, and raw spans remain available under explicit Advanced disclosures;
+    the initial document renders no technical event or span rows. Advanced
+    records reveal in batches of twenty with bounded load-more controls. Evidence
+    bytes remain lazy. Collapsing the outer Advanced disclosure explicitly closes
+    nested evidence disclosures before clearing selected evidence, text, and
+    object URLs, so hidden stale bytes cannot survive a collapse and no refetch is
+    triggered.
+  - >-
+    Stage summaries preserve reported running, failed, partial, parallel, and
+    unavailable timing states; duration labels are human-readable and never
+    synthesize timing when the source lacks a duration.
+  - >-
+    Components now render a compact problem-first catalogue capped at twenty
+    rows, with identity, health, samples, P95, error rate, and definition state.
+    Version, trend, measurement, topology, and definition detail are loaded in
+    one selected-component surface alongside the catalogue at desktop widths,
+    with reconciled total/healthy/degraded/no-data/missing-definition/stale KPIs,
+    stable problem-first sorting before the twenty-row slice, selected-only
+    health loading, human-readable durations, a closed native topology
+    disclosure, and an explicit narrow-screen two-row reflow.
+  - >-
+    Trace stage facets are derived from one authoritative source per stage,
+    preserving independent failed/running/partial/cancelled counts and partial
+    reasons without max-merging unreconciled projections. Unknown outcomes remain
+    unavailable, failed verdicts stay neutral, and parallel is asserted only for
+    sibling intervals with authoritative overlap; structural branching is labelled
+    separately. Technical phase records are revealed in batches of twenty and raw
+    tree roles were replaced with native list semantics. Evidence manifests now
+    have per-step twenty-item continuation controls, each phase has its own closed
+    native disclosure, and the span summary reports the current twenty-row open
+    batch rather than the global cap. Stage accordion state is keyed by phase and
+    survives same-run inspection invalidation without retaining evidence bytes.
+  - >-
+    Aggregate outcomes never promote mixed successful/unavailable or cancelled
+    records to a misleading success state. Component definition gaps are counted
+    from observed_only rows (with a grouped definition-gap filter), while healthy
+    observed-only rows remain healthy when their outcome health is healthy. Native
+    disclosure markers remain visible for phase and topology details, duration bars
+    have explicit grid tracks and non-zero rendering, and the narrow Trace layout
+    uses a denser summary/stage treatment for the 390px viewport.
+  - >-
+    Retrieval, Generation, and Tools stage highlights qualify their timing as the
+    longest operation (or explicitly unavailable), so the compact operator summary
+    cannot be mistaken for a stage-total duration.
+  - >-
+    Detail disclosures begin with twenty rows but continue through the generated
+    contract page bounds: up to 1000 inspection steps, 128 measurements per step,
+    and 10000 spans. Loaded-page continuation is explicitly distinguished from a
+    non-null server cursor, so client reveal controls never imply that later pages
+    have already been loaded.
+  - >-
+    Storybook adds a 205-step/205-span trace fixture proving concise defaults
+    while retaining the existing deleted, partial, error, and narrow states, plus
+    a sixty-component bounded catalogue fixture.
+risks:
+  - >-
+    Browser budget, disclosure focus restoration, lazy evidence requests, and
+    the sixty-component visual fixture should be verified by the assigned E2E
+    and UX integration checks.
+unresolved: []

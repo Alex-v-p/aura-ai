@@ -1,8 +1,8 @@
 ---
 title: Aura AI Architecture and Repository Handover
 status: Current architecture baseline
-version: 0.2
-last_updated: 2026-10-04
+version: 0.3
+last_updated: 2026-10-25
 audience:
   - Codex
   - future contributors
@@ -167,6 +167,12 @@ Aura Observatory is not an admin page embedded inside Aura Core. It has its own:
 - deployment lifecycle.
 
 Observatory must not read Aura Core's database directly.
+
+Owner-enabled production run evidence does not change this independence. Core
+may write exact model-visible and executor-visible items to a bounded,
+nonblocking, one-way asynchronous `run-evidence-v1` channel. Core never reads
+from or waits for Observatory, and Aura Web has no Observatory reference or
+communication. Ordinary OTLP telemetry and SSE remain metadata-only.
 
 ## 4. Core terminology
 
@@ -857,6 +863,7 @@ Observatory is responsible for:
 - incidents.
 - annotations.
 - privacy-aware captured artifacts.
+- governed owner-only production run evidence and deletion truth.
 
 ### 11.2 Service boundary
 
@@ -871,6 +878,8 @@ Observatory owns:
 - regression detection.
 - dashboards and alerts.
 - operational analytics.
+- production run-evidence manifests, authorization, content-free audit,
+  dedicated evidence objects, and manual deletion state.
 
 Aura Core owns the production code being tested and the controlled evaluation runner that executes it.
 
@@ -891,17 +900,25 @@ Aura Core emits:
 - evaluation results.
 - selected redacted artifacts.
 
+Ordinary telemetry above remains metadata-only unless an existing controlled
+evaluation contract explicitly says otherwise. When owner deployment policy
+enables full production inspection, Core separately emits closed and bounded
+`run-evidence-v1` envelopes. This is not an OTLP or SSE payload. Export is
+best-effort and nonblocking; pressure, transport failure, Observatory outage,
+or storage failure cannot alter a run and must instead be represented by
+content-free completeness state.
+
 The OpenTelemetry Collector provides buffering and routing.
 
 Expected storage roles:
 
 | Store | Ownership |
 |---|---|
-| Observatory PostgreSQL | Datasets, suites, experiments, dashboards, alert rules, baselines, component catalog, incidents |
+| Observatory PostgreSQL | Datasets, suites, experiments, dashboards, alert rules, baselines, component catalog, incidents, run-evidence manifests, authorization, deletion truth, and content-free audit |
 | ClickHouse | High-cardinality spans, run observations, component measurements, evaluation observations, structured events |
 | Prometheus | Host, process, container, database, queue, GPU, and service time-series metrics |
 | Loki | Application and infrastructure logs |
-| S3-compatible object storage | Captured artifacts, redacted inputs and outputs, large evaluation results |
+| S3-compatible object storage | Separate least-privilege buckets for evaluation artifacts and production run-evidence bytes |
 | OpenTelemetry Collector | Telemetry ingestion, transformation, buffering, and routing |
 
 Grafana may remain available for low-level infrastructure debugging. Observatory Web is the primary agent-specific analysis interface.
@@ -1071,7 +1088,24 @@ sampled_content
 full_content
 ```
 
-Capture policy is enforced by Aura Core before telemetry leaves the service boundary.
+Capture policy is enforced by Aura Core before content leaves the service boundary.
+OTLP and SSE remain metadata-only. ADR-0017 permits exact ordinary-production
+run evidence only when an owner-controlled deployment policy enables it and
+only on the separate governed channel. Explicit serializers may capture the
+admitted request and trigger, compiled prompt and admitted context, retrieval
+chunks, model-visible attachments, routing, displayed thinking, generation,
+model-visible tool arguments and results, policy and approvals, synthesis,
+persistence, delivery, workers, automations, schedules, and evaluations.
+Credentials, secret-bearing fields, bearer material, provider-hidden
+reasoning, and arbitrary object dumps are permanently excluded; rejected
+items are represented by bounded content-free reasons rather than misleading
+redactions.
+
+Production run evidence uses manual-only retention, owner-only `no-store`
+access, durable idempotent deletion, content-free audit, PostgreSQL manifests,
+and a dedicated Garage bucket separate from evaluation artifacts. Evidence
+content never enters URLs, logs, metrics, browser persistence,
+service-worker caches, screenshots, ClickHouse, SSE, or Aura Web.
 
 Full content belongs only in explicitly authorized evaluation datasets or similarly controlled contexts.
 
@@ -1126,6 +1160,8 @@ Observatory stores high-volume telemetry separately from transactional metadata.
 - Core must not query Observatory's database to complete normal user requests.
 - Shared database schemas are prohibited.
 - Cross-service communication uses versioned contracts, generated clients, event schemas, OTLP, and controlled job channels.
+- The run-evidence channel is Core-to-Observatory only; failure or
+  backpressure cannot become a Core execution dependency.
 - A service owns its own migrations.
 
 ## 13. Events, messaging, and consistency
@@ -2450,6 +2486,7 @@ docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
 docs/adr/0014-aura-owned-execution-langgraph-backend.md
 docs/adr/0015-authentik-bff-secrets-extensions.md
 docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+docs/adr/0017-governed-production-run-evidence.md
 ```
 
 ## 19. Expected internal module shape
@@ -2522,16 +2559,22 @@ The reserved ADR range `0001`–`0011` remains reserved by the handover. The acc
 - [ADR-0014 — Aura-owned execution with an optional LangGraph backend](../adr/0014-aura-owned-execution-langgraph-backend.md).
 - [ADR-0015 — Authentik BFF sessions, SOPS/age, and isolated extensions](../adr/0015-authentik-bff-secrets-extensions.md).
 - [ADR-0016 — API/realtime, generated clients, PWA, and voice protocols](../adr/0016-api-realtime-pwa-and-voice-protocols.md).
+- [ADR-0017 — Governed production run evidence](../adr/0017-governed-production-run-evidence.md).
 
 ## 21. Intentionally unresolved decisions
 
 The following remain design decisions rather than hidden assumptions:
 
 - Household role and membership semantics, including how identity claims become Aura household permissions.
-- Retention and encryption periods for memory, files, credentials, recordings, telemetry, and evaluation artifacts.
+- Retention and encryption periods for memory, files, credentials, recordings,
+  telemetry, and captured content not covered by an accepted manual-only
+  policy. Evaluation artifacts and production run evidence are retained until
+  explicit owner deletion under their accepted decisions.
 - File-source inclusion, exclusion, authorization, and confirmation rules.
 - Home Assistant allowlists and high-impact action classification.
-- Detailed telemetry and captured-content retention periods.
+- Detailed telemetry retention periods and captured-content retention outside
+  the accepted manual-only evaluation-artifact and production-run-evidence
+  policies.
 - Exact model routing policy and model inventory, including hardware placement and fallback policy.
 - Thresholds and benchmark method for escalating from pgvector to dedicated vector infrastructure.
 - Evaluation judge models, local/cloud policy, and human calibration rules.

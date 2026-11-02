@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "manifestRevision": "aura0148-integration-evidence-v1",
+  "capturePolicy": "metadata_only",
+  "items": [
+    {
+      "workItem": "AURA-0142",
+      "report": "work-items/integration/AURA-0142.yaml",
+      "reportCommit": "49951a0e106719ca37ff0087c9b46ad23d865ff9",
+      "checkpointCommits": ["7d7e0e3014c91e5455da260a550b6d5d2ed6c145"],
+      "sensitiveCommands": [
+        "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0142.yaml",
+        "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0142.yaml",
+        "python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0142.yaml",
+        "python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0142.yaml",
+        "python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0142.yaml",
+        "git diff --check"
+      ],
+      "evidenceBindings": [
+        {"requestedCommand":"python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0142.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"python3 tooling/architecture/validate-work-item.py passed."},
+        {"requestedCommand":"python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0142.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"Commit-scoped changed-path validation for 7d7e0e3 passed for all 29 AURA-0142 paths; the final feature branch is clean, so the branch-wide changed-path validator has no uncommitted paths to validate."},
+        {"requestedCommand":"python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0142.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"python3 tooling/architecture/validate-contract-changes.py reported no contract changes."},
+        {"requestedCommand":"python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0142.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"python3 tooling/architecture/validate-observability.py passed."},
+        {"requestedCommand":"python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0142.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"python3 tooling/architecture/validate-baseline-protection.py skipped with no protected baseline changes."},
+        {"requestedCommand":"git diff --check","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"git diff --check"}
+      ]
+    },
+    {
+      "workItem": "AURA-0143",
+      "report": "work-items/integration/AURA-0143.yaml",
+      "reportCommit": "49951a0e106719ca37ff0087c9b46ad23d865ff9",
+      "checkpointCommits": [
+        "b3039114c012ebb952a171a23d28e71804865b64",
+        "146632b20d086bb85437f083c5fb7d0e7e170b65"
+      ],
+      "sensitiveCommands": [
+        "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0143.yaml",
+        "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0143.yaml",
+        "python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0143.yaml",
+        "python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0143.yaml",
+        "python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0143.yaml",
+        "git diff --check"
+      ],
+      "evidenceBindings": [
+        {"requestedCommand":"python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0143.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"python3 tooling/architecture/validate-work-item.py passed."},
+        {"requestedCommand":"python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0143.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"Commit-scoped changed-path validation for b303911 passed for all 58 AURA-0143 paths; the shared integration composition in 146632b is present on the clean feature branch."},
+        {"requestedCommand":"python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0143.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"python3 tooling/architecture/validate-contract-changes.py reported no contract changes."},
+        {"requestedCommand":"python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0143.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0143.yaml"},
+        {"requestedCommand":"python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0143.yaml","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"Reviewed AURA-0143 commit b303911 and all four recorded PASS verdicts; no unresolved worker-slice finding remains."},
+        {"requestedCommand":"git diff --check","reportCommit":"49951a0e106719ca37ff0087c9b46ad23d865ff9","evidenceText":"git diff --check"}
+      ]
+    },
+    {
+      "workItem": "AURA-0144",
+      "report": "work-items/integration/AURA-0144.yaml",
+      "reportCommit": "14053291f92f247f63fc04d7558377e680644511",
+      "checkpointCommits": [
+        "146632b20d086bb85437f083c5fb7d0e7e170b65",
+        "cad38edb4345092a0644af74923dd92923485d6e",
+        "14053291f92f247f63fc04d7558377e680644511"
+      ],
+      "sensitiveCommands": [
+        "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0144.yaml",
+        "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0144.yaml",
+        "python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0144.yaml",
+        "python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0144.yaml",
+        "python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0144.yaml",
+        "git diff --check"
+      ],
+      "evidenceBindings": [
+        {"requestedCommand":"python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0144.yaml","reportCommit":"14053291f92f247f63fc04d7558377e680644511","evidenceText":"The updated AURA-0144 work item validates with no open decisions; its disabled-only owner decision explicitly defers production egress and provider-image publication."},
+        {"requestedCommand":"python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0144.yaml","reportCommit":"14053291f92f247f63fc04d7558377e680644511","evidenceText":"python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0144.yaml passed for the current AURA-0144 metadata changes."},
+        {"requestedCommand":"python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0144.yaml","reportCommit":"14053291f92f247f63fc04d7558377e680644511","evidenceText":"Architecture, contract-change, import-boundary, service-isolation, module-registry, repository-shape, observability, and baseline-protection validators passed or reported the expected not-applicable result."},
+        {"requestedCommand":"python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0144.yaml","reportCommit":"14053291f92f247f63fc04d7558377e680644511","evidenceText":"Architecture, contract-change, import-boundary, service-isolation, module-registry, repository-shape, observability, and baseline-protection validators passed or reported the expected not-applicable result."},
+        {"requestedCommand":"python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0144.yaml","reportCommit":"14053291f92f247f63fc04d7558377e680644511","evidenceText":"Architecture, contract-change, import-boundary, service-isolation, module-registry, repository-shape, observability, and baseline-protection validators passed or reported the expected not-applicable result."},
+        {"requestedCommand":"git diff --check","reportCommit":"14053291f92f247f63fc04d7558377e680644511","evidenceText":"git diff --check passed."}
+      ]
+    },
+    {
+      "workItem": "AURA-0145",
+      "report": "work-items/integration/AURA-0145.yaml",
+      "reportCommit": "a43d4902bcf6c1b0a62aac361c692e77692c7a5a",
+      "checkpointCommits": ["a43d4902bcf6c1b0a62aac361c692e77692c7a5a"],
+      "sensitiveCommands": [
+        "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0145.yaml",
+        "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0145.yaml",
+        "python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0145.yaml",
+        "python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0145.yaml",
+        "python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0145.yaml",
+        "git diff --check"
+      ],
+      "evidenceBindings": [
+        {"requestedCommand":"python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0145.yaml","reportCommit":"a43d4902bcf6c1b0a62aac361c692e77692c7a5a","evidenceText":"python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0145.yaml passed before archival."},
+        {"requestedCommand":"python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0145.yaml","reportCommit":"a43d4902bcf6c1b0a62aac361c692e77692c7a5a","evidenceText":"python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0145.yaml passed for all 47 changed paths."},
+        {"requestedCommand":"python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0145.yaml","reportCommit":"a43d4902bcf6c1b0a62aac361c692e77692c7a5a","evidenceText":"python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0145.yaml reported no contract changes."},
+        {"requestedCommand":"python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0145.yaml","reportCommit":"a43d4902bcf6c1b0a62aac361c692e77692c7a5a","evidenceText":"python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0145.yaml passed."},
+        {"requestedCommand":"python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0145.yaml","reportCommit":"a43d4902bcf6c1b0a62aac361c692e77692c7a5a","evidenceText":"python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0145.yaml reported no protected baseline changes."},
+        {"requestedCommand":"git diff --check","reportCommit":"a43d4902bcf6c1b0a62aac361c692e77692c7a5a","evidenceText":"git diff --check passed."}
+      ]
+    },
+    {
+      "workItem": "AURA-0146",
+      "report": "work-items/integration/AURA-0146.yaml",
+      "reportCommit": "600a32240636cbd643a1ab743aedafb238cb876d",
+      "checkpointCommits": ["600a32240636cbd643a1ab743aedafb238cb876d"],
+      "sensitiveCommands": [
+        "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0146.yaml",
+        "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0146.yaml",
+        "python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0146.yaml",
+        "python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0146.yaml",
+        "python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0146.yaml",
+        "git diff --check"
+      ],
+      "evidenceBindings": [
+        {"requestedCommand":"python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0146.yaml","reportCommit":"600a32240636cbd643a1ab743aedafb238cb876d","evidenceText":"python3 tooling/architecture/validate-work-item.py work-items/archived/AURA-0146.yaml passed after archival."},
+        {"requestedCommand":"python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0146.yaml","reportCommit":"600a32240636cbd643a1ab743aedafb238cb876d","evidenceText":"python3 tooling/architecture/validate-changed-paths.py --work-item work-items/archived/AURA-0146.yaml passed for the final 61 changed paths."},
+        {"requestedCommand":"python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0146.yaml","reportCommit":"600a32240636cbd643a1ab743aedafb238cb876d","evidenceText":"python3 tooling/architecture/validate-contract-changes.py --work-item work-items/archived/AURA-0146.yaml passed."},
+        {"requestedCommand":"python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0146.yaml","reportCommit":"600a32240636cbd643a1ab743aedafb238cb876d","evidenceText":"python3 tooling/architecture/validate-observability.py --work-item work-items/archived/AURA-0146.yaml passed."},
+        {"requestedCommand":"python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0146.yaml","reportCommit":"600a32240636cbd643a1ab743aedafb238cb876d","evidenceText":"python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/archived/AURA-0146.yaml reported no protected baseline changes and returned the documented skip."},
+        {"requestedCommand":"git diff --check","reportCommit":"600a32240636cbd643a1ab743aedafb238cb876d","evidenceText":"git diff --check passed."}
+      ]
+    },
+    {
+      "workItem": "AURA-0147",
+      "report": "work-items/integration/AURA-0147.yaml",
+      "reportCommit": "f52c3ff7a71204f35e45c33ddf8d9334ff9f8dae",
+      "checkpointCommits": ["f52c3ff7a71204f35e45c33ddf8d9334ff9f8dae"],
+      "sensitiveCommands": [
+        "python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0147.yaml",
+        "python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0147.yaml",
+        "python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0147.yaml",
+        "python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0147.yaml",
+        "git diff --check"
+      ],
+      "evidenceBindings": [
+        {"requestedCommand":"python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0147.yaml","reportCommit":"f52c3ff7a71204f35e45c33ddf8d9334ff9f8dae","evidenceText":"python3 tooling/architecture/validate-work-item.py passed for the approved AURA-0147 item before archival."},
+        {"requestedCommand":"python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0147.yaml","reportCommit":"f52c3ff7a71204f35e45c33ddf8d9334ff9f8dae","evidenceText":"python3 tooling/architecture/validate-changed-paths.py passed for 67 changed paths within the approved AURA-0147 scope."},
+        {"requestedCommand":"python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0147.yaml","reportCommit":"f52c3ff7a71204f35e45c33ddf8d9334ff9f8dae","evidenceText":"python3 tooling/architecture/validate-contract-changes.py reported no contract changes."},
+        {"requestedCommand":"python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0147.yaml","reportCommit":"f52c3ff7a71204f35e45c33ddf8d9334ff9f8dae","evidenceText":"python3 tooling/architecture/validate-baseline-protection.py reported no protected baseline or threshold changes."},
+        {"requestedCommand":"git diff --check","reportCommit":"f52c3ff7a71204f35e45c33ddf8d9334ff9f8dae","evidenceText":"git diff --check passed."}
+      ]
+    }
+  ]
+}

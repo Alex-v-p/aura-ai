@@ -1,0 +1,55 @@
+agent: observatory_worker
+work_item: AURA-0114
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: null
+  worktree: shared
+scope:
+  ownership_zone: services.aura-observatory.query
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/adapters/query.py
+  - services/aura-observatory/tests/test_aura0114_backend.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components:
+    - aura.observatory.query
+  metrics_added: []
+verification:
+  passed:
+    - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0114_backend.py
+    - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0080_formal_regressions.py -k 'trace_lineage or run_status_search'
+    - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0108_reconciliation.py -k 'detail or cursor or out_of_order_tail'
+    - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0114_backend.py (16 passed, including component/model/time/status qualification, full-header detail, and disjoint-row parity regressions)
+    - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0114_backend.py services/aura-observatory/tests/test_aura0080_formal_regressions.py -k 'aura0114_backend or production_run_query_uses_latest_nonempty_trace_with_stable_tie_breaker or production_run_query_uses_lifecycle_projection' (17 passed; ClickHouse-safe complete trace-aggregate SQL regression)
+    - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0114_backend.py (16 passed after the Code 184 continuation repair)
+    - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pytest -q services/aura-observatory/tests/test_aura0080_formal_regressions.py services/aura-observatory/tests/test_aura0108_reconciliation.py -k 'run_status_search or production_run_query or run_cursor or trace_lineage or lifecycle or detail' (17 passed)
+    - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory ruff check services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0114_backend.py
+    - UV_CACHE_DIR=/tmp/aura-0114-uv uv run --project services/aura-observatory pyright services/aura-observatory/src/aura_observatory/query.py services/aura-observatory/src/aura_observatory/adapters/query.py services/aura-observatory/tests/test_aura0114_backend.py
+    - git diff --check
+  failed:
+    - services/aura-observatory full suite has six pre-existing baseline failures in migration/full-stack fixture tests unrelated to changed query files
+  not_run:
+    - work-item aggregate architecture, frontend, and e2e checks (owned by other AURA-0114 workers)
+decisions:
+  - Run headers use run_started, run_status, and valid run_duration_ms lifecycle telemetry; terminal status is sticky against late non-lifecycle rows.
+  - Core's producer spelling `canceled` is normalized to the public Observatory `cancelled` vocabulary in reference and ClickHouse projections and filters.
+  - Model headers prefer provider evidence from the run trace or model-routing/model-inference components and do not fall back to provider-less or unrelated background rows after lifecycle evidence exists.
+  - Running lifecycle projections leave finishedAt and durationMs unavailable until terminal evidence arrives; they never use later activity as a synthetic finish.
+  - Detail headers use the full reference snapshot or ClickHouse inner-window aggregates; only observations and continuation cursors are page-scoped.
+  - Production run cursors encode the private latest-observation ordering boundary used by ORDER BY/HAVING, while finishedAt remains the lifecycle field shown to clients.
+  - Legacy runs without lifecycle telemetry retain the prior bounded min/max and newest-trace fallback for backward compatibility.
+  - Primary lineage prefers the Core run UUID trace and otherwise chooses deterministic earliest lineage when lifecycle evidence exists.
+  - Component, deployment, model, and observed-time filters qualify run IDs using countIf/HAVING (or a reference equivalent) while lifecycle headers aggregate every row in the same fenced snapshot; combined terminal status filtering is applied only after that full projection.
+  - Production discovery predicates are combined into one countIf conjunction so component, deployment, model, and time filters must be satisfied by the same observation, matching reference `_matches` semantics; lifecycle status remains a separate run-level predicate.
+  - All four production trace aggregates (lifecycle, primary, legacy, and compatibility `AS trace_id`) qualify source columns with the `observations` table name so ClickHouse cannot substitute the compatibility alias and raise Code 184; the legacy alias remains for compatibility with existing row fakes.
+risks:
+  - Production ClickHouse SQL now expects lifecycle aliases and uses countIf/minIf/argMaxIf; an integration environment must validate the exact ClickHouse version during aggregate checks.
+unresolved:
+  - Rich prompt, chunk, thinking, generation, and tool payloads remain unavailable under AURA-0114 metadata-only capture and require the separately governed evidence work.

@@ -1,0 +1,153 @@
+id: AURA-0140
+title: Authorize governed web research and task artifact boundaries
+status: integrated
+change_class: repository_governance
+intent: >
+  Authorize an implementation-ready bounded architecture for governed web
+  research, Core-owned generated text artifacts, and a federated durable-task
+  projection without weakening Core ownership, provider isolation, bounded
+  execution, privacy, or Observatory independence.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/open-decisions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - docs/adr/0017-governed-production-run-evidence.md
+    - The owner approved the AURA-0140 through AURA-0148 initiative on 2026-10-28 and requested implementation from the latest remote dev branch.
+    - Research is available from conversation and a dedicated workspace, with Quick, Auto, Deep, and bounded Agent-led modes and HTTP preferred over isolated browser retrieval by cost policy.
+    - Generated artifacts initially support system-generated Markdown, plain text, and JSON with manual-only retention and explicit deletion.
+    - Task Center is a federated read projection over research, workflows, briefings, document processing, and memory reindexing; source domains remain authoritative.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - RUN-014
+  - RUN-015
+  - RUN-016
+  - RUN-017
+  - RUN-024
+  - WEB-001
+  - WEB-002
+  - WEB-003
+  - WEB-004
+  - WEB-005
+  - WEB-006
+  - WEB-007
+  - WEB-008
+  - WEB-009
+  - WEB-010
+  - WEB-011
+  - WEB-012
+  - ART-002
+  - ART-003
+  - ART-004
+  - ART-005
+  - ART-006
+  - ART-007
+  - ART-008
+  - ART-009
+  - ART-010
+ownership_zones:
+  - architecture.governed-web-research
+  - design.research-artifacts-task-center
+  - delivery.aura0140
+allowed_paths:
+  - work-items/active/AURA-0140.yaml
+  - work-items/archived/AURA-0140.yaml
+  - work-items/handoffs/AURA-0140-*.yaml
+  - work-items/reviews/AURA-0140-*.yaml
+  - work-items/integration/AURA-0140.yaml
+  - docs/adr/0018-governed-web-research-providers.md
+  - docs/design/governed-research-artifacts-and-tasks.md
+  - docs/adr/README.md
+  - docs/design/README.md
+  - docs/README.md
+forbidden_paths:
+  - services/**
+  - frontend/**
+  - contracts/**
+  - deploy/**
+  - evaluations/**
+  - tooling/**
+  - docs/architecture/**
+  - .codex/**
+contracts:
+  changes_allowed: false
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/run-events.schema.json
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Fetchers must resist SSRF DNS rebinding redirect abuse private-address access decompression bombs malicious content types browser escape and credential discovery.
+    - Search results fetched text excerpts queries artifacts and task detail are owner-private and excluded from URLs logs telemetry metadata-only events service-worker caches and browser persistence.
+    - Fetched and model-produced content is untrusted evidence and cannot modify policy prompts tools permissions budgets task transitions or artifact authorization.
+    - Background workers and provider services carry no user authority and must revalidate immutable owner scope and narrowed grants through Core application APIs.
+    - Task projection must not become a second source of truth or read another domain's persistence internals.
+    - Artifact deletion and task cancellation must remain idempotent and truthful across unknown storage provider and transport outcomes.
+  data_classes:
+    - owner-private research questions plans excerpts citations and reports
+    - owner-private generated text artifacts and lineage
+    - owner-private task detail and source status
+    - metadata-only lifecycle identifiers status versions and timestamps
+required_agents:
+  implementation:
+    - delivery_lead
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: false
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 6
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - An accepted ADR authorizes SearXNG plus separate no-credential static and browser fetcher deployables with exact trust network secret filesystem resource and kill-switch boundaries.
+  - The design fixes the Quick Auto Deep and Agent-led budgets interactive detachment extension policy source retention browser-selection policy and bounded evidence-sufficiency outcome.
+  - Generated artifacts have explicit ownership revision lineage integrity storage preview download manual-retention and deletion semantics without reusing Observatory artifacts.
+  - Task Center remains a rebuildable federated projection whose source modules retain authority and whose generic commands route only through public application APIs.
+  - Research completion from conversation defines synchronous and detached behavior compact cited completion append notification and failure cancellation and budget-exhaustion outcomes.
+  - The threat model covers SSRF DNS rebinding redirects parser and browser compromise prompt injection secrets content leakage duplicate delivery cancellation races resource exhaustion and deletion ambiguity with testable mitigations.
+  - The document defines AURA-0141 through AURA-0148 ownership dependencies contracts migrations observability evaluation rollout and rollback without implementing product behavior.
+  - No product code contract migration dependency deployment telemetry baseline or generated client changes occur in AURA-0140.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0140.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0140.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0140.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

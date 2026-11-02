@@ -1,0 +1,21 @@
+agent: observability_steward
+work_item: AURA-0096
+verdict: PASS
+checked:
+  - >-
+    Re-verified declared experiment, baseline, regression, attribution, live
+    update, projection, and retention metrics and spans use bounded allowlisted
+    operation, outcome, component, and failure labels.
+  - >-
+    Confirmed regression duration starts at the projection operation, failure
+    spans map validation, conflict, not-found, provider, and storage failures
+    explicitly, and threshold facts include incomplete and terminal states.
+  - >-
+    Confirmed leased projection-outbox recovery, shared regression locking,
+    exact resource-version retention fencing, ClickHouse deduplication, live
+    event versioning, and replay reconciliation remain restart-safe and
+    content-free.
+  - >-
+    Observability declarations and architecture validation passed; no
+    unresolved observability finding remains.
+findings: []

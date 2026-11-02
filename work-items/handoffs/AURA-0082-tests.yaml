@@ -1,0 +1,137 @@
+agent: test_evaluation_engineer
+work_item: AURA-0082
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: evaluation.compose-topology, evaluation.observatory-regressions
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/handoffs/AURA-0082-tests.yaml
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0082.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0082.yaml --role platform_worker
+      --path README.md --path docs/README.md
+      --path deploy/compose/local-http.sh
+      --path deploy/compose/local-http.yaml
+      --path deploy/compose/test_topology.py
+      (5 platform-owned paths validated)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py
+      --work-item work-items/active/AURA-0082.yaml --role observatory_worker
+      with all 8 Observatory implementation, migration, and regression-test
+      paths explicitly supplied, plus the corresponding
+      test_evaluation_engineer validation for all 4 regression-test paths.
+    - python3 tooling/architecture/validate-repository-shape.py
+    - bash -n deploy/compose/local-http.sh
+    - timeout 90s python3 deploy/compose/test_topology.py (38 passed)
+    - >-
+      timeout 60s docker compose --env-file .env --env-file .env.local-http
+      -f compose.yaml -f deploy/compose/local-identity.yaml
+      -f deploy/compose/local-http.yaml --profile local-identity
+      --profile observatory config --quiet
+    - >-
+      Rendered Compose JSON independently confirms all required Core,
+      Authentik, and Observatory services are present; all ten durable
+      disposable mounts resolve to aura_local_http_* named volumes, while
+      Garage, Authentik blueprints, and Collector configuration remain
+      read-only bind mounts.
+    - >-
+      Rendered Compose JSON confirms the same generated owner subject is
+      propagated to aura-core-api and observatory-api, and the project-scoped
+      volume names are prefixed with the Compose project name `aura`.
+    - >-
+      jq assertions over the rendered graph confirm every remaining bind is a
+      permitted read-only source/configuration bind; no durable database,
+      broker, object-store, identity-media, or Observatory state target is a
+      host bind.
+    - >-
+      Under an 805 MiB address-space cap and one Rayon thread, the focused
+      deployment regression suite passed: 14 tests.
+    - >-
+      Under an 805 MiB address-space cap and one Rayon thread, the complete
+      Observatory suite passed: 214 tests with one existing Authlib deprecation
+      warning.
+    - >-
+      Under an 805 MiB address-space cap and one Rayon thread, the focused
+      AURA-0078/AURA-0079/AURA-0080 regression suite passed: 136 tests with
+      one existing Authlib deprecation warning.
+    - >-
+      Ruff passed for all changed deployment and Observatory implementation
+      and regression-test paths under a 2 GiB address-space cap.
+    - >-
+      Pyright passed with 0 errors, 0 warnings, and 0 informations for the
+      changed Observatory CLI, adapters, and regression-test paths under a
+      2 GiB address-space cap.
+    - >-
+      Canonical ./deploy/compose/local-http.sh up completed with exit 0; all
+      long-running services became healthy, migration/bootstrap jobs completed,
+      and Aura, Observatory, and Authentik readiness endpoints returned 2xx.
+    - >-
+      The first healthy run had matching Core/Observatory owner-subject hashes
+      and exactly ten project-scoped disposable volumes.
+    - >-
+      ./deploy/compose/local-http.sh down completed with exit 0 and preserved
+      .env.local-http, the owner-subject hash, the owner-password hash, and all
+      ten disposable volumes.
+    - >-
+      A repeated ./deploy/compose/local-http.sh up completed with exit 0,
+      readiness endpoints remained healthy, and both owner-related hashes were
+      unchanged.
+    - >-
+      ./deploy/compose/local-http.sh reset completed with exit 0, removed
+      .env.local-http and all project volumes (volume count zero), and
+      preserved the owner-password hash.
+    - >-
+      A blank-state ./deploy/compose/local-http.sh up completed with exit 0,
+      all readiness endpoints were healthy, and the ten expected project
+      volumes were recreated.
+    - git diff --check
+  failed:
+    []
+  not_run:
+    []
+decisions:
+  - >-
+    The static topology suite covers all ten disposable named volumes for Core,
+    Garage, Authentik, and Observatory, read-only source/configuration binds,
+    separate identity audiences, owner-subject propagation, and start/stop/reset
+    documentation; it passed all 35 cases.
+  - >-
+    Compose config rendering was attempted because it is client-side and does
+    not create or remove daemon resources; an initial duplicate mapping was
+    corrected by the platform worker, and the final merged graph rendered
+    successfully.
+  - >-
+    Runtime acceptance was performed by the platform worker in a disposable
+    Docker project after Docker Desktop recovered; it covered healthy startup,
+    idempotent restart, state-preserving down, explicit reset, and blank-state
+    startup without recording credential values.
+  - >-
+    AURA-0082 ownership is split explicitly: platform owns deployment and
+    topology paths, while observatory_worker owns Observatory runtime paths
+    and test_evaluation_engineer owns the four Observatory regression-test
+    paths. This handoff records validation of both role scopes without
+    duplicating their implementation files.
+  - >-
+    No product, deployment, or topology files were edited by this test worker;
+    only this work-item handoff records the independent validation result.
+risks:
+  - >-
+    Runtime evidence depends on the disposable Docker project and does not
+    validate preservation of any discarded host-bound local state; this is
+    intentional and authorized by AURA-0082.
+unresolved: []

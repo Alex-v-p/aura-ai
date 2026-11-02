@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/automation/v1/reminder-events.schema.json",
+  "title": "Aura reminder lifecycle events v1",
+  "description": "Identifier-only reminder lifecycle events carried by the generic transactional outbox. Reminder content, owner identity, prompts, responses, credentials, and other private payloads are prohibited.",
+  "oneOf": [
+    { "$ref": "#/$defs/ReminderCreatedEvent" },
+    { "$ref": "#/$defs/ReminderFiredEvent" },
+    { "$ref": "#/$defs/ReminderCompletedEvent" },
+    { "$ref": "#/$defs/ReminderCanceledEvent" }
+  ],
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "ReminderStatus": {
+      "type": "string",
+      "enum": ["scheduled", "fired", "completed", "canceled"]
+    },
+    "EventProperties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "commandId",
+        "aggregateType",
+        "aggregateId",
+        "createdAt",
+        "correlationId",
+        "causationId",
+        "eventType",
+        "status",
+        "version"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "commandId": { "$ref": "#/$defs/Uuid" },
+        "aggregateType": { "const": "automation.reminder" },
+        "aggregateId": { "$ref": "#/$defs/Uuid" },
+        "createdAt": { "$ref": "#/$defs/Timestamp" },
+        "correlationId": { "$ref": "#/$defs/Uuid" },
+        "causationId": { "$ref": "#/$defs/Uuid" },
+        "eventType": {
+          "type": "string",
+          "enum": [
+            "reminder.created",
+            "reminder.fired",
+            "reminder.completed",
+            "reminder.canceled"
+          ]
+        },
+        "status": { "$ref": "#/$defs/ReminderStatus" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ReminderCreatedEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/EventProperties" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "commandId", "aggregateType", "aggregateId", "createdAt", "correlationId", "causationId", "eventType", "status", "version"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "commandId": { "$ref": "#/$defs/Uuid" },
+            "aggregateType": { "const": "automation.reminder" },
+            "aggregateId": { "$ref": "#/$defs/Uuid" },
+            "createdAt": { "$ref": "#/$defs/Timestamp" },
+            "correlationId": { "$ref": "#/$defs/Uuid" },
+            "causationId": { "$ref": "#/$defs/Uuid" },
+            "eventType": { "const": "reminder.created" },
+            "status": { "const": "scheduled" },
+            "version": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "ReminderFiredEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/EventProperties" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "commandId", "aggregateType", "aggregateId", "createdAt", "correlationId", "causationId", "eventType", "status", "version"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "commandId": { "$ref": "#/$defs/Uuid" },
+            "aggregateType": { "const": "automation.reminder" },
+            "aggregateId": { "$ref": "#/$defs/Uuid" },
+            "createdAt": { "$ref": "#/$defs/Timestamp" },
+            "correlationId": { "$ref": "#/$defs/Uuid" },
+            "causationId": { "$ref": "#/$defs/Uuid" },
+            "eventType": { "const": "reminder.fired" },
+            "status": { "const": "fired" },
+            "version": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "ReminderCompletedEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/EventProperties" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "commandId", "aggregateType", "aggregateId", "createdAt", "correlationId", "causationId", "eventType", "status", "version"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "commandId": { "$ref": "#/$defs/Uuid" },
+            "aggregateType": { "const": "automation.reminder" },
+            "aggregateId": { "$ref": "#/$defs/Uuid" },
+            "createdAt": { "$ref": "#/$defs/Timestamp" },
+            "correlationId": { "$ref": "#/$defs/Uuid" },
+            "causationId": { "$ref": "#/$defs/Uuid" },
+            "eventType": { "const": "reminder.completed" },
+            "status": { "const": "completed" },
+            "version": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "ReminderCanceledEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/EventProperties" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schemaVersion", "commandId", "aggregateType", "aggregateId", "createdAt", "correlationId", "causationId", "eventType", "status", "version"],
+          "properties": {
+            "schemaVersion": { "const": 1 },
+            "commandId": { "$ref": "#/$defs/Uuid" },
+            "aggregateType": { "const": "automation.reminder" },
+            "aggregateId": { "$ref": "#/$defs/Uuid" },
+            "createdAt": { "$ref": "#/$defs/Timestamp" },
+            "correlationId": { "$ref": "#/$defs/Uuid" },
+            "causationId": { "$ref": "#/$defs/Uuid" },
+            "eventType": { "const": "reminder.canceled" },
+            "status": { "const": "canceled" },
+            "version": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    }
+  }
+}

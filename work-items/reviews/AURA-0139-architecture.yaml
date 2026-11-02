@@ -1,0 +1,27 @@
+agent: architecture_guardian
+work_item: AURA-0139
+verdict: PASS
+checked:
+  - >-
+    Verified all aggregation remains Observatory-owned behind the public query
+    port and production adapter, with no Core imports, database reads,
+    manifests, commands, migration, or per-instance projection.
+  - >-
+    Verified exact fifteen-measurement semantic bindings, closed aggregate
+    vocabularies, and invalid cross-pair rejection are Observatory analytics
+    policy rather than a copied Core persistence or protocol boundary.
+  - >-
+    Verified ClickHouse component spans use registered stable metadata-only
+    query-api identity, finite operations, dependencies, outcomes, and errors.
+  - >-
+    Verified the adapter advances replay cursors before source-only self-event
+    filtering and preserves the existing closed public metadata-only SSE shape.
+  - >-
+    Verified generated contract direction, Observatory frontend boundaries,
+    Storybook/E2E placement, and absence of any ADR-requiring architecture
+    change.
+  - >-
+    Work-item, changed-path, repository-shape, module-registry, import,
+    service-isolation, frontend, contract, generated-sync, observability,
+    baseline, and diff checks passed.
+findings: []

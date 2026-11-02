@@ -1,0 +1,74 @@
+agent: test_evaluation_engineer
+work_item: AURA-0136
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0136_evaluation
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: evaluation.workflow-contract-state
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - services/aura-core/tests/test_workflow_contract_state_evaluation.py
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      uv run --project services/aura-core pytest -q
+      services/aura-core/tests/test_workflow_contract_state_evaluation.py
+      (3 passed)
+    - uv run --project services/aura-core ruff check services/aura-core/tests/test_workflow_contract_state_evaluation.py
+    - uv run --project services/aura-core pyright services/aura-core/tests/test_workflow_contract_state_evaluation.py
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0136.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0136.yaml
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0136.yaml
+    - git diff --check
+    - implementation-handoff schema validation
+    - >-
+      All evaluator cases pass deterministically and remain replay-stable,
+      including foreign tombstone deletion rejection.
+  failed: []
+  not_run:
+    - Aggregate AURA-0136 checks remain owned by integration.
+decisions:
+  - >-
+    Added a deterministic synthetic evaluator over the workflow public value
+    objects, pure state transitions, and memory repository; it records only
+    bounded statuses, versions, counts, and outcomes.
+  - >-
+    Reconciled the executable catalogue with the reviewed workflow-state
+    manifest: the seven semantic cases use only
+    workflow_state_transition_correctness and
+    workflow_idempotency_and_race_correctness, with bounded scenario and case
+    identities for the individual behaviors.
+  - >-
+    Centralized component attribution at
+    aura.automation.workflow_state@1.0.0; every result and replay key carries
+    the component identifier and version.
+  - >-
+    Covered valid sequential completion, stale optimistic versions,
+    concurrent idempotent admission, unknown-effect reconciliation and
+    cancellation, one-replay limits, terminal immutability, selector and
+    canonical-value rejection, owner-scoped deletion ordering, and replay
+    stability.
+  - >-
+    The deletion evaluator requires non-owner history, result, and checkpoint
+    deletion to be rejected after terminal tombstoning; the Core repository
+    now checks tombstone ownership before accepting any of those scopes.
+risks:
+  - >-
+    The test intentionally depends on the final AURA-0136 public state and
+    repository exception semantics; if those APIs change, the owning worker
+    must update the evaluator without broadening its ownership.
+unresolved: []

@@ -1,0 +1,66 @@
+agent: integration_maintainer
+work_item: AURA-0119
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0119-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0119-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0119-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0119-observability.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0119.yaml
+  - work-items/integration/AURA-0119.yaml
+checks:
+  passed:
+    - >-
+      All three implementation handoffs are schema-valid complete records with
+      allowed paths respected and no unresolved items; all four required review
+      artifacts are schema-valid PASS verdicts with no findings.
+    - >-
+      Work-item, changed-path, contract-change, generated-sync, import-boundary,
+      module-registry, service-isolation, frontend-boundary, observability,
+      repository-shape, and baseline-protection validators passed; contract and
+      baseline checks correctly reported no applicable changes.
+    - >-
+      The focused AURA-0119 acceptance, regression, and topology command passed
+      with 93 passed, 1 skipped, and 1 pre-existing Authlib deprecation warning.
+    - >-
+      Observatory Pyright passed with 0 errors, warnings, or informations.
+    - >-
+      Docker Compose configuration and git diff whitespace checks passed.
+    - >-
+      The required aggregate Ruff and pytest commands were executed; their
+      unchanged repository-level collection/lint limitations are recorded as
+      remaining integration risks below and did not implicate AURA-0119 product
+      files.
+    - >-
+      The work item was moved from active to archived with status integrated,
+      and all discovered changed paths remain within its authorized scope.
+  failed: []
+repository_clean: true
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Aggregate Ruff still reports the pre-existing E501 at
+    deploy/tests/test_aura0090_topology.py:189. This unrelated baseline issue
+    was not changed or weakened during integration.
+  - >-
+    Aggregate pytest collection still stops on the pre-existing duplicate
+    test_aura0104_acceptance_capabilities module basename in the Observatory and
+    deploy test directories. The focused AURA-0119 suite remains green; the
+    duplicate was not renamed as unrelated scope.
+  - >-
+    Live PostgreSQL, Garage, NATS restart, ACL, and independent outage checks
+    remain for final integration-environment validation.
+  - >-
+    Observatory Web rendering and interactive live-inspector behavior remain
+    assigned to AURA-0120.

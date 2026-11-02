@@ -1,0 +1,51 @@
+agent: platform_worker
+work_item: AURA-0089
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0089_platform
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: documentation.evaluation-privacy-decisions, repository.module-registration
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - docs/specifications/observatory-and-evaluation.md
+  - docs/specifications/open-decisions.md
+  - tooling/architecture/modules.yaml
+  - work-items/handoffs/AURA-0089-platform.yaml
+contracts:
+  changed: false
+  consumed:
+    - contracts/evaluation/v1/evaluation.schema.json
+    - contracts/events/evaluation/v1/evaluation-events.schema.json
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0089.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0089.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0089.yaml (not applicable)
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0089.yaml (no protected changes)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0089.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - Observatory AURA-0089 contract-test lint, type checking, and pytest have no matching test_aura0089_*.py files in this platform-only slice.
+decisions:
+  - Recorded owner authorization as the prerequisite for any content-bearing evaluation capture; ordinary production telemetry remains metadata_only.
+  - Recorded manual-only evaluation artifact retention without resolving global retention or encryption periods for other platform data.
+  - Recorded deterministic-first evaluation and local-Ollama-only model-assisted judging; exact inventory and calibration remain deferred to AURA-0094.
+  - Recorded immutable baselines with explicit owner promotion and prohibited automatic promotion or protected repository baseline mutation.
+  - Registered evaluation-v1 and evaluation-events-v1 as independent closed contract roots with no runtime dependencies.
+risks:
+  - Downstream storage, orchestration, API, and browser work must enforce the documented owner authorization and manual deletion policy without widening production telemetry capture.
+unresolved: []

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "fixtureRevision": "research-privacy-telemetry-v1",
+  "classification": "synthetic-metadata-only-sink-observations",
+  "sinks": ["metrics", "spans", "events", "logs", "browser_state"],
+  "allowedFields": ["component", "componentVersion", "operation", "outcome", "status", "dependency", "errorClass"],
+  "prohibitedFields": ["ownerId", "taskId", "researchId", "query", "url", "excerpt", "title", "filename", "objectKey", "digest", "secret"],
+  "expectedProhibitedCount": 0
+}

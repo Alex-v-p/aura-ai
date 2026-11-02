@@ -1,0 +1,178 @@
+id: AURA-0089
+title: Define evaluation privacy and versioned contracts
+status: integrated
+change_class: repository_governance
+intent: >
+  Establish closed versioned contracts for explicitly authorized evaluation
+  definitions execution results artifacts replay and lifecycle events while
+  preserving metadata-only production telemetry and the Core Observatory
+  service boundary.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/specifications/observatory-and-evaluation.md
+    - docs/specifications/open-decisions.md
+    - docs/specifications/aura-ai-envisioned-feature-catalogue.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Evaluation content is permitted only when an owner-authorized dataset or controlled evaluation request explicitly selects a non-metadata capture classification; ordinary production telemetry remains metadata_only.
+    - Evaluation definitions and artifacts are retained until an explicit authorized manual deletion; this work item defines retention intent and identifiers but does not add storage or deletion behavior.
+    - Model-assisted judging is local Ollama only and deterministic evaluators remain preferred; exact judge inventory prompts rubrics and calibration are deferred to AURA-0094.
+    - Baseline promotion is an explicit owner action and baseline records are immutable; automatic promotion is prohibited.
+    - Durable evaluation events contain identifiers status timestamps bounded provenance hashes and artifact references only; raw inputs outputs prompts rubrics comments credentials endpoints object keys and owner identity are prohibited.
+    - AURA-0089 is contract-only; PostgreSQL ClickHouse Garage NATS runtime API CLI browser and Core runner behavior remain assigned to AURA-0090 through AURA-0096.
+  contracts:
+    - contracts/telemetry/v2/metadata-observation.schema.json
+    - contracts/events/runs/v1/run-events.schema.json
+feature_references:
+  - EVA-001
+  - EVA-002
+  - EVA-005
+  - EVA-016
+  - EVA-019
+  - EVA-021
+  - EVA-024
+  - EVA-025
+  - EVA-027
+  - EVA-028
+  - EVA-038
+  - EVA-039
+  - EVA-040
+  - EVA-041
+  - EVA-048
+ownership_zones:
+  - contracts.evaluation-v1
+  - contracts.evaluation-events-v1
+  - documentation.evaluation-privacy-decisions
+  - repository.module-registration
+  - evaluation.contract-verification
+allowed_paths:
+  - work-items/active/AURA-0089.yaml
+  - work-items/archived/AURA-0089.yaml
+  - work-items/handoffs/AURA-0089-*.yaml
+  - work-items/reviews/AURA-0089-*.yaml
+  - work-items/integration/AURA-0089.yaml
+  - contracts/evaluation/v1/**
+  - contracts/events/evaluation/v1/**
+  - docs/specifications/observatory-and-evaluation.md
+  - docs/specifications/open-decisions.md
+  - tooling/architecture/modules.yaml
+  - services/aura-observatory/tests/test_aura0089_*.py
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/telemetry/**
+  - contracts/openapi/**
+  - services/aura-core/src/**
+  - services/aura-core/migrations/**
+  - services/aura-observatory/src/**
+  - services/aura-observatory/migrations/**
+  - frontend/**
+  - compose.yaml
+  - deploy/**
+  - infra/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+contracts:
+  changes_allowed: true
+  affected:
+    - evaluation-v1
+    - evaluation-events-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: false
+  owning_service: aura-observatory
+  owning_module: evaluation
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Content-bearing evaluation fields are allowed only behind explicit authorization purpose dataset scope capture classification and manual-retention metadata; metadata_only remains the default and production telemetry contract.
+    - Evaluation content is untrusted data and cannot grant instructions policy permissions paths endpoints credentials provider selection or execution authority.
+    - Durable NATS event payloads are content-free and may carry only bounded identifiers lifecycle status timestamps hashes versions limits provenance and opaque artifact references.
+    - Raw content credentials bearer tokens endpoints object keys filenames tool arguments results owner identity arbitrary attributes hidden reasoning and private source identifiers are prohibited from events telemetry logs metrics SSE URLs and browser persistence.
+    - Requests results scores artifacts baselines and replay definitions require stable identifiers schema versions idempotency provenance component versions evaluator versions deterministic limits capture classification and reproducibility metadata.
+    - Baseline promotion is manual and immutable; contracts must distinguish a candidate from an owner-promoted baseline without encoding owner identity.
+    - Artifact references describe integrity media classification and authorization scope without exposing storage endpoints credentials or provider object keys.
+    - Cancellation failure and retry metadata remain bounded and must not include exception text payload excerpts or provider diagnostics.
+  data_classes:
+    - authorized_evaluation_content
+    - evaluation_metadata
+    - evaluation_artifact_reference
+    - evaluation_score
+    - reproducibility_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - observatory_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 5
+  max_parallel_writers: 1
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - JSON Schema 2020-12 contracts define dataset case suite evaluator score request result artifact experiment baseline and replay resources with closed bounded objects and stable versioned identifiers.
+  - Dataset cases distinguish synthetic owner_supplied and captured sources plus public project private sensitive and environment scopes without embedding owner identity in a portable contract.
+  - Every content-bearing field requires an explicit capture classification authorization purpose and retention mode; metadata_only requests cannot carry content and full_content is limited to controlled evaluation contexts.
+  - Evaluation content is treated as untrusted data and cannot supply instructions permissions provider endpoints credentials object keys executable paths or arbitrary attributes.
+  - Requests bind exact dataset suite evaluator component code image configuration model prompt policy fixture and seed provenance together with deadlines concurrency budgets and idempotency keys sufficient for deterministic replay.
+  - Results and scores distinguish deterministic local_judge and human_review evaluators preserve version rubric calibration and uncertainty metadata and never infer missing evidence.
+  - Artifact contracts use opaque references integrity metadata bounded media classifications capture classification and deletion scope without exposing bytes filenames storage endpoints credentials or object keys.
+  - Experiment and replay contracts declare bounded variants cohorts inputs fixtures component versions and reproducibility evidence without implementing execution orchestration.
+  - Baseline contracts require explicit manual promotion record immutable source result sets and thresholds and prohibit automatic promotion or protected repository baseline mutation.
+  - A closed evaluation event contract defines exactly requested completed cancelled and failed lifecycle events with stable event correlation causation request job attempt and idempotency identifiers.
+  - Evaluation events contain no raw input output prompt rubric comment artifact content credential endpoint object key owner identity exception text arbitrary attributes or hidden reasoning.
+  - The specifications record owner-authorized evaluation content manual-only evaluation retention local-only judging and manual baseline promotion while leaving exact local judge inventory calibration artifact storage orchestration API and regression logic to their assigned work items.
+  - Deliberate module-registry entries expose the two new contract roots without introducing runtime dependencies or cross-service imports.
+  - Contract tests cover valid representatives every resource and event negative unknown-field missing-bound invalid-combination metadata-only-content credential endpoint object-key owner-identity and untrusted-instruction cases.
+  - Contract tests verify production telemetry remains metadata-only and has no reference to evaluation content-bearing schemas.
+  - No database migration service entrypoint API generated client browser feature package dependency deployment change cloud integration protected golden result or repository baseline change is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0089.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0089.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0089.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0089.yaml
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0089.yaml
+  - cd services/aura-observatory && uv run ruff check tests/test_aura0089_*.py
+  - cd services/aura-observatory && uv run pyright tests/test_aura0089_*.py
+  - cd services/aura-observatory && uv run pytest tests/test_aura0089_*.py
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions:
+  - Exact local Ollama judge inventory prompt templates rubrics seeds calibration datasets and advisory thresholds remain assigned to AURA-0094.
+  - Garage bucket credentials object layout encryption operations and deletion mechanics remain assigned to AURA-0090.
+  - NATS subjects stream consumers retry cancellation and recovery behavior remain assigned to AURA-0091 and AURA-0092.
+  - Dataset suite evaluator persistence and deterministic evaluator execution remain assigned to AURA-0093.
+  - Observatory API CLI SSE and browser resources remain assigned to AURA-0095.
+  - Experiment statistics baseline comparison thresholds regression attribution and promotion workflow remain assigned to AURA-0096.

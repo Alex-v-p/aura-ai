@@ -1,0 +1,59 @@
+agent: general_reviewer
+work_item: AURA-0116
+verdict: PASS
+checked:
+  - >-
+    Reviewed the approved work item, architecture handover, Observatory
+    specification, final frontend and test-evaluation handoffs, and the complete
+    current diff. The change is confined to the Observatory selected-run store
+    and focused tests; Aura Web, backend services, contracts, persistence, and
+    deployment topology are unchanged.
+  - >-
+    Traced rapid live invalidations through openRun, loadSelectedRun,
+    handleLiveMessage, and queueSelectedRunReconciliation. An active
+    detail/trace request remains authoritative, records bounded pending state,
+    publishes its first snapshot, and schedules at most one trailing timer for
+    that in-flight window.
+  - >-
+    Verified live invalidations and projection-gap retries retain separate
+    provenance. Retry work remains capped, while a live invalidation arriving
+    during a successful final attempt survives settlement and produces exactly
+    one latest-projection refresh.
+  - >-
+    Verified selection and session boundaries clear pending timers and advance
+    monotonic request sequences. Browser regressions cover a late run A
+    completion after selecting run B, a queued run A timer after selecting run
+    B, and a held refresh completing after session expiry; none can restore or
+    overwrite stale/private selected-run state.
+  - >-
+    The initial review found that accepting in-flight pending work before
+    enforcing the 30-attempt cap could leave a missing-trace run permanently
+    loading without a timer. The owner separated retry/live pending state and
+    preserved the cap. The corrected browser coverage proves the bounded window
+    exits loading into the trace-unavailable disclosure and separately proves a
+    successful final attempt still consumes one live trailing refresh.
+  - >-
+    The burst regression independently blocks the initial and trailing detail
+    responses, proves the 5.00 s first snapshot is visible while the trailing
+    request remains pending, then proves the 7.00 s latest projection replaces
+    it with exactly two requests after 24 invalidations.
+  - >-
+    Independent verification passed: 63 Observatory unit tests, Observatory
+    and Observatory E2E lint with no errors, Observatory Web production build,
+    and six focused desktop browser scenarios including Axe coverage. Work-item,
+    changed-path, repository-shape, import-boundary, service-isolation,
+    observability, contract-change, baseline-protection, and whitespace checks
+    also passed.
+findings: []
+risks:
+  - >-
+    The existing operational live handler does not filter observation.changed
+    payloads by resource ID before invalidating the current selection. This
+    change serializes and coalesces those reads, but sustained telemetry for
+    unrelated runs can still cause periodic selected-run refreshes.
+  - >-
+    Direct Angular TestBed coverage of the decorated store is unavailable under
+    the repository's current standalone Vitest transform. The concurrency,
+    selection, session, retry-cap, and UI-state paths are therefore guarded by
+    focused browser acceptance plus the existing generic coordinator unit test.
+unresolved: []

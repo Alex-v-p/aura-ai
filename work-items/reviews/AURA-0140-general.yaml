@@ -1,0 +1,46 @@
+agent: general_reviewer
+work_item: AURA-0140
+verdict: PASS
+checked:
+  - >-
+    Re-read the active work item, corrected delivery handoff, ADR-0018, the full
+    governed research/artifact/task design, repository indexes, architecture
+    handover, module boundaries, technology stack, execution and client
+    specifications, open decisions, and ADRs 0013 through 0017; inspected all
+    eight changed or added paths against origin/dev.
+  - >-
+    Re-verified the prior Task Center owner-scope finding. Source modules now
+    emit identifier/version-only invalidations, while the nondelegable internal
+    projection capability obtains owner-scoped TaskProjectionSnapshotV1 values
+    through one named source public query shared by live reconciliation and
+    rebuild. Events remain owner- and content-free and no cross-domain table or
+    adapter read is authorized.
+  - >-
+    Re-verified the prior conversation-delivery finding. web.research@1 now
+    performs admission only within the existing tool-attempt budget and the
+    ordinary tools-disabled synthesis persists only the stable acknowledgement;
+    one durable completion-delivery record exclusively owns the terminal append
+    and independent notification for every conversational mode. Auto's
+    foreground cutoff is client presentation only, and append/notification
+    idempotency and unknown-outcome reconciliation prevent duplicate writes.
+  - >-
+    Re-verified the prior lifecycle-vocabulary finding. Research now has one
+    closed stage and terminal-outcome vocabulary, provider disablement and
+    unavailability are bounded failure classes, research never pauses, owner
+    cancellation alone produces canceled, immediate operator interruption has a
+    distinct outcome, and every case has an explicit Task Center mapping that
+    preserves authoritative source outcome.
+  - >-
+    Traced corrected admission, checkpoint/recovery, budget extension,
+    kill-switch draining, evidence/citation validation, artifact and research
+    deletion, terminal delivery, task projection/rebuild, routed commands,
+    privacy, observability/evaluation, rollout, and rollback paths against every
+    AURA-0140 acceptance criterion. No product code, contract, migration,
+    dependency, deployment, telemetry baseline, or generated-client change is
+    present.
+  - >-
+    python3 tooling/architecture/validate-work-item.py
+    work-items/active/AURA-0140.yaml passed; validate-changed-paths passed for
+    all eight paths; validate-repository-shape passed; validate-observability
+    returned the declared not-applicable skip; and git diff --check passed.
+findings: []

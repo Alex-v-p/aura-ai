@@ -1,0 +1,68 @@
+component:
+  id: aura.artifacts.deletion@1
+  version: 1.0.0
+  owner: artifacts.generated
+  category: deletion
+input:
+  schema: ArtifactDeleteInputV1
+  replayable: true
+  replay_reason: Deterministic identifier and lifecycle metadata only; object references and bytes are never captured.
+output:
+  schema: ArtifactDeleteResultV1
+  replayable: true
+  capture:
+    content: none
+    metadata: allowlisted
+boundaries:
+  accepts: [ArtifactDeleteInputV1]
+  emits: [ArtifactDeleteResultV1]
+  excludes: [artifact_id, revision_id, event_id, correlation_id, causation_id, owner_identity, title, content, text, digest, filename, object_key, task_id, run_id, conversation_id, workspace_id, prompt, response, payload, endpoint, token, credential]
+dependencies: [core_postgresql, garage_port, transactional_outbox]
+span: artifact.delete
+outcomes: [success, rejected, timeout, failed, unknown]
+errors: [validation_failed, conflict, storage_unavailable, cleanup_unknown, delivery_failed, settlement_unknown, timeout]
+metrics: [artifact_deletion_outcome_count, artifact_deletion_latency_ms]
+metric_definitions:
+  - name: artifact_deletion_outcome_count
+    type: counter
+    unit: count
+    labels: [operation, outcome, error_class, dependency]
+    dependencies: [core_postgresql, garage_port, transactional_outbox]
+    trace: artifact.delete
+    correlation: admitted_trace_context
+    export: structured_container_log
+  - name: artifact_deletion_latency_ms
+    type: histogram
+    unit: milliseconds
+    labels: [operation, outcome, error_class, dependency]
+    dependencies: [core_postgresql, garage_port, transactional_outbox]
+    trace: artifact.delete
+    correlation: admitted_trace_context
+    export: structured_container_log
+metric_semantics:
+  artifact_deletion_outcome_count: Metadata-only bounded admission, claim, settlement, reconciliation, and replay outcome count.
+  artifact_deletion_latency_ms: Active cleanup admission, provider, and lifecycle-delivery duration in milliseconds.
+evaluators: [generated_artifact_deletion_truth@1, generated_artifact_privacy@1]
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency]
+  trace_only: [trace_id, span_id, parent_span_id, link_span_ids]
+  prohibited: [artifact_id, revision_id, event_id, correlation_id, causation_id, owner, owner_identity, subject, title, content, text, digest, filename, object_key, task_id, run_id, conversation_id, workspace_id, prompt, response, payload, endpoint, token, credential, exception, exception_text]
+capture_policy: metadata_only
+privacy:
+  capture: metadata_only
+  content: forbidden
+  owner_identity: forbidden
+  credentials: forbidden
+replay:
+  mode: deterministic
+  input: identifier_version_only
+  clock: injected
+  random: prohibited
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

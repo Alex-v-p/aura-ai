@@ -1,0 +1,25 @@
+agent: security_privacy_reviewer
+work_item: AURA-0101
+verdict: PASS
+checked:
+  - >-
+    Reviewed the amended authorization scope, generated NATS ACLs, Core
+    adapter changes, topology assertions, and final live startup evidence.
+  - >-
+    Confirmed normal Core access is exact and bounded: account information,
+    stream list, AURA_RUNS stream operations, and the five durable/filter
+    consumer operation sets only; no JetStream or consumer wildcard, delete,
+    purge, evaluation, or obsolete normal durable-create authority is present.
+  - >-
+    Confirmed bootstrap retains only the exact legacy subjects its evaluation
+    script uses, dispatch and runner identities receive no normal Core grants,
+    and the obsolete account-info permission is absent from all identities.
+  - >-
+    Confirmed NATS credentials remain file-injected and absent from arguments,
+    logs, reports, and tests; the adapter handles only operational stream
+    metadata and does not expose authenticated content or cross-service data.
+  - >-
+    Reviewed the final repeated live startup evidence for absence of NATS ACL
+    violations and worker restart loops; no security or privacy finding
+    remains.
+findings: []

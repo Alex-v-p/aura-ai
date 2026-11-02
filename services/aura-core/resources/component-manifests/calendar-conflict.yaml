@@ -1,0 +1,37 @@
+component:
+  id: aura.automation.calendar_conflict
+  version: 1.0.0
+  owner: automation.calendar
+  category: evaluation
+input:
+  schema: aura-calendar-conflict-query-v1
+  replayable: true
+  replay_reason: Conflict evaluation is deterministic over normalized transient events and captures only bounded metadata.
+output:
+  schema: aura-calendar-conflict-result-v1
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - calendar_retrieval
+metrics:
+  - calendar_conflict_evaluation_duration_ms
+  - calendar_conflict_evaluation_outcome
+metric_semantics:
+  calendar_conflict_evaluation_duration_ms: Bounded deterministic conflict evaluation duration in milliseconds.
+  calendar_conflict_evaluation_outcome: Content-free conflict evaluation outcome.
+capture_policy: metadata_only
+evaluators:
+  - calendar.conflict.v1
+  - calendar.normalization.v1
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, status]
+  trace_only: [trace_id, span_id, parent_span_id, correlation_id, attempt_id, query_id]
+  prohibited: [content, event_title, description, attendees, location, calendar_name, provider_identifier, owner_identity, timezone, cursor, token, credential, url, endpoint]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown

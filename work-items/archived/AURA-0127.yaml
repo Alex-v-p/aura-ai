@@ -1,0 +1,161 @@
+id: AURA-0127
+title: Add the Aura Web Today action center
+status: integrated
+change_class: repository_governance
+intent: >
+  Make Today the authenticated Aura Web landing destination and present a
+  calm, responsive, navigation-only action center for pending approvals,
+  unacknowledged reminder notifications, due and upcoming reminders, and
+  recent conversations by composing existing owner-authorized feature stores
+  without changing Core behavior or public contracts.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/design/daily-action-and-workflow-initiative.md
+    - docs/design/README.md
+    - docs/design/foundations.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+    - docs/design/sidebar-and-management-surfaces.md
+    - docs/specifications/clients-and-voice.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - work-items/archived/AURA-0126.yaml
+    - The owner authorized implementation of all four initiative stages on 2026-10-26; AURA-0127 activates only the independently bounded first stage.
+    - Today cards navigate to canonical detail routes and never approve, reject, acknowledge, complete, cancel, or otherwise mutate records inline.
+    - The daily-action feature library consumes existing public stores and starts no approval or notification stream of its own.
+    - Full browser acceptance exposed an existing conversation-bootstrap race from the new Today entry path; the same work item may make the smallest component-local draft handoff correction without changing conversation contracts or persistence.
+    - Review found that Today cannot safely depend on the notification workspace's currently selected unread/history view; the same work item may add a bounded unread projection to the existing NotificationStore, including at most one companion unread refresh while History is active, without adding direct Today transport calls, streams, persistence, or contract changes.
+    - Review found that a component-only draft handoff can write an originating transient draft into the newly selected conversation; the scoped correction may add an id-addressed draft update to ConversationStore so handoff remains bound to its originating conversation.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - AUI-001
+  - AUI-002
+  - AUI-019
+  - AUI-023
+  - AUI-025
+ownership_zones:
+  - frontend.aura-web.daily-action
+  - frontend.aura-web.shell
+  - frontend.aura-web.interaction-conversations
+  - frontend.aura-web.automation-notifications
+  - repository.frontend-module-registry
+  - repository.frontend-test-configuration
+  - evaluation.aura-web.daily-action
+  - delivery.aura0127
+allowed_paths:
+  - work-items/active/AURA-0127.yaml
+  - work-items/archived/AURA-0127.yaml
+  - work-items/handoffs/AURA-0127-*.yaml
+  - work-items/reviews/AURA-0127-*.yaml
+  - work-items/integration/AURA-0127.yaml
+  - frontend/libs/aura/daily-action/**
+  - frontend/tsconfig.base.json
+  - frontend/vitest.workspace.ts
+  - frontend/apps/aura-web/src/app/app.routes.ts
+  - frontend/apps/aura-web/project.json
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.ts
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-branching.spec.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notification-store.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notification-models.ts
+  - frontend/libs/aura/automation/notifications/src/lib/notification-workspace.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/today.spec.ts
+  - frontend/apps/aura-web-e2e/src/storybook-a11y.spec.ts
+  - frontend/apps/storybook/src/daily-action.stories.ts
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - contracts/**
+  - services/**
+  - deploy/**
+  - frontend/libs/platform/**
+  - frontend/libs/aura/governance/**
+  - frontend/libs/aura/knowledge/**
+  - frontend/libs/observatory/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/aura-web/src/main.ts
+  - frontend/apps/aura-web/src/styles.css
+  - frontend/apps/aura-web-e2e/src/full-stack.spec.ts
+  - .codex/**
+contracts:
+  changes_allowed: false
+  affected:
+    - contracts/openapi/aura-v1.yaml
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: true
+  concerns:
+    - Today may render only owner-authorized reminder content and existing conversation title and status returned by current APIs.
+    - Approval proposal detail, calendar content, and future briefing or workflow content must not appear in compact cards.
+    - Authenticated responses and private summaries must not enter service-worker caches, URLs, logs, telemetry, or browser persistence.
+    - Inexact approval counts must not be represented as exact.
+  data_classes:
+    - owner-private reminder content
+    - owner-private conversation titles and status
+    - content-free approval and notification metadata
+required_agents:
+  implementation:
+    - frontend_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - aura_ux_ui_reviewer
+    - security_privacy_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 3
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The root route redirects to /today, Today is the first navigation destination, every Aura home link targets /today, Conversations remains explicit, and every existing deep link remains compatible.
+  - A registered daily-action frontend feature library consumes only the existing public reminder, notification, approval, and conversation stores and contains all Action Center aggregation and presentation behavior.
+  - Needs attention shows only pending approval metadata and unacknowledged delivered reminder notifications; Today and Later show bounded nonduplicated reminder records; Continue shows a bounded recent active-conversation set.
+  - Every Action Center record is navigation-only and resolves to its canonical detail route without inline mutation or duplicate live-stream ownership.
+  - Loading, all-clear, partial-source failure, authentication, permission, offline or reconnecting, and stale states preserve independent available sections and accessible recovery guidance.
+  - The closed mobile navigation is absent from the accessibility tree; the open navigation makes background content inert or uses equivalent modal semantics and restores focus correctly on close, route activation, Escape, and viewport transition.
+  - Responsive, theme, reduced-motion, keyboard, focus, live-region, touch-target, 200 percent reflow, privacy-summary, and request-amplification behavior have focused unit, Storybook, and browser coverage.
+  - No Core, contract, generated-client, persistence, provider, deployment, service-worker, or runtime telemetry behavior changes.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0127.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0127.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - cd frontend && pnpm exec nx test aura-web
+  - cd frontend && pnpm exec vitest run --config vitest.workspace.ts libs/aura/daily-action
+  - cd frontend && pnpm exec nx build aura-web --configuration=production
+  - cd frontend && pnpm exec nx run storybook:build-storybook
+  - cd frontend && pnpm exec playwright test apps/aura-web-e2e/src/today.spec.ts apps/aura-web-e2e/src/aura-web.spec.ts apps/aura-web-e2e/src/storybook-a11y.spec.ts
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

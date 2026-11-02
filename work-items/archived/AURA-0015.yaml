@@ -1,0 +1,234 @@
+id: AURA-0015
+title: Deliver Ollama-backed persistent conversations
+status: integrated
+change_class: contract
+intent: >
+  Replace the Aura Web conversation preview with an authenticated, persistent,
+  streaming conversation vertical backed by Aura Core, PostgreSQL, NATS,
+  Valkey, and a provider-neutral Ollama adapter, while keeping the temporary
+  local Authentik deployment optional and portable to an external host.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/open-decisions.md
+    - docs/design/components-and-interactions.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0014-aura-owned-execution-langgraph-backend.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - User-approved Ollama-backed conversations with portable Authentik development deployment plan
+    - One configured Authentik issuer and subject is the initial owner authorization boundary
+    - All installed Ollama models are visible and chat-incompatible models are disabled
+    - Conversation model selection is mutable for future runs with no silent fallback
+    - Independent conversation runs continue in the background
+    - Partial streamed output is checkpointed and preserved
+    - Conversations are retained until an explicit future deletion capability
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/runs/v1/*.json
+feature_references:
+  - RUN-001
+  - RUN-002
+  - RUN-008
+  - RUN-009
+  - RUN-010
+  - RUN-020
+  - RUN-021
+  - RUN-024
+  - RUN-025
+  - MOD-001
+  - MOD-011
+  - MOD-012
+  - MOD-015
+  - AUI-002
+  - AUI-003
+  - AUI-005
+  - AUI-030
+ownership_zones:
+  - contracts.aura.v1
+  - aura-core.governance.identity
+  - aura-core.governance.audit
+  - aura-core.interaction.agents
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.runtime.models
+  - aura-core.platform
+  - aura-core.bootstrap
+  - aura-core.providers.ollama
+  - frontend.platform.aura-api-client
+  - frontend.aura.interaction.conversations
+  - deployment.aura-stack
+allowed_paths:
+  - work-items/active/AURA-0015.yaml
+  - work-items/archived/AURA-0015.yaml
+  - pyproject.toml
+  - uv.lock
+  - .python-version
+  - .env.example
+  - .gitignore
+  - services/aura-core/**
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/runs/v1/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - frontend/tsconfig.base.json
+  - frontend/nx.json
+  - frontend/vitest.workspace.ts
+  - frontend/README.md
+  - frontend/apps/aura-web/**
+  - frontend/apps/aura-web-e2e/**
+  - frontend/apps/storybook/src/conversation-panel.stories.ts
+  - frontend/libs/aura/interaction/conversations/**
+  - frontend/libs/platform/aura-api-client/**
+  - compose.yaml
+  - deploy/docker/aura-web.Dockerfile
+  - deploy/docker/aura-web.nginx.conf
+  - deploy/docker/aura-api.Dockerfile
+  - deploy/docker/aura-worker.Dockerfile
+  - deploy/docker/aura-core-entrypoint.sh
+  - deploy/docker/aura-core-migrate.sh
+  - deploy/docker/aura-core.Dockerfile.dockerignore
+  - deploy/authentik/**
+  - deploy/compose/**
+  - docs/README.md
+  - docs/runbooks/authentik-relocation.md
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - tooling/architecture/**
+  - docs/architecture/**
+  - docs/adr/**
+  - docs/specifications/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - frontend/apps/aura-wall/**
+  - frontend/apps/observatory-web/**
+  - frontend/libs/observatory/**
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - aura-openapi-v1
+    - aura-run-events-v1
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: interaction.conversations-and-execution.runs
+observability:
+  applicable: true
+  affected_components:
+    - aura.execution.run_coordinator
+    - aura.runtime.model_routing
+    - aura.runtime.model_inference
+    - aura.interaction.conversation_persistence
+    - aura.runtime.stream_delivery
+  required_metrics:
+    - queue_wait_ms
+    - run_duration_ms
+    - time_to_first_token_ms
+    - output_tokens
+    - provider_errors
+    - sse_reconnects
+  required_evaluators: []
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - OIDC issuer, audience, state, nonce, signature, redirect, session rotation, and owner-subject validation
+    - HttpOnly Secure SameSite cookies and origin-aware CSRF protection for state-changing commands
+    - Provider tokens and sessions remain server-side in non-persistent Valkey
+    - Conversation content remains Core-owned and is excluded from queue commands and telemetry
+    - Ollama remains private to the trusted LAN and its endpoint is never exposed to browsers
+    - Authentik and Core databases, credentials, migrations, and lifecycle remain isolated
+    - Temporary Authentik deployment must be removable without application or Core data changes
+    - Secrets, real subjects, endpoints, tokens, and certificates must not be committed
+  data_classes:
+    - private conversation content
+    - assistant partial and completed output
+    - authenticated principal identifiers
+    - OIDC provider tokens and session state
+    - model inventory and run metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - frontend_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 5
+  max_parallel_writers: 5
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - An Authentik-authenticated configured owner can create, list, select, and continue persistent conversations while other subjects are rejected.
+  - The temporary Authentik server, worker, database, and blueprint run only through the local-identity profile and Aura also operates against an external configured issuer.
+  - Authentik can move externally while preserving issuer, client, signing material, and subject without an Aura code or Core data migration.
+  - The UI shows installed Ollama models, disables known incompatible models, and persists a mutable per-conversation selection for future runs.
+  - Conversation creation and the first user message and run are atomic, idempotent, and create no abandoned empty database conversation.
+  - New and retried runs use bounded completed conversation context and record the exact immutable agent revision, model policy, provider, and model.
+  - Run requests use the transactional outbox and NATS JetStream with identifier-only idempotent commands and ordered mutations per conversation.
+  - Independent conversations run concurrently and continue when the user navigates elsewhere.
+  - SSE streams typed run and text events, reconnects from a persisted snapshot, and never carries browser credentials in its URL.
+  - Cancellation preserves the user message and checkpointed partial output; retry creates linked history without duplicating the message.
+  - Liveness is distinct from readiness across PostgreSQL, NATS, configured OIDC, the default model, and Ollama.
+  - Metadata-only instrumentation covers all declared components and metrics without exporting prompt or response content.
+  - Workbox does not cache APIs, authenticated responses, SSE, transcripts, or drafts; theme and unsent drafts remain browser-local.
+  - Core and Authentik durable state uses operator-configured encrypted host paths and all secrets are runtime-injected.
+  - Existing responsive, accessibility, focus, Storybook, and frontend behaviors remain covered.
+  - No Observatory, memory, tools, artifacts, voice, cloud provider, rich Markdown, deletion, or broader conversation-management feature is introduced.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0015.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0015.yaml
+  - uv sync --frozen
+  - uv run ruff check services/aura-core
+  - uv run pyright services/aura-core
+  - uv run pytest services/aura-core/tests -q
+  - pnpm --dir frontend run lint
+  - pnpm --dir frontend run test
+  - pnpm --dir frontend run build:production
+  - pnpm --dir frontend run build-storybook
+  - docker compose config --quiet
+  - docker compose --profile checks build frontend-checks frontend-e2e
+  - docker compose --profile checks run --rm frontend-checks
+  - docker compose up --build --detach --wait aura-web aura-core-api aura-core-worker
+  - curl --fail --silent --show-error http://127.0.0.1:4200/healthz
+  - docker compose --profile checks run --rm frontend-e2e
+  - docker compose down --remove-orphans
+  - python3 -m unittest discover -s tooling/architecture/tests -v
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0015.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0015.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0015.yaml
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

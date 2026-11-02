@@ -1,0 +1,265 @@
+agent: contract_steward
+work_item: AURA-0093
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: priority
+  agent_thread_id: /root/aura0093_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.evaluation-v1
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/evaluation/v1/evaluation.schema.json
+  - work-items/handoffs/AURA-0093-contract.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward as the sole writer for
+    evaluation-v1 during this ownership slice; the evaluation runner transport
+    and lifecycle event contracts were explicitly excluded and remain
+    byte-for-byte unchanged.
+  compatibility: backward_compatible
+  definitions:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      changes:
+        - >-
+          Added one optional closed Case expectations object with independently
+          optional exact, schema, retrieval, context, tool, policy,
+          groundedness, response, and resource families, so existing Case
+          resources remain valid while new deterministic cases can declare
+          typed evidence.
+        - >-
+          Added digest-only exact-field and schema expectations with bounded
+          field identities, canonical normalization modes, finite schema
+          dialects, and explicit additional-field policy; schema or expected
+          payload bytes are not embedded.
+        - >-
+          Added ranked evidence, cutoffs, relevance grades, citation
+          requirements, freshness, irrelevant evidence, required and
+          prohibited context, token ceilings, truncation, conflict, and
+          injection-handling expectations using opaque fixture-scoped evidence
+          identities.
+        - >-
+          Added declarative expected tool calls, argument schema and optional
+          exact argument digests, finite outcomes, side-effect and idempotency
+          evidence, prohibited tool identities, and redundant-call ceilings;
+          the shape grants no tool or execution authority.
+        - >-
+          Added finite expected policy decisions, confirmation states,
+          sensitive-data handling, consequential-action behavior, and optional
+          policy revision evidence without carrying a policy or permission.
+        - >-
+          Added claim-to-evidence support and citation expectations plus
+          deterministic response digest, instruction/style marker, refusal,
+          structural property, byte, and token expectations without prompt,
+          rubric, response, or judge content.
+        - >-
+          Added bounded resource expectations for latency, queueing, bytes,
+          tokens, memory, provider-call count, concurrency,
+          operation count, and throughput with explicit units in field names.
+        - >-
+          Added optional Suite manual thresholds bound to an exact evaluator
+          reference, metric, aggregation, comparison operator, finite value,
+          unit, minimum sample size, and missing-evidence policy; the threshold
+          cannot promote a baseline or alter execution limits.
+        - >-
+          Kept every new object closed and every string, number, and collection
+          bounded; arbitrary attributes, dynamic configuration, providers,
+          endpoints, credentials, object locators, filenames, owner identity,
+          executable values, and content-bearing evidence are absent.
+        - >-
+          Added an expectation-specific metadata identifier grammar and applied
+          it to every new evidence, field, call, tool, policy revision, claim,
+          instruction, style, and manual-threshold metric identifier. It
+          rejects case-insensitive delimited owner, user, identity, credential,
+          bearer, token, secret, password, private, content, hash, digest,
+          endpoint, URL, URI, path, filename, authentication, session, cookie,
+          and object-key segments without changing pre-existing identifiers.
+  compatibility_notes:
+    - >-
+      Case.expectations and Suite.manualThresholds are additive optional
+      properties on existing closed v1 resources. All AURA-0089 resources and
+      producers that omit them remain valid without transformation.
+    - >-
+      No existing required field, enum member, bound, conditional branch, or
+      resource union variant was removed or narrowed.
+    - >-
+      Reserved-segment rejection applies only to the optional AURA-0093
+      expectation and manual-threshold identifier fields introduced in this
+      unreleased work item. Pre-existing SafeIdentifier consumers, Evaluator
+      metrics, Score metrics, baseline thresholds, and settled v1 resources
+      retain their original grammar.
+    - >-
+      New AURA-0093 producers may populate the additions immediately, while
+      older consumers continue to process existing resources; consumers that
+      admit AURA-0093 definitions must reject unknown expectation families,
+      unsupported evaluator versions, and malformed nested evidence.
+    - >-
+      Cross-record reference existence, duplicate semantic identities,
+      artifact authorization compatibility, canonical digest calculation,
+      evaluator support, and metric-unit compatibility remain consumer
+      validation because portable JSON Schema cannot prove them.
+    - >-
+      evaluation-runner-transport-v1, evaluation-events-v1, production
+      telemetry contracts, OpenAPI contracts, and protected repository
+      baselines are unchanged.
+  producers:
+    - >-
+      Aura Observatory evaluation-definition application authorized by
+      AURA-0093, producing immutable Dataset, Case, Suite, and Evaluator v1
+      resources.
+    - >-
+      Authorized synthetic-fixture and owner-supplied dataset import workflows
+      assigned to later public API and browser work, after service validation.
+  consumers:
+    - >-
+      Aura Observatory evaluation-definition persistence and deterministic
+      evaluator registry authorized by AURA-0093.
+    - >-
+      Aura Observatory evaluation orchestration and score persistence, using
+      only validated exact resource versions and typed replay evidence.
+    - >-
+      AURA-0093 contract, definition, deterministic-evaluator, privacy, and
+      compatibility tests.
+    - >-
+      Later AURA-0095 API and generated Angular transport client after an
+      explicit OpenAPI contract change in that work item.
+  rollout:
+    - >-
+      Deploy the additive schema with strict version dispatch and nested
+      closed-object validation before admitting definitions that include
+      expectations or manual thresholds.
+    - >-
+      Apply the service-owned PostgreSQL definition migration, register the
+      closed evaluator inventory, and verify referenced dataset, evaluator,
+      component, fixture, and artifact versions before admitting a Suite.
+    - >-
+      Producers canonicalize digest inputs and persist only identifiers,
+      digests, classifications, limits, expectations, and thresholds;
+      authorized raw content remains solely behind existing opaque Garage
+      artifact references and manual retention.
+    - >-
+      Enable deterministic scoring only after repeatability, negative,
+      malformed, partial-evidence, privacy, migration, and Core-boundary tests
+      pass; ordinary Core activity and metadata-only production telemetry
+      remain independent.
+  generated_outputs: []
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0093.yaml
+    - python3 -m json.tool contracts/evaluation/v1/evaluation.schema.json
+    - >-
+      AJV 8.20 strict JSON Schema 2020-12 compilation with strictRequired
+      disabled for the established conditional-required convention and the
+      local evaluation-failure-codes-v1 reference resolved
+    - >-
+      AJV representative validation for a Case containing all nine expectation
+      families and a Suite containing a manual threshold
+    - >-
+      AJV representative rejection of unknown Case expectation fields,
+      endpoint-shaped nested attributes, a missing exact tool-argument digest,
+      unknown threshold attributes, and an over-limit sample size
+    - >-
+      AJV expectation-identifier probes accepting bounded operational names and
+      rejecting case-insensitive reserved segments at the beginning, middle,
+      and end for all privacy, identity, credential, network/storage locator,
+      authentication, session, and object-key categories
+    - >-
+      cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run
+      pytest tests/test_aura0089_contract.py -q (42 passed; verifies all prior
+      v1 resource representatives remain valid)
+    - >-
+      cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run
+      pytest tests/test_aura0089_contract.py tests/test_aura0093_contract.py -q
+      (49 passed after the reserved-segment correction)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0093.yaml (skipped successfully; no protected
+      baseline or threshold paths changed)
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0093.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0093.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Persistent AURA-0093 contract tests must be added by the assigned
+      test_evaluation_engineer under services/aura-observatory/tests. They
+      must cover a positive representative for every expectation family and
+      manual threshold plus closure, collection bounds, numeric bounds,
+      conditional exact-digest behavior, duplicate identities, missing
+      evidence, unknown fields, sensitive-shaped keys, non-finite values, and
+      backward compatibility for every AURA-0089 resource.
+    - >-
+      Observatory definition/evaluator tests, migration checks, lint, typing,
+      the complete Observatory suite, Core seam tests, component manifest
+      validation, observability validation, and aggregate integration checks
+      depend on parallel AURA-0093 ownership zones and remain required before
+      integration.
+decisions:
+  - >-
+    Preserved evaluation-v1 rather than introducing v2 because every resource
+    change is an optional property and every supporting definition is new;
+    no existing valid instance is invalidated.
+  - >-
+    Used reserved-segment-checked opaque evidence, instruction, style, field,
+    call, tool, policy revision, and metric identities plus SHA-256 digests
+    instead of embedding expected documents, arguments, responses, schemas,
+    policies, prompts, rubrics, filenames, identity metadata, credentials, or
+    storage locators in definition metadata.
+  - >-
+    Kept evaluator configuration out of Case expectations. The contract
+    declares evidence and expected outcomes; the service-owned closed registry
+    selects reviewed evaluator code by exact Evaluator identity and version.
+  - >-
+    Bound each manual threshold to an exact EvaluatorReference and explicit
+    metric, aggregation, operator, unit, sample floor, and missing-evidence
+    policy to avoid ambiguous suite-level numeric maps.
+  - >-
+    Kept baseline Threshold unchanged because Suite thresholds have stronger
+    AURA-0093 provenance and missing-evidence needs, while baseline comparison
+    and promotion remain assigned to AURA-0096.
+  - >-
+    Did not edit the runner transport or lifecycle event schemas: execution
+    remains reference-only and content-free, and deterministic scoring consumes
+    typed replay projections inside Observatory.
+  - >-
+    Omitted GPU-specific expectations because GPU monitoring is explicitly
+    deferred by the roadmap; the generic bounded resource family does not
+    authorize new host or accelerator telemetry.
+  - >-
+    Did not consult online documentation because dependency-version
+    verification was not assigned; the repository already fixes JSON Schema
+    2020-12 and the applicable architecture decisions.
+risks:
+  - >-
+    JSON Schema cannot prove digest correctness, ensure semantic identity
+    uniqueness across differently shaped objects, verify that evidence IDs
+    resolve to the declared fixture version, or compare artifact authorization
+    restrictiveness; service admission must enforce those invariants.
+  - >-
+    The expectation-specific grammar rejects delimited reserved sensitive
+    segments but cannot prove that a syntactically safe opaque identifier was
+    not derived from private content or owner identity; producers must generate
+    and scan identifiers at the service boundary.
+  - >-
+    Semantic correctness, usefulness, clarity, and other model-judged response
+    qualities are deliberately not encoded as deterministic v1 expectations;
+    local judge rubrics and calibration remain assigned to AURA-0094.
+unresolved: []

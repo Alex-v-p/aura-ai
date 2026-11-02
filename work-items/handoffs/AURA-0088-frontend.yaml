@@ -1,0 +1,298 @@
+agent: frontend_worker
+work_item: AURA-0088
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0088_frontend
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: frontend.observatory.run-comparison
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web/src/main.ts
+  - frontend/apps/observatory-web-e2e/src/observatory-web.spec.ts
+  - frontend/apps/storybook/src/observatory-comparison.stories.ts
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/comparison.spec.ts
+  - frontend/libs/observatory/src/lib/features/comparison/comparison.component.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - work-items/handoffs/AURA-0088-frontend.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0088.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0088.yaml --role frontend_worker with explicit
+      frontend-owned paths
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - git diff --check
+    - >-
+      cd frontend && pnpm exec vitest run --config vitest.workspace.ts
+      libs/observatory/src/lib/comparison.spec.ts (6 tests passed, including
+      privacy-safe tagged model identifiers, numeric/unit bounds, unique
+      integrity values, and 10,000/512 trace bounds)
+    - cd frontend && NX_DAEMON=false NX_CLOUD=false pnpm exec nx run observatory:test --skip-nx-cache
+    - cd frontend && NX_DAEMON=false NX_CLOUD=false pnpm exec nx run observatory-web:test --skip-nx-cache
+    - cd frontend && NX_DAEMON=false NX_CLOUD=false pnpm exec nx run observatory:lint --skip-nx-cache
+    - cd frontend && NX_DAEMON=false NX_CLOUD=false pnpm exec nx run observatory-web:lint --skip-nx-cache
+    - >-
+      cd frontend && pnpm exec eslint
+      apps/observatory-web-e2e/src/observatory-web.spec.ts
+      libs/observatory/src/lib/features/comparison/comparison.component.ts
+      libs/observatory/src/lib/observatory-models.ts
+      libs/observatory/src/lib/comparison.spec.ts
+      apps/storybook/src/observatory-comparison.stories.ts (0 errors)
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-web:build:production
+    - cd frontend && pnpm exec tsc --noEmit -p apps/storybook/tsconfig.json
+    - >-
+      cd frontend/apps/observatory-web-e2e && AURA_OBSERVATORY_WEB_E2E_SKIP_SERVER=1
+      pnpm exec playwright test --list --reporter=line (204 mocked browser
+      tests discovered, including keyboard Tab/Enter/Space paths, focus
+      restoration, truthful empty/first-use/retry states, freshness and
+      unavailable markers, responsive, dark, reduced-motion, and Axe
+      coverage)
+    - >-
+      After the responsive overflow correction: Observatory and Observatory Web
+      unit tests passed, Observatory Web production build passed, focused ESLint
+      passed, Playwright discovery reported 204 tests, and changed-path,
+      frontend-boundary, work-item, and diff checks passed.
+    - >-
+      After the hidden-panel containment correction: Observatory and Observatory
+      Web unit tests, focused ESLint, production build, Playwright discovery
+      (204 tests), changed-path, frontend-boundary, work-item, YAML, and diff
+      checks passed.
+    - >-
+      Added durable diagnostics to the zoomed document-overflow assertion;
+      focused ESLint, Observatory and Observatory Web unit tests, production
+      build, Playwright discovery (204 tests), changed-path,
+      frontend-boundary, work-item, and diff checks passed.
+    - >-
+      After replacing the unreliable hidden-only presentation with explicit
+      inline display bindings on mounted feature hosts: focused ESLint,
+      Observatory and Observatory Web unit tests, production build, Playwright
+      discovery (204 tests), changed-path, frontend-boundary, work-item, YAML,
+      and diff checks passed.
+    - >-
+      Corrected the browser regression to verify each direct feature host by
+      expected tag and computed display, with active Compare asserted as block
+      and visible. Focused ESLint, Observatory and Observatory Web unit tests,
+      production build, Playwright discovery (204 tests), changed-path,
+      frontend-boundary, work-item, and diff checks passed.
+    - >-
+      Contained the diagnosed masthead overflow with explicit narrow-grid and
+      wrapping rules; focused ESLint, Observatory and Observatory Web unit
+      tests, production build, Playwright discovery (204 tests), changed-path,
+      frontend-boundary, work-item, YAML, and diff checks passed.
+    - >-
+      Added bounded wrapping to the masthead text block after browser
+      diagnostics identified its intrinsic h1 width; focused ESLint,
+      Observatory and Observatory Web unit tests, production build, Playwright
+      discovery (204 tests), changed-path, frontend-boundary, work-item, YAML,
+      and diff checks passed.
+    - >-
+      Corrected responsive acceptance semantics to test 375px narrow layout at
+      100% zoom, then deterministic 640px and 320px effective widths with
+      one-column control assertions; focused ESLint, Observatory and
+      Observatory Web unit tests, production build, Playwright discovery (204
+      tests), changed-path, frontend-boundary, work-item, YAML, and diff checks
+      passed.
+    - >-
+      Added semantic synchronization on Compare navigation (`aria-current` and
+      active host visibility) before panel display diagnostics; focused ESLint,
+      Observatory and Observatory Web unit tests, production build, Playwright
+      discovery (204 tests), changed-path, frontend-boundary, work-item, YAML,
+      and diff checks passed.
+    - >-
+      Bounded comparison invalidation after full-stack evidence showed
+      redundant compare POSTs: initial snapshot, health.changed, and heartbeat
+      events no longer invalidate run evidence, heartbeat no longer starts a
+      full snapshot refresh, and metadata invalidations arriving while the
+      manual comparison is loading are suppressed. The mocked comparison
+      fixture now emits a health.changed event and asserts exactly one compare request. Focused
+      ESLint, Observatory and Observatory Web unit tests, production build,
+      Playwright discovery (204 tests), changed-path, frontend-boundary,
+      work-item, and diff checks passed.
+  failed:
+    - >-
+      cd frontend && NX_DAEMON=false pnpm exec nx run storybook:build-storybook
+      could not complete because the restricted runner could not resolve
+      cloud.nx.app (EAI_AGAIN); no application assertion or TypeScript error
+      was reported.
+    - >-
+      cd frontend/apps/observatory-web-e2e && pnpm exec playwright test
+      observatory-web.spec.ts -g "compares two runs with keyboard-safe selection"
+      --project=desktop could not start the configured webServer (exit code 1);
+      direct Nx serve evidence is EPERM while listening on its /tmp/.nx
+      pseudo-terminal socket.
+    - >-
+      cd frontend/apps/observatory-web-e2e && pnpm exec playwright test
+      observatory-web.spec.ts -g "uses Tab, Enter, and Space" --project=desktop
+      could not start the configured webServer (exit code 1) before browser
+      launch; no test assertion ran.
+    - >-
+      cd frontend/apps/observatory-web-e2e && pnpm exec playwright test
+      observatory-web.spec.ts -g "gives a true empty run catalogue" --project=desktop
+      could not start the configured webServer (exit code 1) before browser
+      launch; no test assertion ran.
+  not_run:
+    - >-
+      AURA-0088 real-browser and full-stack browser checks were not run in this
+      ownership slice because no live stack was started; integration owns the
+      final mocked and full-stack acceptance matrix.
+    - >-
+      The repository's full required service, contract, migration, and
+      Compose checks remain integration-maintainer checks.
+decisions:
+  - >-
+    Added a standalone Observatory comparison feature and registered it only
+    in the Observatory application shell; Aura product feature libraries,
+    shared product UI, contracts, and generated clients were not edited.
+  - >-
+    Kept comparison selections and results in ObservatoryStore memory only.
+    The generated compareRuns transport operation is used with a bounded POST,
+    existing owner session, no URL parameters, no browser persistence, and
+    bounded LiveRefreshCoordinator invalidation on metadata SSE.
+  - >-
+    Added closed runtime validation for comparison markers, run sides,
+    component measurements, aligned spans, integrity states, limits, freshness,
+    and metadata_only capture before any server response reaches a template.
+    Unknown fields, unsupported identifiers, and content-like marker values
+    are rejected.
+  - >-
+    Aligned the browser validator with OpenAPI bounds: model identifiers accept
+    bounded provider tags such as qwen3:8b while rejecting URL/private-shaped
+    values; all finite numeric measurements are bounded, AnalyticsUnit is
+    allowlisted, component durations/spans and freshness are bounded, and
+    integrity arrays are unique. Traces accept up to 10,000 spans and
+    512-character alignment keys. Duplicate alignment keys use a stable
+    key-plus-index Angular identity.
+  - >-
+    Implemented explicit left/right selection, same-run validation, swap/reset,
+    retry, focus restoration, stale/disconnected/partial/malformed/rejected/
+    unavailable/service-down states, non-colour status text, and semantic
+    tables for run markers, component deltas, and aligned trace differences.
+    Refreshing preserves the visible result and uses aria-busy; only a failed
+    refresh becomes stale. Local selection changes are explicitly labelled as
+    obsolete, and left/right integrity is rendered separately with plain
+    labels for bounded partial reasons.
+  - >-
+    Added realistic Storybook ready/partial dense fixtures with tagged model
+    identifiers, a disconnected prior-result state, and a semantic-token dark
+    surface, plus parser tests covering zero versus missing measurements,
+    unavailable evidence, unknown fields, malformed integrity metadata, model
+    privacy, duplicate keys, and contract bounds.
+  - >-
+    Kept same-run aria-describedby targets present before and after submit,
+    added an explicit empty-state Retry runs action wired to ObservatoryStore.load,
+    kept ordinary first use as plain selection guidance, restricted comparison
+    retry controls to failed requests, and changed version availability copy to
+    “Version missing” and “Version unavailable”.
+  - >-
+    Corrected the selector grid to a valid four-track desktop declaration and
+    added a browser assertion for four computed tracks. The Storybook dark story
+    now assigns the complete Observatory production semantic dark token set on
+    its themed wrapper; browser checks assert dark luminance and text contrast.
+  - >-
+    Updated the keyboard reset acceptance to assert cleared left/right
+    selections, disabled Reset, visible first-use guidance, and no comparison
+    retry action after a successful reset.
+  - >-
+    Reconciled real-browser feedback: Retry runs now has a correctly instrumented
+    fixture request path; comparison table assertions target their semantic
+    regions/tables; selector track assertions are desktop-aware; unavailable
+    marker assertions are scoped to the bounded-evidence status; and the SSE
+    run assertion is scoped to the Runs workspace.
+  - >-
+    Render freshness-unavailable evidence from the validated comparison result
+    even when the independent live stream is disconnected, preserving both
+    truthful data freshness and connection state.
+  - >-
+    Corrected the browser fixtures and expectations to distinguish partial
+    comparison evidence from the disconnected live-stream state. Partial
+    fixtures assert their bounded partial-evidence status, while complete
+    fixtures do not claim a retry or partial state; semantic comparison tables
+    remain scoped to their named regions.
+  - >-
+    Made the freshness-unavailable fixture carry an explicitly unavailable
+    marker and scoped the browser assertion to bounded status roles. Reduced
+    motion checks parse comma-separated CSS durations numerically, accepting
+    valid browser serialization such as 1e-05s while enforcing the 0.01s
+    limit.
+  - >-
+    Contained the responsive comparison selection surface by clearing intrinsic
+    minimum widths on its fieldset, grid children, labels, controls, and
+    selects. Long run identifiers and option labels can now wrap or shrink at
+    zoomed narrow widths, while the comparison data tables retain their
+    intentional local horizontal scrolling.
+  - >-
+    Kept all Observatory feature hosts mounted for state preservation, while
+    using explicit inline display bindings on each host alongside the hidden
+    attributes. Inactive panels render as `display:none` and the active panel
+    as `display:block`, overriding child-host display styles without relying on
+    Angular's encapsulated shell selector.
+  - >-
+    Extended the existing 200%/400% responsive overflow assertion with bounded
+    browser-side diagnostics for every visible element that extends beyond the
+    viewport or has oversized layout metrics. Diagnostics include a stable
+    tag/id/class selector, bounding left/right/width, scrollWidth, clientWidth,
+    and overflow mode, while the document-level overflow assertion remains
+    blocking.
+  - >-
+    Restricted comparison refreshes to persisted metadata-bearing events
+    (`observation.changed` and `retention.changed`) and retained
+    the existing one-active/one-trailing LiveRefreshCoordinator. Health
+    notifications update health history only, keepalives update connection
+    timestamps only, and a live event cannot race the initial manual compare
+    request into redundant POSTs. No telemetry payload, URL, or browser storage
+    behavior changed.
+  - >-
+    Scoped the inactive-host regression to each direct feature host's expected
+    tag and computed display value. It separately verifies active Compare is
+    `display:block` and visible, avoiding assumptions about Angular's retained
+    boolean `hidden` attribute.
+  - >-
+    Fixed the active app-shell overflow identified by browser diagnostics: the
+    masthead's narrow grid now uses a `minmax(0,1fr)` track, direct children and
+    header actions have bounded minimum/maximum widths, and the connection and
+    action labels may wrap at narrow or extreme zoom. The tab strip keeps its
+    intentional local horizontal scrolling.
+  - >-
+    Wrapped and bounded the masthead text container, heading, eyebrow, and
+    subtitle with `overflow-wrap:anywhere` and safe word breaking after the
+    browser diagnostic identified the h1 as the remaining intrinsic-width
+    source at 400% zoom.
+  - >-
+    Split responsive acceptance into a true 375px narrow viewport at 100% zoom
+    and deterministic 640px/320px viewport simulations for the 200%/400%
+    effective widths of a 1280px reference viewport. Chromium CSS zoom does not
+    change layout viewport or media-query width, so the simulation keeps zoom
+    at 1, asserts one-column controls and bounded document overflow, and keeps
+    the existing visible-element diagnostics blocking.
+  - >-
+    Synchronize the panel-display regression on semantic Compare navigation
+    state and active-host visibility before reading computed styles, avoiding a
+    timing race with the Angular tab signal render without adding sleeps.
+risks:
+  - >-
+    Storybook production build needs to be rerun in an environment with the
+    repository's Nx integration endpoint reachable; the failure here was
+    network resolution only.
+  - >-
+    Focused browser checks require the integration runner's mocked web server;
+    this runner reported webServer exit code 1 before a browser launched:
+    direct Nx serve fails with EPERM on its /tmp/.nx pseudo-terminal socket.
+    The discovered suite includes focus restoration, reset/swap, separate
+    integrity labels, error-state copy, responsive/zoom layouts, dark mode,
+    reduced motion, and no-storage/no-URL behavior.
+unresolved: []

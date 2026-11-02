@@ -1,0 +1,94 @@
+agent: integration_maintainer
+work_item: AURA-0081
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0081-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0081-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0081-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0081-observability.yaml
+  - reviewer: aura_ux_ui_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0081-ux-ui.yaml
+  - reviewer: contract_steward
+    status: PASS
+    verdict: work-items/handoffs/AURA-0081-contracts.yaml
+  - reviewer: observatory_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0081-observatory.yaml
+  - reviewer: frontend_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0081-frontend.yaml
+  - reviewer: platform_worker
+    status: PASS
+    verdict: work-items/handoffs/AURA-0081-platform.yaml
+  - reviewer: test_evaluation_engineer
+    status: PASS
+    verdict: work-items/handoffs/AURA-0081-tests.yaml
+conflicts_resolved: []
+generated_outputs:
+  - work-items/archived/AURA-0081.yaml
+checks:
+  passed:
+    - >-
+      work-item, implementation-handoff, and review-verdict schema validation
+      for AURA-0081 and all five handoffs and five reviews
+    - >-
+      AURA-0081 work-item, changed-path, repository-shape, module-registry,
+      frontend-boundary, contract-change, observability, and baseline-protection
+      validators (baseline protection skipped with no protected changes)
+    - >-
+      tooling/architecture/tests (52 passed) under a 2 GiB address-space and
+      single-threaded Git configuration
+    - >-
+      deploy/compose/test_topology.py (33 passed) and shell syntax validation
+      for deploy/compose/run-observatory-full-stack-e2e.sh
+    - >-
+      observatory-v1 generated-client drift, contract, lint, and TypeScript
+      checks
+    - >-
+      Observatory Web and feature-library lint, unit tests, TypeScript checks,
+      production build, and Storybook production build from the implementation
+      and test/evaluation handoffs (Storybook passed with its recorded 768 MiB
+      Node cap)
+    - >-
+      final mocked Playwright regression (48/48 across desktop, tablet, and
+      mobile) and focused retention-failure regression (3/3)
+    - >-
+      Storybook/Playwright accessibility checks for healthy, unavailable, and
+      retention-confirmation states across supported viewports
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      A second integration-owned Storybook build was not completed after the
+      bounded rerun terminated its shell without a status; the implementation
+      handoff's capped Storybook build remains the passing evidence.
+    - >-
+      The real Docker full-stack browser acceptance was not run because the
+      existing Docker Desktop daemon is wedged by the prior disposable bind
+      state and restarting it could affect user workloads.
+  blocked:
+    - >-
+      Real full-stack acceptance remains environment-blocked until Docker
+      Desktop is safely restarted; no product or repository failure was found.
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    Full Core-to-Collector-to-Observatory-to-browser execution, outage-phase
+    Core usability confirmation, and live Docker Compose startup remain
+    unverified solely because Docker Desktop is wedged. Rerun
+    deploy/compose/run-observatory-full-stack-e2e.sh after an approved Docker
+    Desktop restart.
+  - >-
+    No integration commit was created in this handoff; the reviewed working
+    tree is ready for the Delivery Lead's authorized Conventional Commit.

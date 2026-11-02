@@ -1,0 +1,99 @@
+agent: platform_worker
+work_item: AURA-0136
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0136_platform
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: repository.module-registry; aura-core.workflow-state-observability
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - tooling/architecture/modules.yaml
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/resources/component-manifests/approval-workflow.yaml
+  - services/aura-core/resources/component-manifests/notification-delivery.yaml
+  - services/aura-core/resources/component-manifests/workflow-state.yaml
+  - work-items/handoffs/AURA-0136-platform.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.automation.workflow_state@1.0.0
+    - aura.governance.approval_workflow@1.2.0
+    - aura.automation.notification_delivery@1.2.0
+  metrics_added:
+    - workflow_transition_outcome
+    - workflow_command_outcome
+    - workflow_repository_outcome
+    - workflow_transition_duration_ms
+    - workflow_command_duration_ms
+    - workflow_repository_duration_ms
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0136.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0136.yaml
+    - python3 tooling/architecture/validate-module-registry.py
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0136.yaml
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run ruff check
+      services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/tests/test_telemetry.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_telemetry.py
+      services/aura-core/tests/test_workflow_state_machine.py
+      services/aura-core/tests/test_workflow_repository.py -q (112 passed, 1 skipped)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pyright
+      services/aura-core/src/aura_core/platform/telemetry.py
+      services/aura-core/tests/test_telemetry.py (0 errors)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      services/aura-core/tests/test_aura0130_observability.py
+      services/aura-core/tests/test_aura0133_observability.py -q (31 passed)
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+  failed: []
+  not_run:
+    - >-
+      Aggregate Core, contract, frontend, migration, and browser checks remain
+      owned by their respective AURA-0136 workers and the integration maintainer.
+decisions:
+  - >-
+    Registered aura-core.domains.automation.workflows as a package and assigned
+    ownership of all currently present workflow package modules: __init__.py,
+    models.py, public.py, persistence.py, repository.py, and state.py.
+  - >-
+    Advanced approval and notification component versions to 1.2.0 in both
+    manifests and the runtime component catalogue because their workflow source
+    unions are additive behavior changes; existing finite dimensions,
+    metadata-only capture, and legacy evaluators remain intact.
+  - >-
+    Added a separate workflow-state component manifest at
+    services/aura-core/resources/component-manifests/workflow-state.yaml with
+    component aura.automation.workflow_state, bounded transition, command, and
+    repository outcome and component-local latency metrics, and the two
+    workflow evaluators. Its capture policy is metadata_only and private
+    workflow values and executor state are prohibited.
+  - >-
+    Registered exactly three finite workflow operations and bounded workflow
+    dependency, outcome, and error-class vocabularies at the telemetry boundary;
+    application_validation, PostgreSQL, and transactional_outbox are the only
+    workflow dependencies; workflow identifiers and optimistic versions remain
+    trace-only attributes. The pure transition path is therefore accepted
+    without telemetry rejection.
+  - >-
+    No product code, workflow route, scheduler, worker, provider, Observatory,
+    dependency, framework, or deployment logic was added in this slice.
+risks: []
+unresolved: []

@@ -1,0 +1,44 @@
+component:
+  id: aura.execution.briefing_admission
+  version: 1.0.0
+  owner: execution.briefings
+  category: execution
+input:
+  schema: aura-briefing-admission-v1
+  replayable: true
+  replay_reason: Admission evaluates a durable occurrence against synthetic owner policy and pinned execution references.
+output:
+  schema: aura-run-events-v3
+  additional_schemas:
+    - contracts/events/runs/v1/run-events.schema.json
+  capture:
+    content: none
+    metadata: allowlisted
+dependencies:
+  - postgresql
+  - aura.execution.run_coordinator
+  - aura.governance.identity
+metrics:
+  - briefing_admission_duration_ms
+  - briefing_budget_exhaustion_count
+  - briefing_outcome_count
+metric_semantics:
+  briefing_admission_duration_ms: Active duration of authorization, pinning, and durable run-admission work.
+  briefing_budget_exhaustion_count: Count of bounded deadline or resource-budget rejections.
+  briefing_outcome_count: Count of bounded admitted, rejected, timeout, or error outcomes.
+capture_policy: metadata_only
+evaluators:
+  - briefing.authorization.v1
+  - briefing.execution.v1
+cardinality:
+  metric_attributes: [operation, outcome, error_class, dependency, status]
+  trace_only: [trace_id, span_id, parent_span_id, run_id, schedule_id, occurrence_id, command_id, correlation_id, causation_id, agent_revision_id, policy_revision_id]
+  prohibited: [content, prompt, response, payload, token, credential, owner_identity, owner_subject, timezone, due_at, source_value, raw_error]
+retention:
+  process_buffer: bounded
+  overflow: drop_oldest_and_count
+  export_failure: retry_three_times_then_drop_and_count
+export:
+  sink: structured_container_log
+  cadence: periodic_and_shutdown
+  health_counters: [dropped, rejected, export_failures, abandoned_batches]

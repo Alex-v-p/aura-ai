@@ -1,0 +1,71 @@
+agent: integration_maintainer
+work_item: AURA-0149
+status: integrated
+integrated_commits:
+  - c6448a7
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0149-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0149-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0149-security-privacy.yaml
+conflicts_resolved: []
+generated_outputs: []
+checks:
+  passed:
+    - >-
+      The AURA-0149 implementation handoff and all three required review
+      verdicts were verified; each review is schema-valid PASS with no findings.
+    - >-
+      The approved work item was validated before archival and the archived
+      integrated work item remains schema-valid.
+    - >-
+      Commit-scoped changed-path validation passed for all seven AURA-0149
+      implementation, handoff, work-item, and review paths; unrelated AURA-0148
+      edits were excluded and preserved.
+    - python3 tooling/architecture/validate-contract-changes.py reported no contract changes.
+    - python3 tooling/architecture/validate-import-boundaries.py passed.
+    - python3 tooling/architecture/validate-service-isolation.py passed.
+    - python3 tooling/architecture/validate-module-registry.py passed.
+    - python3 tooling/architecture/validate-repository-shape.py passed.
+    - >-
+      Baseline protection passed in the clean commit worktree with no protected
+      baseline or threshold changes.
+    - >-
+      Scoped Ruff and Pyright checks passed with no diagnostics for the
+      migration, AURA-0149 regression, migration regression, and research
+      delivery test paths.
+    - >-
+      The exact focused isolated PostgreSQL suite passed 58 tests against a
+      fresh disposable database.
+    - >-
+      The exact migration and research-delivery aggregate passed 62 tests
+      against the same fresh disposable PostgreSQL database.
+    - >-
+      The collision regression passed 4 tests twice consecutively against the
+      same disposable PostgreSQL database, including concurrent and re-entry
+      coverage.
+    - >-
+      The unchanged AURA-0068 document SQL check passed 8 tests against a
+      separate fresh disposable PostgreSQL database; that database was removed
+      after verification.
+    - git diff --check passed for the reviewed checkpoint and remaining shared worktree edits.
+    - >-
+      The integration report and all AURA-0149 review verdicts conform to their
+      repository schemas.
+  failed: []
+repository_clean: false
+changed_paths_valid: true
+remaining_risks:
+  - >-
+    The shared feature worktree retains unrelated uncommitted AURA-0148
+    implementation and validation files; they were not staged or modified by
+    this integration and must be integrated separately by the owning workflow.
+  - >-
+    Real research providers remain disabled under the accepted AURA-0144
+    rollout decision; this migration correction adds no provider or network
+    behavior.

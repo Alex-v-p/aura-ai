@@ -1,0 +1,30 @@
+agent: observability_steward
+work_item: AURA-0091
+verdict: PASS
+checked:
+  - >-
+    Re-verified the aura.evaluation.runner manifest and typed observability
+    validator: all required queue, fixture-load, execution, cancellation,
+    resource-limit, outcome, and reproducibility measurements have explicit
+    bounded units, dimensions, dependencies, trace/export behavior, and
+    metadata-only retention semantics.
+  - >-
+    Confirmed production MetadataMetrics accepts every emitted runner metric
+    with zero rejection and fixed bounded labels; failure, storage, NATS,
+    lease, recovery, cleanup, and dependency attribution remain finite and
+    content-free.
+  - >-
+    Confirmed durable terminal accounting prevents duplicate outcomes or fake
+    durations across redelivery and fresh-process recovery, and NATS setup,
+    publication, and object-storage failures are attributed to the correct
+    bounded dependency class.
+  - >-
+    Confirmed the opt-in live OTLP acceptance observes runner metadata-only
+    observations through Collector and Observatory ingest, then stops the
+    Collector and ingest API while proving runner execution and normal Core
+    usability continue.
+  - >-
+    Observability validator tests, focused runner tests, topology checks, and
+    the final serialized Docker Desktop acceptance passed with no unresolved
+    observability finding.
+findings: []

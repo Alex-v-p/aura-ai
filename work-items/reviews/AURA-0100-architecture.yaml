@@ -1,0 +1,26 @@
+agent: architecture_guardian
+work_item: AURA-0100
+verdict: PASS
+checked:
+  - >-
+    Reviewed the approved AURA-0100 scope, implementation handoffs, and final
+    production diff for the Observatory migration prerequisite, local-http
+    overlay, Garage bootstrap, credential helper, and evaluation healthchecks.
+  - >-
+    Confirmed the PostgreSQL ledger remains Observatory-owned and is created by
+    the existing forward-only migration chain before guarded later writes; no
+    public contract, provider direction, persistence ownership, or
+    Core/Observatory isolation boundary changes were introduced.
+  - >-
+    Confirmed the local-http overlay restores the existing entrypoint bind,
+    retains disposable named state, and removes only redundant dependent Garage
+    cluster-layout mutation while leaving Core bootstrap as the sole layout
+    owner.
+  - >-
+    Confirmed evaluation process probes remain service-local healthchecks using
+    the packaged interpreter and bounded process identity inspection; no new
+    service, package, framework, or architecture exception was added.
+  - >-
+    Reviewed the final live-startup and focused-test evidence supplied by the
+    general reviewer; no architectural finding remains.
+findings: []

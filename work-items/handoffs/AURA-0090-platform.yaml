@@ -1,0 +1,85 @@
+agent: platform_worker
+work_item: AURA-0090
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: null
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: deploy.observatory-garage
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - .env.example
+  - compose.yaml
+  - deploy/compose/local-http.yaml
+  - deploy/compose/run-observatory-full-stack-e2e.sh
+  - deploy/compose/test_topology.py
+  - tooling/architecture/modules.yaml
+  - tooling/architecture/validate-observability.py
+  - tooling/architecture/tests/test_validate_observability.py
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      consumer_boundary:
+        - Deployment exposes only the worker-owned file-injected evaluation object-store boundary; no API or event transport was added.
+migrations:
+  changed: false
+  postgresql: []
+  clickhouse: []
+observability:
+  components:
+    - aura.observatory.evaluation_artifact_storage
+    - aura.observatory.evaluation_deletion
+  metrics_added: []
+verification:
+  passed:
+    - bash -n deploy/compose/local-http.sh deploy/compose/run-observatory-full-stack-e2e.sh
+    - python3 -m unittest deploy.compose.test_topology
+    - python3 -m unittest deploy.compose.test_topology.ComposeTopologyTests.test_garage_is_private_digest_qualified_and_core_only
+    - python3 -m unittest deploy.compose.test_topology.ComposeTopologyTests.test_observatory_garage_bootstrap_rendered_command_is_shell_valid deploy.compose.test_topology.ComposeTopologyTests.test_observatory_garage_rendered_command_reaches_grant_and_verification deploy.compose.test_topology.ComposeTopologyTests.test_observatory_garage_parser_matches_pinned_bucket_table deploy.compose.test_topology.ComposeTopologyTests.test_observatory_garage_permission_flags_require_exact_write_row deploy.compose.test_topology.ComposeTopologyTests.test_observatory_garage_bootstrap_rejects_missing_core_bucket
+    - python3 -m unittest deploy.compose.test_topology.ComposeTopologyTests.test_observatory_full_stack_runner_allocates_and_cleans_disposable_networks deploy.compose.test_topology.ComposeTopologyTests.test_private_parser_and_object_storage_networks_have_deterministic_ipam
+    - python3 -m pytest -q deploy/tests/test_aura0090_topology.py
+    - python3 -m unittest tooling.architecture.tests.test_validate_observability tooling.architecture.tests.test_observability
+    - python3 -m unittest discover -s tooling/architecture/tests -p 'test_*.py'
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0090.yaml
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0090.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0090.yaml
+    - git diff --check
+    - docker compose topology rendering through deploy.compose.test_topology fixtures
+  failed: []
+  not_run:
+    - Full Docker build and run-observatory-full-stack-e2e.sh require the disposable Docker acceptance environment and remain integration-owner checks. The first real-stack rerun reached ClickHouse cleanup, then bootstrap exited 78 during import because the disposable Observatory fixture used a non-Garage-compatible prefix. The corrected-key reruns exposed a shell-folding syntax defect, a parser false rejection, a folded YAML shell-comment defect that commented out the grant and post-grant verification while allowing bootstrap to exit successfully, a Garage association-order defect where permission verification ran after deny operations on an unassociated key, and a compact-permission verification defect where bucket-info flags were incorrectly searched as words. Redacted Garage v2.1 evidence established the exact `BUCKETS FOR THIS KEY` table and bucket-info row shape: a fresh key has only the key-info header, while a write grant is a row containing `W`, a 16-hex ID, and the target alias; bucket-info permissions use compact flags in the first column. The bootstrap now supplies the Core bucket, rejects missing/empty/equal bucket configuration, parses the exact table, grants write before permission cleanup, fails closed on deny failures, requires an exact matched-key bucket-info flag of `W`, keeps unrelated grants fail-closed, and uses shell no-op comments so every grant and verification command remains executable. Integration should rerun the stack and capture only redacted bucket-table output if the error persists.
+    - Service Python lint, type checks, migrations, and artifact behavior tests remain with the Observatory worker/test handoffs.
+decisions:
+  - Reused the existing private Garage deployment and pinned image, adding a separate Observatory evaluation bucket/key and a dedicated internal network.
+  - Added a separate one-shot Observatory Garage bootstrap job so Core bootstrap never receives evaluation credentials; only the long-running Observatory worker receives those credentials.
+  - Kept evaluation credentials file-injected and replaced durable host-state mounts with project-scoped named volumes in the disposable local HTTP and full-stack overlays.
+  - Added a bounded full-stack worker preflight that uploads one synthetic artifact, writes a finite score, simulates a missing object, verifies idempotent deletion, and exercises job, dataset, suite, cutoff, and purge-all selectors without exposing content or locators.
+  - Corrected the full-stack subnet allocator to emit and validate all three selected /28 values, including the dedicated Observatory object-storage subnet, and added a focused topology assertion for the third value.
+  - Registered evaluation-storage application and concrete providers under Observatory composition, while keeping the worker entrypoint dependent only on composition plus its imported application/settings modules.
+  - Restricted the pinned Garage v2.1 Observatory grant to write/delete capability, required Core bootstrap completion first, and added pre/post key-info checks that reject bucket reuse or unexpected preexisting grants without printing key material.
+  - Removed any pre-existing target-bucket read and owner grants with the pinned Garage deny commands, then matched the full access key in bucket-info and required the first permission column to be exactly `W`; `R`, `RW`, `WO`, `RWO`, empty, and missing rows remain fail-closed.
+  - Corrected the disposable Observatory Garage access-key fixture after real-stack evidence showed Garage 2.1 rejects the prior non-Garage-compatible prefix; it now uses a distinct same-length GK-prefixed fixture while Core retains its separate key.
+  - Hardened authorized-bucket parsing for Garage 2.1 output by extracting only the bounded bucket token from annotated entries and ignoring empty/none markers; unexpected actual bucket grants remain fail-closed.
+  - Added expected-alias matching for Garage key-info entries that carry a bucket ID plus alias/permissions annotations, with a redacted fixture/parser regression covering multiple entries; unknown bucket aliases continue to be emitted for the existing unexpected-grant fail-closed check.
+  - Added a rendered Compose-command `/bin/sh -n` regression so folded multiline bootstrap commands are syntax-checked after Compose dollar interpolation, including the required function terminator.
+  - Supplied the configured Core bucket to Observatory bootstrap and fail closed when either bucket is empty or reused; guarded Core-bucket equality checks against empty parser output. Replaced speculative authorized-bucket parsing with the pinned Garage v2.1 `BUCKETS FOR THIS KEY` table parser and added fresh, target-only, unrelated-grant, and missing-Core-bucket regressions.
+  - Removed shell comments from the folded Compose bootstrap scalar because YAML folding made them consume the following grant and verification commands; replaced them with bounded `:` no-op statements and added a stubbed rendered-command regression proving deny, write grant, and post-grant inspection are reached.
+  - Ordered Garage provisioning as write association first, then read/owner denial with explicit failure handling; the rendered-command regression verifies this order and confirms a deny failure exits before post-grant verification.
+  - Added explicit module registry entries for the new Observatory evaluation storage and worker adapter modules.
+  - Added both AURA-0090 evaluation component IDs to the typed observability validator and covered metadata-only capture plus required prohibited-field enforcement with focused validator tests.
+risks:
+  - The full-stack acceptance phase requires the Garage, PostgreSQL, ClickHouse, and Observatory images to be available to Docker; no network or privileged setup was attempted.
+  - Operators must create the two Observatory Garage secret files referenced by .env before enabling the observatory profile.
+unresolved: []

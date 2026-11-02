@@ -1,0 +1,162 @@
+agent: contract_steward
+work_item: AURA-0146
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: deep
+  agent_thread_id: /root/aura0146_contracts
+  worktree: feat/governed-research-artifacts-tasks
+scope:
+  ownership_zone: >-
+    contracts.aura-api.research-notifications,
+    contracts.events.automation.research-notifications,
+    frontend.aura-api-client.generated
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/automation/v1/notification-events.schema.json
+  - contracts/tests/test_aura0132_briefing_contract.py
+  - contracts/tests/test_aura0136_workflow_contract.py
+  - contracts/tests/test_aura0146_conversational_research_contract.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - work-items/handoffs/AURA-0146-contracts.yaml
+contracts:
+  changed: true
+  authorship: >-
+    Serialized by the assigned contract_steward after AURA-0146 explicitly
+    authorized the exact Aura v1, notification-event, compatibility-test, and
+    generated-client paths. No concurrent contract author was assigned and no
+    business behavior was added to schemas or generated code.
+  compatibility: backward_compatible
+  definitions:
+    - id: aura-v1
+      version: 1.22.0
+      source: contracts/openapi/aura-v1.yaml
+      changes:
+        - >-
+          Additively added the closed ResearchNotification owner-authorized
+          list and detail variant. It contains only notification lifecycle
+          metadata and one opaque researchId; owner identity, research content,
+          citations, evidence, URLs, artifacts, provider data, and recovery
+          detail are unrepresentable.
+        - >-
+          Additively added the closed ResearchNotificationLifecycleEvent to
+          persisted notification lifecycle and SSE unions with only opaque
+          identifiers, bounded status, version, and timestamp.
+    - id: automation-notification-events
+      version: 1
+      source: contracts/events/automation/v1/notification-events.schema.json
+      changes:
+        - >-
+          Additively added delivered and acknowledged research-source variants
+          with opaque researchId lineage. Existing reminder, briefing, and
+          workflow event definitions and union ordering remain unchanged.
+  compatibility_notes:
+    - >-
+      Existing reminder, briefing, and workflow notification REST and event
+      variants remain accepted byte-for-byte. The only evolution is appending
+      the research variants to the existing closed unions.
+    - >-
+      Aura v1 remains 1.22.0 and the notification event schema remains v1
+      because this is an additive source variant authorized by ADR-0018 and
+      AURA-0146; no path, field, or existing variant was removed or weakened.
+    - >-
+      Consumers performing exhaustive union handling should deploy the
+      regenerated client and research variant handling before research
+      notification production is enabled.
+  producers:
+    - Aura Core owner notification application and lifecycle-event publisher
+    - Aura Core research completion delivery worker
+  consumers:
+    - Aura Web notification list and detail consumers
+    - Aura Web persisted notification SSE consumer
+    - generated Aura TypeScript transport client
+    - Aura Core notification event replay and compatibility tests
+  rollout:
+    - >-
+      Deploy the additive Aura API and versioned event contract plus updated
+      notification consumers first, then deploy the synchronized Core producer.
+      Keep research admission and external providers disabled until their
+      separate rollout gates pass.
+    - >-
+      Enable research notification production only after consumers accept the
+      new union member. Rollback stops new research notification publication;
+      existing durable notification records and metadata-only lifecycle events
+      remain readable and acknowledgeable.
+  generated_outputs:
+    - source: contracts/openapi/aura-v1.yaml
+      generator: frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+migrations:
+  changed: false
+  notes: >-
+    This contract ownership zone authored no persistence migration. AURA-0146
+    Core owns any service data evolution required to produce the variants.
+observability:
+  components: []
+  metrics_added: []
+  notes: >-
+    Contract payloads are metadata-only and add no telemetry behavior. Runtime
+    spans, counters, and privacy evaluators remain in the Core ownership zone.
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0146.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0146.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0146.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - node frontend/libs/platform/aura-api-client/tools/generate-client.mjs --check
+    - NX_DAEMON=false pnpm --dir frontend exec nx check-generated aura-api-client
+    - NX_DAEMON=false pnpm --dir frontend exec nx lint aura-api-client
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run ruff check
+      contracts/tests/test_aura0132_briefing_contract.py
+      contracts/tests/test_aura0136_workflow_contract.py
+      contracts/tests/test_aura0146_conversational_research_contract.py
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests/test_aura0128_calendar_contract.py
+      contracts/tests/test_aura0132_briefing_contract.py
+      contracts/tests/test_aura0136_workflow_contract.py
+      contracts/tests/test_aura0141_research_artifact_task_contract.py
+      contracts/tests/test_aura0146_conversational_research_contract.py -q
+      (50 passed)
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      contracts/tests -q (128 passed)
+    - >-
+      tooling.architecture.common.validate_document against
+      implementation-handoff.schema.json
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      Core runtime and PostgreSQL checks remain owned by the Core and
+      integration agents; this contract slice changed no product behavior or
+      database state.
+decisions:
+  - >-
+    Used researchId as the sole source-specific REST and event lineage field.
+    It is an opaque UUID and requires an independently owner-authorized
+    research API lookup for all private or actionable detail.
+  - >-
+    Reused the existing notification delivered and acknowledged statuses and
+    event types. The contract describes transport shape only; delivery order,
+    authorization, idempotency, acknowledgement, deletion fencing, and retry
+    behavior remain in Core.
+  - >-
+    Preserved every existing notification variant and adjusted only legacy
+    assertions that encoded the former union ceiling. The compatibility tests
+    continue checking the exact reminder, briefing, and workflow shapes.
+  - >-
+    Kept generated output transport-only. It contains the new discriminable
+    structural variants and operation response types without authorization,
+    persistence, notification, retry, or feature-state logic.
+risks:
+  - >-
+    Exhaustive consumers compiled against the earlier three-member union need
+    the regenerated client and an explicit research-notification presentation
+    before the producer capability is enabled; the rollout is consumer-first.
+unresolved: []

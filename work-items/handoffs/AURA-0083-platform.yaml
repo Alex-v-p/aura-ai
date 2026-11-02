@@ -1,0 +1,111 @@
+agent: platform_worker
+work_item: AURA-0083
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0082_platform
+  worktree: feat/aura-0078-0081-observatory-mvp
+scope:
+  ownership_zone: deployment.local-http, deployment.networking, documentation.local-provider-routing, evaluation.compose-topology
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - compose.yaml
+  - deploy/compose/local-http.yaml
+  - deploy/compose/local-http.sh
+  - deploy/compose/test_topology.py
+  - .env.example
+  - README.md
+  - docs/README.md
+contracts: {changed: false}
+migrations: {changed: false}
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0083.yaml
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0083.yaml --role platform_worker with all seven
+      platform-owned changed paths explicitly supplied
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 deploy/compose/test_topology.py (41 passed, including executable relay lifecycle stubs)
+    - python3 -m py_compile deploy/compose/test_topology.py
+    - .venv/bin/python -m ruff check deploy/compose/test_topology.py
+    - >-
+      docker compose --env-file .env --env-file .env.local-http -f compose.yaml
+      -f deploy/compose/local-identity.yaml -f deploy/compose/local-http.yaml
+      --profile local-identity --profile observatory config --quiet
+    - >-
+      Docker Compose rendered local-http-bootstrap environment with
+      AURA_OBSERVATORY_AUTHENTIK_CLIENT_ID=aura-observatory and
+      AURA_OBSERVATORY_AUTHENTIK_REDIRECT_URI=http://observatory.localhost:4300/api/v1/auth/callback.
+    - >-
+      Rendered Compose config confirmed authentik.localhost on
+      observatory-identity-egress and operator override
+      AURA_FRONTEND_SUBNET=10.254.242.0/24.
+    - bash -n deploy/compose/local-http.sh
+    - >-
+      Static topology assertions cover strict relay target/port validation,
+      bounded five-digit ports, loopback self-target rejection, argument-array
+      invocation, loopback-only socat binding, generated host.docker.internal
+      URL, failure traps, immediate is-active cleanup, signal cleanup, and
+      down/reset cleanup.
+    - >-
+      Executable stubbed-launcher coverage proves relay cleanup after
+      bootstrap and final Compose failures, cleanup after a failed immediate
+      systemd is-active check, rejection of self-target and overlong ports
+      before systemd-run, relay persistence after successful startup, and
+      nonzero INT/TERM cleanup without later Compose phases.
+    - >-
+      The local-http bootstrap topology regression asserts that the repeated
+      Authentik blueprint application receives the local Observatory client ID
+      and exact local redirect URI.
+    - git diff --check
+  failed: []
+  not_run:
+    - >-
+      ./deploy/compose/local-http.sh up and the required Observatory login curl
+      were not run because Docker startup was not authorized for this worker.
+decisions:
+  - >-
+    The disposable local overlay adds authentik.localhost as an alias on
+    observatory-identity-egress, allowing Observatory API issuer discovery to
+    resolve inside its existing narrowly scoped identity network without
+    merging Core and Observatory identity audiences or networks.
+  - >-
+    aura-frontend now uses explicit IPAM with the operator-configurable
+    AURA_FRONTEND_SUBNET and a 10.254.241.0/24 default. This prevents Docker's
+    automatic 192.168.0.0/20 allocation from shadowing a trusted LAN or VPN
+    route used by the configured Ollama provider.
+  - >-
+    Documentation and .env.example describe the reserved frontend range and
+    the override procedure; no provider endpoint or credential is committed.
+  - >-
+    The optional Docker Desktop relay is activated only by a non-empty,
+    validated IPv4 target. The launcher starts a transient fixed-name user
+    systemd unit with socat listening on 127.0.0.1, writes the generated
+    host.docker.internal URL into its ignored local environment, and stops the
+    unit during down/reset; it never uses eval or binds the LAN interface.
+  - >-
+    The disposable bootstrap job receives the same Observatory client ID and
+    local redirect URI as the local API/server overlay, so its retrying
+    blueprint application cannot restore production/default callback values.
+  - >-
+    The launcher arms ERR/INT/TERM/EXIT cleanup immediately after relay
+    creation and removes those traps only after final Compose success. A
+    failed is-active check performs immediate cleanup before exiting;
+    down/reset attempt cleanup before other validation.
+  - >-
+    Relay ports are limited to one through five decimal digits before numeric
+    validation. Loopback targets whose numeric target port equals the listener
+    port, including leading-zero forms, are rejected to prevent a forking
+    self-forward cascade.
+risks:
+  - >-
+    Runtime login and provider reachability remain unverified until the
+    canonical local launcher is exercised against a healthy Docker daemon.
+unresolved: []

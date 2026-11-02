@@ -1,0 +1,234 @@
+id: AURA-0068
+title: Add owner-private document storage and ingestion foundation
+status: integrated
+change_class: repository_governance
+intent: >
+  Add a private Garage-backed Aura document library foundation with bounded
+  streamed uploads, owner-scoped metadata, asynchronous PDF DOCX Markdown and
+  plain-text processing, hybrid retrieval, explicit retry and deletion, and
+  metadata-only lifecycle observation without introducing mounted sources or
+  conversational document tools.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/memory-and-knowledge.md
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/clients-and-voice.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved Aura-managed Garage object uploads as the only v1 document source with no filesystem SMB Nextcloud or arbitrary URL ingestion
+    - Owner-approved PDF DOCX Markdown and plain-text formats with a 100000000-byte per-file limit and no OCR
+    - Owner-approved asynchronous processing on upload and retention until explicit owner deletion
+    - Owner-approved private owner-wide document search with custom agents remaining deny-by-default until a later conversational-tool slice
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+feature_references:
+  - KNO-001
+  - KNO-003
+  - KNO-005
+  - KNO-006
+  - KNO-007
+  - KNO-008
+  - KNO-012
+  - KNO-013
+  - KNO-014
+  - KNO-016
+  - KNO-017
+  - KNO-019
+  - KNO-020
+  - KNO-024
+  - KNO-025
+  - KNO-026
+  - KNO-027
+  - KNO-028
+  - KNO-029
+  - KNO-030
+  - INT-011
+ownership_zones:
+  - contracts.openapi.aura-v1
+  - contracts.events.knowledge.v1
+  - aura-core.knowledge.documents
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.entrypoints.api
+  - aura-core.entrypoints.worker
+  - aura-core.providers.object-storage.garage
+  - aura-core.providers.document-parser
+  - aura-core.platform.outbox
+  - aura-core.platform.telemetry
+  - aura-web.api-client
+  - deployment.compose
+  - repository.dependencies
+  - repository.architecture.registry
+  - evaluation.document-ingestion
+allowed_paths:
+  - work-items/active/AURA-0068.yaml
+  - work-items/archived/AURA-0068.yaml
+  - contracts/openapi/aura-v1.yaml
+  - contracts/events/knowledge/v1/document-events.schema.json
+  - docs/specifications/memory-and-knowledge.md
+  - pyproject.toml
+  - uv.lock
+  - compose.yaml
+  - .env.example
+  - deploy/compose/**
+  - deploy/docker/**
+  - deploy/tests/**
+  - services/aura-core/migrations/versions/0019_document_library.py
+  - services/aura-core/src/aura_core/domains/knowledge/documents/**
+  - services/aura-core/src/aura_core/bootstrap/document_uow.py
+  - services/aura-core/src/aura_core/entrypoints/api/app.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/documents.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/dependencies.py
+  - services/aura-core/src/aura_core/entrypoints/api/state.py
+  - services/aura-core/src/aura_core/entrypoints/worker/**
+  - services/aura-core/src/aura_core/entrypoints/document_parser/**
+  - services/aura-core/src/aura_core/platform/auth.py
+  - services/aura-core/src/aura_core/platform/outbox/**
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/providers/object_storage/**
+  - services/aura-core/src/aura_core/providers/document_parser/**
+  - services/aura-core/resources/component-manifests/document-*.yaml
+  - services/aura-core/tests/test_documents.py
+  - services/aura-core/tests/test_document_*.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_memory_product_api.py
+  - services/aura-core/tests/test_notification_api.py
+  - services/aura-core/tests/test_reminder_api.py
+  - services/aura-core/tests/system/test_document_*.py
+  - services/aura-core/tests/system/test_contract_and_deployment.py
+  - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  - frontend/libs/platform/aura-api-client/tools/generate-client.mjs
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/memory/**
+  - services/aura-core/src/aura_core/domains/automation/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-core/src/aura_core/providers/home_automation/**
+  - frontend/apps/**
+  - frontend/libs/aura/**
+  - satellites/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/knowledge/v1/document-events.schema.json
+    - frontend/libs/platform/aura-api-client/src/lib/generated/aura-api.ts
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: knowledge.documents
+observability:
+  applicable: true
+  affected_components:
+    - aura.knowledge.document_upload
+    - aura.knowledge.document_processing
+    - aura.knowledge.document_retrieval
+    - aura.knowledge.document_deletion
+  required_metrics:
+    - document_upload_duration_ms
+    - document_upload_outcome
+    - document_processing_duration_ms
+    - document_processing_outcome
+    - document_chunk_count
+    - document_retrieval_duration_ms
+    - document_retrieval_candidate_count
+    - document_deletion_outcome
+    - document_deletion_duration_ms
+    - document_retry_count
+  required_evaluators:
+    - document_format_validation
+    - document_processing_idempotency
+    - document_owner_isolation
+    - document_retrieval_relevance
+    - document_deletion_completion
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Original objects filenames extracted text chunks hashes embeddings and owner identity are private and must not enter ordinary logs telemetry NATS payloads or audit metadata.
+    - The browser never receives Garage credentials object keys or direct bucket access and authenticated document traffic must not be cacheable.
+    - Upload streams are bounded to 100000000 bytes and validated by declared type extension and content signature before processing.
+    - PDF and DOCX parsing treats input as hostile and enforces bounded time memory archive expansion page and extracted-text limits without general egress or unrelated secret access.
+    - All document list inspect search download retry and delete operations are bound to the authenticated owner.
+    - Document events and NATS messages contain identifiers bounded lifecycle state versions and timestamps only.
+    - Deletion removes the document from retrieval before asynchronous object cleanup and remains retryable without redisclosing private content.
+  data_classes:
+    - private_document_content
+    - private_document_filename_and_metadata
+    - private_document_embeddings
+    - owner_identity
+    - document_and_processing_identifiers
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - platform_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 4
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - A private single-node Garage deployment persists beneath AURA_STATE_ROOT uses a private bucket and scoped runtime-file credentials and is reachable only by authorized Core processes.
+  - Aura Core exposes an owner-scoped document public API with immutable document identity optimistic versions and uploading queued processing ready failed and deleting states.
+  - The API streams at most 100000000 bytes per upload into the object-store port without buffering the full file and accepts only validated PDF DOCX Markdown and plain text.
+  - Durable asynchronous processing parses bounded untrusted input chunks extracted text creates provider-neutral embeddings and commits searchable content atomically and idempotently.
+  - Active duplicate content for one owner resolves to the existing document without duplicating object bytes chunks or embeddings.
+  - Owner-authorized list inspect search download retry and delete operations are represented by backward-compatible OpenAPI and generated-client contracts.
+  - Search combines bounded lexical and vector retrieval only across ready documents belonging to the authenticated owner and preserves document and page-or-section provenance.
+  - Deletion immediately excludes content from retrieval and eventually removes chunks embeddings and the Garage object with visible retryable failure state.
+  - Lifecycle events manifests metrics and evaluators are metadata-only and never capture names content chunks hashes embeddings object keys owner identity or credentials.
+  - Migration 0019 upgrades from 0018 and fresh installations without changing existing memory conversation reminder notification approval or tool behavior.
+  - No document frontend feature conversational document tool citations mounted source SMB Nextcloud URL fetch OCR image inspection artifact behavior or automatic memory extraction is added.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0068.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0068.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0068.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0068.yaml
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run pyright services/aura-core
+  - uv run ruff check services/aura-core/src services/aura-core/tests
+  - uv run pytest services/aura-core/tests
+  - python3 deploy/compose/test_topology.py
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

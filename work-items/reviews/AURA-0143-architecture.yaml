@@ -1,0 +1,40 @@
+agent: architecture_guardian
+work_item: AURA-0143
+verdict: PASS
+checked:
+  - >-
+    Generic platform outbox and NATS consumer are parameterized by subject and
+    parser and contain no task-specific vocabulary or execution.tasks import.
+  - >-
+    Task invalidation contracts, parsing, staging adapter, and durable consumer
+    wrapper are owned by execution.tasks.
+  - >-
+    Workflow, briefing, document, and memory mutations stage full schema-exact
+    invalidations through the existing platform outbox in the authoritative
+    transaction; JetStream acknowledges only after reconciliation.
+  - >-
+    Migration 0030 is execution-only. Memory-owned migration 0031 adds a
+    positive lifecycle-version constraint, reverses it on downgrade, and has
+    executable live PostgreSQL upgrade, rejection, and downgrade coverage.
+  - >-
+    All four source boundaries own opaque immutable-fence keyset cursors and
+    expose capability-guarded global exact/page APIs; execution persists source
+    tokens unchanged.
+  - >-
+    Rebuild fences, unknown recovery, monotonic projection updates, durable SSE
+    ordering, closed route keys, and schema versions remain execution-owned
+    without cross-domain ORM or table access.
+  - >-
+    API and worker entrypoints remain transport/composition layers; no frontend,
+    provider, or Observatory dependency was introduced.
+  - >-
+    Work-item, import-boundary, service-isolation, and repository-shape
+    validation passed; focused architecture/migration tests passed, and the
+    required projection suite passed 75 tests with only the environment-gated
+    live migration test skipped locally.
+  - >-
+    Core, platform, and test handoffs are complete and preserve the planned
+    integration sequence. Shared modules.yaml and AppState/router/worker
+    composition remain explicitly Integration Maintainer-owned and must be
+    reconciled during aggregate integration.
+findings: []

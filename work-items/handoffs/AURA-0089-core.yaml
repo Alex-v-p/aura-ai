@@ -1,0 +1,92 @@
+agent: core_worker
+work_item: AURA-0089
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura_0089_core_consumer
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.evaluation-v1.consumer-compatibility
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - work-items/handoffs/AURA-0089-core.yaml
+contracts:
+  changed: false
+  compatibility: backward_compatible
+  consumed:
+    - id: evaluation-v1
+      version: 1
+      source: contracts/evaluation/v1/evaluation.schema.json
+      consumer_boundary:
+        - A future Core runner accepts a separately authenticated Request resource and the correlated requested lifecycle event; it must not read Observatory storage or import Observatory modules.
+        - Request references and execution provenance are treated as an exact immutable execution description. The consumer validates schema version, request/version and provenance agreement, UUID correlation, idempotency, UTC deadline, and all execution limits before dispatch.
+        - ComponentBinding, ModelBinding, and Reproducibility are checked against the exact deployed Core public execution ports and configured runtime identity. A mismatch is rejected with a bounded failure classification; no provider endpoint, credential, path, or arbitrary request field is selected from the payload.
+        - Any case content obtained through a later approved evaluation boundary remains inert untrusted data. It cannot grant instructions, permissions, policy changes, provider selection, endpoints, credentials, object keys, executable paths, or execution authority.
+        - Results are emitted through the versioned result contract and contain only identifiers, bounded status/failure classifications, provenance, score identifiers, and opaque artifact references. Raw inputs, outputs, prompts, tool data, credentials, and diagnostics never enter lifecycle events, telemetry, logs, or ordinary Core run events.
+    - id: evaluation-events-v1
+      version: 1
+      source: contracts/events/evaluation/v1/evaluation-events.schema.json
+      consumer_boundary:
+        - The Core consumer accepts only evaluation.requested as a dispatch signal and handles evaluation.completed, evaluation.cancelled, and evaluation.failed as content-free lifecycle evidence; it never treats an event as a command to mutate Core production state.
+        - All event and provenance identifiers are validated as bounded UUID/version values, eventType is an exact closed value, schemaVersion is dispatched explicitly, and requestVersion/requestDigest/dataset/suite provenance is matched to the separately received Request resource.
+        - Stable event, correlation, causation, request, job, attempt, and idempotency identifiers are used for idempotent processing and bounded retry/recovery. Duplicate delivery is acknowledged without re-executing a request.
+        - Requested deadlines and maxAttempts are enforced by deterministic runner policy; cancellation and deadline races resolve through an atomic Core-owned state transition, with one bounded terminal result classification.
+        - Lifecycle payloads are closed and content-free. The consumer rejects unknown fields, raw content, prompt/rubric/comment/exception text, credentials, endpoints, provider object keys, filenames, owner identity, arbitrary attributes, and hidden reasoning before dispatch or publication.
+    - id: evaluation-failure-codes-v1
+      version: 1
+      source: contracts/evaluation/v1/failure-codes.schema.json
+      consumer_boundary:
+        - Core maps internal and provider failures to exactly one finite provider-neutral code before producing a failed result or evaluation.failed event; exception text, provider diagnostics, payload excerpts, credentials, endpoints, and content-derived codes are never published.
+        - The consumer rejects unknown failure codes and requires failureCode only for failed results; completed and cancelled results must not carry one.
+  rollout:
+    - AURA-0091 may add the controlled Core runner and its transport adapter only after defining its own public inward ports and authenticated versioned request envelope; this handoff does not select NATS subjects, streams, storage, provider, or runtime implementation.
+    - Observatory remains the owner of evaluation definitions, request persistence, scores, artifacts, and lifecycle orchestration. Core receives only the approved request boundary and publishes structured result/lifecycle evidence through the later work-item protocol.
+    - Ordinary production runs and metadata-only telemetry remain unchanged and independent of evaluation content-bearing resources.
+  generated_outputs: []
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0089.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0089.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0089.yaml (not applicable)
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0089.yaml
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0089.yaml
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check tests/test_aura0089_*.py (services/aura-observatory; passed)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pyright tests/test_aura0089_*.py (services/aura-observatory; 0 errors, 0 warnings, 0 informations)
+    - UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest -q tests/test_aura0089_*.py (services/aura-observatory; 62 passed)
+    - strict AJV 8 JSON Schema 2020-12 compilation and representative/negative validation for evaluation-v1, evaluation-failure-codes-v1, and evaluation-events-v1 (including UUID-only idempotency, finite failure codes, missing-evidence outcomes, and capture/artifact restrictions)
+    - python3 -m json.tool contracts/evaluation/v1/evaluation.schema.json
+    - python3 -m json.tool contracts/evaluation/v1/failure-codes.schema.json
+    - python3 -m json.tool contracts/events/evaluation/v1/evaluation-events.schema.json
+    - git diff --check
+  failed: []
+  not_run:
+    - Core runner implementation, transport adapter, NATS subject/stream selection, cancellation/recovery runtime, and result publication are assigned to AURA-0091/AURA-0092 and are intentionally not implemented in this contract-consumer compatibility handoff.
+    - No Core product tests were run because the active AURA-0089 work item forbids services/aura-core/** changes and this slice changes no Core product code.
+decisions:
+  - Kept the Core slice contract-only and changed no Core source, migrations, entrypoints, runtime provider, NATS configuration, deployment, or tests.
+  - Required a separately authenticated versioned Request resource in addition to the content-free requested event. The event carries lifecycle correlation and provenance, but cannot by itself describe the execution references needed by Core; Core must not solve that gap by reading Observatory tables.
+  - Made request/provenance/version agreement, exact component/model/reproducibility binding, bounded limits, deadlines, cancellation races, and service-generated UUID-only idempotency explicit consumer responsibilities while leaving transport and runtime selection to AURA-0091/AURA-0092.
+  - Preserved the Core public execution boundary: a future runner invokes exact deployed components through public Core application ports and does not import Observatory or another domain's persistence/adapters.
+  - Treated evaluation content as inert untrusted data and preserved metadata-only production telemetry; content-bearing evaluation data cannot enter durable lifecycle events or ordinary Core telemetry.
+  - Required Core to preserve missing-evidence outcomes: when a score is not_observed or not_applicable, it must not synthesize or forward a value or outcome.
+  - Required authorization-strength checks for every resolved content artifact: metadata_only and hashed cases/replays cannot carry artifact references, content-bearing references must be non-empty, and an artifact authorization must be at least as restrictive as its enclosing resource.
+  - Used the finite failure-code taxonomy and opaque artifact/result identifiers so provider diagnostics, exception text, endpoints, credentials, object keys, and private content cannot leak through the result/event boundary.
+  - Did not consult online documentation because this compatibility audit is governed by the repository's pinned contracts and accepted ADRs and introduces no dependency or protocol implementation.
+risks:
+  - AURA-0091 must define the authenticated request-delivery envelope and its Core inward port without placing raw content in lifecycle events or choosing an unapproved cross-service database dependency; an implementation that only consumes evaluation.requested cannot execute the referenced request.
+  - JSON Schema cannot prove cross-resource equality, digest recomputation, identifier non-reuse, deadline ordering, or semantic scanning of untrusted content. The Core consumer and producer must enforce these invariants fail-closed.
+  - JSON Schema cannot compare capture-policy restrictiveness across separately resolved artifact records; the Core runner must verify the artifact authorization before consuming a content reference and reject a weaker or missing authorization.
+  - The contract permits full_content only for explicitly authorized controlled evaluation. A future runner must keep that data path separate from production run state and metadata-only telemetry, with bounded memory, deadlines, cancellation, and artifact references.
+  - Core and Observatory may deliver lifecycle messages at least once and out of order. AURA-0091/AURA-0092 must persist or otherwise coordinate idempotency and terminal-state races without making NATS the source of business truth.
+unresolved: []

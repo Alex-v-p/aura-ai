@@ -1,0 +1,12 @@
+agent: observability_steward
+work_item: AURA-0130
+verdict: PASS
+checked:
+  - API timeout and provider deadline paths retain all required spans and metrics with exact timeout and deadline classifications and zero rejection.
+  - Route, provider, and conflict instrumentation use the closed calendar outcome and error vocabularies with retry classification separate.
+  - Actual provider snapshot dimensions match the Google provider manifest.
+  - Successful empty HTTP 204 revocation emits one complete provider observation with zero rejection.
+  - Conflict latency measures only local deterministic evaluation with shared-trace child correlation.
+  - Versioned provider-boundary and credential-lifecycle evaluators execute real adapter and application behavior against deterministic fixtures.
+  - Replay, metadata-only capture, redaction, retention, dependency, correlation, and low-cardinality requirements were verified.
+findings: []

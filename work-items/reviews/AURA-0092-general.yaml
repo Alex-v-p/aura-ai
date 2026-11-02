@@ -1,0 +1,56 @@
+agent: general_reviewer
+work_item: AURA-0092
+verdict: PASS
+checked:
+  - >-
+    Re-read the exact current AURA-0092 work item, implementation, migration,
+    deployment acceptance, latest implementation/test handoffs, and every
+    prior general-review finding. No reviewed production or test code was
+    edited.
+  - >-
+    Verified terminal-result application in both providers. Succeeded, failed,
+    cancelled, and deadline jobs and attempts are fenced before retry or
+    terminal work; same-message redelivery is duplicate, while a distinct
+    terminal result is persisted only as out_of_order and cannot reopen the
+    job, create an attempt/outbox row, or append another terminal audit.
+  - >-
+    Ran direct competing-terminal probes through the public service with both
+    the in-memory repository and an isolated schema in disposable PostgreSQL
+    17. In each case completed then retryable-failed produced applied then
+    out_of_order, retained succeeded state, one attempt, and one terminal
+    audit; PostgreSQL retained one applied and one out-of-order receipt.
+  - >-
+    Verified terminal audit and metric ownership. Direct completed, cancelled,
+    and non-retryable failed results commit one content-free audit with the
+    exact job and attempt. Retryable failure records retry work rather than a
+    terminal transition. Cancellation and deadline races have one winning
+    audit/transition, and ResultApplication prevents duplicate or later
+    out-of-order deliveries from incrementing terminal/deadline counters.
+  - >-
+    Traced the typed result-delivery boundary from EvaluationResultDelivery
+    through NatsEvaluationTransport.results and
+    EvaluationOrchestrationService.consume_results. Provider acknowledgement
+    occurs only after durable application or bounded rejection; repository or
+    storage failure propagates without acknowledgement, and no hidden callback
+    is carried in the wire envelope.
+  - >-
+    Rechecked retry due-time gating, deadline precedence, cancellation
+    idempotency, scheduler materialization and lease recovery, bounded provider
+    diagnostics, Core callback privacy, transitive schema packaging, Collector
+    recovery, OTLP failure classification, and the exact final privacy-scan
+    exception against code and the reported clean Docker matrix.
+  - >-
+    Ran the focused Observatory, deployment, and Core AURA-0092 matrix: 81
+    passed and 5 opt-in PostgreSQL tests skipped without their explicit URL.
+    Focused Ruff passed and focused Pyright reported zero errors, warnings, or
+    informations. Work-item validation, changed-path validation for all 41
+    current paths, and git diff --check passed.
+  - >-
+    Considered the reported fresh PostgreSQL 17 suite (12 passed) and final
+    clean serialized Docker Desktop matrix (exit 0), including real Core
+    dispatch/result consumption, JetStream redelivery, cancellation/deadline
+    races, scheduler/lease recovery, NATS/PostgreSQL/Collector outages and
+    recovery, Core independence, persisted metrics/traces, and scoped cleanup.
+findings: []
+risks: []
+unresolved: []

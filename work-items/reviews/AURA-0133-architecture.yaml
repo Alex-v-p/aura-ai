@@ -1,0 +1,23 @@
+agent: architecture_guardian
+work_item: AURA-0133
+verdict: PASS
+checked:
+  - >-
+    Worker and scheduler entrypoints remain composition-only; briefing
+    orchestration, admission, settlement, recovery, and delivery live in the
+    domain application.
+  - >-
+    Schema-exact briefing lifecycle events are transactionally staged,
+    rehydrated, and published separately from identifier-only worker wake
+    commands.
+  - >-
+    Typed briefing cancellation uses briefing lineage and authoritative durable
+    settlement without querying conversation-run storage.
+  - >-
+    Module registry, public dependency direction, Core/Observatory isolation,
+    service-owned data, provider isolation, frontend boundaries, and unchanged
+    contracts all pass.
+  - >-
+    Final evidence: governance validators, Ruff, and Pyright passed; 203 focused
+    tests passed with 8 skips and 1524 Core tests passed with 110 skips.
+findings: []

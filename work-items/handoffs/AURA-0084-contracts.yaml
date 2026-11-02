@@ -1,0 +1,94 @@
+agent: contract_steward
+work_item: AURA-0084
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: /root/aura_0084_contract
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.observatory-telemetry-api
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/telemetry/v1/metadata-observation.schema.json
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-observatory/src/aura_observatory/contract.py
+  - services/aura-observatory/src/aura_observatory/query.py
+  - services/aura-observatory/src/aura_observatory/entrypoints/api/app.py
+  - services/aura-observatory/tests/test_aura0078_contract.py
+  - services/aura-observatory/tests/test_aura0080_api.py
+  - work-items/handoffs/AURA-0084-contracts.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward after the Delivery Lead amended AURA-0084 to authorize these exact contract and generated-client paths; no concurrent contract author was assigned
+  compatibility: backward_compatible
+  definitions:
+    - id: metadata-observation-v1
+      version: 1
+      source: contracts/telemetry/v1/metadata-observation.schema.json
+      changes:
+        - Widened the shared Uuid lexical pattern from RFC version and variant marker bits to any lowercase canonical 8-4-4-4-12 hexadecimal UUID representation.
+        - Kept fixed length, lowercase hexadecimal alphabet, separators, closed objects, bounded dimensions, and metadata_only capture unchanged.
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - Applied the same canonical lowercase UUID validation widening to query identifiers so persisted Core correlations remain addressable through owner-authorized REST resources.
+        - Regenerated the transport-only Angular client; the generated type surface is unchanged and only its source-contract digest changed.
+  compatibility_notes:
+    - This is a validation widening that accepts existing Core identifiers previously rejected by Observatory; every value accepted before this change remains accepted.
+    - Core intentionally persists deterministic initial conversation, message, and run identifiers from 128 hash bits. Its aura-v1 contract declares UUID format without requiring version or variant marker bits, so changing those persisted identifiers would break idempotent identity and would not repair existing data.
+    - Uppercase, compact, malformed, oversized, non-hexadecimal, and content-bearing values remain rejected.
+    - Contract identifiers and versions remain unchanged because no operation, field, generated type, producer behavior, or capture classification changed.
+  producers:
+    - Aura Core metadata-only OTLP exporter
+    - Aura Observatory retention and live-event identifier generators
+  consumers:
+    - Aura Observatory metadata ingestion runtime
+    - Aura Observatory owner-authorized query and cursor runtime
+    - Observatory Web generated transport client
+    - Observatory contract and full-stack acceptance suites
+  rollout:
+    - Deploy Observatory ingestion and query runtime together with the widened contracts before rerunning full-stack acceptance against existing or newly generated Core identifiers.
+    - No Core deployment, identifier rewrite, data migration, or coordinated client rollout is required.
+    - Existing rejected telemetry is retried only under the exporter's existing bounded retry policy; no content or credentials are introduced during rollout.
+  generated_outputs:
+    - source: contracts/openapi/observatory-v1.yaml
+      generator: frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - python3 -m json.tool contracts/telemetry/v1/metadata-observation.schema.json
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0084.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0084.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0084.yaml
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0084-contract-uv uv run pytest tests/test_aura0078_contract.py tests/test_aura0080_api.py -q (46 passed)
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0084-contract-uv uv run ruff check src/aura_observatory/contract.py src/aura_observatory/query.py src/aura_observatory/entrypoints/api/app.py tests/test_aura0078_contract.py tests/test_aura0080_api.py
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-0084-contract-uv uv run pyright src/aura_observatory/contract.py src/aura_observatory/query.py src/aura_observatory/entrypoints/api/app.py
+    - cd frontend && pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && pnpm exec nx run observatory-api-client:lint
+    - cd frontend && pnpm exec tsc -p libs/platform/observatory-api-client/tsconfig.lib.json --noEmit
+    - implementation-handoff.schema.json validation for work-items/handoffs/AURA-0084-contracts.yaml
+    - git diff --check for contract-owned paths
+  failed: []
+  not_run:
+    - Full-stack browser acceptance remains assigned to the AURA-0084 test and integration owners.
+decisions:
+  - Reconciled Observatory with Core's already-published UUID-format identifiers rather than changing Core generation, which would alter idempotent public identities and leave existing identifiers unreadable.
+  - Preserved lowercase canonical formatting as the bounded cross-service representation while removing only marker-bit semantics that Core does not promise.
+  - Kept metadata-observation-v1 schemaVersion 1 and observatory-v1 version 1.0.0 because the wire and generated type shapes are unchanged and acceptance only widens.
+  - Kept generated output transport-only; no validation, retry, ingestion, query, or product behavior was added to the client.
+risks:
+  - The shared Uuid definition now accepts nil and future-version bit patterns, but values remain opaque, fixed-size metadata identifiers and no logic may infer meaning from their marker bits.
+unresolved: []

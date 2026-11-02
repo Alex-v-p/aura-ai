@@ -1,0 +1,53 @@
+agent: delivery_lead
+work_item: AURA-0135
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0135_decisions
+  worktree: feat/aura-daily-action-workflows
+scope:
+  ownership_zone: delivery.stage4-workflow-decisions
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - docs/design/daily-action-and-workflow-initiative.md
+  - work-items/handoffs/AURA-0135-delivery.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0135.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0135.yaml
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0135.yaml (skipped as declared not applicable)
+    - tooling.architecture.common.validate_document against implementation-handoff.schema.json
+    - git diff --check
+  failed: []
+  not_run: []
+decisions:
+  - The first slice is closed to one through eight strictly sequential steps selected from agent_run, owner_approval, owner_notification, and wait_until; explicit owner-requested manual start is the only admission trigger.
+  - Scheduling is deferred until a separate owner decision closes cadence, timezone, DST gap and overlap, missed-run, lifecycle, and deletion semantics; the first contracts, Core runtime, and Aura Web experience contain no schedule behavior.
+  - Each step, value, result, selector, instance status, terminal outcome, step status, effect outcome, recovery capability, and checkpoint status has a closed schema or enum with unknown fields rejected and RFC 8785 UTF-8 byte accounting.
+  - The data plane uses publish-time type-compatible selectors over instance input and earlier closed outputs only; expressions, templates, coercion, dynamic paths, model-selected mappings, and all authority-bearing data flow are prohibited.
+  - An instance permits one tools-disabled and memory-disabled five-minute agent run, one active step, a 30-day total lifetime, seven-day approval expiry, bounded private values, and at most nine bounded checkpoints.
+  - A replay-safe definitive failure enters failed_replayable and waiting_for_resolution; exactly one owner-requested replay is allowed before terminal settlement, while decline or deadline settles failed and no terminal state can reopen.
+  - An ambiguous effect enters durable nonterminal resolution_required and blocks later steps; reconciliation may continue or fail, while owner cancellation or deadline settles canceled with the unknown effect preserved and late evidence unable to reopen or rewrite the terminal outcome.
+  - Immutable system-derived approval presentation contains only bounded workflow identity/name, exact step binding, next kind, closed consequence/copy, owner/workspace scope, manual origin, and expiry; author/prior-output interpolation is prohibited and nested confirmation remains mandatory.
+  - Definitions, drafts, immutable revisions, terminal instance state, histories, results, and checkpoints remain until explicit owner-only scope-specific deletion; each scope is contextual and non-cascading, with content-free tombstones preserving surviving lineage.
+  - Published revisions remain immutable, edits clone new drafts, and each instance pins its exact revision and security context for its lifetime.
+  - PostgreSQL and public application APIs remain authoritative; optional executor state is private and replaceable, and Observatory remains isolated and nonblocking.
+  - Aura Web must author selectors through compatible typed pickers; deterministic focus, error, and whole-graph revalidation rules apply after add, move, remove, clone, reorder, and version conflict.
+  - Aura Web separately presents terminal outcome, per-step effects, completed-effect summary, and recovery capabilities; partial is derived presentation and canceled instances may retain unknown step history.
+  - The four Stage 4 checkpoints remain ordered as decisions and threat model, manual-only contracts and deterministic state machine, manual-only Core execution, and manual-only Aura Web management.
+risks:
+  - Follow-on contract work must encode the documented byte, time, replay, checkpoint, mapping, and deletion limits exactly rather than treating prose examples as extensible defaults.
+  - Cancellation of an unknown operation stops future admission but cannot establish whether the in-flight effect occurred; clients must preserve that uncertainty in step history and completed-effect presentation even after instance cancellation or late reconciliation evidence.
+  - Future scheduling remains blocked on a separate owner decision and must not be inferred from deferred observability catalogue entries or the broader initiative sequence.
+unresolved: []

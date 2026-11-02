@@ -1,0 +1,71 @@
+agent: test_evaluation_engineer
+work_item: AURA-0120
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: balanced
+  agent_thread_id: /root/aura0115_test
+  worktree: shared
+scope:
+  ownership_zone: evaluation.aura0120
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - deploy/tests/test_aura0120_garage_grants.py
+  - work-items/handoffs/AURA-0120-test-evaluation.yaml
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - >-
+      Added focused worker/API bootstrap tests that execute the embedded
+      Garage 2.1 authorized-bucket parser against header-only, valid target,
+      Core evaluation, and unrelated-bucket key-info tables.
+    - >-
+      Verified Garage 2.1 table headers are ignored, valid target aliases are
+      returned, and unrelated grants remain guarded by explicit fail-closed
+      checks for both worker and API bootstraps.
+    - >-
+      Added adversarial malformed-row coverage for malformed-only and
+      malformed-plus-valid-target tables; both worker and API bootstrap paths
+      now require the bounded parse-error sentinel and fail closed.
+    - >-
+      Verified worker W and API RW permission modes, owner denial, and the
+      dedicated run-evidence bucket wiring remain present.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache RUFF_CACHE_DIR=.local-state/ruff-cache
+      uv run ruff check deploy/tests/test_aura0119_topology.py
+      deploy/tests/test_aura0120_*.py: passed.
+    - >-
+      UV_CACHE_DIR=.local-state/uv-cache uv run pytest -p no:cacheprovider
+      deploy/tests/test_aura0119_topology.py deploy/tests/test_aura0120_*.py
+      -q: 12 passed.
+    - >-
+      Work-item, changed-path, contract, service-isolation,
+      frontend-boundary, Compose, and diff checks passed.
+  failed: []
+  not_run:
+    - >-
+      Live Garage 2.1 bootstrap execution was not run because the focused
+      deployment checks use deterministic shell-parser fixtures; full Compose
+      startup remains an integration-environment responsibility.
+decisions:
+  - >-
+    Kept all evaluator changes in the authorized AURA-0120 deployment test and
+    handoff paths; no product or deployment behavior was changed.
+  - >-
+    Executed the bootstrap-owned parser extracted from Compose rather than
+    duplicating its parsing logic in the test, while using static probes for
+    the fail-closed guard and permission-mode wiring.
+risks:
+  - >-
+    These tests do not start a live Garage node or exercise real key import and
+    grant commands; final integration should confirm the same fixtures against
+    the pinned Garage 2.1 image.
+unresolved: []

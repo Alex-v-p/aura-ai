@@ -1,0 +1,78 @@
+agent: integration_maintainer
+work_item: AURA-0079
+status: integrated
+integrated_commits: []
+reviews:
+  - reviewer: general_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0079-general.yaml
+  - reviewer: architecture_guardian
+    status: PASS
+    verdict: work-items/reviews/AURA-0079-architecture.yaml
+  - reviewer: security_privacy_reviewer
+    status: PASS
+    verdict: work-items/reviews/AURA-0079-security-privacy.yaml
+  - reviewer: observability_steward
+    status: PASS
+    verdict: work-items/reviews/AURA-0079-observability.yaml
+  - reviewer: core_worker
+    status: COMPLETE
+    verdict: work-items/handoffs/AURA-0079-core.yaml
+  - reviewer: platform_worker
+    status: COMPLETE
+    verdict: work-items/handoffs/AURA-0079-platform.yaml
+  - reviewer: test_evaluation_engineer
+    status: PARTIAL
+    verdict: work-items/handoffs/AURA-0079-tests.yaml
+conflicts_resolved:
+  - >-
+    Reconciled the test worker's intermediate partial handoff against the final
+    platform handoff and the current aggregate tree: its named deployment
+    regressions are resolved, all required tests pass, and no semantic conflict
+    remains. No product code was changed during integration.
+generated_outputs:
+  - work-items/archived/AURA-0079.yaml
+checks:
+  passed:
+    - >-
+      python3 tooling/architecture/validate-work-item.py
+      work-items/active/AURA-0079.yaml (passed before archival)
+    - >-
+      python3 tooling/architecture/validate-changed-paths.py --work-item
+      work-items/active/AURA-0079.yaml (39 changed paths validated)
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - >-
+      python3 tooling/architecture/validate-contract-changes.py --work-item
+      work-items/active/AURA-0079.yaml (no contract changes; skipped)
+    - >-
+      python3 tooling/architecture/validate-observability.py --work-item
+      work-items/active/AURA-0079.yaml
+    - >-
+      python3 tooling/architecture/validate-baseline-protection.py --work-item
+      work-items/active/AURA-0079.yaml (no protected baseline changes; skipped)
+    - python3 -m unittest discover -s tooling/architecture/tests (52 passed)
+    - uv lock --check
+    - uv run pyright services/aura-core services/aura-observatory (0 errors)
+    - >-
+      uv run ruff check services/aura-core/src services/aura-core/tests
+      services/aura-observatory deploy
+    - >-
+      uv run pytest services/aura-core/tests services/aura-observatory/tests
+      deploy/tests (1151 passed, 103 skipped, 1 warning)
+    - python3 deploy/compose/test_topology.py (26 passed)
+    - docker compose --env-file .env config --quiet
+    - docker compose --env-file .env --profile observatory config --quiet
+    - implementation handoff schema validation for 3 AURA-0079 handoffs
+    - review verdict schema validation for 4 AURA-0079 reviews
+    - git diff --check
+  failed: []
+changed_paths_valid: true
+repository_clean: false
+remaining_risks:
+  - >-
+    No live container startup or full-stack browser acceptance was performed in
+    this deployment-foundation item; those checks are owned by AURA-0081, while
+    the required Compose topology and configuration validations passed.

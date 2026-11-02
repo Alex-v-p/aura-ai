@@ -1,0 +1,26 @@
+# Repository-wide protection for every Dockerfile that uses the root context.
+# Keep required source trees available while excluding credentials and local
+# or generated artifacts from Docker build contexts and caches.
+**/.git
+**/.gitignore
+**/.env*
+**/.secrets
+**/.secrets/**
+**/.secrets.*
+**/.aura-e2e.*
+**/.aura-e2e.*/**
+**/.local-state
+**/.local-state/**
+**/.state
+**/.state/**
+**/state
+**/state/**
+**/node_modules
+**/.nx
+**/.angular
+**/dist
+**/coverage
+**/playwright-report
+**/test-results
+**/storybook-static
+**/*.log

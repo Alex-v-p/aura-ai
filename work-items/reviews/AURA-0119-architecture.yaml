@@ -1,0 +1,17 @@
+agent: architecture_guardian
+work_item: AURA-0119
+verdict: PASS
+checked:
+  - Active work item scope, governing ADRs and specifications, handoffs, ownership manifests, public APIs, and actual diff.
+  - One-way nonblocking Core-to-Observatory evidence transport, dedicated NATS bootstrap and identities, and absence of runtime callbacks into Core.
+  - Observatory ownership of PostgreSQL manifest and deletion truth and dedicated Garage evidence bytes, with ClickHouse, OTLP, and SSE remaining content-free.
+  - Closed run-evidence envelope validation, exact Core maximum-envelope compatibility, stable duplicate and collision handling, and durable acknowledgement semantics.
+  - Atomic inspection page and run-wide summary snapshots, deterministic bounded projection, truthful truncation and missing-parent completeness, and metadata-only live invalidation high-water behavior.
+  - Contract-valid per-object deletion transitions, run-scoped ingestion fence, cumulative restart recovery, and crash-atomic manifest and counter progress.
+  - Validation, storage, inspection, and deletion telemetry boundaries with finite metadata-only dimensions and correlation.
+  - Aura Web isolation, frontend product boundaries, module dependency direction, service isolation, and authorized changed paths.
+  - Focused AURA-0119 suite 88 passed and 1 environment-dependent skip; architecture, observability, contract-change, and diff checks passed.
+findings: []
+risks:
+  - Observatory Web rendering and interactive live-inspector behavior remain intentionally assigned to AURA-0120.
+unresolved: []

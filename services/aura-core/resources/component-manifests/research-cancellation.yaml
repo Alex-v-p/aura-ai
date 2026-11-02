@@ -1,0 +1,25 @@
+component:
+  id: aura.research.cancellation@1
+  version: 1.0.0
+  owner: knowledge.research
+  category: command
+input: {schema: ResearchCancelInputV1, replayable: true, replay_reason: Expected-version and idempotency fencing preserve one cancellation intent.}
+output: {schema: ResearchCancelResultV1, capture: {content: none, metadata: allowlisted}}
+boundaries: {accepts: [ResearchCancelInputV1], emits: [ResearchCancelResultV1], excludes: [question, query, url, owner_identity, task_id, request_id, payload, exception]}
+dependencies: [core_postgresql, static_fetcher_cancel_port, browser_fetcher_cancel_port]
+span: {operation: research.cancel_command, dependency: core_postgresql, capture: metadata_only}
+outcomes: [success, rejected, timeout, failed, unknown]
+errors: [authorization_denied, conflict, cancel_dispatch_failed, provider_unavailable, timeout, settlement_unknown]
+metrics: [research_cancel_command_outcome_count, research_cancel_command_latency_ms, research_cancel_settlement_lag_ms]
+metric_definitions:
+  - {name: research_cancel_command_outcome_count, type: counter, unit: count, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_cancel_command_latency_ms, type: histogram, unit: milliseconds, labels: [operation, outcome, status, error_class, dependency]}
+  - {name: research_cancel_settlement_lag_ms, type: histogram, unit: milliseconds, labels: [operation, outcome, status, error_class, dependency]}
+metric_semantics: {research_cancel_command_outcome_count: terminal command outcome, research_cancel_command_latency_ms: active cancellation latency, research_cancel_settlement_lag_ms: owner intent to terminal settlement lag}
+capture_policy: metadata_only
+evaluators: [research_failure_isolation@1, research_privacy@1]
+cardinality: {metric_attributes: [operation, outcome, status, error_class, dependency], trace_only: [trace_id, span_id, parent_span_id, link_span_ids, run_id, conversation_id], prohibited: [question, query, url, excerpt, content, payload, owner_identity, task_id, research_id, request_id, exception]}
+replay: synthetic_fixture_only
+privacy: {capture: metadata_only, content: forbidden, owner_identity: forbidden, credentials: forbidden}
+retention: {process_buffer: bounded, overflow: drop_oldest_and_count, export_failure: retry_three_times_then_drop_and_count}
+export: {sinks: [structured_container_log, otlp], cadence: periodic_and_shutdown, health_counters: [dropped, rejected, export_failures, abandoned_batches]}

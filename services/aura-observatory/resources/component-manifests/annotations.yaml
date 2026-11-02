@@ -1,0 +1,27 @@
+component:
+  id: aura.observatory.annotations
+  version: 1.0.0
+  owner: observatory.operations
+  category: observability
+input:
+  schema: observatory-v1
+  replayable: true
+output:
+  schema: observatory-v1
+dependencies: [postgresql, oidc_provider, session_store]
+metrics: [observatory_annotation_operation_count]
+metric_semantics:
+  observatory_annotation_operation_count: Owner-authored annotation operations; text is never a metric label.
+metric_definitions:
+  observatory_annotation_operation_count:
+    type: counter
+    labels: [operation, outcome]
+    trace: annotation_operation
+    correlation: service
+    export: prometheus
+cardinality:
+  bounded_labels: [operation, outcome]
+  prohibited: [prompt, response, content, filename, arguments, result, endpoint, token, credential, owner_identity]
+evaluators: [annotation_privacy, operations_owner_authorization, operations_browser_persistence_isolation]
+capture_policy: metadata_only
+retention: manual_owner_delete_only

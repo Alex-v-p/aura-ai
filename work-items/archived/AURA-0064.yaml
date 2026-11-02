@@ -1,0 +1,211 @@
+id: AURA-0064
+title: Add recurring reminder schedule foundation
+status: integrated
+change_class: repository_governance
+intent: >
+  Add owner-scoped recurring reminder series with deterministic wall-clock
+  recurrence, exactly one materialized future occurrence, bounded recovery
+  after downtime, serialized lifecycle commands, and metadata-only lifecycle
+  observation while preserving every existing one-shot reminder and delivery
+  contract.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/architecture/technology-stack.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/tools-automation-and-integrations.md
+    - docs/specifications/open-decisions.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0015-authentik-bff-secrets-extensions.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - Owner-approved structured daily selected-weekday weekly and monthly-by-date recurrence with positive intervals and optional occurrence-count or end-date termination
+    - Owner-approved local wall-clock recurrence in an explicit IANA timezone with DST gaps moved to the first valid instant and overlaps emitted once at the earlier instant
+    - Owner-approved monthly overflow on the last valid calendar day followed by return to the requested date in longer months
+    - Owner-approved exactly one materialized scheduled occurrence per active series and immutable historical occurrences
+    - Owner-approved one overdue delivery after downtime with additional missed occurrences counted and skipped before the next future occurrence is materialized
+    - Owner-approved paused windows skipped without catch-up and resume continuing on the original cadence
+    - Owner-approved occurrence completion independent from series lifecycle and explicit skip-next edit-future pause resume and cancel-series commands
+    - Owner-approved PostgreSQL locking and optimistic versions so firing and lifecycle command races have exactly one committed winner
+  contracts:
+    - contracts/events/automation/v1/reminder-events.schema.json
+    - contracts/events/automation/v1/notification-events.schema.json
+feature_references:
+  - AUT-002
+  - AUT-003
+  - AUT-004
+  - AUT-013
+  - AUT-017
+  - AUT-018
+  - AUT-019
+  - AUT-020
+ownership_zones:
+  - contracts.events.automation.v1
+  - aura-core.automation.reminders
+  - aura-core.automation.notifications
+  - aura-core.bootstrap
+  - aura-core.migrations
+  - aura-core.entrypoints.scheduler
+  - aura-core.platform.outbox
+  - aura-core.platform.telemetry
+  - repository.architecture.registry
+  - evaluation.automation-reminders
+allowed_paths:
+  - work-items/active/AURA-0064.yaml
+  - work-items/archived/AURA-0064.yaml
+  - contracts/events/automation/v1/reminder-series-events.schema.json
+  - docs/specifications/tools-automation-and-integrations.md
+  - services/aura-core/migrations/versions/0017_recurring_reminders.py
+  - services/aura-core/src/aura_core/domains/automation/reminders/**
+  - services/aura-core/src/aura_core/domains/automation/notifications/**
+  - services/aura-core/src/aura_core/bootstrap/reminder_uow.py
+  - services/aura-core/src/aura_core/bootstrap/notification_uow.py
+  - services/aura-core/src/aura_core/entrypoints/scheduler/**
+  - services/aura-core/src/aura_core/platform/telemetry.py
+  - services/aura-core/src/aura_core/platform/outbox/service.py
+  - services/aura-core/resources/component-manifests/reminder-management.yaml
+  - services/aura-core/resources/component-manifests/reminder-scheduler.yaml
+  - services/aura-core/resources/component-manifests/notification-delivery.yaml
+  - services/aura-core/tests/test_reminders.py
+  - services/aura-core/tests/test_reminder_series.py
+  - services/aura-core/tests/test_reminder_evaluation.py
+  - services/aura-core/tests/test_reminder_scheduler.py
+  - services/aura-core/tests/test_notifications.py
+  - services/aura-core/tests/test_notification_delivery.py
+  - services/aura-core/tests/test_outbox.py
+  - services/aura-core/tests/test_telemetry.py
+  - services/aura-core/tests/test_migrations.py
+  - services/aura-core/tests/test_migration_0017_recurring_reminders.py
+  - services/aura-core/tests/system/test_notification_delivery.py
+  - services/aura-core/tests/system/test_recurring_reminder_delivery.py
+  - tooling/architecture/modules.yaml
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - docs/architecture/**
+  - docs/adr/**
+  - contracts/openapi/**
+  - contracts/events/runs/**
+  - contracts/events/automation/v1/reminder-events.schema.json
+  - contracts/events/automation/v1/notification-events.schema.json
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-observatory/**
+  - services/aura-core/src/aura_core/domains/knowledge/**
+  - services/aura-core/src/aura_core/domains/integrations/**
+  - services/aura-core/src/aura_core/domains/governance/**
+  - services/aura-core/src/aura_core/domains/execution/**
+  - services/aura-core/src/aura_core/runtime/tools/**
+  - services/aura-core/src/aura_core/entrypoints/api/**
+  - frontend/**
+  - deploy/**
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: true
+  affected:
+    - contracts/events/automation/v1/reminder-series-events.schema.json
+  compatibility_requirement: backward_compatible
+data:
+  migration_required: true
+  owning_service: aura-core
+  owning_module: automation.reminders
+observability:
+  applicable: true
+  affected_components:
+    - aura.automation.reminder_management
+    - aura.automation.reminder_scheduler
+    - aura.automation.notification_delivery
+  required_metrics:
+    - reminder_series_command_duration_ms
+    - reminder_series_command_outcome
+    - reminder_recurrence_calculation_outcome
+    - reminder_occurrence_generated_count
+    - reminder_occurrence_skipped_count
+    - reminder_occurrence_missed_count
+    - reminder_series_version_conflict_count
+    - reminder_series_idempotency_conflict_count
+    - reminder_series_due_lag_ms
+  required_evaluators:
+    - recurring_reminder_rule_correctness
+    - recurring_reminder_timezone_correctness
+    - recurring_reminder_exactly_one_future_occurrence
+    - recurring_reminder_bounded_catch_up
+    - recurring_reminder_race_safety
+    - recurring_reminder_owner_isolation
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Every series record occurrence lifecycle command repository lookup and scheduler mutation remains bound to the authenticated owner except the database-only due-delivery scan.
+    - Private reminder content recurrence rules local wall-clock values timezones owner identity and due instants must not enter lifecycle event envelopes NATS telemetry ordinary audit metadata logs or error details.
+    - Series commands require UUID idempotency exact replay and optimistic expected-version enforcement even though HTTP entrypoints are deferred to AURA-0065.
+    - Exactly one scheduled occurrence may exist for an active series and database constraints plus row locks must prevent duplicate materialization delivery and notification creation.
+    - Edit pause skip cancel and scheduler firing races must lock the authoritative series and occurrence rows so only one valid transition commits.
+    - Existing one-shot reminder rows APIs lifecycle events notification events and owner authorization behavior must remain byte-compatible and require no data backfill.
+    - Timezone identifiers and recurrence fields are validated before persistence with bounded intervals selected weekdays count and end-date limits.
+  data_classes:
+    - private_reminder_content
+    - private_recurrence_configuration
+    - owner_identity
+    - reminder_series_and_occurrence_identifiers
+    - lifecycle_and_scheduling_metadata
+required_agents:
+  implementation:
+    - contract_steward
+    - core_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 3
+  model_tier: deep
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - The reminder domain exposes owner-scoped recurring series commands and queries through its public application API while persistence and recurrence implementation details remain private to automation.reminders.
+  - A series stores private content a structured daily selected-weekday weekly or monthly-by-date rule a positive interval local wall-clock start validated IANA timezone optional count or end-date termination status optimistic version lifecycle timestamps missed count and the next due instant.
+  - Recurrence preserves local wall-clock time across offset changes moves DST-gap values to the first valid instant emits one earlier-instant value for overlaps and uses the last valid day for short-month overflow before returning to the requested date.
+  - Creating or advancing an active series materializes exactly one future scheduled ordinary Reminder linked through an immutable occurrence sequence while one-shot reminder behavior remains unchanged.
+  - Firing a recurring occurrence atomically preserves its Reminder lifecycle creates exactly one existing in-app Notification advances series counters records bounded missed occurrences and materializes only the next future occurrence.
+  - After downtime one overdue occurrence is delivered at most once additional past occurrences are counted and recorded as skipped and no burst of missed notifications is produced.
+  - Completing a fired occurrence never completes its series while exhausting count or end-date termination completes the series and creates no additional occurrence.
+  - Skip-next records the occurrence as skipped and advances pause cancels the pending occurrence without catch-up resume chooses the next future occurrence on the original cadence edit replaces only the pending future occurrence and cancel-series prevents every future occurrence.
+  - Series and occurrence history distinguishes scheduled fired completed skipped replaced paused-window and series-canceled outcomes without adding values to the existing ReminderStatus wire contract.
+  - Concurrent create replay scheduler scans edit pause skip resume cancel and fire operations use database constraints locks expected versions and idempotency so exactly one valid outcome commits and crash retry cannot duplicate an occurrence or notification.
+  - A new reminder-series event schema carries identifiers status version command correlation causation and bounded count metadata only while the existing reminder and notification v1 schemas remain unchanged.
+  - Component manifests and instrumentation cover recurrence calculation commands occurrence generation skipping missed-count recovery conflicts due lag and failures without capturing content recurrence payload owner identity timezone local time or due instants.
+  - The forward migration upgrades from 0016 and fresh installations creates additive series occurrence and command-idempotency persistence without backfilling or changing existing one-shot reminders.
+  - No HTTP API generated client frontend conversational tool approval policy Web Push Home Assistant calendar household sharing workflow voice Wall Observatory or external provider behavior is added.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0064.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0064.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-baseline-protection.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0064.yaml
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0064.yaml
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run --project services/aura-core pyright services/aura-core
+  - uv run --project services/aura-core ruff check services/aura-core/src services/aura-core/tests
+  - uv run --project services/aura-core pytest services/aura-core/tests
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: true
+open_decisions: []

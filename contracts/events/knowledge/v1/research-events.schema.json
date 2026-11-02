@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/contracts/events/knowledge/v1/research-events.schema.json",
+  "title": "Aura governed research lifecycle events v1",
+  "description": "Closed metadata-only research lifecycle events. Owner identity, questions, plans, queries, URLs, domains, source labels, excerpts, citations, artifact titles, digests, object references, provider payloads, credentials, prompts, responses, and hidden reasoning are prohibited.",
+  "$ref": "#/$defs/ResearchLifecycleEvent",
+  "$defs": {
+    "Uuid": { "type": "string", "format": "uuid" },
+    "Timestamp": { "type": "string", "format": "date-time" },
+    "ResearchStage": { "type": "string", "enum": ["queued", "planning", "searching", "fetching", "validating_evidence", "synthesizing", "persisting", "draining", "terminal"] },
+    "ResearchOutcome": { "type": ["string", "null"], "enum": ["completed", "partial", "budget_exhausted", "failed", "canceled", "interrupted", null] },
+    "ContentDeletionState": { "type": "string", "enum": ["active", "deletion_pending", "deletion_failed", "cleanup_unknown", "deleted"] },
+    "ResearchLifecycleEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "eventId", "eventType", "researchId", "taskId", "researchVersion", "stage", "outcome", "contentState", "occurredAt", "correlationId", "causationId"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "eventId": { "$ref": "#/$defs/Uuid" },
+        "eventType": { "type": "string", "enum": ["research.admitted", "research.stage_changed", "research.terminal", "research.content_deletion_changed"] },
+        "researchId": { "$ref": "#/$defs/Uuid" },
+        "taskId": { "$ref": "#/$defs/Uuid" },
+        "researchVersion": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "stage": { "$ref": "#/$defs/ResearchStage" },
+        "outcome": { "$ref": "#/$defs/ResearchOutcome" },
+        "contentState": { "$ref": "#/$defs/ContentDeletionState" },
+        "occurredAt": { "$ref": "#/$defs/Timestamp" },
+        "correlationId": { "$ref": "#/$defs/Uuid" },
+        "causationId": { "$ref": "#/$defs/Uuid" }
+      }
+    }
+  }
+}

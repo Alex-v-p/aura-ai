@@ -1,0 +1,150 @@
+agent: frontend_worker
+work_item: AURA-0121
+status: complete
+runtime:
+  model: gpt-5
+  reasoning_effort: high
+  execution_tier: deep
+  agent_thread_id: /root/aura0121_frontend
+  worktree: shared-main
+scope:
+  ownership_zone: observatory-web
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - frontend/apps/observatory-web/src/app/app.component.css
+  - frontend/apps/observatory-web/src/app/app.component.ts
+  - frontend/apps/storybook/src/observatory-icons.stories.ts
+  - frontend/apps/storybook/src/observatory-destinations.stories.ts
+  - frontend/apps/storybook/src/observatory-trace.stories.ts
+  - frontend/libs/observatory/src/lib/observatory-gateway.ts
+  - frontend/libs/observatory/src/lib/observatory-models.ts
+  - frontend/libs/observatory/src/lib/observatory-store.ts
+  - frontend/libs/observatory/src/index.ts
+  - frontend/libs/observatory/src/lib/features/analytics/analytics.component.ts
+  - frontend/libs/observatory/src/lib/features/comparison/comparison.component.ts
+  - frontend/libs/observatory/src/lib/features/components/components.component.ts
+  - frontend/libs/observatory/src/lib/features/evaluation/evaluation-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-state.utils.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.store.ts
+  - frontend/libs/observatory/src/lib/features/experiments/experiment-workspace.store.spec.ts
+  - frontend/libs/observatory/src/lib/features/overview/overview.component.ts
+  - frontend/libs/observatory/src/lib/features/operations/operations-workspace.component.ts
+  - frontend/libs/observatory/src/lib/features/runs/runs.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace-inspector.utils.ts
+  - frontend/libs/observatory/src/lib/features/traces/trace.component.spec.ts
+  - frontend/libs/observatory/src/lib/observatory-store.spec.ts
+  - frontend/libs/observatory/src/lib/presentation/observatory-icon.component.ts
+contracts:
+  changed: false
+migrations:
+  changed: false
+observability:
+  components: []
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0121.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0121.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0121.yaml (no contract changes)
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-import-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0121.yaml (no protected changes)
+    - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0121.yaml
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0121.yaml
+    - pnpm --dir frontend exec nx test observatory (74 passed)
+    - pnpm --dir frontend exec nx test observatory-web (1 passed)
+    - pnpm --dir frontend exec nx lint observatory-web
+    - pnpm --dir frontend exec nx build observatory-web --configuration=production
+    - pnpm --dir frontend exec nx build-storybook storybook
+    - git diff --check
+  failed: []
+  not_run:
+    - pnpm --dir frontend exec nx test observatory --runInBand (Vitest does not support --runInBand; rerun without the flag passed)
+    - pnpm --dir frontend exec nx test observatory-web --runInBand (Vitest does not support --runInBand; rerun without the flag passed)
+    - pnpm --dir frontend exec nx e2e observatory-web-e2e (acceptance worker/integration-owned)
+    - bash deploy/compose/e2e/test_full_stack_observability_path.sh (acceptance worker/integration-owned)
+    - Remaining integration checks and visual browser acceptance are delivery/integration-owned.
+decisions:
+  - >-
+    The selected-run projection now loads the authoritative getRunInspection
+    snapshot alongside existing metadata and trace projections. Inspection
+    failure remains truthful and does not hide usable metadata.
+  - >-
+    Evidence bytes are fetched only when an owner opens a captured manifest,
+    held in memory only, rendered as escaped text/JSON or an approved image
+    preview, and cleared when closed or the selected run changes.
+  - >-
+    The existing CSRF/idempotent deletion route is used with its exact
+    DELETE_RUN_EVIDENCE confirmation; deletion progress remains explicit while
+    metadata stays visible.
+  - >-
+    Timeline, trace spans, phase records, measurements, and evidence manifests
+    are bounded in the view so delayed/repeated delivery cannot create an
+    unbounded document.
+  - >-
+    Observatory navigation and workspace status use a closed semantic SVG icon
+    vocabulary. Overview distinguishes current health from lifetime counters and
+    exposes an accessible bounded trend; Components, Analytics, Compare, Evaluation,
+    Experiments, Operations, and Retention expose bounded, labelled, truthful states.
+  - >-
+    Mobile closed-drawer state is explicitly hidden and non-interactive at compact
+    widths, preventing a transformed residual rail from clipping the 390px workspace.
+  - >-
+    Evidence disclosure uses request generations and selected-manifest identity checks;
+    collapse, run changes, later selections, and component destruction revoke object URLs
+    and clear in-memory text before any late response can be displayed.
+  - >-
+    Evidence transport is abortable and session-expiry aware. Responses fail closed
+    unless the manifest byte count, media type, classification, and bounded 1 MiB
+    allowlist all agree; no unapproved blob is decoded or previewed.
+  - >-
+    Destructive evidence deletion keeps one in-memory idempotency key per selected run,
+    gates duplicate requests, and polls accepted/in-progress work within a bounded
+    window until authoritative inspection reports deleted or a truthful non-converged
+    state is shown.
+  - >-
+    Run invalidations refresh only matching metadata-only run events, while inspection
+    freshness remains distinct from detail readiness. Authoritative manifests drive
+    coverage labels, and repeatable events are aggregated before the timeline bound so
+    terminal and failure outcomes remain visible.
+  - >-
+    A live inspection replacement must preserve an open disclosure only when the
+    authoritative manifest remains captured with the same evidence ID, media
+    classification/type, digest, and byte count. Any capture-state or immutable
+    manifest change clears the store blob and component text/object URL immediately.
+  - >-
+    The selected-run inspector uses a bounded abortable load with a ten-second
+    timeout and explicit retry state. Trace and inspection rows expose treeitem
+    levels, parent step/span lineage, start offsets, and parallel-branch styling;
+    status and branch decoration uses the Observatory SVG icon vocabulary.
+  - >-
+    Product shell copy now distinguishes private operational metadata monitoring
+    from owner-disclosed governed evidence. Runs flag model/trace-limited
+    historical projections without changing the authoritative stored duration.
+  - >-
+    Storybook now has isolated Runs, Components, and Analytics destination
+    fixtures covering loading, empty, stale, disconnected, partial/error,
+    limited/deleted, bounded large-run, and narrow-screen states; Trace adds
+    deleted-evidence, bounded-large-inspection, and narrow-screen fixtures.
+  - >-
+    Selected-run refreshes inspect both settled projections before handling a
+    metadata failure: inspection-only session expiry follows the global signed-
+    out purge, while a fulfilled deleted inspection revokes disclosed evidence
+    even when detail or trace timed out. Operations alert legends use the same
+    semantic SVG vocabulary as the rest of Observatory.
+  - >-
+    Inspection and raw trace tree ARIA positions now use sibling-relative
+    position and set size for root, nested, and parallel branches rather than
+    flattened sequence indexes; focused tests cover both trees.
+risks:
+  - >-
+    The full-stack visual and browser acceptance should verify the backend
+    inspection response and deletion lifecycle against the restarted stack.
+unresolved: []

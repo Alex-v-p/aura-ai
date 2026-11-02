@@ -1,0 +1,128 @@
+agent: contract_steward
+work_item: AURA-0088
+status: complete
+runtime:
+  model: gpt-5.6-sol
+  reasoning_effort: medium
+  execution_tier: balanced
+  agent_thread_id: /root/aura_0088_contracts
+  worktree: feat/aura-0084-0098-observatory-expansion
+scope:
+  ownership_zone: contracts.metadata-observation-v2, contracts.observatory-api
+  allowed_paths_respected: true
+commits: []
+files_changed:
+  - contracts/telemetry/v2/metadata-observation.schema.json
+  - contracts/openapi/observatory-v1.yaml
+  - frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+  - services/aura-observatory/tests/test_aura0088_contract.py
+  - work-items/handoffs/AURA-0088-contract.yaml
+contracts:
+  changed: true
+  authorship: serialized by the assigned contract_steward; no other owner was authorized to edit the metadata-observation v2 schema, Observatory OpenAPI source, or generated Observatory client during this slice
+  compatibility: backward_compatible
+  definitions:
+    - id: metadata-observation-v2
+      version: 2
+      source: contracts/telemetry/v2/metadata-observation.schema.json
+      changes:
+        - Added a standalone closed JSON Schema 2020-12 contract while leaving metadata-observation v1 unchanged.
+        - Preserved the v1 observation, timestamp, component, operation, measurement, dimension, trace, correlation, role, and metadata-only capture shapes.
+        - Added optional bounded deployment imageVersion and configurationVersion markers.
+        - Added an optional closed execution object containing only modelId, modelVersion, agentRevision, promptBundleRevision, and policyRevision.
+        - Added one ModelIdentifier grammar for trusted local model names and optional tags, including qwen3:8b and llama3.2:latest, while excluding URL, path, whitespace, email, numeric-port-tag, and case-insensitive delimited owner, identity, credential, bearer, token, secret, password, private, content, hash, digest, and endpoint markers.
+        - Tightened RevisionIdentifier across deployment image/configuration and execution model/agent/prompt-bundle/policy revisions to reject the same case-insensitive delimited private/content marker set while retaining unrelated bounded release labels.
+        - Explicitly prohibited prompt text, content-derived prompt hashes, responses, memories, documents, filenames, tool payloads, credentials, endpoints, bearer tokens, owner identity, captured content, and arbitrary attributes.
+    - id: observatory-v1
+      version: 1.0.0
+      source: contracts/openapi/observatory-v1.yaml
+      changes:
+        - Added the owner-authorized POST /api/v1/run-comparisons/query resource with left and right run UUIDs in a closed JSON body and no URL identifiers.
+        - Added a no-store metadata-only comparison snapshot with fixed two-run, per-run observation, per-run span, measurement, scan-row, and execution-time limits.
+        - Added explicit available, missing, unavailable, equal, changed, matched, left-only, right-only, incompatible, retained-partial, truncated, missing-parent, cyclic, and duplicate evidence states.
+        - Added bounded run-side timing, status, outcome, model, deployment, git, image, configuration, component-version, agent, prompt-bundle, and policy marker projections.
+        - Applied ModelIdentifier only to modelId comparison values and the matching closed RevisionIdentifier to all other comparison markers without widening SafeLabel elsewhere in observatory-v1.
+        - Added compatible-unit component measurement comparisons that distinguish zero from missing and expose a non-negative absolute delta only for two available finite values.
+        - Added deterministic structural span-alignment transport shapes with a 512-character structural-key grammar and up to 10,000 aligned records for two independently bounded 5,000-span sides, without inferring absent lineage or collapsing incompatible component operations.
+  compatibility_notes:
+    - contracts/telemetry/v1/metadata-observation.schema.json is unchanged and remains accepted throughout the coordinated rollout.
+    - metadata-observation v2 is a new contract identifier and source path rather than a widening of v1; its marker fields are optional so producers may roll out configuration incrementally.
+    - observatory-v1 remains at 1.0.0 because the comparison operation and supporting schemas are additive and no existing operation, parameter, request, response, or required property changed.
+    - Existing generated-client consumers remain source-compatible; the generated output adds only types and a compareRuns transport descriptor.
+    - The reviewed identifier correction is additive relative to the repository baseline, narrows only the new AURA-0088 marker shapes before release, and does not widen SafeLabel, existing Observatory resources, or metadata-observation v1.
+    - Equal left and right identifiers are a semantic 422 error enforced by the API producer because JSON Schema cannot express inequality between two object properties portably.
+  producers:
+    - Aura Core optional asynchronous OTLP exporter producing metadata-observation v2
+    - Aura Observatory owner-authorized bounded run-comparison API
+    - Aura Observatory ClickHouse comparison query adapter
+  consumers:
+    - Aura Observatory v1/v2 ingest normalization and validation
+    - Aura Observatory ClickHouse observation and span storage
+    - Observatory Web run-comparison workspace through the generated Angular transport client
+    - Observatory contract, privacy, adapter, accessibility, browser, and full-stack acceptance suites
+  rollout:
+    - Deploy the Observatory migration and dual-version v1/v2 ingest consumer before enabling Core metadata-observation v2 export.
+    - Keep v1 accepted during the coordinated producer rollout; do not rewrite or widen historical v1 observations.
+    - Deploy the compatible comparison API before or with the regenerated Observatory Web client; older clients continue using unchanged observatory-v1 resources.
+    - Execute comparisons on demand behind the bounded query port, return Cache-Control no-store, never persist comparison snapshots, and keep SSE as a marker-free invalidation signal.
+    - Retention removes source comparison evidence; clients must discard an in-flight or displayed snapshot and refetch after a metadata-only invalidation.
+  generated_outputs:
+    - source: contracts/openapi/observatory-v1.yaml
+      generator: frontend/libs/platform/observatory-api-client/tools/generate-client.mjs
+      output: frontend/libs/platform/observatory-api-client/src/lib/generated/observatory-api.ts
+migrations:
+  changed: false
+observability:
+  components:
+    - aura.platform.telemetry_export
+    - aura.observatory.telemetry_ingestion
+    - aura.observatory.query_api
+    - aura.observatory.telemetry_storage
+  metrics_added: []
+verification:
+  passed:
+    - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0088.yaml
+    - python3 -m json.tool contracts/telemetry/v2/metadata-observation.schema.json
+    - python3 -m json.tool contracts/openapi/observatory-v1.yaml
+    - node ECMAScript RevisionIdentifier and ModelIdentifier pattern probe (safe releases and qwen3:8b, llama3.2:latest accepted; every approved private/content segment plus URL, path, email, and numeric-port shapes rejected)
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run ruff check tests/test_aura0088_contract.py
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest tests/test_aura0088_contract.py -q (41 passed)
+    - cd services/aura-observatory && UV_CACHE_DIR=/tmp/aura-uv-cache uv run pytest tests/test_aura0078_contract.py tests/test_aura0086_contract.py tests/test_aura0087_contract.py tests/test_aura0088_contract.py -q (85 passed)
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:validate-contract
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:check-generated
+    - cd frontend && NX_DAEMON=false pnpm exec nx run observatory-api-client:lint
+    - cd frontend && pnpm exec tsc -p libs/platform/observatory-api-client/tsconfig.lib.json --noEmit
+    - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0088.yaml
+    - python3 tooling/architecture/validate-generated-sync.py
+    - python3 tooling/architecture/validate-frontend-boundaries.py
+    - python3 tooling/architecture/validate-repository-shape.py
+    - python3 tooling/architecture/validate-module-registry.py
+    - python3 tooling/architecture/validate-service-isolation.py
+    - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0088.yaml
+    - git diff --check
+  failed: []
+  not_run:
+    - A successful aggregate observability validation is deferred until the Core, Observatory, platform, and frontend owners add the work item's required metrics and evaluator declarations; a contract-slice diagnostic correctly reported those declarations as pending.
+    - Core exporter, Observatory runtime, ClickHouse migration, frontend feature, Storybook, browser, and full-stack checks remain assigned to their implementation, review, and integration owners.
+decisions:
+  - Kept metadata-observation v1 immutable and introduced v2 as a standalone closed schema so mixed-version ingestion can be tested and rolled out without silently reinterpreting stored v1 payloads.
+  - Used explicit nested deployment and execution marker properties instead of arbitrary attributes or dimensions, preventing high-cardinality revision values from becoming metric labels.
+  - Limited revision identifiers to bounded trusted-configuration labels and documented that promptBundleRevision must be assigned before capture rather than derived from prompt or other content.
+  - Defined matching RevisionIdentifier and lowercase ModelIdentifier grammars in metadata-observation v2 and observatory-v1 so repository-supported release and tagged local-model identifiers remain comparable without granting a general colon-bearing label.
+  - Rejected owner, identity, credential, bearer, token, secret, password, private, content, hash, digest, and endpoint only as complete delimiter-separated segments; this blocks owner-secret, content-hash-abc, private-image, qwen3:content, and qwen3:hash while preserving unrelated labels such as ownerless, contention, privateer, digestive, and sha256_abc.
+  - Used explicit per-letter character classes for case-insensitive RevisionIdentifier segment rejection because JSON Schema/OpenAPI patterns must remain valid ECMAScript without relying on non-portable inline regex flags.
+  - Required a letter-bearing optional model tag to accept 8b and latest while rejecting a host-and-numeric-port shape; explicit scheme, path, email, whitespace, and sensitive metadata segments are rejected syntactically, with runtime private-shape validation still required for provenance and ambiguous labels.
+  - Used a POST query with a closed body because the selected run identifiers are authenticated operational metadata that must not appear in browser history, access URLs, or query strings; the operation remains read-only and non-persistent.
+  - Retained observatory-v1 version 1.0.0 because adding a new resource and new schemas is backward-compatible and requires no existing consumer to send or accept new fields.
+  - Represented marker and evidence absence as missing or unavailable instead of null alone so clients never mistake absent historical data for equality.
+  - Kept measurement pairs keyed by declared name and non-null unit, with absoluteDelta nullable, so incompatible units cannot be compared and a measured zero remains distinct from absent evidence.
+  - Exposed fixed limits in the response contract so clients can explain partial results and never imply that bounded evidence is complete.
+  - Kept TraceComparison.alignedSpans at 10,000 because independently retained 5,000-span sides can be entirely unmatched, and retained the 512-character structural alignment-key grammar emitted by the bounded canonical-path algorithm; no persisted comparison or row identity was introduced.
+  - Kept the generated Angular output transport-only with no auth, querying, alignment, caching, retry, state, retention, or presentation behavior.
+  - No online documentation was needed because the repository-pinned JSON Schema 2020-12, OpenAPI 3.1, Angular generator, and existing compatible contract patterns resolved this ownership slice.
+risks:
+  - JSON Schema constrains marker syntax and rejects the approved delimited sensitive shapes but cannot prove that an otherwise valid model or revision identifier was not derived from content or semantically represents private data; trusted Core configuration and Observatory runtime allowlists must enforce marker provenance and broader private-shape rejection.
+  - The OpenAPI contract describes left/right inequality as a semantic 422 because portable JSON Schema cannot compare sibling property values.
+  - Large but finite aligned-span responses remain dense; the query and frontend owners must preserve fixed limits, partial reasons, progressive rendering, and memory-only handling.
+unresolved: []

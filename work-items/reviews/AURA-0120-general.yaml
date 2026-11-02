@@ -1,0 +1,48 @@
+agent: general_reviewer
+work_item: AURA-0120
+verdict: PASS
+checked:
+  - >-
+    Reviewed the active work item, ADR-0017, the archived AURA-0119 boundary,
+    both implementation handoffs, and the complete current diff. The behavior
+    change is confined to the two run-evidence Garage bootstrap commands and
+    focused deployment tests; contracts, service code, frontends, credentials,
+    and storage topology are unchanged.
+  - >-
+    Executed the worker and API parsers extracted from Compose against Garage
+    2.1 header-only tables, global-alias and local-alias target rows, ID-only
+    rows, unrelated grants, and mixed target/unrelated grants. Header-only
+    output is empty; valid rows yield only a bucket alias or 16-hex bucket ID;
+    and every unrelated valid row remains visible to the fail-closed guard.
+  - >-
+    Verified the implementation reuses the established Garage 2.1-aware
+    parser shape: it enters only the named bucket table, explicitly skips the
+    header, requires a valid 16-hex bucket ID, selects a non-placeholder alias
+    when available, and otherwise emits the ID. The rendered Compose command
+    preserves the regular-expression anchors and post-grant count check.
+  - >-
+    Traced fresh and repeated bootstrap behavior. Missing keys are imported,
+    the worker creates the dedicated bucket when absent, existing target-only
+    grants pass the preflight, permission mutations remain repeatable, and both
+    identities re-read key state and require exactly one target grant with no
+    unrelated grants before succeeding.
+  - >-
+    Verified least privilege remains unchanged: the worker grants write,
+    denies read and owner, and requires compact permission W; the API grants
+    read/write, denies owner, and requires RW. Core documents, evaluation, and
+    all other valid bucket grants are rejected before mutation.
+  - >-
+    Inspected the running local Compose deployment created from commands that
+    contain the corrected parser and post-grant verification. Both
+    observatory-run-evidence Garage bootstrap containers exited with status 0
+    against persisted Garage state, exercising the target-present idempotent
+    startup path.
+  - >-
+    Independent focused verification passed: 9 AURA-0119/AURA-0120 topology
+    and parser tests, focused Ruff, work-item validation, changed-path
+    validation, contract-change validation, service isolation, frontend
+    boundaries, rendered Compose validation, and repository diff whitespace
+    validation.
+findings: []
+risks: []
+unresolved: []

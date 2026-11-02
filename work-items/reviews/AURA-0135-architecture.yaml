@@ -1,0 +1,14 @@
+agent: architecture_guardian
+work_item: AURA-0135
+verdict: PASS
+checked:
+  - The documentation-only change stays within authorized paths and changes no product, contract, migration, provider, deployment, package, or protected architecture boundary.
+  - Workflow truth remains Core-owned PostgreSQL state and the transactional outbox remains identifier-only; NATS, Valkey, workers, and executors are non-authoritative.
+  - Workflow handlers use deliberate public Runs, Approvals, and Notifications application APIs without reaching into adapters or tables.
+  - The slice needs no LangGraph integration and exposes no executor concepts or state through public contracts, events, clients, telemetry, or evidence.
+  - Manual-only retention and deletion decisions do not select private graph-state retention or change ADR-0017 evidence policy.
+  - Core and Observatory remain isolated and Aura Web remains limited to generated Aura API clients.
+  - The ordered follow-on checkpoints keep contracts and state machine, Core execution, and Aura Web management separately gated.
+  - Existing accepted ADRs authorize the selected direction; no new ADR is required.
+  - Required governance and diff checks passed.
+findings: []

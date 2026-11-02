@@ -1,0 +1,169 @@
+id: AURA-0077
+title: Repair attachment persistence ordering and image deduplication
+status: integrated
+change_class: bugfix
+intent: >
+  Restore atomic conversation creation with attachments and make owner-scoped
+  duplicate image uploads converge on the existing attachment without exposing
+  database failures, private content, or inconsistent lifecycle state.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+    - docs/development/work-item-process.md
+  specifications:
+    - docs/specifications/agents-and-execution.md
+    - docs/specifications/memory-and-knowledge.md
+    - docs/design/failure-and-recovery-states.md
+  decisions:
+    - docs/adr/0013-postgresql-nats-valkey-garage-consistency.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+    - AURA-0076 owner-private attachment ownership, immutable message-link, atomic admission, and metadata-only capture decisions remain authoritative.
+  contracts:
+    - contracts/openapi/aura-v1.yaml
+    - contracts/events/artifacts/v1/attachment-events.schema.json
+feature_references:
+  - ART-001
+  - ART-004
+  - ART-006
+  - RUN-004
+  - RUN-005
+ownership_zones:
+  - aura-core.artifacts.attachments
+  - aura-core.interaction.conversations
+  - aura-core.execution.runs
+  - aura-core.bootstrap
+  - aura-web.interaction.conversations
+  - evaluation.conversation-attachments
+allowed_paths:
+  - work-items/active/AURA-0077.yaml
+  - work-items/archived/AURA-0077.yaml
+  - work-items/handoffs/AURA-0077-*.yaml
+  - work-items/reviews/AURA-0077-*.yaml
+  - work-items/integration/AURA-0077.yaml
+  - services/aura-core/src/aura_core/bootstrap/conversation_uow.py
+  - services/aura-core/src/aura_core/domains/artifacts/attachments/**
+  - services/aura-core/src/aura_core/domains/interaction/conversations/persistence.py
+  - services/aura-core/src/aura_core/domains/interaction/conversations/repository.py
+  - services/aura-core/src/aura_core/domains/execution/runs/service.py
+  - services/aura-core/src/aura_core/entrypoints/api/routes/attachments.py
+  - services/aura-core/tests/test_conversation_attachments.py
+  - services/aura-core/tests/test_run_events.py
+  - services/aura-core/tests/system/test_api_conversation_flow.py
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.html
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.spec.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.ts
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-store.spec.ts
+  - deploy/compose/e2e/**
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - docs/architecture/**
+  - docs/adr/**
+  - evaluations/golden-results/**
+  - evaluations/**/baselines/**
+  - services/aura-core/migrations/**
+  - services/aura-observatory/**
+  - frontend/apps/**
+  - frontend/libs/platform/**
+  - frontend/libs/aura/interaction/conversations/src/lib/conversation-panel.component.css
+  - compose.yaml
+  - satellites/**
+  - extensions/**
+  - infra/**
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: aura-core
+  owning_module: artifacts.attachments and interaction.conversations
+observability:
+  applicable: true
+  affected_components:
+    - aura.artifacts.attachment_upload
+    - aura.artifacts.attachment_processing
+    - aura.interaction.conversation_persistence
+    - aura.execution.run_coordinator
+  required_metrics:
+    - attachment_upload_outcome
+    - conversation_attachment_admission_outcome
+  required_evaluators:
+    - conversation_attachment_branch_isolation
+    - attachment_capture_redaction
+  capture_policy: metadata_only
+security_privacy:
+  applicable: true
+  concerns:
+    - Duplicate lookup remains owner-scoped and must not disclose cross-owner resource existence.
+    - Duplicate and persistence failures must not expose filenames hashes bytes prompts excerpts or extracted content.
+    - Immutable message attachment links remain atomic with their owning message and run.
+    - Deleted attachment tombstones remain unavailable and are never resurrected by deduplication.
+  data_classes:
+    - private_image_content
+    - user_supplied_filename
+    - opaque_attachment_identifiers
+    - owner_identity
+required_agents:
+  implementation:
+    - core_worker
+    - frontend_worker
+    - test_evaluation_engineer
+  review:
+    - general_reviewer
+    - architecture_guardian
+    - security_privacy_reviewer
+    - observability_steward
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: standard
+  max_parallel_agents: 8
+  max_parallel_writers: 2
+  model_tier: balanced
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - SQLAlchemy orders every message row before its normalized attachment links while preserving the immutable JSON attachment snapshot and transaction atomicity.
+  - New conversations subsequent runs edit-and-branch regeneration and assistant persistence retain their existing behavior with no partial message links after rollback.
+  - A same-owner upload with identical bytes and a different filename or upload ID returns the existing ready attachment without additional object writes or lifecycle events.
+  - Concurrent same-owner duplicate uploads converge on one attachment and only the owner-digest unique race is translated into the bounded duplicate path.
+  - Same-content uploads by different owners remain independent while failed or unavailable prior records produce a typed HTTP 409 and same-attachment retries remain possible.
+  - Existing public API event database and generated-client shapes remain unchanged and attachment telemetry stays metadata-only.
+  - Existing message attachment summaries are serialized from the immutable persisted snapshot so sent-message cards, branch reads, and tombstones remain visible without changing the contract.
+  - Edit-and-branch hydrates the branch attachment selection from the source turn and submits that explicit set without relying on composer draft state.
+  - Retained branch edits keep their per-conversation explicit attachment additions and removals across navigation, render one selection surface, and focus the branch editor after activation.
+  - The local HTTP stack builds successfully and browser acceptance covers duplicate upload conversation admission grounding vision branching regeneration preview deletion tombstones draft preservation and private-browser-storage exclusions.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0077.yaml
+  - python3 tooling/architecture/validate-changed-paths.py --work-item work-items/active/AURA-0077.yaml
+  - python3 tooling/architecture/validate-repository-shape.py
+  - python3 tooling/architecture/validate-module-registry.py
+  - python3 tooling/architecture/validate-import-boundaries.py
+  - python3 tooling/architecture/validate-service-isolation.py
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - python3 tooling/architecture/validate-contract-changes.py --work-item work-items/active/AURA-0077.yaml
+  - python3 tooling/architecture/validate-generated-sync.py
+  - python3 tooling/architecture/validate-observability.py --work-item work-items/active/AURA-0077.yaml
+  - python3 tooling/architecture/validate-baseline-protection.py --work-item work-items/active/AURA-0077.yaml
+  - python3 -m unittest discover -s tooling/architecture/tests
+  - uv run pyright services/aura-core
+  - uv run ruff check services/aura-core/src services/aura-core/tests deploy/compose/e2e
+  - uv run pytest services/aura-core/tests/test_conversation_attachments.py
+  - uv run pytest services/aura-core/tests
+  - uv run pytest deploy/compose/e2e
+  - pnpm --dir frontend exec nx test aura-conversations
+  - pnpm --dir frontend exec nx lint aura-conversations
+  - pnpm --dir frontend run build:production
+  - bash ./deploy/compose/run-full-stack-e2e.sh
+  - ./deploy/compose/local-http.sh up
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []
