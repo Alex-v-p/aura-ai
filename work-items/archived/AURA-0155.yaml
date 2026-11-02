@@ -1,0 +1,128 @@
+id: AURA-0155
+title: Prevent expanded sidebar sections from overlapping
+status: integrated
+change_class: bugfix
+intent: >
+  Keep Aura Web's expanded desktop product navigation and conversation library
+  visually separated when the product navigation grows beyond its prior height.
+sources_of_truth:
+  architecture:
+    - docs/architecture/aura-ai-architecture-handover.md
+    - docs/architecture/module-boundaries.md
+    - docs/development/codex-agent-system.md
+  specifications:
+    - docs/design/components-and-interactions.md
+    - docs/design/foundations.md
+  decisions:
+    - docs/adr/0012-python-angular-tailwind-toolchain.md
+    - docs/adr/0016-api-realtime-pwa-and-voice-protocols.md
+  contracts: []
+feature_references:
+  - WEB-003
+ownership_zones:
+  - frontend.aura-web.shell-navigation
+  - frontend.aura-web.shell-acceptance
+  - delivery.aura0155
+allowed_paths:
+  - work-items/active/AURA-0155.yaml
+  - work-items/archived/AURA-0155.yaml
+  - work-items/handoffs/AURA-0155-*.yaml
+  - work-items/reviews/AURA-0155-*.yaml
+  - work-items/integration/AURA-0155.yaml
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.html
+  - frontend/apps/aura-web/src/app/shell/aura-shell.component.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura-web.spec.ts
+  - frontend/apps/aura-web-e2e/src/aura0155-sidebar-layout.spec.ts
+  - frontend/apps/aura-web-e2e/playwright.config.ts
+forbidden_paths:
+  - AGENTS.md
+  - .agents/**
+  - .codex/**
+  - .github/**
+  - contracts/**
+  - deploy/**
+  - evaluations/**
+  - infra/**
+  - satellites/**
+  - extensions/**
+  - tooling/**
+  - services/**
+  - frontend/libs/**
+  - frontend/apps/observatory-web/**
+  - frontend/apps/observatory-web-e2e/**
+  - frontend/package.json
+  - frontend/pnpm-lock.yaml
+  - package.json
+  - pnpm-lock.yaml
+  - pyproject.toml
+  - uv.lock
+contracts:
+  changes_allowed: false
+  affected: []
+  compatibility_requirement: none
+data:
+  migration_required: false
+  owning_service: null
+  owning_module: null
+observability:
+  applicable: false
+  affected_components: []
+  required_metrics: []
+  required_evaluators: []
+  capture_policy: null
+security_privacy:
+  applicable: false
+  concerns: []
+  data_classes: []
+required_agents:
+  implementation:
+    - frontend_worker
+  review:
+    - general_reviewer
+    - aura_ux_ui_reviewer
+  integration: true
+execution:
+  parallelism_class: local
+  max_parallel_agents: 3
+  max_parallel_writers: 1
+  model_tier: efficient
+  model_escalation_allowed: true
+  escalation_reason_required: true
+acceptance_criteria:
+  - >-
+    At an expanded desktop viewport, the conversation library starts at or
+    below the product navigation and does not overlap Calendar or Activity.
+  - >-
+    The sidebar remains bounded to the viewport, keeps one scroll owner, and
+    preserves access to Preferences, compact navigation, and mobile navigation.
+  - >-
+    A browser geometry regression covers the expanded desktop layout at the
+    representative short-height viewport that exposed the clipping.
+  - >-
+    No contracts, dependencies, generated clients, protected baselines, or
+    backend behavior change.
+required_checks:
+  - python3 tooling/architecture/validate-work-item.py work-items/active/AURA-0155.yaml
+  - >-
+    python3 tooling/architecture/validate-changed-paths.py --work-item
+    work-items/active/AURA-0155.yaml --path work-items/active/AURA-0155.yaml
+    --path frontend/apps/aura-web/src/app/shell/aura-shell.component.css
+    --path frontend/apps/aura-web-e2e/src/aura0155-sidebar-layout.spec.ts
+  - python3 tooling/architecture/validate-frontend-boundaries.py
+  - >-
+    cd frontend && pnpm exec prettier --check
+    apps/aura-web-e2e/playwright.config.ts
+    apps/aura-web-e2e/src/aura0155-sidebar-layout.spec.ts
+  - >-
+    cd frontend && pnpm exec eslint
+    apps/aura-web-e2e/src/aura0155-sidebar-layout.spec.ts
+  - cd frontend && NX_DAEMON=false pnpm exec nx run aura-web:build:production
+  - >-
+    cd frontend && pnpm exec playwright test --config
+    apps/aura-web-e2e/playwright.config.ts --project=desktop -g
+    "keeps expanded product navigation separate from conversation library"
+  - git diff --check
+baseline_changes_allowed: false
+human_approval_required: false
+open_decisions: []

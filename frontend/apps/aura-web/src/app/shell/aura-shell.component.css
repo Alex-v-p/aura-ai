@@ -13,6 +13,10 @@
 .sidebar.is-collapsed .new-conversation { border-radius: .65rem; font-size: 1.2rem; width: 2.75rem; }
 .sidebar-scroll-region { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; width: 100%; }
 .product-nav { display: flex; flex: 0 0 auto; flex-direction: column; gap: .8rem; margin-top: 1.25rem; width: 100%; }
+@media (min-width: 1280px) {
+  .sidebar-scroll-region > .product-nav { flex-shrink: 0 !important; }
+  .sidebar-scroll-region > .conversation-nav { flex-shrink: 0 !important; }
+}
 .nav-group { display: grid; gap: .15rem; }
 .nav-group-heading { color: var(--text-muted); font-size: .7rem; font-weight: 750; letter-spacing: .1em; margin: 0 .7rem .25rem; text-transform: uppercase; }
 .product-link, .preferences-trigger, .library-context-trigger { align-items: center; background: transparent; border: 0; border-radius: .7rem; color: var(--text-muted); cursor: pointer; display: flex; font: inherit; font-size: .875rem; gap: .7rem; min-height: 2.75rem; min-width: 0; padding: .5rem .7rem; position: relative; text-align: left; text-decoration: none; transition: background .15s,color .15s; width: 100%; }

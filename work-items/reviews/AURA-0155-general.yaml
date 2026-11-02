@@ -1,0 +1,27 @@
+agent: general_reviewer
+work_item: AURA-0155
+verdict: PASS
+checked:
+  - >-
+    Reviewed the expanded desktop shell flex and overflow execution path. The
+    changed wide-desktop rules keep product navigation and the inline
+    conversation library as non-shrinking children of the existing
+    sidebar-scroll-region, while compact tablet and mobile rules remain outside
+    the changed media query.
+  - >-
+    Verified the corrected dedicated aura0155-sidebar-layout.spec.ts fixture
+    covers the 1280x720 product-navigation, conversation-library, Calendar,
+    Activity, single-scroll-owner, viewport-bound, and Preferences geometry.
+  - >-
+    Verified the committed Playwright testMatch includes the dedicated AURA-0155
+    spec and the superseded legacy geometry test was removed from
+    aura-web.spec.ts rather than retained as a duplicate.
+  - >-
+    Ran the exact required repository Playwright command; it discovered and
+    passed one desktop test from aura0155-sidebar-layout.spec.ts.
+  - >-
+    Work-item, changed-path, frontend-boundary, dedicated-spec formatting and
+    lint, Playwright-config formatting and lint, and diff checks passed. The
+    legacy shell CSS retains its documented pre-existing whole-file Prettier
+    baseline difference; the changed CSS lines introduce no whitespace error.
+findings: []

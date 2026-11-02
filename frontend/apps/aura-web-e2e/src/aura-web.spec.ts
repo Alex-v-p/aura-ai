@@ -1372,52 +1372,6 @@ test('keeps the expanded sidebar scroll bounded while resizing', async ({
   }
 });
 
-test('bounds the expanded 1280x720 navigation above Preferences', async ({ page }, testInfo) => {
-  test.skip(
-    testInfo.project.name !== 'desktop',
-    'Expanded navigation geometry runs once in the desktop project.',
-  );
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await page.goto('/conversation/welcome?fixture=long-sidebar');
-  const navigation = page.locator('#primary-navigation');
-  const preferences = navigation.getByRole('button', { name: 'Preferences' });
-  await expect(navigation.locator('.conversation-nav')).toBeVisible();
-  await expect(preferences).toBeVisible();
-
-  const metrics = await page.evaluate(() => {
-    const sidebar = document.querySelector<HTMLElement>('#primary-navigation');
-    const recent = document.querySelector<HTMLElement>('.conversation-nav');
-    const preferences = document.querySelector<HTMLElement>('.sidebar-bottom');
-    const scrollOwners = sidebar
-      ? [sidebar, ...Array.from(sidebar.querySelectorAll<HTMLElement>('*'))]
-          .filter(
-            (element) =>
-              ['auto', 'scroll'].includes(getComputedStyle(element).overflowY) &&
-              element.scrollHeight > element.clientHeight,
-          )
-          .map((element) => element.className || element.tagName.toLowerCase())
-      : [];
-    const sidebarBounds = sidebar?.getBoundingClientRect();
-    const recentBounds = recent?.getBoundingClientRect();
-    const preferencesBounds = preferences?.getBoundingClientRect();
-    return {
-      scrollOwners,
-      recentOverflow: recent ? getComputedStyle(recent).overflowY : 'visible',
-      recentScrollable: (recent?.scrollHeight ?? 0) > (recent?.clientHeight ?? 0),
-      sidebarBottom: sidebarBounds?.bottom ?? 0,
-      recentBottom: recentBounds?.bottom ?? 0,
-      preferencesTop: preferencesBounds?.top ?? 0,
-      viewportHeight: window.innerHeight,
-    };
-  });
-
-  expect(metrics.scrollOwners).toEqual(['sidebar-scroll-region']);
-  expect(metrics.recentOverflow).toBe('visible');
-  expect(metrics.recentScrollable).toBe(true);
-  expect(metrics.sidebarBottom).toBeLessThanOrEqual(metrics.viewportHeight + 1);
-  expect(metrics.recentBottom).toBeLessThanOrEqual(metrics.preferencesTop + 1);
-});
-
 test('keeps expanded preferences visible at a short desktop viewport', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop sidebar height coverage runs once.');
   await page.setViewportSize({ width: 1280, height: 720 });

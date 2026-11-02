@@ -1,0 +1,22 @@
+agent: aura_ux_ui_reviewer
+work_item: AURA-0155
+verdict: PASS
+checked:
+  - >-
+    Advisory UX review found no material UX or UI defect after correction.
+    The 1280x720 regression verifies one sidebar scroll owner, product and
+    conversation navigation separation, Calendar and Activity containment,
+    and the Preferences boundary.
+  - >-
+    The dedicated regression is discoverable through the committed Playwright
+    configuration and the exact configured command passed one test.
+  - >-
+    The rebuilt live Aura Web asset is healthy and includes the corrected
+    wide-desktop flex behavior; tablet and mobile rules remain outside the
+    changed media query and prior rendered checks retained compact and drawer
+    navigation behavior, Escape handling, and focus return.
+  - >-
+    A future short-height focus-not-obscured test was recommended as a
+    nonblocking enhancement; no privacy, recovery, theme, or disclosure
+    behavior changed.
+findings: []
